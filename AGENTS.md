@@ -21,7 +21,7 @@ Clone them outside this repo, for example `git clone --depth 1 -b anjuna-port-ba
 2. **Buyer handoff is LeadsGate prepop redirect only.** No server-side post to LeadsGate, and no `LEADSGATE_ENDPOINT`.
 3. **No cloaking.** No response may vary by user agent, IP, ASN, referrer, gclid or bot detection. The flow gate depends only on what the visitor did (valid amount + ZIP from the landing page).
 4. **Brand bytes stay clean.** Nothing a brand serves may contain another brand's identifiers, the strings "anjuna" or "aurum", a PostHog key or a Sentry DSN.
-5. **Cloudflare only.** D1 for data, R2 for template artifacts, Workers and Workflows for compute.
+5. **Cloudflare only.** D1 for all data. R2 only for sealed template/form artifacts and certification evidence; lead data never goes to R2. Workers and Workflows for compute.
 6. **No secrets in git.** Never commit `.dev.vars`, tokens, account IDs or database IDs. Use placeholders.
 7. **No deploys and no real external calls.** Do not deploy to Cloudflare, call LeadsGate, or touch the drain. Those are owner-gated (Wave 4).
 
@@ -39,12 +39,12 @@ Clone them outside this repo, for example `git clone --depth 1 -b anjuna-port-ba
 | `apps/` | `lead-form` (T4), `web` control panel (T12) |
 | `packages/` | `contracts` (T3), `leads-db`, `factory-db`, `auth-db` (T2), `brand-runtime` (T7), template starters (T5) |
 | `workers/` | `core` (T6), factory Workflows (T10) |
-| `docs/adr/` | architecture decision records (T1) |
+| `docs/adr/` | architecture decision records (T1): 0001 D1 only, 0002 LeadsGate prepop + postback, 0003 brand Worker topology, 0004 same-origin tracking |
 | `spike/` | reference only |
 
 ## Tooling
 
 - Bun workspaces (`apps/*`, `packages/*`, `workers/*`), Turborepo, TypeScript strict, Vitest.
-- Worker tests run with Miniflare / `@cloudflare/vitest-pool-workers`. Use `compatibility_flags: ["global_fetch_strictly_public"]` on any Worker that fetches another Worker in the same zone.
+- Worker tests run with Miniflare / `@cloudflare/vitest-pool-workers`. Use `compatibility_flags: ["global_fetch_strictly_public"]` on every brand Worker and on any Worker that fetches another Worker in the same zone (error 1042).
 - Root commands: `bun install`, `bun run build`, `bun run test`, `bun run typecheck`.
 - Each package defines its own `build`, `test` and `typecheck` scripts so Turborepo can run them.
