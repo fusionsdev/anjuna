@@ -24,5 +24,5 @@ Conversions need the Google click ID from the ad click attached to the lead. Pro
 - The CI identity scan (FO-4, TP-3) can fail a build on any PostHog key, Sentry DSN, "anjuna" or "aurum" string.
 - The brand Worker carries proxy forwarding code but no extra secrets; it size-caps what it forwards.
 - Core exposes the analytics forward endpoints and needs per-path size caps and rate limits on them; they require the per-account credential like `/rpc/*`.
-- Clicks without a click ID are not ledgered; organic visits have no conversion path, as in V1.
+- Clicks without a click ID get no click ledger entry, as in V1. A sold lead from such a visit may still get a `conversion_uploads` row (ADR-0002), but it cannot be attributed to an ad click.
 - A/B assignment uses its own sticky first-party cookie (BR-9); it is not part of this decision.
