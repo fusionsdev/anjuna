@@ -1,0 +1,61 @@
+---
+import Disclosure from '../components/Disclosure.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+const { title, description = 'Check your funding options in minutes.' } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <!-- Template contract: shared styles must be is:global (Astro scopes styles per component). -->
+    <style is:global>
+      :root {
+        --ink: #10231c;
+        --muted: #4b5f56;
+        --accent: #1f7a4d;
+        --bg: #f6faf7;
+        --card: #ffffff;
+        --line: #c9d6cf;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--ink); background: var(--bg); line-height: 1.5; }
+      header.site, main, footer.site { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+      header.site { padding-top: 20px; font-weight: 700; }
+      header.site a { color: var(--ink); text-decoration: none; }
+      main { padding-top: 32px; padding-bottom: 32px; }
+      h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.1; margin: 0 0 16px; }
+      h2 { font-size: 1.25rem; margin: 32px 0 8px; }
+      form.cta { display: grid; gap: 12px; margin-top: 24px; background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid var(--line); }
+      form.cta label { display: grid; gap: 6px; }
+      .cta-label { font-weight: 600; }
+      select, input, button { font: inherit; padding: 12px; border-radius: 8px; border: 1px solid var(--line); width: 100%; }
+      button { background: var(--accent); color: #fff; border: 0; cursor: pointer; font-weight: 600; }
+      ol.steps { padding-left: 20px; }
+      footer.site { font-size: .85rem; color: var(--muted); padding-bottom: 48px; border-top: 1px solid var(--line); padding-top: 16px; }
+      footer.site nav a { margin-right: 12px; color: var(--ink); }
+      .disclosure { margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <header class="site"><a href="/">Example Brand</a></header>
+    <main>
+      <slot />
+    </main>
+    <footer class="site">
+      <nav aria-label="Legal">
+        <a href="/privacy/">Privacy Policy</a>
+        <a href="/terms/">Terms of Use</a>
+        <a href="/do-not-sell/">Do Not Sell or Share My Personal Information</a>
+        <a href="/disclosures/">Disclosures</a>
+      </nav>
+      <Disclosure />
+    </footer>
+  </body>
+</html>

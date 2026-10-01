@@ -1,0 +1,18 @@
+---
+import Base from '../layouts/Base.astro';
+import KeywordSlot from '../components/KeywordSlot.astro';
+import CtaForm from '../components/CtaForm.astro';
+---
+<Base title="Example Brand | Check Your Options">
+  <h1><KeywordSlot default="Funding Options" /> | Check Your Options in Minutes</h1>
+  <p>Answer two quick questions to see if a lending partner in our network may be able to help.</p>
+
+  <CtaForm />
+
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li>Choose an amount and enter your ZIP code.</li>
+    <li>Complete a short secure request form.</li>
+    <li>If a lending partner is available, you are connected to review their offer.</li>
+  </ol>
+</Base>
