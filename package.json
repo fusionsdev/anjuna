@@ -1,0 +1,16 @@
+{
+  "name": "anjuna",
+  "private": true,
+  "packageManager": "bun@1.3.13",
+  "workspaces": ["apps/*", "packages/*", "workers/*"],
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0"
+  }
+}

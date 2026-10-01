@@ -1,0 +1,11 @@
+node_modules
+dist
+.turbo
+.wrangler
+coverage
+.dev.vars
+.env
+.env.*
+*.local
+spike/**/public
+.astro

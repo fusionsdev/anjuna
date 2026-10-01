@@ -1,0 +1,21 @@
+{
+  "name": "aurum-v3-spike-brand",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "vars": {
+    "CORE_URL": "https://<core>.workers.dev",
+    "BRAND_ID": "spike-brand",
+    "BRAND_NAME": "Example Brand",
+    "FORM_ROUTE": "/request",
+    "AMOUNTS": "[350,500,750,1000,1500,1750,2000,3000,3250,4500,5000]"
+  }
+  // Secret (wrangler secret put): CORE_TOKEN
+}

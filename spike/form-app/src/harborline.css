@@ -1,0 +1,25 @@
+/* Harborline-only entry: deliberately omits Tailwind's preflight/reset layer
+   (@import "tailwindcss/preflight") — Harborline's own page already applies
+   a Tailwind v3 preflight globally, and stacking a second (v4) reset on top
+   would risk visible spacing/style shifts across Harborline's own sections,
+   not just the mounted form. */
+@import "tailwindcss/theme" layer(theme);
+@import "./theme.css";
+@import "tailwindcss/utilities" layer(utilities);
+
+@source "./App.tsx";
+
+/* Reset number input spin buttons */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Base custom classes */
+.focus-ring {
+  @apply focus-visible:ring-2 focus-visible:ring-zinc-900 focus-visible:outline-none focus:border-zinc-900;
+}

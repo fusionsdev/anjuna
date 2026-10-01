@@ -1,0 +1,16 @@
+{
+  "name": "aurum-v3-spike-core",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "workers_dev": true,
+  "preview_urls": false,
+  "d1_databases": [
+    { "binding": "DB", "database_name": "aurum-v3-spike-leads", "database_id": "<d1-database-id>" }
+  ],
+  "vars": {
+    "ALLOWED_BRANDS": "spike-brand",
+    "PREPOP_BASE": "https://example.com/prepop",
+    "AID": "TEST"
+  }
+  // Secrets (wrangler secret put): RPC_TOKEN, POSTBACK_TOKEN, DRAIN_TOKEN
+}

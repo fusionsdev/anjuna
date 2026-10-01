@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Your request</title>
+  <!-- Runtime config: the brand Worker replaces this JSON on every response. -->
+  <script type="application/json" id="cfg">{}</script>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f6faf7; color: #10231c; }
+    main { max-width: 520px; margin: 0 auto; padding: 40px 20px; }
+    form { display: grid; gap: 12px; background: #fff; padding: 20px; border-radius: 12px; }
+    input, button { font: inherit; padding: 12px; border-radius: 8px; border: 1px solid #c9d6cf; }
+    button { background: #1f7a4d; color: #fff; border: 0; cursor: pointer; }
+    .err { color: #b3261e; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+<main>
+  <h2><span data-kw>Funding Options</span>: Your Request</h2>
+  <p id="summary"></p>
+  <form id="f">
+    <input name="first_name" placeholder="First name" required />
+    <input name="last_name" placeholder="Last name" required />
+    <input name="email" type="email" placeholder="Email" required />
+    <input name="home_phone" inputmode="tel" placeholder="Phone (10 digits)" required />
+    <label><input type="checkbox" name="consent" required /> I agree to be contacted by lending partners about my request.</label>
+    <button type="submit">See my options</button>
+    <p class="err" id="err"></p>
+  </form>
+</main>
+<script>
+  const cfg = JSON.parse(document.getElementById('cfg').textContent || '{}');
+  document.getElementById('summary').textContent =
+    'Requested amount: $' + Number(cfg.amount).toLocaleString('en-US') + ' · ZIP ' + cfg.zip;
+  // V1-style idempotency: one client-generated lead_id per tab session.
+  const leadId = sessionStorage.getItem('lead_id') || crypto.randomUUID();
+  sessionStorage.setItem('lead_id', leadId);
+  document.getElementById('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = Object.fromEntries(fd.entries());
+    body.lead_id = leadId;
+    body.requested_amount = cfg.amount;
+    body.zip = cfg.zip;
+    body.consent = fd.get('consent') === 'on';
+    const res = await fetch('/api/leads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.continuation) {
+      location.assign(cfg.formRoute + '/provider?c=' + encodeURIComponent(data.continuation));
+    } else {
+      document.getElementById('err').textContent = data.message || 'Something went wrong. Please try again.';
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+---
+import Base from '../layouts/Base.astro';
+import KeywordSlot from '../components/KeywordSlot.astro';
+const amounts = [350, 500, 750, 1000, 1500, 1750, 2000, 3000, 3250, 4500, 5000];
+---
+<Base title="Spike Brand — Check your options">
+  <h1><KeywordSlot default="Funding Options" /> — Check Your Options in Minutes</h1>
+  <p>Answer two quick questions to see if a lending partner may be able to help.</p>
+
+  <!-- Template contract: the CTA form submits amount + ZIP to /go.
+       The brand Worker appends allowlisted ad params as hidden inputs (data-cta). -->
+  <form class="cta" method="get" action="/go" data-cta>
+    <label>How much do you need?
+      <select name="requested_amount" required>
+        {amounts.map((a) => <option value={a} selected={a === 1000}>${a.toLocaleString('en-US')}</option>)}
+      </select>
+    </label>
+    <label>ZIP code
+      <input name="zip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required />
+    </label>
+    <button type="submit">Continue</button>
+  </form>
+</Base>

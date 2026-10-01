@@ -1,0 +1,9 @@
+---
+// Template-contract slot: the brand Worker replaces this text with the ad keyword
+// (?keyword=…) at request time. The build only ever emits the default text.
+interface Props {
+  default: string;
+}
+const { default: fallback } = Astro.props;
+---
+<span data-kw>{fallback}</span>

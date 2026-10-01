@@ -1,0 +1,27 @@
+@import "tailwindcss";
+/* This package is consumed from a sibling build root (fusion_formv_v1), so Tailwind v4's automatic
+   content detection does NOT crawl these files. Declare them explicitly or every utility class used
+   in App.tsx gets purged and the app ships unstyled. Paths are relative to this CSS file. */
+@source "./**/*.{ts,tsx}";
+@import "./theme.css";
+
+body {
+  background-color: #FAFAFA;
+  color: #18181B;
+  font-family: 'Inter', sans-serif;
+}
+
+/* Reset number input spin buttons */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Base custom classes */
+.focus-ring {
+  @apply focus-visible:ring-2 focus-visible:ring-zinc-900 focus-visible:outline-none focus:border-zinc-900;
+}
