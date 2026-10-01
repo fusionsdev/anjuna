@@ -1,0 +1,10 @@
+{
+  "contract_version": 1,
+  "name": "starter-astro",
+  "version": "1.0.0",
+  "framework": "astro",
+  "entry": "index.html",
+  "keyword_slot": { "default": "Funding Options" },
+  "cta": { "action": "/go", "method": "get", "fields": ["requested_amount", "zip"], "amounts": [350, 500, 750, 1000, 1500, 1750, 2000, 3000, 3250, 4500, 5000] },
+  "legal_pages": { "privacy": "/privacy", "terms": "/terms", "do_not_sell": "/do-not-sell", "disclosures": "/disclosures" }
+}

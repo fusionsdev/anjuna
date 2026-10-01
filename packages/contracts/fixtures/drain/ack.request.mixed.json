@@ -1,0 +1,1 @@
+{"results":[{"lead_id":"6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f","status":"uploaded"},{"lead_id":"0b7e4d21-9c3f-4a8b-9d10-2e3f4a5b6c7d","status":"failed","error":"upload failed"},{"lead_id":"a3d5e7f9-1b2c-4d3e-a4f5-6a7b8c9d0e1f","status":"deferred","error":"not ready yet: Can't import events to a conversion action that was just created."}]}

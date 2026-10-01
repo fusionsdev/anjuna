@@ -1,0 +1,2 @@
+packages/contracts/test/v1/** -text
+packages/contracts/fixtures/** text eol=lf

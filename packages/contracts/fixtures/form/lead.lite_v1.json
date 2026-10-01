@@ -1,0 +1,52 @@
+{
+  "lead_id": "0b7e4d21-9c3f-4a8b-9d10-2e3f4a5b6c7d",
+  "session_id": "7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+  "form_version": "2026-01",
+  "form_variant": "lite_v1",
+  "site": {
+    "site_id": "aurum-default",
+    "brand": "Brand B",
+    "hostname": "www.brand-b.example"
+  },
+  "lead": {
+    "requested_amount": "750",
+    "loan_purpose": "",
+    "first_name": "John",
+    "last_name": "O'Neil",
+    "birth_date": "",
+    "email": "john.oneil@example.com",
+    "home_phone": "3125550199",
+    "work_phone": "",
+    "address": "",
+    "city": "",
+    "state": "",
+    "zip": "60601",
+    "address_length_months": "",
+    "own_home": "",
+    "income_type": "",
+    "employer": "",
+    "job_title": "",
+    "employed_months": "",
+    "pay_date1": "",
+    "pay_frequency": "",
+    "direct_deposit": "",
+    "monthly_income": ""
+  },
+  "consent": {
+    "application_consent": true,
+    "consent_version": "consent-2026-02",
+    "partner_list_version": "partners-2026-01",
+    "accepted_at": "2026-10-02T15:10:00.000Z",
+    "page_url": "https://www.brand-b.example/request"
+  },
+  "tracking": {
+    "gbraid": "0AAAAAFIXTURE-gbraid",
+    "keyword": "cash advance"
+  },
+  "metadata": {
+    "landing_page_url": "https://www.brand-b.example/request",
+    "referrer": "",
+    "hostname": "www.brand-b.example",
+    "submitted_at": "2026-10-02T15:10:00.000Z"
+  }
+}

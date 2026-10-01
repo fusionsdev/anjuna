@@ -1,0 +1,53 @@
+{
+  "lead_id": "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f",
+  "session_id": "1d2e3f40-5a6b-4c7d-8e9f-a0b1c2d3e4f5",
+  "form_version": "2026-01",
+  "form_variant": "aurum-14-step",
+  "site": {
+    "site_id": "aurum-default",
+    "brand": "Brand A",
+    "hostname": "brand-a.example"
+  },
+  "lead": {
+    "requested_amount": "1750",
+    "loan_purpose": "DEBT_CONSOLIDATION",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "birth_date": "1985-04-12",
+    "email": "jane.doe@example.com",
+    "home_phone": "2145550123",
+    "work_phone": "",
+    "address": "123 Main St, Apt 4",
+    "city": "Dallas",
+    "state": "TX",
+    "zip": "75201",
+    "address_length_months": "24",
+    "own_home": "0",
+    "income_type": "EMPLOYMENT",
+    "employer": "Acme Corp",
+    "job_title": "Clerk",
+    "employed_months": "36",
+    "pay_date1": "2026-10-09",
+    "pay_frequency": "BIWEEKLY",
+    "direct_deposit": "1",
+    "monthly_income": "3200"
+  },
+  "consent": {
+    "application_consent": true,
+    "consent_version": "consent-2026-02",
+    "partner_list_version": "partners-2026-01",
+    "accepted_at": "2026-10-02T15:04:05.000Z",
+    "page_url": "https://brand-a.example/request"
+  },
+  "tracking": {
+    "gclid": "Cj0KCQjwFIXTURE-gclid-1",
+    "utm_source": "google",
+    "keyword": "fast cash loans"
+  },
+  "metadata": {
+    "landing_page_url": "https://brand-a.example/request",
+    "referrer": "https://brand-a.example",
+    "hostname": "brand-a.example",
+    "submitted_at": "2026-10-02T15:04:05.000Z"
+  }
+}
