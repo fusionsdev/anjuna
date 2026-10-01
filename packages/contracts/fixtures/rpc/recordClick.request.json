@@ -1,0 +1,9 @@
+{
+  "brand_id": "brand-a",
+  "hostname": "brand-a.example",
+  "landing_path": "/",
+  "referrer_origin": "https://www.google.com",
+  "params": { "gclid": "Cj0KCQjwFIXTURE-gclid-1", "utm_source": "google", "utm_campaign": "search-1", "keyword": "fast cash loans" },
+  "experiment_id": "exp-2026-10",
+  "variant": "a"
+}

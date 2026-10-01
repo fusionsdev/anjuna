@@ -1,0 +1,22 @@
+{
+  "_source": "V1 functions/api/[[path]].ts handlePostback @ 8404ec2. `expect` is what V1 derives after the token check; null = V1 answers 400 Invalid postback.",
+  "cases": [
+    { "name": "sold with payout", "query": "token=T&cid=6f1c2b9e3a4d4c5e8f607a8b9c0d1e2f&payout=25&lead_id=LG-1001&type=soldLead",
+      "expect": { "cid": "6f1c2b9e3a4d4c5e8f607a8b9c0d1e2f", "type": "soldLead", "payout": 25, "payout_clamped": false, "buyer_lead_id": "LG-1001" }, "queues_conversion": true },
+    { "name": "payout above ceiling is clamped to 230", "query": "token=T&cid=abc123&payout=999.99&lead_id=LG-1002&type=soldLead",
+      "expect": { "cid": "abc123", "type": "soldLead", "payout": 230, "payout_clamped": true, "buyer_lead_id": "LG-1002" }, "queues_conversion": true },
+    { "name": "zero payout sold is recorded but not queued", "query": "token=T&cid=abc123&payout=0&type=soldLead",
+      "expect": { "cid": "abc123", "type": "soldLead", "payout": 0, "payout_clamped": false, "buyer_lead_id": "" }, "queues_conversion": false },
+    { "name": "negative payout becomes 0", "query": "token=T&cid=abc123&payout=-5&type=soldLead",
+      "expect": { "cid": "abc123", "type": "soldLead", "payout": 0, "payout_clamped": false, "buyer_lead_id": "" }, "queues_conversion": false },
+    { "name": "non-numeric payout becomes 0", "query": "token=T&cid=abc123&payout=%7Bprice%7D&type=newLead",
+      "expect": { "cid": "abc123", "type": "newLead", "payout": 0, "payout_clamped": false, "buyer_lead_id": "" }, "queues_conversion": false },
+    { "name": "missing payout becomes 0", "query": "token=T&cid=abc123&type=rejectLead",
+      "expect": { "cid": "abc123", "type": "rejectLead", "payout": 0, "payout_clamped": false, "buyer_lead_id": "" }, "queues_conversion": false },
+    { "name": "cid is trimmed", "query": "token=T&cid=%20abc123%20&payout=10&type=soldLead",
+      "expect": { "cid": "abc123", "type": "soldLead", "payout": 10, "payout_clamped": false, "buyer_lead_id": "" }, "queues_conversion": true },
+    { "name": "unknown type", "query": "token=T&cid=abc123&payout=10&type=duplicate", "expect": null },
+    { "name": "missing cid", "query": "token=T&payout=10&type=soldLead", "expect": null },
+    { "name": "empty type", "query": "token=T&cid=abc123&payout=10&type=", "expect": null }
+  ]
+}
