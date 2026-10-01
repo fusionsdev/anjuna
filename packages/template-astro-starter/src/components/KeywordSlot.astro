@@ -1,0 +1,12 @@
+---
+// Template contract slot. Place exactly one inside the page H1.
+// The build only emits the default text; at request time the brand Worker replaces
+// the text of [data-kw] with the cleaned ad keyword (?keyword=...) using HTMLRewriter.
+// Keep the markup a plain <span data-kw> with text only: no nested elements, no classes
+// that depend on the text length.
+interface Props {
+  default: string;
+}
+const { default: fallback } = Astro.props;
+---
+<span data-kw>{fallback}</span>

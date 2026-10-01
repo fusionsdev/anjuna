@@ -1,0 +1,36 @@
+---
+// Template contract CTA. Collects only requested_amount + 5-digit zip and submits to /go
+// with GET. The brand Worker appends allowlisted ad params as hidden inputs to form[data-cta].
+// Never add PII inputs (name, email, phone, address, SSN, DOB) here: the lead form collects those.
+const AMOUNTS = [350, 500, 750, 1000, 1500, 1750, 2000, 3000, 3250, 4500, 5000] as const;
+
+interface Props {
+  defaultAmount?: (typeof AMOUNTS)[number];
+  buttonLabel?: string;
+}
+const { defaultAmount = 1000, buttonLabel = 'Continue' } = Astro.props;
+---
+<form class="cta" method="get" action="/go" data-cta>
+  <label>
+    <span class="cta-label">How much do you need?</span>
+    <select name="requested_amount" required>
+      {AMOUNTS.map((a) => (
+        <option value={String(a)} selected={a === defaultAmount}>${a.toLocaleString('en-US')}</option>
+      ))}
+    </select>
+  </label>
+  <label>
+    <span class="cta-label">ZIP code</span>
+    <input
+      name="zip"
+      type="text"
+      inputmode="numeric"
+      autocomplete="postal-code"
+      pattern="[0-9]{5}"
+      minlength="5"
+      maxlength="5"
+      required
+    />
+  </label>
+  <button type="submit">{buttonLabel}</button>
+</form>
