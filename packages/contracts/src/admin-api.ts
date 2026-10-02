@@ -1,0 +1,659 @@
+/**
+ * Core admin API (T12-0, FUS-353): what the control panel (T12a) calls and core (T6) serves.
+ *
+ * The panel Worker reaches core over a Service Binding (plan decision 1) and never binds the
+ * `leads` D1 (ADR-0001). Every request carries the acting user's id and role in
+ * ADMIN_CONTEXT_HEADERS; the panel sets them from its better-auth session, never from the
+ * browser. Core is the enforcement point: it checks the role with `authorize()` against
+ * ADMIN_ROLE_TABLE and writes the `audit_log` row for every change.
+ *
+ * Check order core applies (and the mock core in T12a copies):
+ *   1. context headers missing or invalid      -> 401 unauthorized
+ *   2. endpoint below the actor's role          -> 403 forbidden_role
+ *   3. body / query invalid                     -> 422 invalid
+ *   4. PATCH field group above the actor's role -> 403 forbidden_role (lists denied_fields)
+ *   5. brand or lead does not exist             -> 404 not_found
+ *   6. PATCH `expected_updated_at` is stale     -> 409 conflict
+ *
+ * No secret ever leaves core: the postback token is shown only as "set" / "not_set" (never a
+ * value or a hash), and the one exception is the freshly rotated token returned once in the
+ * PATCH response so the owner can paste it into LeadsGate.
+ *
+ * Out of scope: rollback / install / upgrade (factory Workflows, T10).
+ */
+import { z } from "zod";
+import { BrandId, Hostname } from "./common.js";
+import { ExperimentId, OpaqueToken, VariantId } from "./leads-rpc.js";
+import { Keyword } from "./runtime-config.js";
+import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
+
+// --- roles and request context ------------------------------------------------------------------
+
+/** better-auth roles (plan: `defaultRole: "employee"`, `adminRoles: ["owner"]`). */
+export const ADMIN_ROLES = ["employee", "owner"] as const;
+export const AdminRole = z.enum(ADMIN_ROLES);
+export type AdminRole = z.infer<typeof AdminRole>;
+
+/** Owner outranks employee. */
+const ROLE_RANK: Record<AdminRole, number> = { employee: 1, owner: 2 };
+
+/** True when `role` meets `min`. */
+export function roleAtLeast(role: AdminRole, min: AdminRole): boolean {
+  return ROLE_RANK[role] >= ROLE_RANK[min];
+}
+
+/** Request id: the panel mints one per call; core echoes it in errors and logs. */
+export const RequestId = z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/, "Invalid request_id");
+
+/** Who is acting. Set by the panel Worker from its session; never taken from the browser. */
+export const AdminRequestContext = z.strictObject({
+  /** better-auth user id. Written to `audit_log.actor_id`. */
+  actor_id: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/, "Invalid actor_id"),
+  actor_role: AdminRole,
+  request_id: RequestId,
+});
+export type AdminRequestContext = z.infer<typeof AdminRequestContext>;
+
+/** Headers that carry AdminRequestContext over the Service Binding. */
+export const ADMIN_CONTEXT_HEADERS = {
+  actor_id: "x-actor-id",
+  actor_role: "x-actor-role",
+  request_id: "x-request-id",
+} as const;
+
+/** Read the context from request headers. Returns null (-> 401) when anything is missing or bad. */
+export function adminContextFromHeaders(headers: { get(name: string): string | null }): AdminRequestContext | null {
+  const r = AdminRequestContext.safeParse({
+    actor_id: headers.get(ADMIN_CONTEXT_HEADERS.actor_id) ?? undefined,
+    actor_role: headers.get(ADMIN_CONTEXT_HEADERS.actor_role) ?? undefined,
+    request_id: headers.get(ADMIN_CONTEXT_HEADERS.request_id) ?? undefined,
+  });
+  return r.success ? r.data : null;
+}
+
+/** The inverse, for the panel Worker. */
+export function adminContextToHeaders(ctx: AdminRequestContext): Record<string, string> {
+  const c = AdminRequestContext.parse(ctx);
+  return {
+    [ADMIN_CONTEXT_HEADERS.actor_id]: c.actor_id,
+    [ADMIN_CONTEXT_HEADERS.actor_role]: c.actor_role,
+    [ADMIN_CONTEXT_HEADERS.request_id]: c.request_id,
+  };
+}
+
+// --- shared brand fields -------------------------------------------------------------------------
+
+/** `brand_runtime.paused` as the panel shows it. */
+export const BrandStatus = z.enum(["live", "paused"]);
+export type BrandStatus = z.infer<typeof BrandStatus>;
+
+/** `brand_runtime.flow_gate_mode` (BR-2 / BR-3). */
+export const FlowGateMode = z.enum(["param", "signed_cookie"]);
+export type FlowGateMode = z.infer<typeof FlowGateMode>;
+
+/** One A/B arm. `id` is the same slug the brand Worker writes on clicks and leads. */
+export const AbVariant = z.strictObject({
+  id: VariantId,
+  weight: z.number().int().min(0).max(100),
+});
+export type AbVariant = z.infer<typeof AbVariant>;
+
+/** `brand_runtime.ab_config_json` (BR-9). Weights are percentages and sum to 100. */
+export const AbConfig = z
+  .strictObject({
+    experiment_id: ExperimentId,
+    variants: z.array(AbVariant).min(2).max(8),
+  })
+  .refine((c) => c.variants.reduce((s, v) => s + v.weight, 0) === 100, "A/B weights must sum to 100")
+  .refine((c) => new Set(c.variants.map((v) => v.id)).size === c.variants.length, "A/B variant ids must be unique");
+export type AbConfig = z.infer<typeof AbConfig>;
+
+/** `brand_runtime.amount_buckets` (BR-2): unique, ascending, within the V1 range. */
+export const AmountBuckets = z
+  .array(z.number().int().min(REQUESTED_AMOUNT_RANGE.min).max(REQUESTED_AMOUNT_RANGE.max))
+  .min(1)
+  .max(32)
+  .refine((a) => a.every((v, i) => i === 0 || v > a[i - 1]!), "Amount buckets must be unique and ascending");
+
+/** Form bundle version a brand serves (`form@<sha>`, FO-4). Null when core cannot tell yet. */
+export const FormVersion = z.string().regex(/^[A-Za-z0-9._@-]{1,64}$/, "Invalid form version");
+
+/** The only thing anyone outside core ever learns about the postback token. */
+export const PostbackTokenState = z.enum(["set", "not_set"]);
+export type PostbackTokenState = z.infer<typeof PostbackTokenState>;
+
+/** LeadsGate affiliate id. */
+export const LeadsGateAid = z.string().regex(/^[A-Za-z0-9_-]{1,32}$/, "Invalid aid");
+
+/** LeadsGate prepop form URL. https only, no query or fragment (core appends the params). */
+export const PrepopBase = z
+  .url({ protocol: /^https$/ })
+  .max(512)
+  .refine((u) => !u.includes("?") && !u.includes("#"), "prepop_base must not carry a query or fragment");
+
+/** Key in the drain's BRAND_ROUTING_JSON. An identifier, not a credential. */
+export const DrainKey = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid drain_key");
+
+const Day = z.iso.date();
+const Timestamp = z.iso.datetime();
+const Count = z.number().int().min(0);
+
+// --- GET /admin/brands ---------------------------------------------------------------------------
+
+/** Leads created in the last 7 days, by buyer outcome. */
+export const BrandStats7d = z
+  .strictObject({
+    leads: Count,
+    sold: Count,
+    pending: Count,
+  })
+  .refine((s) => s.sold + s.pending <= s.leads, "sold + pending cannot exceed leads");
+
+export const BrandSummary = z.strictObject({
+  brand_id: BrandId,
+  hostnames: z.array(Hostname).min(1),
+  status: BrandStatus,
+  flow_gate_mode: FlowGateMode,
+  /** Null = no A/B test running. */
+  ab_config: AbConfig.nullable(),
+  form_version: FormVersion.nullable(),
+  stats_7d: BrandStats7d,
+});
+export type BrandSummary = z.infer<typeof BrandSummary>;
+
+export const ListBrandsResponse = z.strictObject({
+  brands: z.array(BrandSummary),
+  generated_at: Timestamp,
+});
+export type ListBrandsResponse = z.infer<typeof ListBrandsResponse>;
+
+// --- GET /admin/brands/:id -----------------------------------------------------------------------
+
+/**
+ * The full editable config of one `brand_runtime` row. Strict: `postback_token_hash` (or any
+ * other unlisted column) fails validation, so it cannot leak by accident.
+ */
+export const BrandConfig = z.strictObject({
+  brand_id: BrandId,
+  account: z.string().min(1).max(64),
+  hostnames: z.array(Hostname).min(1),
+  status: BrandStatus,
+  form_version: FormVersion.nullable(),
+  keyword_default: Keyword.nullable(),
+  amount_buckets: AmountBuckets,
+  ab_config: AbConfig.nullable(),
+  flow_gate_mode: FlowGateMode,
+  aid: LeadsGateAid,
+  prepop_base: PrepopBase,
+  drain_key: DrainKey,
+  postback_token: PostbackTokenState,
+  created_at: Timestamp,
+  /** Pass back as `expected_updated_at` on PATCH for optimistic concurrency (409 when stale). */
+  updated_at: Timestamp,
+});
+export type BrandConfig = z.infer<typeof BrandConfig>;
+
+export const GetBrandResponse = z.strictObject({ brand: BrandConfig });
+export type GetBrandResponse = z.infer<typeof GetBrandResponse>;
+
+// --- PATCH /admin/brands/:id ---------------------------------------------------------------------
+
+/** Editable fields. `rotate_postback_token: true` asks core to mint a new token. */
+export const BRAND_PATCH_FIELDS = [
+  "keyword_default",
+  "amount_buckets",
+  "ab_config",
+  "flow_gate_mode",
+  "aid",
+  "prepop_base",
+  "drain_key",
+  "rotate_postback_token",
+] as const;
+export type BrandPatchField = (typeof BRAND_PATCH_FIELDS)[number];
+
+export const BrandPatchRequest = z
+  .strictObject({
+    /** Null clears it (the template keeps its own default text). */
+    keyword_default: Keyword.nullable().optional(),
+    amount_buckets: AmountBuckets.optional(),
+    /** Null stops the test. */
+    ab_config: AbConfig.nullable().optional(),
+    flow_gate_mode: FlowGateMode.optional(),
+    aid: LeadsGateAid.optional(),
+    prepop_base: PrepopBase.optional(),
+    drain_key: DrainKey.optional(),
+    rotate_postback_token: z.literal(true).optional(),
+    /** `BrandConfig.updated_at` the editor loaded. Stale -> 409 conflict. */
+    expected_updated_at: Timestamp.optional(),
+  })
+  .refine((p) => BRAND_PATCH_FIELDS.some((f) => p[f] !== undefined), "Patch changes nothing");
+export type BrandPatchRequest = z.infer<typeof BrandPatchRequest>;
+
+export const BrandPatchResponse = z.strictObject({
+  brand: BrandConfig,
+  /** Fields whose value actually changed (empty when the patch was a no-op). */
+  changed: z.array(z.enum(BRAND_PATCH_FIELDS)),
+  /** `audit_log.id` of the row core wrote; null when nothing changed. */
+  audit_id: z.number().int().positive().nullable(),
+  /**
+   * The new postback token, present only on the response to `rotate_postback_token: true`.
+   * Shown once so the owner can update the LeadsGate postback URL; core stores only its hash
+   * and never returns it again.
+   */
+  issued_postback_token: OpaqueToken.optional(),
+});
+export type BrandPatchResponse = z.infer<typeof BrandPatchResponse>;
+
+// --- POST /admin/brands/:id/pause | /resume ------------------------------------------------------
+
+export const BrandStatusChangeRequest = z.strictObject({
+  /** Free-text note for the audit log. */
+  reason: z.string().max(280).optional(),
+});
+export type BrandStatusChangeRequest = z.infer<typeof BrandStatusChangeRequest>;
+
+/** Idempotent: pausing a paused brand answers 200 with `changed: false` and writes no audit row. */
+export const BrandStatusChangeResponse = z
+  .strictObject({
+    brand_id: BrandId,
+    status: BrandStatus,
+    changed: z.boolean(),
+    audit_id: z.number().int().positive().nullable(),
+  })
+  .refine((r) => r.changed === (r.audit_id !== null), "audit_id is set exactly when the status changed");
+export type BrandStatusChangeResponse = z.infer<typeof BrandStatusChangeResponse>;
+
+// --- GET /admin/leads/aggregates -----------------------------------------------------------------
+
+/** Buyer outcome of a lead, derived from `leads.status`. */
+export const LEAD_OUTCOMES = ["pending", "sold", "rejected"] as const;
+export const LeadOutcome = z.enum(LEAD_OUTCOMES);
+export type LeadOutcome = z.infer<typeof LeadOutcome>;
+
+/**
+ * `leads.status` -> outcome. V1 inserts `accepted`; the postback handler then writes the
+ * LeadsGate type (`newLead`, `soldLead`, `rejectLead`) and never moves a sold lead back.
+ */
+export function leadOutcome(status: string): LeadOutcome {
+  if (status === "soldLead") return "sold";
+  if (status === "rejectLead") return "rejected";
+  return "pending";
+}
+
+/** Longest window one aggregates call may ask for, in days (inclusive). */
+export const LEAD_AGGREGATES_MAX_DAYS = 93;
+
+/** Query string. Days are UTC calendar days, inclusive. */
+export const LeadAggregatesQuery = z
+  .strictObject({
+    from: Day,
+    to: Day,
+    brand_id: BrandId.optional(),
+  })
+  .refine((q) => q.from <= q.to, "from must not be after to")
+  .refine(
+    (q) => (Date.parse(q.to) - Date.parse(q.from)) / 86_400_000 + 1 <= LEAD_AGGREGATES_MAX_DAYS,
+    `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days`,
+  );
+export type LeadAggregatesQuery = z.infer<typeof LeadAggregatesQuery>;
+
+/** One cell of brand x day x outcome. Counts only: no lead id, no applicant field. */
+export const LeadAggregateRow = z.strictObject({
+  brand_id: BrandId,
+  day: Day,
+  status: LeadOutcome,
+  count: Count,
+});
+export type LeadAggregateRow = z.infer<typeof LeadAggregateRow>;
+
+export const LeadAggregatesResponse = z.strictObject({
+  from: Day,
+  to: Day,
+  timezone: z.literal("UTC"),
+  /** Zero cells are omitted. */
+  rows: z.array(LeadAggregateRow),
+});
+export type LeadAggregatesResponse = z.infer<typeof LeadAggregatesResponse>;
+
+// --- GET /admin/leads/:lead_id (owner only, PII) -------------------------------------------------
+
+export const LeadId = z.string().regex(/^[A-Za-z0-9-]{8,64}$/, "Invalid lead_id");
+
+/** Applicant fields as `leads` stores them (V1 columns). This is PII. */
+export const LeadApplicant = z.strictObject({
+  first_name: z.string(),
+  last_name: z.string(),
+  birth_date: z.string(),
+  email: z.string(),
+  home_phone: z.string(),
+  work_phone: z.string().nullable(),
+  address: z.string(),
+  city: z.string(),
+  state: z.string(),
+  zip: z.string(),
+  address_length_months: z.number().int(),
+  own_home: z.boolean(),
+  income_type: z.string(),
+  employer: z.string(),
+  job_title: z.string(),
+  employed_months: z.number().int(),
+  pay_date1: z.string(),
+  pay_frequency: z.string(),
+  direct_deposit: z.boolean(),
+  monthly_income: z.number().int(),
+});
+export type LeadApplicant = z.infer<typeof LeadApplicant>;
+
+export const LeadPostbackEvent = z.strictObject({
+  event_type: z.string().max(32),
+  payout: z.number().min(0),
+  created_at: Timestamp,
+});
+
+export const LeadDetail = z.strictObject({
+  lead_id: LeadId,
+  brand_id: BrandId,
+  hostname: Hostname,
+  /** Raw `leads.status`. */
+  status: z.string().max(32),
+  outcome: LeadOutcome,
+  form_version: z.string().max(64),
+  form_variant: z.string().max(64),
+  experiment_id: ExperimentId.nullable(),
+  variant: VariantId.nullable(),
+  keyword: z.string().max(60).nullable(),
+  requested_amount: z.number().int().positive(),
+  loan_purpose: z.string(),
+  applicant: LeadApplicant,
+  postbacks: z.array(LeadPostbackEvent),
+  created_at: Timestamp,
+  updated_at: Timestamp.nullable(),
+});
+export type LeadDetail = z.infer<typeof LeadDetail>;
+
+export const GetLeadResponse = z.strictObject({ lead: LeadDetail });
+export type GetLeadResponse = z.infer<typeof GetLeadResponse>;
+
+// --- GET /admin/audit ----------------------------------------------------------------------------
+
+/** Actions core writes for this API. Factory rows (install.start, template.seal, ...) also appear. */
+export const ADMIN_AUDIT_ACTIONS = ["brand.update", "brand.pause", "brand.resume"] as const;
+
+export const AuditActorRole = z.enum(["owner", "employee", "system"]);
+
+/** One `factory.audit_log` row (entity_type/entity_id -> target, before/after_json -> old/new). */
+export const AuditEntry = z.strictObject({
+  id: z.number().int().positive(),
+  actor_id: z.string().min(1).max(128),
+  actor_role: AuditActorRole,
+  action: z.string().regex(/^[a-z_]+(?:\.[a-z_]+)+$/, "Invalid audit action"),
+  target: z.strictObject({
+    type: z.string().regex(/^[a-z_]{1,32}$/),
+    id: z.string().min(1).max(128),
+  }),
+  /** Changed fields before / after. Secrets appear only as PostbackTokenState. */
+  old: z.record(z.string(), z.json()).nullable(),
+  new: z.record(z.string(), z.json()).nullable(),
+  at: Timestamp,
+});
+export type AuditEntry = z.infer<typeof AuditEntry>;
+
+export const AUDIT_PAGE_LIMIT = { default: 50, min: 1, max: 200 } as const;
+
+/**
+ * Query string. For an employee core forces `actor_id` to the caller; an employee who asks for
+ * another actor gets 403 forbidden_role.
+ */
+export const AuditQuery = z.strictObject({
+  limit: z.coerce.number().int().min(AUDIT_PAGE_LIMIT.min).max(AUDIT_PAGE_LIMIT.max).optional(),
+  /** Opaque `next_cursor` from the previous page. */
+  cursor: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
+  actor_id: z.string().min(1).max(128).optional(),
+  target_type: z.string().regex(/^[a-z_]{1,32}$/).optional(),
+  target_id: z.string().min(1).max(128).optional(),
+});
+export type AuditQuery = z.infer<typeof AuditQuery>;
+
+/** Newest first. */
+export const AuditListResponse = z.strictObject({
+  entries: z.array(AuditEntry),
+  next_cursor: z.string().nullable(),
+});
+export type AuditListResponse = z.infer<typeof AuditListResponse>;
+
+// --- errors --------------------------------------------------------------------------------------
+
+export const ADMIN_ERROR_STATUS = {
+  unauthorized: 401,
+  forbidden_role: 403,
+  not_found: 404,
+  conflict: 409,
+  invalid: 422,
+} as const;
+export type AdminErrorCode = keyof typeof ADMIN_ERROR_STATUS;
+
+const errorBase = { message: z.string().max(500).optional(), request_id: RequestId.optional() };
+
+/** Uniform non-2xx body. `request_id` is absent only on 401 (no valid context to echo). */
+export const AdminError = z.discriminatedUnion("error", [
+  z.strictObject({ error: z.literal("unauthorized"), ...errorBase }),
+  z.strictObject({
+    error: z.literal("forbidden_role"),
+    ...errorBase,
+    required_role: AdminRole,
+    /** PATCH fields the caller may not change (absent when the whole endpoint is denied). */
+    denied_fields: z.array(z.string()).min(1).optional(),
+  }),
+  z.strictObject({ error: z.literal("not_found"), ...errorBase, resource: z.enum(["brand", "lead", "route"]) }),
+  z.strictObject({ error: z.literal("conflict"), ...errorBase, current_updated_at: Timestamp }),
+  z.strictObject({
+    error: z.literal("invalid"),
+    ...errorBase,
+    issues: z.array(z.strictObject({ path: z.string(), message: z.string() })).min(1),
+  }),
+]);
+export type AdminError = z.infer<typeof AdminError>;
+
+// --- endpoint table and role table ---------------------------------------------------------------
+
+/**
+ * Every admin endpoint: method, path template, minimum role and schemas. Core and the panel's
+ * mock core both route with this table. `audit_scope: "own_for_employee"` means an employee
+ * sees only rows where actor_id is themselves.
+ */
+export const AdminApi = {
+  listBrands: {
+    method: "GET",
+    path: "/admin/brands",
+    min_role: "employee",
+    response: ListBrandsResponse,
+  },
+  getBrand: {
+    method: "GET",
+    path: "/admin/brands/:id",
+    min_role: "employee",
+    response: GetBrandResponse,
+  },
+  patchBrand: {
+    method: "PATCH",
+    path: "/admin/brands/:id",
+    /** Endpoint floor. Each field group below has its own minimum. */
+    min_role: "employee",
+    request: BrandPatchRequest,
+    response: BrandPatchResponse,
+  },
+  pauseBrand: {
+    method: "POST",
+    path: "/admin/brands/:id/pause",
+    min_role: "employee",
+    request: BrandStatusChangeRequest,
+    response: BrandStatusChangeResponse,
+  },
+  resumeBrand: {
+    method: "POST",
+    path: "/admin/brands/:id/resume",
+    min_role: "employee",
+    request: BrandStatusChangeRequest,
+    response: BrandStatusChangeResponse,
+  },
+  leadAggregates: {
+    method: "GET",
+    path: "/admin/leads/aggregates",
+    min_role: "employee",
+    query: LeadAggregatesQuery,
+    response: LeadAggregatesResponse,
+  },
+  getLead: {
+    method: "GET",
+    path: "/admin/leads/:lead_id",
+    min_role: "owner",
+    response: GetLeadResponse,
+  },
+  listAudit: {
+    method: "GET",
+    path: "/admin/audit",
+    min_role: "employee",
+    audit_scope: "own_for_employee",
+    query: AuditQuery,
+    response: AuditListResponse,
+  },
+} as const;
+export type AdminEndpoint = keyof typeof AdminApi;
+export const ADMIN_ENDPOINTS = Object.keys(AdminApi) as AdminEndpoint[];
+
+/**
+ * PATCH /admin/brands/:id field groups and their minimum role. Every BRAND_PATCH_FIELDS entry
+ * is in exactly one group. `plan_action` is the row of the T12 plan's role matrix it implements.
+ */
+export const BRAND_PATCH_FIELD_GROUPS = {
+  keyword: {
+    min_role: "employee",
+    fields: ["keyword_default"],
+    plan_action: "Edit keyword default",
+  },
+  ab_weights: {
+    min_role: "owner",
+    fields: ["ab_config"],
+    plan_action: "Change A/B weights",
+  },
+  amount_buckets: {
+    min_role: "owner",
+    fields: ["amount_buckets"],
+    plan_action: "Change amount buckets",
+  },
+  flow_gate_mode: {
+    min_role: "owner",
+    fields: ["flow_gate_mode"],
+    plan_action: "Switch flow gate mode (`param` / `signed_cookie`)",
+  },
+  money_routing: {
+    min_role: "owner",
+    fields: ["aid", "prepop_base", "drain_key", "rotate_postback_token"],
+    plan_action: "Set LeadsGate aid, postback token, drain key, prepop base",
+  },
+} as const satisfies Record<string, { min_role: AdminRole; fields: readonly BrandPatchField[]; plan_action: string }>;
+export type BrandPatchFieldGroup = keyof typeof BRAND_PATCH_FIELD_GROUPS;
+
+/** Field -> minimum role, derived from BRAND_PATCH_FIELD_GROUPS. */
+export const BRAND_PATCH_FIELD_MIN_ROLE: Record<BrandPatchField, AdminRole> = Object.fromEntries(
+  Object.values(BRAND_PATCH_FIELD_GROUPS).flatMap((g) => g.fields.map((f) => [f, g.min_role])),
+) as Record<BrandPatchField, AdminRole>;
+
+export interface AdminRoleTableRow {
+  /** `"METHOD /path"` or `"PATCH /admin/brands/:id#<group>"` for a field group. */
+  key: string;
+  endpoint: AdminEndpoint;
+  field_group: BrandPatchFieldGroup | null;
+  fields: readonly string[] | null;
+  min_role: AdminRole;
+  /** What each role sees where it differs (audit only). */
+  scope: { employee: "own" | "all" | "none"; owner: "own" | "all" | "none" };
+}
+
+/**
+ * Machine-readable role table: every endpoint and every PATCH field group with its minimum role.
+ * T6 and T12a both test against this.
+ */
+export const ADMIN_ROLE_TABLE: readonly AdminRoleTableRow[] = [
+  ...ADMIN_ENDPOINTS.map((e): AdminRoleTableRow => {
+    const def = AdminApi[e];
+    const ownOnly = "audit_scope" in def && def.audit_scope === "own_for_employee";
+    return {
+      key: `${def.method} ${def.path}`,
+      endpoint: e,
+      field_group: null,
+      fields: null,
+      min_role: def.min_role,
+      scope: {
+        employee: def.min_role === "owner" ? "none" : ownOnly ? "own" : "all",
+        owner: "all",
+      },
+    };
+  }),
+  ...(Object.entries(BRAND_PATCH_FIELD_GROUPS) as [BrandPatchFieldGroup, (typeof BRAND_PATCH_FIELD_GROUPS)[BrandPatchFieldGroup]][]).map(
+    ([group, g]): AdminRoleTableRow => ({
+      key: `PATCH /admin/brands/:id#${group}`,
+      endpoint: "patchBrand",
+      field_group: group,
+      fields: g.fields,
+      min_role: g.min_role,
+      scope: { employee: g.min_role === "owner" ? "none" : "all", owner: "all" },
+    }),
+  ),
+];
+
+export type AuthorizeResult =
+  | { ok: true; scope: "own" | "all" }
+  | { ok: false; status: 403; error: Extract<AdminError, { error: "forbidden_role" }> };
+
+/**
+ * Role check for one call. For `patchBrand` pass the (parsed or raw) body: every present key
+ * whose group needs a higher role is listed in `denied_fields`. An unknown key is treated as
+ * owner-only, so the check fails closed. `scope: "own"` means core must filter to the actor's
+ * own rows (audit log).
+ */
+export function authorize(endpoint: AdminEndpoint, role: AdminRole, patch?: Record<string, unknown>): AuthorizeResult {
+  const def = AdminApi[endpoint];
+  if (!roleAtLeast(role, def.min_role)) {
+    return { ok: false, status: 403, error: { error: "forbidden_role", required_role: def.min_role } };
+  }
+  if (endpoint === "patchBrand" && patch) {
+    const denied = Object.keys(patch).filter((k) => {
+      if (k === "expected_updated_at") return false;
+      if (patch[k] === undefined) return false;
+      const min = (BRAND_PATCH_FIELD_MIN_ROLE as Record<string, AdminRole | undefined>)[k] ?? "owner";
+      return !roleAtLeast(role, min);
+    });
+    if (denied.length > 0) {
+      return { ok: false, status: 403, error: { error: "forbidden_role", required_role: "owner", denied_fields: denied } };
+    }
+  }
+  const ownOnly = "audit_scope" in def && def.audit_scope === "own_for_employee" && role !== "owner";
+  return { ok: true, scope: ownOnly ? "own" : "all" };
+}
+
+/** Match a request to an endpoint (core router and the panel's mock core). */
+export function matchAdminRoute(
+  method: string,
+  pathname: string,
+): { endpoint: AdminEndpoint; params: Record<string, string> } | null {
+  const parts = pathname.replace(/\/+$/, "").split("/");
+  for (const e of ADMIN_ENDPOINTS) {
+    const def = AdminApi[e];
+    if (def.method !== method.toUpperCase()) continue;
+    const tpl = def.path.split("/");
+    if (tpl.length !== parts.length) continue;
+    const params: Record<string, string> = {};
+    let ok = true;
+    for (let i = 0; i < tpl.length && ok; i++) {
+      const t = tpl[i]!;
+      const p = parts[i]!;
+      if (t.startsWith(":")) {
+        if (p === "") ok = false;
+        else params[t.slice(1)] = decodeURIComponent(p);
+      } else if (t !== p) ok = false;
+    }
+    if (ok) return { endpoint: e, params };
+  }
+  return null;
+}

@@ -1,0 +1,37 @@
+{
+  "from": "2026-09-30",
+  "to": "2026-10-01",
+  "timezone": "UTC",
+  "rows": [
+    {
+      "brand_id": "brand-a",
+      "day": "2026-09-30",
+      "status": "pending",
+      "count": 4
+    },
+    {
+      "brand_id": "brand-a",
+      "day": "2026-09-30",
+      "status": "sold",
+      "count": 3
+    },
+    {
+      "brand_id": "brand-a",
+      "day": "2026-09-30",
+      "status": "rejected",
+      "count": 1
+    },
+    {
+      "brand_id": "brand-a",
+      "day": "2026-10-01",
+      "status": "pending",
+      "count": 6
+    },
+    {
+      "brand_id": "brand-a",
+      "day": "2026-10-01",
+      "status": "sold",
+      "count": 2
+    }
+  ]
+}

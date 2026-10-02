@@ -1,0 +1,10 @@
+{
+  "error": "invalid",
+  "issues": [
+    {
+      "path": "ab_config",
+      "message": "A/B weights must sum to 100"
+    }
+  ],
+  "request_id": "req_01HZX9K2M4N6P8Q0"
+}

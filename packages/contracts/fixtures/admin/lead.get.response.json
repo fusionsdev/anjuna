@@ -1,0 +1,52 @@
+{
+  "lead": {
+    "lead_id": "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f",
+    "brand_id": "brand-a",
+    "hostname": "brand-a.example",
+    "status": "soldLead",
+    "outcome": "sold",
+    "form_version": "2026-01",
+    "form_variant": "lite_v1",
+    "experiment_id": "exp-2026-10",
+    "variant": "a",
+    "keyword": "Fast Cash Loans",
+    "requested_amount": 1000,
+    "loan_purpose": "DEBT_CONSOLIDATION",
+    "applicant": {
+      "first_name": "Test",
+      "last_name": "Applicant",
+      "birth_date": "1990-01-15",
+      "email": "test.applicant@example.com",
+      "home_phone": "2145550123",
+      "work_phone": null,
+      "address": "100 Example St",
+      "city": "Dallas",
+      "state": "TX",
+      "zip": "75201",
+      "address_length_months": 24,
+      "own_home": false,
+      "income_type": "EMPLOYMENT",
+      "employer": "Example Co",
+      "job_title": "Clerk",
+      "employed_months": 36,
+      "pay_date1": "2026-10-09",
+      "pay_frequency": "BIWEEKLY",
+      "direct_deposit": true,
+      "monthly_income": 3200
+    },
+    "postbacks": [
+      {
+        "event_type": "newLead",
+        "payout": 0,
+        "created_at": "2026-10-01T12:00:30.000Z"
+      },
+      {
+        "event_type": "soldLead",
+        "payout": 85,
+        "created_at": "2026-10-01T12:01:10.000Z"
+      }
+    ],
+    "created_at": "2026-10-01T12:00:00.000Z",
+    "updated_at": "2026-10-01T12:01:10.000Z"
+  }
+}

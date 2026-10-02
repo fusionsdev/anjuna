@@ -1,0 +1,48 @@
+{
+  "brands": [
+    {
+      "brand_id": "brand-a",
+      "hostnames": [
+        "brand-a.example",
+        "www.brand-a.example"
+      ],
+      "status": "live",
+      "flow_gate_mode": "param",
+      "ab_config": {
+        "experiment_id": "exp-2026-10",
+        "variants": [
+          {
+            "id": "a",
+            "weight": 50
+          },
+          {
+            "id": "b",
+            "weight": 50
+          }
+        ]
+      },
+      "form_version": "form@8ba11d3",
+      "stats_7d": {
+        "leads": 42,
+        "sold": 17,
+        "pending": 20
+      }
+    },
+    {
+      "brand_id": "brand-b",
+      "hostnames": [
+        "brand-b.example"
+      ],
+      "status": "paused",
+      "flow_gate_mode": "signed_cookie",
+      "ab_config": null,
+      "form_version": null,
+      "stats_7d": {
+        "leads": 0,
+        "sold": 0,
+        "pending": 0
+      }
+    }
+  ],
+  "generated_at": "2026-10-02T15:04:05.000Z"
+}

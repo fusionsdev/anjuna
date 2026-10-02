@@ -1,0 +1,40 @@
+{
+  "entries": [
+    {
+      "id": 103,
+      "actor_id": "usr_emp_01",
+      "actor_role": "employee",
+      "action": "brand.pause",
+      "target": {
+        "type": "brand",
+        "id": "brand-a"
+      },
+      "old": {
+        "status": "live"
+      },
+      "new": {
+        "status": "paused",
+        "reason": "Reject rate spike on brand-a"
+      },
+      "at": "2026-10-02T15:20:00.000Z"
+    },
+    {
+      "id": 101,
+      "actor_id": "usr_emp_01",
+      "actor_role": "employee",
+      "action": "brand.update",
+      "target": {
+        "type": "brand",
+        "id": "brand-a"
+      },
+      "old": {
+        "keyword_default": "Fast Cash Loans"
+      },
+      "new": {
+        "keyword_default": "Quick Cash Today"
+      },
+      "at": "2026-10-02T15:04:05.000Z"
+    }
+  ],
+  "next_cursor": null
+}

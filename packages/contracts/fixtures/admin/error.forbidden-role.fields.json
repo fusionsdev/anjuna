@@ -1,0 +1,9 @@
+{
+  "error": "forbidden_role",
+  "required_role": "owner",
+  "denied_fields": [
+    "amount_buckets",
+    "aid"
+  ],
+  "request_id": "req_01HZX9K2M4N6P8Q1"
+}

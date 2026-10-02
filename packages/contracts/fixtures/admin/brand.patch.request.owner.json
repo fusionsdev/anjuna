@@ -1,0 +1,24 @@
+{
+  "amount_buckets": [
+    500,
+    1000,
+    1500,
+    2500,
+    3000
+  ],
+  "ab_config": {
+    "experiment_id": "exp-2026-10",
+    "variants": [
+      {
+        "id": "a",
+        "weight": 70
+      },
+      {
+        "id": "b",
+        "weight": 30
+      }
+    ]
+  },
+  "flow_gate_mode": "signed_cookie",
+  "expected_updated_at": "2026-10-01T09:30:00.000Z"
+}
