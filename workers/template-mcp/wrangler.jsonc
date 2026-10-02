@@ -16,9 +16,17 @@
       "migrations_dir": "../../packages/factory-db/migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "anjuna-artifacts"
+    }
+  ],
+  // Optional binding: BROWSER (Cloudflare Browser Rendering) — owner adds in Wave 4 for screenshot checks.
+  // "browser": { "binding": "BROWSER" },
   "durable_objects": { "bindings": [{ "name": "MCP_OBJECT", "class_name": "TemplateMcp" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TemplateMcp"] }],
   "vars": { "RATE_LIMIT_PER_MINUTE": "60", "SIMILARITY_THRESHOLD": "0.5" }
-  // Optional secret: GITHUB_TOKEN (read-only) so check_github_repo can read private builder repos.
+  // Optional secrets: GITHUB_TOKEN (read-only for private repos), OWNER_SECRET (required for seal_template_version).
   // Builder API keys are stored as SHA-256 hashes in the factory D1 (builder_keys); mint with scripts/mint-key.mjs.
 }

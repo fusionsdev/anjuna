@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InputError, type FileMap } from "./archive";
 import { checkTemplate, type CheckReport, type Issue, type OtherBrand } from "./checker";
 import { contractForBuilders } from "./contract";
+import { certifyTemplateVersion, importTemplateVersion, sealTemplateVersion } from "./certifier";
 import type { Env } from "./env";
 import { SIGNAL_FIXES, compareFingerprints, computeFingerprint, type Fingerprint, type SignalScores } from "./fingerprint";
 import { loadFromGithub, loadFromUrl, loadZipBase64, type Loaded } from "./input";
@@ -216,6 +217,90 @@ export function registerTools(server: McpServer, env: Env): void {
       try {
         const loaded = await loadSource(args);
         return text({ ...(await similarityCheck(env, loaded.files, args.brand_id)), source: loaded.source });
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  // ── Certification pipeline (T11) ──────────────────────────────────────────
+
+  server.registerTool(
+    "import_template_version",
+    {
+      title: "Import a template version",
+      description:
+        "Upload a static dist/ ZIP to R2 and register it as a new template_version row in D1 (status = 'draft'). " +
+        "Returns the template_version_id to pass to certify_template_version. " +
+        "The ZIP must contain index.html at the root (the contents of dist/, not the dist/ folder itself).",
+      inputSchema: {
+        zip_base64: z.string().min(1).describe("Base64 of the dist/ ZIP archive. Max 30 MB."),
+        template_id: z.string().min(1).max(64).describe("Unique identifier for the template (e.g. 'harbor-v1'). Created if it does not exist."),
+        template_name: z.string().min(1).max(128).describe("Human-readable name shown in the control panel."),
+        framework: z.enum(["astro", "next_export", "react_spa"]).describe("The build framework used."),
+        created_by: z.string().min(1).max(64).describe("Auth user id of the person uploading."),
+      },
+    },
+    async (args) => {
+      try {
+        if (!env.ARTIFACTS) return text({ pass: false, error: "no_r2", message: "ARTIFACTS R2 bucket is not bound on this deployment." }, true);
+        const zipBytes = Uint8Array.from(atob(args.zip_base64), (c) => c.charCodeAt(0));
+        const result = await importTemplateVersion(env.FACTORY, env.ARTIFACTS, zipBytes, {
+          template_id: args.template_id,
+          template_name: args.template_name,
+          framework: args.framework,
+          created_by: args.created_by,
+        });
+        return text({ pass: true, ...result });
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "certify_template_version",
+    {
+      title: "Run certification checks on a template version",
+      description:
+        "Run lint, identity scan, and (if Browser Rendering is bound) screenshots on a template_version. " +
+        "Writes certification rows to D1 and sets status to 'certified' or 'rejected'. " +
+        "Pass all checks before calling seal_template_version. " +
+        "Returns a repair_messages array with actionable fixes for every failing check.",
+      inputSchema: {
+        template_version_id: z.string().min(1).describe("The template_version_id returned by import_template_version."),
+        brand_id: z.string().min(1).max(64).optional().describe("When set, the brand's own earlier sealed templates are excluded from the similarity check."),
+      },
+    },
+    async (args) => {
+      try {
+        if (!env.ARTIFACTS) return text({ pass: false, error: "no_r2", message: "ARTIFACTS R2 bucket is not bound on this deployment." }, true);
+        const result = await certifyTemplateVersion(env, args.template_version_id, args.brand_id);
+        return text({ pass: result.status === "certified", ...result });
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "seal_template_version",
+    {
+      title: "Seal a certified template version (owner only)",
+      description:
+        "Mark a certified template version as sealed and immutable. " +
+        "Sealed versions can be used in brand installs; the SHA-256 of the ZIP is locked forever. " +
+        "Requires the OWNER_SECRET configured on this deployment. Owner-only action.",
+      inputSchema: {
+        template_version_id: z.string().min(1).describe("The template_version_id to seal (must have status = 'certified')."),
+        owner_secret: z.string().min(1).describe("The owner secret configured in OWNER_SECRET."),
+        sealed_by: z.string().min(1).max(64).describe("Auth user id of the owner performing the seal."),
+      },
+    },
+    async (args) => {
+      try {
+        const result = await sealTemplateVersion(env.FACTORY, args.owner_secret, env.OWNER_SECRET, args.template_version_id, args.sealed_by);
+        return text({ pass: true, ...result });
       } catch (error) {
         return failure(error);
       }
