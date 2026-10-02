@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { handleAdminRequest } from "./admin/index.js";
 import { authenticateAccount } from "./auth.js";
 import { handleConversionsAck, handleConversionsPending } from "./conversions.js";
 import type { Env } from "./env.js";
@@ -42,9 +43,8 @@ export class AdminService extends WorkerEntrypoint<Env> {
     return this.handleAdmin(request);
   }
 
-  protected async handleAdmin(_request: Request): Promise<Response> {
-    // Admin endpoints are a later task. Tests override only this method to prove the boundary.
-    return notFound();
+  protected async handleAdmin(request: Request): Promise<Response> {
+    return handleAdminRequest(request, this.env);
   }
 }
 

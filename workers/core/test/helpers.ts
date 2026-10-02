@@ -8,7 +8,12 @@ import { join, resolve } from "node:path";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { readD1Migrations } from "@cloudflare/vitest-pool-workers";
-import { PendingResponse, type PendingConversion } from "@anjuna/contracts";
+import {
+  PendingResponse,
+  adminContextToHeaders,
+  type AdminRequestContext,
+  type PendingConversion,
+} from "@anjuna/contracts";
 
 export const ROOT = resolve(import.meta.dirname, "../../..");
 export const DRAIN_TOKEN = "core-test-drain-only";
@@ -60,6 +65,7 @@ export async function createHarness() {
   for (const migration of leadsMigrations) await db.batch(migration.queries.map((query) => db.prepare(query)));
   for (const migration of factoryMigrations) await factory.batch(migration.queries.map((query) => factory.prepare(query)));
   const core = await mf.getWorker("production");
+  const panel = await mf.getWorker("panel");
   let hiddenOrphan = false;
 
   return {
@@ -125,6 +131,18 @@ export async function createHarness() {
     async request(path: string, init: RequestInit = {}) {
       const response = await core.fetch(`https://core.aduplift.ai${path}`, init as Parameters<typeof core.fetch>[1]);
       // Always drain the local HTTP transport, including tests that only inspect status.
+      return new Response(await response.arrayBuffer(), {
+        status: response.status, headers: Object.fromEntries(response.headers),
+      });
+    },
+    async admin(path: string, context: AdminRequestContext, init: RequestInit = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("x-production", "1");
+      for (const [name, value] of Object.entries(adminContextToHeaders(context))) headers.set(name, value);
+      const response = await panel.fetch(`https://core.internal${path}`, {
+        ...init,
+        headers: Object.fromEntries(headers),
+      } as Parameters<typeof panel.fetch>[1]);
       return new Response(await response.arrayBuffer(), {
         status: response.status, headers: Object.fromEntries(response.headers),
       });

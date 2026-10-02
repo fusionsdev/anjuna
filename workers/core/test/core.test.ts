@@ -55,8 +55,8 @@ describe("skeleton and authentication", () => {
     const rejected = await panel.fetch("https://core.aduplift.ai/admin/test");
     expect(rejected.status).toBe(404);
     expect((await panel.fetch("https://core.internal/api/health")).status).toBe(404);
-    // The real entrypoint has no admin handlers yet, even when called through a binding.
-    expect((await panel.fetch("https://core.internal/admin/brands", { headers: { "x-production": "1" } })).status).toBe(404);
+    // The real entrypoint is reachable only through the binding and requires admin context.
+    expect((await panel.fetch("https://core.internal/admin/brands", { headers: { "x-production": "1" } })).status).toBe(401);
   });
 
   it.each([undefined, "Bearer wrong", "Basic account-a-token", "account-a-token", "Bearer"])(
