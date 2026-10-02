@@ -1,0 +1,23 @@
+{
+  "name": "@anjuna/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "bootstrap": "bun src/bootstrap.ts"
+  },
+  "dependencies": {
+    "@anjuna/auth-db": "workspace:*",
+    "@anjuna/tenants": "workspace:*",
+    "better-auth": "^1.7.7",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/node": "^26.6.3",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}

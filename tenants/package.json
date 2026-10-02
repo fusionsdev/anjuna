@@ -1,0 +1,14 @@
+{
+  "name": "@anjuna/tenants",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./schema": "./schema.ts",
+    "./aduplift.config": "./aduplift.config.ts",
+    "./friend.config": "./friend.config.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  }
+}
