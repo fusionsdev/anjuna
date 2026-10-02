@@ -88,10 +88,9 @@ describe("employee can run the day", () => {
     expect(body.brand.keyword_default).toBe("Quick Cash Today");
   });
 
-  it("rolls back (stub): allowed for the role, answers 501 not_implemented, changes nothing", async () => {
-    const res = await post(employee, "/api/brands/brand-a/rollback");
-    expect(res.status).toBe(501);
-    expect(await res.json()).toMatchObject({ error: "not_implemented", feature: "rollback" });
+  it("rollback: allowed for the role, returns 404 for unknown brands (not in factory)", async () => {
+    // Rollback checks FACTORY D1 for brand existence. Core-mock brands (brand-a) are not seeded there.
+    expect((await post(employee, "/api/brands/brand-a/rollback")).status).toBe(404);
     expect((await post(employee, "/api/brands/nope/rollback")).status).toBe(404);
   });
 
@@ -217,7 +216,15 @@ describe("role table coverage", () => {
   });
 
   it("panel-only actions follow the plan's matrix", () => {
-    expect(PANEL_ROLE_TABLE).toEqual({ listUsers: "owner", createUser: "owner", setUserRole: "owner", rollbackBrand: "employee" });
+    expect(PANEL_ROLE_TABLE).toEqual({
+      listUsers: "owner",
+      createUser: "owner",
+      setUserRole: "owner",
+      rollbackBrand: "employee",
+      createBrand: "employee",
+      installBrand: "employee",
+      upgradeAll: "owner",
+    });
   });
 });
 
@@ -292,6 +299,99 @@ describe("audit", () => {
     // Another employee does not see emp1's rows.
     const emp2 = AuditListResponse.parse(await (await call("/api/audit?limit=200", { cookie: employee2 })).json());
     expect(emp2.entries.every((e) => e.actor_id !== empId)).toBe(true);
+  });
+});
+
+describe("factory brands: create / install / upgrade", () => {
+  let _seq = 0;
+  async function createBrand(cookie: string, overrides: Record<string, unknown> = {}): Promise<{ brand_id: string }> {
+    const res = await post(cookie, "/api/brands", {
+      name: "Test Brand",
+      domain: `t${++_seq}.example.com`,
+      keyword_default: "quick loan",
+      ...overrides,
+    });
+    if (res.status !== 201) throw new Error(`createBrand failed: ${res.status} ${await res.text()}`);
+    const { brand } = (await res.json()) as { brand: { brand_id: string } };
+    return brand;
+  }
+
+  it("employee creates a brand and install is queued", async () => {
+    const brand = await createBrand(employee);
+    expect(brand.brand_id).toMatch(/^brand_/);
+
+    const ins = await post(employee, `/api/brands/${brand.brand_id}/install`);
+    expect(ins.status).toBe(201);
+    const insBody = (await ins.json()) as { install_id: string; status: string; kind: string };
+    expect(insBody.install_id).toMatch(/^ins_/);
+    expect(insBody.status).toBe("queued");
+    expect(insBody.kind).toBe("install");
+  });
+
+  it("employee lists installs for the brand", async () => {
+    const brand = await createBrand(employee);
+    await post(employee, `/api/brands/${brand.brand_id}/install`);
+    await post(employee, `/api/brands/${brand.brand_id}/install`);
+
+    const res = await call(`/api/brands/${brand.brand_id}/installs`, { cookie: employee });
+    expect(res.status).toBe(200);
+    const { installs } = (await res.json()) as { installs: unknown[] };
+    expect(installs.length).toBe(2);
+  });
+
+  it("returns 404 for install on unknown brand", async () => {
+    expect((await post(employee, "/api/brands/no-such-brand/install")).status).toBe(404);
+    expect((await post(employee, "/api/brands/no-such-brand/installs")).status).toBe(404);
+  });
+
+  it("POST /api/brands rejects invalid domain", async () => {
+    const bad = await post(employee, "/api/brands", { name: "Bad", domain: "NOT_A_DOMAIN", keyword_default: "x" });
+    expect(bad.status).toBe(422);
+  });
+
+  it("employee cannot upgrade-all (403)", async () => {
+    await expectForbidden(await post(employee, "/api/upgrade-all"));
+  });
+
+  it("owner can upgrade-all; returns queued count", async () => {
+    // Brands created are 'draft', upgrade-all targets live/paused — count = 0 here.
+    const res = await post(owner, "/api/upgrade-all");
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { queued: number };
+    expect(typeof body.queued).toBe("number");
+  });
+
+  it("install and rollback write audit rows", async () => {
+    const brand = await createBrand(employee);
+    const before = (await auditRows()).length;
+    await post(employee, `/api/brands/${brand.brand_id}/install`);
+    await post(employee, `/api/brands/${brand.brand_id}/rollback`);
+    const rows = (await auditRows()).slice(before);
+    expect(rows.filter((r) => r.action === "install.start").length).toBe(2);
+    expect(rows.every((r) => r.actor_role === "employee")).toBe(true);
+  });
+
+  it("createBrand writes a brand.create audit row", async () => {
+    const before = (await auditRows()).length;
+    await createBrand(owner);
+    const rows = (await auditRows()).slice(before);
+    expect(rows.some((r) => r.action === "brand.create")).toBe(true);
+  });
+
+  it("GET /api/alerts accessible by employee, returns empty list", async () => {
+    const res = await call("/api/alerts", { cookie: employee });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ alerts: [] });
+  });
+
+  it("GET /api/mailing accessible by employee, returns status", async () => {
+    const res = await call("/api/mailing", { cookie: employee });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "not_configured" });
+  });
+
+  it("unauthenticated cannot create a brand", async () => {
+    expect((await post("", "/api/brands", { name: "X", domain: "x.example.com", keyword_default: "x" })).status).toBe(401);
   });
 });
 

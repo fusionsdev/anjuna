@@ -11,6 +11,12 @@ export const PANEL_ROLE_TABLE = {
   setUserRole: "owner",
   /** Plan: "Roll back a brand to its previous version" is employee and owner. */
   rollbackBrand: "employee",
+  /** Plan: "Create a brand from Domain + Keyword" is employee and owner. */
+  createBrand: "employee",
+  /** Plan: "Install a brand" is employee and owner. */
+  installBrand: "employee",
+  /** Plan: "Upgrade all brands" is owner only. */
+  upgradeAll: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 
