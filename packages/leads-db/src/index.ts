@@ -14,6 +14,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0003_anjuna_experiment_keyword.sql",
   "0004_brand_runtime.sql",
   "0005_mailing_outbox.sql",
+  "0006_account_credentials.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
