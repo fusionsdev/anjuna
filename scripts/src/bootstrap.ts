@@ -96,7 +96,7 @@ function wrangler(args: string): string {
 
 /** Parse `database_id = "uuid"` from `wrangler d1 create` text output. */
 function parseD1Id(output: string): string {
-  const m = output.match(/database_id\s*=\s*"([0-9a-f-]{36})"/);
+  const m = output.match(/"?database_id"?\s*[:=]\s*"([0-9a-f-]{36})"/);
   if (!m) throw new Error(`Could not find database_id in wrangler output:\n${output}`);
   return m[1]!;
 }
