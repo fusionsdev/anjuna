@@ -214,6 +214,23 @@
         "vitest": "^4.1.0",
       },
     },
+    "workers/factory": {
+      "name": "@anjuna/factory",
+      "version": "0.0.0",
+      "dependencies": {
+        "@anjuna/contracts": "workspace:*",
+        "@anjuna/factory-db": "workspace:*",
+        "fflate": "^0.8.3",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "^0.22.0",
+        "@cloudflare/workers-types": "^5.20261001.1",
+        "@types/node": "^26.6.3",
+        "typescript": "^5.9.0",
+        "vitest": "^4.1.0",
+        "wrangler": "4.124.0",
+      },
+    },
     "workers/template-mcp": {
       "name": "@anjuna/template-mcp",
       "version": "0.0.0",
@@ -244,6 +261,8 @@
     "@anjuna/contracts": ["@anjuna/contracts@workspace:packages/contracts"],
 
     "@anjuna/core": ["@anjuna/core@workspace:workers/core"],
+
+    "@anjuna/factory": ["@anjuna/factory@workspace:workers/factory"],
 
     "@anjuna/factory-db": ["@anjuna/factory-db@workspace:packages/factory-db"],
 
