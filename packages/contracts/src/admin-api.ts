@@ -5,7 +5,9 @@
  * `leads` D1 (ADR-0001). Every request carries the acting user's id and role in
  * ADMIN_CONTEXT_HEADERS; the panel sets them from its better-auth session, never from the
  * browser. Core is the enforcement point: it checks the role with `authorize()` against
- * ADMIN_ROLE_TABLE and writes the `audit_log` row for every change.
+ * ADMIN_ROLE_TABLE. Core binds the `factory` D1 in addition to `leads` and writes the
+ * `audit_log` row itself right after each successful brand/config change. The panel writes
+ * audit rows only for panel-only actions such as user management.
  *
  * Check order core applies (and the mock core in T12a copies):
  *   1. context headers missing or invalid      -> 401 unauthorized
@@ -91,14 +93,14 @@ export type BrandStatus = z.infer<typeof BrandStatus>;
 export const FlowGateMode = z.enum(["param", "signed_cookie"]);
 export type FlowGateMode = z.infer<typeof FlowGateMode>;
 
-/** One A/B arm. `id` is the same slug the brand Worker writes on clicks and leads. */
+/** One A/B arm. `id` is the same lowercase slug (e.g. `lite_v1`, `full_v1`) written on clicks and leads. */
 export const AbVariant = z.strictObject({
   id: VariantId,
   weight: z.number().int().min(0).max(100),
 });
 export type AbVariant = z.infer<typeof AbVariant>;
 
-/** `brand_runtime.ab_config_json` (BR-9). Weights are percentages and sum to 100. */
+/** `brand_runtime.ab_config_json` (BR-9). Weights are whole-number percentages and must sum to 100. */
 export const AbConfig = z
   .strictObject({
     experiment_id: ExperimentId,
@@ -115,7 +117,10 @@ export const AmountBuckets = z
   .max(32)
   .refine((a) => a.every((v, i) => i === 0 || v > a[i - 1]!), "Amount buckets must be unique and ascending");
 
-/** Form bundle version a brand serves (`form@<sha>`, FO-4). Null when core cannot tell yet. */
+/**
+ * Form bundle version a brand serves (`form@<sha>`, FO-4). Nullable in brand responses for now;
+ * filled from `brand_runtime.form_version` once the install Workflow (T10) adds and writes it.
+ */
 export const FormVersion = z.string().regex(/^[A-Za-z0-9._@-]{1,64}$/, "Invalid form version");
 
 /** The only thing anyone outside core ever learns about the postback token. */
@@ -236,7 +241,8 @@ export const BrandPatchResponse = z.strictObject({
   /** `audit_log.id` of the row core wrote; null when nothing changed. */
   audit_id: z.number().int().positive().nullable(),
   /**
-   * The new postback token, present only on the response to `rotate_postback_token: true`.
+   * Core generates a strong random postback token, returned only in the PATCH response to
+   * `rotate_postback_token: true`.
    * Shown once so the owner can update the LeadsGate postback URL; core stores only its hash
    * and never returns it again.
    */
