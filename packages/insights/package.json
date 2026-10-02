@@ -1,0 +1,30 @@
+{
+  "name": "@anjuna/insights",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Funnel report data and alert logic (FA-6, FA-5) for core and the control panel. Read-only over the leads D1 plus an Analytics Engine abstraction.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": ["src", "dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@anjuna/contracts": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/node": "^26.6.3",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}

@@ -95,6 +95,21 @@
         "vitest": "^4.1.0",
       },
     },
+    "packages/insights": {
+      "name": "@anjuna/insights",
+      "version": "0.0.0",
+      "dependencies": {
+        "@anjuna/contracts": "workspace:*",
+        "zod": "^4.1.0",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "^0.22.0",
+        "@cloudflare/workers-types": "^5.20261001.1",
+        "@types/node": "^26.6.3",
+        "typescript": "^5.9.0",
+        "vitest": "^4.1.0",
+      },
+    },
     "packages/keyword-slot-react": {
       "name": "@anjuna/keyword-slot-react",
       "version": "0.1.0",
@@ -154,6 +169,8 @@
     "@anjuna/contracts": ["@anjuna/contracts@workspace:packages/contracts"],
 
     "@anjuna/factory-db": ["@anjuna/factory-db@workspace:packages/factory-db"],
+
+    "@anjuna/insights": ["@anjuna/insights@workspace:packages/insights"],
 
     "@anjuna/keyword-slot-react": ["@anjuna/keyword-slot-react@workspace:packages/keyword-slot-react"],
 
