@@ -123,6 +123,18 @@
         "vitest": "^4.1.0",
       },
     },
+    "packages/mailing": {
+      "name": "@anjuna/mailing",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@anjuna/leads-db": "workspace:*",
+        "@cloudflare/vitest-pool-workers": "^0.22.0",
+        "@cloudflare/workers-types": "^5.20261001.1",
+        "@types/node": "^26.6.3",
+        "typescript": "^5.9.0",
+        "vitest": "^4.1.0",
+      },
+    },
     "packages/template-astro-starter": {
       "name": "@anjuna/template-astro-starter",
       "version": "0.1.0",
@@ -148,6 +160,8 @@
     "@anjuna/lead-form": ["@anjuna/lead-form@workspace:apps/lead-form"],
 
     "@anjuna/leads-db": ["@anjuna/leads-db@workspace:packages/leads-db"],
+
+    "@anjuna/mailing": ["@anjuna/mailing@workspace:packages/mailing"],
 
     "@anjuna/template-astro-starter": ["@anjuna/template-astro-starter@workspace:packages/template-astro-starter"],
 
