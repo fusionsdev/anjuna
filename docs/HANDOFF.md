@@ -2,7 +2,7 @@
 
 ## Where to work (read before anything else)
 - **Local:** open the session in `H:\w	12anjuna` only, and run `git checkout main && git pull --ff-only origin main` first. It is the one clone that holds the git-excluded `wrangler.deploy.jsonc` files with the real D1 ids.
-- **Every other local anjuna clone is a stale per-agent clone.** Do not continue work there. This includes `H:\DEV\projects\ppc_project\leads-formnjuna`, which sits on branch fus-340 / T5 that is ALREADY MERGED, and `H:\w	6`…`tpl`.
+- **Every other local anjuna clone is a stale per-agent clone.** Do not continue work there. This includes `H:/DEV/projects/ppc_project/leads-form/anjuna`, which sits on branch fus-340 / T5 that is ALREADY MERGED, and `H:/w/t6`…`tpl`.
 - **Cloud (claude.ai/code):** work from `main` on GitHub. If this file is missing, you are on an old branch.
 - **Sanity check:** if `docs/HANDOFF.md` is missing or main has fewer than 18 merged PRs, your checkout is stale. Pull before you trust anything.
 
