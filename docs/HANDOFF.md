@@ -16,16 +16,16 @@ Merged:
 - T12a control panel (`apps/web`)
 - T6a/b core auth and V1 money path (`workers/core`)
 - core admin API (`AdminService`)
+- T6c core lead path + live brand settings (end-to-end money path test green)
+- T11 template checker (`packages/template-cert`, `check-template`)
 
 Live on the Cloudflare account "AdUplift" (`6cb8500c35210800451bd9a535482850`; never deploy to `ef771cfd…`):
 - `app.aduplift.ai`: the panel. It is behind Cloudflare Access (team `aduplift.cloudflareaccess.com`) and still uses `MOCK_CORE=1`.
 - `demo1..5.aduplift.ai`: test brands with a TEST banner. Their Worker source is outside this repo.
 - `core.aduplift.ai`: NOT deployed yet.
 
-## In flight (local CLI runs; they may arrive as draft PRs marked "unreviewed")
-- **T6c core lead path + live brand settings**, branch `fus-341-core-lead-submit`.
-- **T11 template checker**, branch `fus-346-template-cert`.
-- **Template MCP** (`workers/template-mcp`, `mcp.aduplift.ai`): being built in a cloud session.
+## In flight
+- **Template MCP** (`workers/template-mcp`, `mcp.aduplift.ai`): being built in a cloud session. It should reuse `packages/template-cert`.
 
 ## How to review and merge a PR here
 1. Read the PR against its task in `docs/TASKS.md` and the rules in `AGENTS.md`. For the money path, compare it line by line with V1. V1 is `fusionsdev/fusion_formv_v1` on branch `anjuna-port-base`, in `functions/api/[[path]].ts`.
@@ -42,12 +42,11 @@ Live on the Cloudflare account "AdUplift" (`6cb8500c35210800451bd9a535482850`; n
 - **Quota.** Use cloud sessions (Sonnet) for Claude-heavy work. Keep the local machine for the local CLIs, WSL tests and deploys.
 
 ## Next, in order
-1. Review and merge T6c and T11.
-2. Wire the `packages/mailing` and `packages/insights` crons into core.
-3. Deploy core: D1 `anjuna-leads`, secrets, and a WAF skip rule for `/api/postback` and `/api/conversions/*`.
-4. Switch the panel off `MOCK_CORE` and add the `CORE` binding.
-5. Template MCP.
-6. T13/T14: a real LeadsGate test-sold and a real drain run. These need the owner and the manager.
-7. T16: the first brand, on a unique builder template.
+1. Wire the `packages/mailing` and `packages/insights` crons into core.
+2. Deploy core: D1 `anjuna-leads`, secrets, and a WAF skip rule for `/api/postback` and `/api/conversions/*`.
+3. Switch the panel off `MOCK_CORE` and add the `CORE` binding.
+4. Template MCP.
+5. T13/T14: a real LeadsGate test-sold and a real drain run. These need the owner and the manager.
+6. T16: the first brand, on a unique builder template.
 
 Not needed for the first brand: T10 install Workflows, T17 the friend's tenant.
