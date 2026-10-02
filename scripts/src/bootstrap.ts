@@ -81,16 +81,24 @@ if (!token) {
 // Wrangler helper
 // ---------------------------------------------------------------------------
 
+const wranglerEnv = {
+  ...process.env,
+  CLOUDFLARE_API_TOKEN: token,
+  CLOUDFLARE_ACCOUNT_ID: cfg.accountId,
+};
+
 function wrangler(args: string): string {
-  return execSync(`bun x wrangler ${args} --account-id ${cfg.accountId}`, {
+  return execSync(`bun x wrangler ${args}`, {
     encoding: "utf8",
-    env: { ...process.env, CLOUDFLARE_API_TOKEN: token },
+    env: wranglerEnv,
   }).trim();
 }
 
-function wranglerJson<T>(args: string): T {
-  const out = wrangler(`${args} --json`);
-  return JSON.parse(out) as T;
+/** Parse `database_id = "uuid"` from `wrangler d1 create` text output. */
+function parseD1Id(output: string): string {
+  const m = output.match(/database_id\s*=\s*"([0-9a-f-]{36})"/);
+  if (!m) throw new Error(`Could not find database_id in wrangler output:\n${output}`);
+  return m[1]!;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,9 +110,9 @@ console.log(`\n── Bootstrapping tenant "${cfg.name}" (account ${cfg.accountI
 
 // 1. D1 databases
 console.log("Creating D1 databases…");
-const { uuid: leadsId } = wranglerJson<{ uuid: string }>(`d1 create ${prefix}-leads`);
-const { uuid: factoryId } = wranglerJson<{ uuid: string }>(`d1 create ${prefix}-factory`);
-const { uuid: authId } = wranglerJson<{ uuid: string }>(`d1 create ${prefix}-auth`);
+const leadsId = parseD1Id(wrangler(`d1 create ${prefix}-leads`));
+const factoryId = parseD1Id(wrangler(`d1 create ${prefix}-factory`));
+const authId = parseD1Id(wrangler(`d1 create ${prefix}-auth`));
 console.log(`  leads:   ${leadsId}`);
 console.log(`  factory: ${factoryId}`);
 console.log(`  auth:    ${authId}`);
