@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { handleAdminRequest } from "./admin/index.js";
 import { authenticateAccount } from "./auth.js";
+import { handleScheduled } from "./cron.js";
 import { handleConversionsAck, handleConversionsPending } from "./conversions.js";
 import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
@@ -12,6 +13,10 @@ export type RpcHandler = (request: Request, env: Env, account: string) => Promis
 /** The public entrypoint supplies the authenticated T6c RPC routes. */
 export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = new Map()) {
   return {
+    async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+      await handleScheduled(controller, env);
+    },
+
     async fetch(request: Request, env: Env): Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/api/health" && request.method === "GET") return json({ ok: true });

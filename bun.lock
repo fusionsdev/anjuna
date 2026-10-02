@@ -201,6 +201,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@anjuna/contracts": "workspace:*",
+        "@anjuna/insights": "workspace:*",
+        "@anjuna/mailing": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/vitest-pool-workers": "^0.22.0",

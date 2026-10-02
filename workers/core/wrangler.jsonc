@@ -8,6 +8,8 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "core.aduplift.ai", "custom_domain": true }],
+  // Cron Triggers: mailing sync every 5 minutes (CO-7), alerts every 15 minutes (FA-5). Strings must match src/cron.ts.
+  "triggers": { "crons": ["*/5 * * * *", "*/15 * * * *"] },
   "d1_databases": [
     {
       "binding": "LEADS",
@@ -22,5 +24,7 @@
       "migrations_dir": "../../packages/factory-db/migrations"
     }
   ]
+  // Optional secrets for the mailing cron (it skips until all are set): LISTMONK_URL, LISTMONK_USER, LISTMONK_TOKEN,
+  // LISTMONK_LIST_MAP (JSON {"<brand_id>": <list id>}).
   // Required secret: DRAIN_TOKEN. Per-account and per-brand tokens are stored as D1 hashes.
 }
