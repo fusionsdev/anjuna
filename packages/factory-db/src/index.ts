@@ -4,7 +4,7 @@
  * exports the migration list and the enumerations the CHECK constraints enforce.
  */
 
-export const FACTORY_DB_MIGRATIONS = ["0001_factory.sql"] as const;
+export const FACTORY_DB_MIGRATIONS = ["0001_factory.sql", "0002_builder_keys.sql", "0003_template_fingerprints.sql"] as const;
 
 export const TEMPLATE_FRAMEWORKS = ["astro", "next_export", "react_spa"] as const;
 export type TemplateFramework = (typeof TEMPLATE_FRAMEWORKS)[number];
