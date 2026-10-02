@@ -8,7 +8,7 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   leads: ["experiment_id", "variant", "keyword"],
   click_sessions: ["experiment_id", "variant", "keyword"],
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials"];
 
 interface ColumnInfo {
   cid: number;
@@ -113,6 +113,7 @@ describe("leads-db migrations", () => {
     expect(results.map((r) => r.name)).toEqual([...LEADS_DB_MIGRATIONS]);
     expect(await userTables(env.DB)).toEqual(
       [
+        "account_credentials",
         "brand_runtime",
         "click_sessions",
         "client_errors",

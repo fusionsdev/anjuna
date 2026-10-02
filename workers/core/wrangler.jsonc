@@ -1,0 +1,26 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-core",
+  "main": "src/index.ts",
+  "account_id": "6cb8500c35210800451bd9a535482850",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "core.aduplift.ai", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "LEADS",
+      "database_name": "anjuna-leads",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/leads-db/migrations"
+    },
+    {
+      "binding": "FACTORY",
+      "database_name": "anjuna-factory",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ]
+  // Required secret: DRAIN_TOKEN. Per-account and per-brand tokens are stored as D1 hashes.
+}

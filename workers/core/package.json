@@ -1,0 +1,23 @@
+{
+  "name": "@anjuna/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=neutral --external:cloudflare:workers --outfile=dist/index.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anjuna/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/node": "^26.6.3",
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260815.0-alpha",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}
