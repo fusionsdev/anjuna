@@ -1,0 +1,25 @@
+@import "tailwindcss";
+/* Tailwind v4 content sources, declared explicitly. Paths are relative to this CSS file. */
+@source "./**/*.{ts,tsx}";
+@import "./theme.css";
+
+body {
+  background-color: #FAFAFA;
+  color: #18181B;
+  font-family: 'Inter', sans-serif;
+}
+
+/* Reset number input spin buttons */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Base custom classes */
+.focus-ring {
+  @apply focus-visible:ring-2 focus-visible:ring-zinc-900 focus-visible:outline-none focus:border-zinc-900;
+}
