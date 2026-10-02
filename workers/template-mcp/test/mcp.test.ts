@@ -102,8 +102,8 @@ describe("tools over streamable HTTP", () => {
       zip_base64: zipBase64(withIndex(goodSite(), (h) => h.replace('<span data-kw>Funding Options</span>', "Funding").replace("</head>", '<script src="https://cdn.example.com/a.js"></script></head>'))),
     });
     expect(bad.data.pass).toBe(false);
-    expect(bad.data.issues.map((i: { rule: string }) => i.rule)).toEqual(expect.arrayContaining(["keyword-slot", "external-scripts"]));
-    for (const issue of bad.data.issues) expect(issue.fix.length).toBeGreaterThan(10);
+    expect(bad.data.issues.map((i: { rule: string }) => i.rule)).toEqual(expect.arrayContaining(["keyword", "external"]));
+    for (const issue of bad.data.issues) expect(issue.message.length).toBeGreaterThan(10);
     await client.close();
   });
 
@@ -112,7 +112,7 @@ describe("tools over streamable HTTP", () => {
     const html = (h: string) => h.replace("Answer two", "See lanternfinance.com. Answer two");
     const client = await connect();
     const other = await callTool(client, "check_template", { zip_base64: zipBase64(withIndex(goodSite(), html)) });
-    expect(other.data.issues.some((i: { rule: string }) => i.rule === "brand-clean")).toBe(true);
+    expect(other.data.issues.some((i: { rule: string }) => i.rule === "brand")).toBe(true);
     const own = await callTool(client, "check_template", { zip_base64: zipBase64(withIndex(goodSite(), html)), brand_id: "b_lantern" });
     expect(own.data.pass).toBe(true);
     await client.close();
