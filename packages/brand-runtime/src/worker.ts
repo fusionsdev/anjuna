@@ -5,7 +5,8 @@ import {
 } from "@anjuna/contracts";
 import { assignVariant, type Assignment } from "./assignment.js";
 import { BrandSettings, LEGAL_PATHS, STATIC_FILES, STATIC_PREFIXES, type BrandConfigSource, type BrandWorkerConfig } from "./config.js";
-import { CoreError, withCoreTimeout, type AnalyticsKind, type CoreResult } from "./core-client.js";
+import { CoreError, withCoreTimeout, type AnalyticsKind, type CoreResult, type SubmitContext } from "./core-client.js";
+import { createSettingsCache } from "./settings-cache.js";
 import { cookie, json, notFound, PayloadTooLarge, readCappedBody, readCookie, redirect } from "./http.js";
 
 const PAUSE_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Temporarily unavailable</title><h1>Temporarily unavailable</h1><p>Please try again later.</p></html>';
@@ -42,13 +43,14 @@ function attribution(assignment: Assignment) {
   return { experiment_id: assignment.experiment_id, variant: assignment.variant };
 }
 
-async function rpc<M extends LeadsRpcMethod>(config: BrandWorkerConfig, method: M, input: LeadsRpcRequest<M>): Promise<CoreResult<M>> {
-  const call = config.core[method] as (body: LeadsRpcRequest<M>) => Promise<CoreResult<M>>;
+async function rpc<M extends LeadsRpcMethod>(config: BrandWorkerConfig, method: M, input: LeadsRpcRequest<M>, context?: SubmitContext): Promise<CoreResult<M>> {
+  const call = config.core[method] as (body: LeadsRpcRequest<M>, context?: SubmitContext) => Promise<CoreResult<M>>;
   const request = LeadsRpc[method].request.parse(input) as LeadsRpcRequest<M>;
-  const result = await withCoreTimeout(() => call.call(config.core, request), config.coreTimeoutMs);
+  const result = await withCoreTimeout(() => call.call(config.core, request, context), config.coreTimeoutMs);
   // Validate custom/mock clients too. Never reflect unknown core response fields to browsers.
   const parsed = LeadsRpc[method].response.safeParse(result.data);
-  if (!parsed.success || (method !== "submitLead" && (result.status < 200 || result.status >= 300))) {
+  const zipNotFound = method === "zip" && result.status === 404 && parsed.success && "found" in parsed.data && !parsed.data.found;
+  if (!parsed.success || (method !== "submitLead" && !zipNotFound && (result.status < 200 || result.status >= 300))) {
     throw new CoreError(result.status);
   }
   return { status: result.status, data: parsed.data as LeadsRpcResponse<M> };
@@ -248,6 +250,8 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
         brand_id: settings.brand_id, hostname: settings.hostname,
         click_session_id: click.success ? click.data : null, ...attribution(assignment), lead,
         client: { ip: request.headers.get("cf-connecting-ip")?.slice(0, 64) || "unknown", user_agent: (request.headers.get("user-agent") ?? "").slice(0, 512) },
+      }, { consent_brand: settings.brand,
+        ...(request.headers.get("sec-gpc") === "1" ? { gpc: "1" } : request.headers.get("sec-gpc") === "0" ? { gpc: "0" } : {}),
       });
       const data = result.data;
       const body = "continuation" in data ? {
@@ -261,12 +265,13 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   return notFound();
 }
 
-/** A config loader can supply refreshed pause/weight/gate settings without changing the Worker. */
+/** Refresh public settings once per minute; static BRAND_CONFIG remains the outage fallback. */
 export function createBrandWorker(source: BrandConfigSource): { fetch(request: Request): Promise<Response> } {
   if (typeof source !== "function") BrandSettings.parse(source);
+  const settingsFor = createSettingsCache();
   return { async fetch(request) {
     const config = typeof source === "function" ? await source() : source;
-    const response = await handle(request, config, BrandSettings.parse(config));
+    const response = await handle(request, config, await settingsFor(config));
     if (request.method !== "HEAD") return response;
     await response.body?.cancel();
     return new Response(null, { status: response.status, headers: response.headers });

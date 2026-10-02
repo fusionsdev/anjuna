@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+/** Shared identifiers used by RPC and admin schemas (no dependency between those modules). */
+export const OpaqueToken = z.string().regex(/^[A-Za-z0-9._~-]{16,512}$/, "Invalid token");
+export const ExperimentId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+export const VariantId = z.string().regex(/^[a-z0-9_-]{1,32}$/);
+
 /** Opaque brand id from `brand_runtime`. Never served to the browser (BR-5). */
 export const BrandId = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, "Invalid brand_id");
 export type BrandId = z.infer<typeof BrandId>;

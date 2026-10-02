@@ -1,7 +1,8 @@
-import { LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse } from "@anjuna/contracts";
+import { LeadsRpc, SUBMIT_CONTEXT_HEADERS, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse } from "@anjuna/contracts";
 
 export type CoreResult<M extends LeadsRpcMethod> = { status: number; data: LeadsRpcResponse<M> };
-type RpcMethods = { [M in LeadsRpcMethod]: (body: LeadsRpcRequest<M>) => Promise<CoreResult<M>> };
+export interface SubmitContext { gpc?: "0" | "1"; consent_brand?: string }
+type RpcMethods = { [M in LeadsRpcMethod]: (body: LeadsRpcRequest<M>, context?: SubmitContext) => Promise<CoreResult<M>> };
 
 export type AnalyticsKind = "posthog" | "sentry" | "telemetry" | "errors";
 export interface AnalyticsRequest {
@@ -61,35 +62,40 @@ abstract class TransportCoreClient implements CoreClient {
     this.origin = origin.origin;
   }
 
-  private request<T>(path: string, body: unknown, decode: (response: Response) => Promise<T>): Promise<T> {
+  private request<T>(path: string, body: unknown, decode: (response: Response) => Promise<T>, context?: SubmitContext): Promise<T> {
     if (!/^\/[A-Za-z0-9/_-]+$/.test(path)) throw new Error("Invalid core path");
     return withCoreTimeout(async (signal) => {
       const response = await this.send(new Request(this.origin + path, {
         method: "POST", redirect: "manual", signal,
-        headers: { "content-type": "application/json", authorization: `Bearer ${this.options.credential}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${this.options.credential}`,
+          ...(context?.gpc !== undefined ? { [SUBMIT_CONTEXT_HEADERS.gpc]: context.gpc } : {}),
+          ...(context?.consent_brand ? { [SUBMIT_CONTEXT_HEADERS.consent_brand]: encodeURIComponent(context.consent_brand) } : {}),
+        },
         body: JSON.stringify(body),
       }));
       return decode(response);
     }, this.options.timeoutMs);
   }
 
-  private async call<M extends LeadsRpcMethod>(method: M, body: LeadsRpcRequest<M>): Promise<CoreResult<M>> {
+  private async call<M extends LeadsRpcMethod>(method: M, body: LeadsRpcRequest<M>, context?: SubmitContext): Promise<CoreResult<M>> {
     const contract = LeadsRpc[method];
     const validated = contract.request.parse(body);
     return this.request(contract.path, validated, async (response) => {
       // submitLead has contract-shaped 400/429/503 errors as well as 200/201 successes.
       const parsed = contract.response.safeParse(await response.json().catch(() => null));
-      if (!parsed.success || (!response.ok && method !== "submitLead")) throw new CoreError(response.status);
+      const zipNotFound = method === "zip" && response.status === 404 && parsed.success && "found" in parsed.data && !parsed.data.found;
+      if (!parsed.success || (!response.ok && method !== "submitLead" && !zipNotFound)) throw new CoreError(response.status);
       return { status: response.status, data: parsed.data as LeadsRpcResponse<M> };
-    });
+    }, context);
   }
 
   recordClick: RpcMethods["recordClick"] = (body) => this.call("recordClick", body);
-  submitLead: RpcMethods["submitLead"] = (body) => this.call("submitLead", body);
+  submitLead: RpcMethods["submitLead"] = (body, context) => this.call("submitLead", body, context);
   resolveContinuation: RpcMethods["resolveContinuation"] = (body) => this.call("resolveContinuation", body);
   zip: RpcMethods["zip"] = (body) => this.call("zip", body);
   issueHandoff: RpcMethods["issueHandoff"] = (body) => this.call("issueHandoff", body);
   verifyHandoff: RpcMethods["verifyHandoff"] = (body) => this.call("verifyHandoff", body);
+  brandSettings: RpcMethods["brandSettings"] = (body) => this.call("brandSettings", body);
 
   async forwardAnalytics(body: AnalyticsRequest): Promise<void> {
     const path = this.options.analyticsPaths?.[body.kind];

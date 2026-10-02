@@ -45,6 +45,20 @@ describe.each(["HTTPS", "Service Binding"])("%s core transport", (kind) => {
     await verify.core.verifyHandoff({ brand_id: "brand-a", token: "handoff_000000000000001" });
     expect(new URL(verify.send.mock.calls[0]![0].url).pathname).toBe("/rpc/verifyHandoff");
   });
+  it("fetches public settings and forwards authenticated consent headers without changing submit JSON", async () => {
+    const settings = { flow_gate_mode: "param", paused: false, amount_buckets: [750], ab_config: null, keyword_default: null, form_route: "/request" };
+    const remote = client(settings);
+    expect(await remote.core.brandSettings({ brand_id: "brand-a" })).toEqual({ status: 200, data: settings });
+    expect(new URL(remote.send.mock.calls[0]![0].url).pathname).toBe("/rpc/brandSettings");
+    const { core, send } = client(accepted, 201);
+    const body = { brand_id: "brand-a", hostname: "brand-a.example", click_session_id: null, client: { ip: "192.0.2.1", user_agent: "test" }, lead: FormLeadPayload.parse(leadFixture) };
+    await core.submitLead(body, { gpc: "1", consent_brand: "Brand Å" });
+    const request = send.mock.calls[0]![0];
+    expect(request.headers.get("sec-gpc")).toBe("1");
+    expect(decodeURIComponent(request.headers.get("x-consent-brand")!)).toBe("Brand Å");
+    expect(await request.json()).toEqual(body);
+    expect(await client({ found: false }, 404).core.zip({ brand_id: "brand-a", zip: "99999" })).toEqual({ status: 404, data: { found: false } });
+  });
   it("validates request/response shapes and exposes no raw core errors", async () => {
     const { core, send } = client({ error: "forbidden_brand" }, 403);
     await expect(core.recordClick(click)).rejects.toMatchObject({ status: 403, message: "Core request failed" });

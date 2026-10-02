@@ -5,9 +5,10 @@
 ```ts
 import { createBrandWorker, HttpsCoreClient } from "@anjuna/brand-runtime";
 
+let worker: ReturnType<typeof createBrandWorker> | undefined;
 export default {
   fetch(request, env) {
-    return createBrandWorker({
+    worker ??= createBrandWorker({
       brand_id: "b-000001",
       hostname: "example.com", // canonical apex, never taken from the submitted payload
       brand: "Example Brand",
@@ -19,7 +20,8 @@ export default {
         experiment_id: "form1",
         variants: [{ id: "lite_v1", weight: 70 }, { id: "full_v1", weight: 30 }],
       },
-    }).fetch(request);
+    });
+    return worker.fetch(request);
   },
 };
 ```
@@ -30,7 +32,9 @@ The runtime validates settings against the existing amount and A/B schemas. Weig
 
 `_vc` holds an opaque click-session ID for 30 days. `_vh` holds the signed handoff. All three cookies are host-only, HttpOnly, Secure, SameSite=Lax, Path=/. Click capture uses the contracts' V1 trigger and parameter lists and never prevents landing or `/go` responses during a core outage.
 
-**Transport and live settings.** `ServiceBindingCoreClient(env.CORE, { credential })` and `HttpsCoreClient({ credential })` implement the same `CoreClient`. Both use the contract's authenticated JSON `/rpc/*` endpoints, validate request/response bodies, and prevent credential-bearing redirect following. HTTPS defaults to `https://core.aduplift.ai`. Only core stores real PostHog/Sentry credentials. A config loader, `createBrandWorker(() => loadSettings())`, can supply refreshed pause/gate/A/B settings without rebuilding the Worker. The loader must provide `core` and `assets` as well; this package does not invent a runtime-config RPC absent from T3.
+**Transport and live settings.** `ServiceBindingCoreClient(env.CORE, { credential })` and `HttpsCoreClient({ credential })` implement the same `CoreClient`. Both use the contract's authenticated JSON `/rpc/*` endpoints, validate request/response bodies, and prevent credential-bearing redirect following. HTTPS defaults to `https://core.aduplift.ai`. Only core stores real PostHog/Sentry credentials. T6c adds `brandSettings`: the runtime fetches public pause/gate/A/B/buckets/keyword/form-route settings and caches them for 60 seconds. Concurrent refreshes share one call. An unavailable core, timeout or invalid response falls back to static config for 60 seconds before retrying. Reuse the handler and CoreClient across requests (as the example does) to retain this cache. A config loader remains supported as the static fallback source.
+
+On submit, the Worker forwards GPC and its configured consent display name in authenticated RPC headers, alongside the unchanged JSON client context. Core requires that display name to hash the form's consent text. No visitor-supplied display-name header is trusted. ZIP not-found responses preserve the contract's HTTP 404 across either transport.
 
 The example reads `BRAND_CONFIG` from server environment JSON, `CORE_TOKEN` from a Worker secret, and optionally `CORE` from a same-account Service Binding. Do not put the token in Wrangler vars or the public config. There is no D1 binding.
 

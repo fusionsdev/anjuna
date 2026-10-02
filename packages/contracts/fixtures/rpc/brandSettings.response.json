@@ -1,0 +1,8 @@
+{
+  "flow_gate_mode": "param",
+  "paused": false,
+  "amount_buckets": [750, 1750],
+  "ab_config": { "experiment_id": "exp-2026-10", "variants": [{ "id": "lite_v1", "weight": 50 }, { "id": "full_v1", "weight": 50 }] },
+  "keyword_default": "Fast Cash Loans",
+  "form_route": "/request"
+}

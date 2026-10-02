@@ -1,15 +1,16 @@
-import { HANDOFF_TTL_SECONDS, LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest } from "@anjuna/contracts";
+import { HANDOFF_TTL_SECONDS, LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest, type BrandSettingsResponse } from "@anjuna/contracts";
 import { CoreError, type AnalyticsRequest, type CoreClient, type CoreResult } from "./core-client.js";
 
 /** In-memory fake: no network, crypto signing, persistence, or provider calls. */
 export class MockCoreClient implements CoreClient {
   readonly calls: { [M in LeadsRpcMethod]: LeadsRpcRequest<M>[] } = {
-    recordClick: [], submitLead: [], resolveContinuation: [], zip: [], issueHandoff: [], verifyHandoff: [],
+    recordClick: [], submitLead: [], resolveContinuation: [], zip: [], issueHandoff: [], verifyHandoff: [], brandSettings: [],
   };
   readonly analytics: AnalyticsRequest[] = [];
   readonly continuations = new Map<string, string>();
   readonly handoffs = new Map<string, { brand_id: string; requested_amount: number; zip: string; expires_at: string }>();
   failure: Error | null = null;
+  settings: BrandSettingsResponse | null = null;
   private sequence = 0;
 
   private record<M extends LeadsRpcMethod>(method: M, body: LeadsRpcRequest<M>) {
@@ -22,6 +23,11 @@ export class MockCoreClient implements CoreClient {
   async recordClick(body: LeadsRpcRequest<"recordClick">): Promise<CoreResult<"recordClick">> {
     this.record("recordClick", body);
     return { status: 200, data: { click_session_id: this.token("click") } };
+  }
+  async brandSettings(body: LeadsRpcRequest<"brandSettings">): Promise<CoreResult<"brandSettings">> {
+    this.record("brandSettings", body);
+    if (!this.settings) throw new CoreError(404);
+    return { status: 200, data: this.settings };
   }
   async submitLead(body: LeadsRpcRequest<"submitLead">): Promise<CoreResult<"submitLead">> {
     this.record("submitLead", body);

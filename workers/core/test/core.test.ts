@@ -32,7 +32,7 @@ describe("skeleton and authentication", () => {
     for (const [method, path] of [
       ["GET", "/"], ["GET", "/unknown"], ["GET", "/api/health/"], ["POST", "/api/health"],
       ["PUT", "/api/postback"], ["POST", "/api/conversions/pending"], ["GET", "/api/conversions/ack"],
-      ["GET", "/api/conversions/unknown"], ["POST", "/rpc/test"], ["POST", "/rpc/submitLead"],
+      ["GET", "/api/conversions/unknown"], ["POST", "/rpc/test"], ["GET", "/rpc/submitLead"],
       ["POST", "/api/leads"], ["GET", "/admin/brands"], ["GET", "/admin/anything"],
     ]) {
       const response = await h.request(path!, { method });

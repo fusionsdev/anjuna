@@ -5,6 +5,8 @@ import {
   IssueHandoffRequest,
   IssueHandoffResponse,
   LeadsRpc,
+  BrandSettingsRequest,
+  BrandSettingsResponse,
   RecordClickRequest,
   RecordClickResponse,
   ResolveContinuationRequest,
@@ -41,9 +43,20 @@ function submitRequest(lead: FormLeadPayload): SubmitLeadRequestT {
 }
 
 describe("LeadsRpc routing table", () => {
-  it("has the six T3 methods under /rpc/", () => {
-    expect(Object.keys(LeadsRpc)).toEqual(["recordClick", "submitLead", "resolveContinuation", "zip", "issueHandoff", "verifyHandoff"]);
+  it("has the six T3 methods and live brandSettings under /rpc/", () => {
+    expect(Object.keys(LeadsRpc)).toEqual(["recordClick", "submitLead", "resolveContinuation", "zip", "issueHandoff", "verifyHandoff", "brandSettings"]);
     for (const [name, def] of Object.entries(LeadsRpc)) expect(def.path).toBe(`/rpc/${name}`);
+  });
+});
+
+describe("brandSettings", () => {
+  it("parses the public golden and rejects extra secret fields", () => {
+    expect(BrandSettingsRequest.parse(fixture("rpc/brandSettings.request.json"))).toEqual({ brand_id: "brand-a" });
+    const data = fixture<object>("rpc/brandSettings.response.json");
+    expect(BrandSettingsResponse.parse(data)).toEqual(data);
+    for (const key of ["postback_token_hash", "aid", "account", "drain_key", "HANDOFF_KEY", "prepop_base"]) {
+      expect(BrandSettingsResponse.safeParse({ ...data, [key]: "private" }).success).toBe(false);
+    }
   });
 });
 
