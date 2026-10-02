@@ -104,3 +104,14 @@ validation used the same source files and lockfile in an isolated filesystem.
 - Wire the panel's Service Binding to `AdminService` when implementing admin handlers.
 - Reconcile the T3 standalone missing-limit default with V1's actual HTTP boundary
   if the owner wants to revise that shared helper. Existing fixture shapes remain unchanged.
+
+## Cron Triggers (CO-7, FA-5)
+
+`wrangler.jsonc` declares two crons; `src/cron.ts` dispatches on the exact string and ignores any other.
+
+- `*/5 * * * *` **mailing**: `syncOutbox` (up to 5 batches of 50 per run; the rest waits for the next trigger), then
+  `syncSuppressions` back into `suppressions`. A listmonk outage throws, so the run shows as failed; rows stay pending
+  with backoff and no lead is lost. It skips with a log line, and makes no request, until the secrets `LISTMONK_URL`,
+  `LISTMONK_USER`, `LISTMONK_TOKEN` and `LISTMONK_LIST_MAP` (JSON `{"<brand_id>": <list id>}`) are all set and valid.
+- `*/15 * * * *` **alerts**: `runAlerts` as of the scheduled time. The notifier (console for now) only receives the report
+  when some alert is `warn` or `alert`. Submit error counts need Analytics Engine, so that source is empty (always ok) until then.
