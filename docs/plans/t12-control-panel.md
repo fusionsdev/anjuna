@@ -57,3 +57,16 @@ Every change writes `audit_log`: actor, action, target, old value, new value, ti
 ## Out of scope for T12
 
 Builder MCP, SMTP sending, any direct D1 `leads` binding in the panel.
+
+## Admin API decisions (2026-10-02)
+
+1. Core binds `factory` D1 alongside `leads` and writes `audit_log` itself right after each successful brand/config change; the panel writes audit rows only for panel-only actions such as user management.
+2. Brand `form_version` stays nullable in the contract and is filled from `brand_runtime.form_version` once the install Workflow (T10) writes it.
+3. Core generates a strong random postback token on rotation; it is shown once in the PATCH response and is never readable again.
+4. Variant IDs remain lowercase, e.g. `lite_v1` and `full_v1`.
+5. A/B weights are whole-number percentages that must sum to 100.
+
+Follow-ups:
+
+- T6 binds the `factory` D1 and writes `audit_log`.
+- T10 adds a `brand_runtime.form_version` migration and writes it at install.
