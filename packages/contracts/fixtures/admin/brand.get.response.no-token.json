@@ -1,0 +1,26 @@
+{
+  "brand": {
+    "brand_id": "brand-b",
+    "account": "main",
+    "hostnames": [
+      "brand-b.example"
+    ],
+    "status": "paused",
+    "form_version": null,
+    "keyword_default": null,
+    "amount_buckets": [
+      350,
+      500,
+      750,
+      1000
+    ],
+    "ab_config": null,
+    "flow_gate_mode": "signed_cookie",
+    "aid": "10001",
+    "prepop_base": "https://prepop.example/apply",
+    "drain_key": "brand_b",
+    "postback_token": "not_set",
+    "created_at": "2026-10-01T10:00:00.000Z",
+    "updated_at": "2026-10-01T10:00:00.000Z"
+  }
+}

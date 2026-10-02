@@ -1,0 +1,44 @@
+{
+  "brand": {
+    "brand_id": "brand-a",
+    "account": "main",
+    "hostnames": [
+      "brand-a.example",
+      "www.brand-a.example"
+    ],
+    "status": "live",
+    "form_version": "form@8ba11d3",
+    "keyword_default": "Quick Cash Today",
+    "amount_buckets": [
+      500,
+      1000,
+      1500,
+      2500
+    ],
+    "ab_config": {
+      "experiment_id": "exp-2026-10",
+      "variants": [
+        {
+          "id": "a",
+          "weight": 50
+        },
+        {
+          "id": "b",
+          "weight": 50
+        }
+      ]
+    },
+    "flow_gate_mode": "param",
+    "aid": "10001",
+    "prepop_base": "https://prepop.example/apply",
+    "drain_key": "brand_a",
+    "postback_token": "set",
+    "created_at": "2026-09-30T08:00:00.000Z",
+    "updated_at": "2026-10-02T15:10:00.000Z"
+  },
+  "changed": [
+    "rotate_postback_token"
+  ],
+  "audit_id": 102,
+  "issued_postback_token": "FAKE-TEST-ONLY-postback-token-0000"
+}
