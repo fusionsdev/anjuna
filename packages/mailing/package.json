@@ -1,0 +1,22 @@
+{
+  "name": "@anjuna/mailing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@anjuna/leads-db": "workspace:*",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/node": "^26.6.3",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}
