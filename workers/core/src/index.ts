@@ -1,4 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { ConsoleNotifier, InMemorySubmitErrorCounts, runAlerts } from "@anjuna/insights";
+import { scheduled as syncMailing } from "@anjuna/mailing";
 import { handleAdminRequest } from "./admin/index.js";
 import { authenticateAccount } from "./auth.js";
 import { handleConversionsAck, handleConversionsPending } from "./conversions.js";
@@ -46,6 +48,31 @@ export class AdminService extends WorkerEntrypoint<Env> {
 
   protected async handleAdmin(request: Request): Promise<Response> {
     return handleAdminRequest(request, this.env);
+  }
+}
+
+export async function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  if (event.cron === "*/5 * * * *") {
+    if (env.LISTMONK_URL && env.LISTMONK_USER && env.LISTMONK_TOKEN && env.LISTMONK_LIST_MAP) {
+      await syncMailing(event, {
+        DB: env.LEADS,
+        LISTMONK_URL: env.LISTMONK_URL,
+        LISTMONK_USER: env.LISTMONK_USER,
+        LISTMONK_TOKEN: env.LISTMONK_TOKEN,
+        LISTMONK_LIST_MAP: env.LISTMONK_LIST_MAP,
+      }, ctx);
+    }
+    return;
+  }
+  if (event.cron === "0 * * * *") {
+    const now = new Date().toISOString();
+    const report = await runAlerts(
+      env.LEADS,
+      { submitErrorCounts: new InMemorySubmitErrorCounts([]) },
+      { now },
+    );
+    new ConsoleNotifier().notify(report);
+    return;
   }
 }
 

@@ -21,6 +21,8 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "../../packages/factory-db/migrations"
     }
-  ]
+  ],
+  "triggers": { "crons": ["*/5 * * * *", "0 * * * *"] }
   // Required secret: DRAIN_TOKEN. Per-account and per-brand tokens are stored as D1 hashes.
+  // Optional secrets for mailing cron: LISTMONK_URL, LISTMONK_USER, LISTMONK_TOKEN, LISTMONK_LIST_MAP.
 }

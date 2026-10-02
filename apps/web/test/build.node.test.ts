@@ -24,7 +24,7 @@ describe("wrangler.jsonc", () => {
   it("binds AUTH and FACTORY, never the leads D1; CORE only once mock core is off", () => {
     expect(wrangler.d1_databases.map((d: { binding: string }) => d.binding).sort()).toEqual(["AUTH", "FACTORY"]);
     // Until T6 deploys anjuna-core the binding is absent and MOCK_CORE must be on.
-    if (wrangler.services) expect(wrangler.services).toEqual([{ binding: "CORE", service: "anjuna-core" }]);
+    if (wrangler.services) expect(wrangler.services).toEqual([{ binding: "CORE", service: "anjuna-core", entrypoint: "AdminService" }]);
     else expect(wrangler.vars.MOCK_CORE).toBe("1");
     expect(JSON.stringify(wrangler).toLowerCase()).not.toContain("leads");
   });

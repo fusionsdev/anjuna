@@ -8,4 +8,8 @@ export interface Env {
   FORM_VERSION?: string;
   CONSENT_VERSION?: string;
   PARTNER_LIST_VERSION?: string;
+  LISTMONK_URL?: string;
+  LISTMONK_USER?: string;
+  LISTMONK_TOKEN?: string;
+  LISTMONK_LIST_MAP?: string;
 }
