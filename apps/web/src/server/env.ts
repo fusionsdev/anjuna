@@ -5,7 +5,7 @@ export interface Env {
   /** `audit_log` and the factory tables (`@anjuna/factory-db`). The panel never binds the leads D1. */
   FACTORY: D1Database;
   /** Service Binding to the `anjuna-core` Worker (admin API). */
-  CORE: Fetcher;
+  CORE?: Fetcher; // absent until T6 deploys anjuna-core; MOCK_CORE=1 is used meanwhile
   /** Static assets (the SPA). */
   ASSETS: Fetcher;
 

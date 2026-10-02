@@ -45,7 +45,13 @@ export async function callCore(env: Env, ctx: AdminRequestContext, call: CoreCal
 
   let res: Response;
   try {
-    res = env.MOCK_CORE === "1" ? await mockCoreFetch(req) : await env.CORE.fetch(req);
+    if (env.MOCK_CORE === "1") {
+      res = await mockCoreFetch(req);
+    } else if (env.CORE) {
+      res = await env.CORE.fetch(req);
+    } else {
+      throw new Error("CORE service binding is missing and MOCK_CORE is not 1");
+    }
   } catch {
     return badGateway("core unreachable");
   }

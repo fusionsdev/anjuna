@@ -17,10 +17,11 @@
     { "binding": "AUTH", "database_name": "anjuna-auth", "database_id": "<AUTH_D1_ID>", "migrations_dir": "../../packages/auth-db/migrations" },
     { "binding": "FACTORY", "database_name": "anjuna-factory", "database_id": "<FACTORY_D1_ID>", "migrations_dir": "../../packages/factory-db/migrations" }
   ],
-  "services": [{ "binding": "CORE", "service": "anjuna-core" }],
+  // CORE service binding is added when T6 deploys anjuna-core:
+  //   "services": [{ "binding": "CORE", "service": "anjuna-core" }],
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "<team>.cloudflareaccess.com",
-    "ACCESS_AUD": "<ACCESS_APPLICATION_AUD>",
+    "ACCESS_TEAM_DOMAIN": "aduplift.cloudflareaccess.com",
+    "ACCESS_AUD": "644bf3613e70f100e38474630d140e3702243de4b9d730eac29262de429120b1",
     "BETTER_AUTH_URL": "https://app.aduplift.ai",
     "MOCK_CORE": "1"
   }

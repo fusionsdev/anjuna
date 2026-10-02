@@ -21,19 +21,22 @@ describe("wrangler.jsonc", () => {
     expect(wrangler.assets).toMatchObject({ binding: "ASSETS", run_worker_first: true, directory: "./dist/client" });
   });
 
-  it("binds AUTH, FACTORY and CORE (service anjuna-core) and never the leads D1", () => {
+  it("binds AUTH and FACTORY, never the leads D1; CORE only once mock core is off", () => {
     expect(wrangler.d1_databases.map((d: { binding: string }) => d.binding).sort()).toEqual(["AUTH", "FACTORY"]);
-    expect(wrangler.services).toEqual([{ binding: "CORE", service: "anjuna-core" }]);
+    // Until T6 deploys anjuna-core the binding is absent and MOCK_CORE must be on.
+    if (wrangler.services) expect(wrangler.services).toEqual([{ binding: "CORE", service: "anjuna-core" }]);
+    else expect(wrangler.vars.MOCK_CORE).toBe("1");
     expect(JSON.stringify(wrangler).toLowerCase()).not.toContain("leads");
   });
 
-  it("keeps real ids and the dev bypass out of the committed config", () => {
+  it("keeps secrets, D1 ids and the dev bypass out of the committed config", () => {
     const text = readFileSync(path.join(root, "wrangler.jsonc"), "utf8");
     expect(wrangler.vars.DEV_ACCESS_BYPASS).toBeUndefined();
     expect(text).not.toMatch(/DEV_ACCESS_BYPASS\s*"/);
     for (const d of wrangler.d1_databases) expect(d.database_id).toMatch(/^<.+>$/);
-    expect(wrangler.vars.ACCESS_TEAM_DOMAIN).toMatch(/</);
-    expect(wrangler.vars.ACCESS_AUD).toMatch(/</);
+    // Access team domain and AUD are not secrets; they must be the real AdUplift values.
+    expect(wrangler.vars.ACCESS_TEAM_DOMAIN).toBe("aduplift.cloudflareaccess.com");
+    expect(wrangler.vars.ACCESS_AUD).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
