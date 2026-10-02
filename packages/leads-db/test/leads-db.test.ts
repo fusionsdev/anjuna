@@ -6,9 +6,10 @@ import { CONVERSION_UPLOADS_COLUMNS, LEADS_DB_MIGRATIONS } from "../src/index";
 // Columns Anjuna adds to V1 tables (migration 0003). Everything else must match V1 exactly.
 const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   leads: ["experiment_id", "variant", "keyword"],
-  click_sessions: ["experiment_id", "variant", "keyword"],
+  click_sessions: ["experiment_id", "variant", "keyword", "brand_id"],
+  consent_evidence: ["consent_text_hash", "consent_brand", "gpc"],
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations"];
 
 interface ColumnInfo {
   cid: number;
@@ -118,6 +119,7 @@ describe("leads-db migrations", () => {
         "click_sessions",
         "client_errors",
         "consent_evidence",
+        "continuations",
         "conversion_uploads",
         "leads",
         "mailing_outbox",

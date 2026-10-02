@@ -5,10 +5,11 @@ import { handleConversionsAck, handleConversionsPending } from "./conversions.js
 import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 import { handlePostback } from "./postback.js";
+import { rpcRoutes } from "./rpc/index.js";
 
 export type RpcHandler = (request: Request, env: Env, account: string) => Promise<Response>;
 
-/** T6c registers POST routes here; only the test worker currently supplies an RPC route. */
+/** The public entrypoint supplies the authenticated T6c RPC routes. */
 export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = new Map()) {
   return {
     async fetch(request: Request, env: Env): Promise<Response> {
@@ -48,4 +49,4 @@ export class AdminService extends WorkerEntrypoint<Env> {
   }
 }
 
-export default createCoreHandler();
+export default createCoreHandler(rpcRoutes);

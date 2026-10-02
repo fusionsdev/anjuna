@@ -1,9 +1,11 @@
-# Core Worker — FUS-341, T6a/T6b
+# Core Worker — FUS-341, T6a/T6b/T6c
 
-The public Worker serves only `GET /api/health`, `GET|POST /api/postback`,
-`GET /api/conversions/pending`, and `POST /api/conversions/ack`. Every other
+The public Worker serves `GET /api/health`, `GET|POST /api/postback`,
+`GET /api/conversions/pending`, `POST /api/conversions/ack`, and the seven
+authenticated `POST /rpc/*` methods. Every other
 path/method returns the same `404 Not Found`. Health is exactly `{"ok":true}`.
-Lead submission, continuations, analytics forwarding and admin handlers are later tasks.
+Lead submission, continuations, signed handoffs and live brand settings are documented in
+[RPC.md](RPC.md). Analytics forwarding and admin handlers are separate tasks.
 
 ## Configuration and authentication
 
@@ -15,9 +17,9 @@ preview URLs. `LEADS` and `FACTORY` use their packages' migration directories.
 - RPC middleware identifies the account by the SHA-256 hash of its bearer
   credential in `account_credentials`. Comparisons use Workers'
   `crypto.subtle.timingSafeEqual`. `ownsBrand` checks account ownership. A route
-  exercising both exists only in the test worker; T6c supplies production RPC routes.
+  exercising both exists in the test worker; every production RPC also checks ownership.
 - Postback joins the cleaned `cid` to `leads.click_id`, then `leads.brand` to
-  `brand_runtime.brand_id`. **T6c integration assumption:** core writes the trusted
+  `brand_runtime.brand_id`. **T6c integration:** core writes the trusted
   opaque brand ID into `leads.brand`. Neither the callback's buyer `lead_id` nor
   its other parameters select a brand. A token for another brand cannot authorize
   a known lead. Query-token precedence and Authorization fallback retain V1 behavior.
@@ -97,8 +99,8 @@ validation used the same source files and lockfile in an isolated filesystem.
 
 ## Proposed (out of scope)
 
-- T6c must use the documented brand identity join when storing leads; if it needs
-  a distinct human/drain brand value, add an explicit brand relationship in that task.
+- If the drain needs a human routing label instead of the stored opaque brand ID,
+  agree an explicit mapping with its owner. T6c follows the brief's `brand = brand_id` join.
 - Wire the panel's Service Binding to `AdminService` when implementing admin handlers.
 - Reconcile the T3 standalone missing-limit default with V1's actual HTTP boundary
   if the owner wants to revise that shared helper. Existing fixture shapes remain unchanged.

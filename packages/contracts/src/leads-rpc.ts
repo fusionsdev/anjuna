@@ -10,15 +10,16 @@
  * click capture = V1 `functions/_middleware.ts`, lead = V1 form payload, zip = V1 handleZipLookup.
  */
 import { z } from "zod";
-import { BrandId, Hostname, Zip5 } from "./common.js";
+import { BrandId, Hostname, Zip5, OpaqueToken, ExperimentId, VariantId } from "./common.js";
 import { FormLeadPayload, LeadError, ZipResponse } from "./form-payload.js";
+import { AbConfig, AmountBuckets, FlowGateMode } from "./admin-api.js";
+import { FormRoute, Keyword } from "./runtime-config.js";
 
 /** Opaque server-minted token (click session, continuation, handoff). URL- and cookie-safe. */
-export const OpaqueToken = z.string().regex(/^[A-Za-z0-9._~-]{16,512}$/, "Invalid token");
+export { OpaqueToken } from "./common.js";
 
 /** A/B identifiers written on clicks and leads (T2 columns). Never secrets. */
-export const ExperimentId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
-export const VariantId = z.string().regex(/^[a-z0-9_-]{1,32}$/);
+export { ExperimentId, VariantId } from "./common.js";
 
 // --- recordClick -----------------------------------------------------------------------------
 
@@ -168,6 +169,25 @@ export const VerifyHandoffInvalid = z.strictObject({
 export const VerifyHandoffResponse = z.discriminatedUnion("valid", [VerifyHandoffValid, VerifyHandoffInvalid]);
 export type VerifyHandoffResponse = z.infer<typeof VerifyHandoffResponse>;
 
+// --- live public settings --------------------------------------------------------------------
+export const BrandSettingsRequest = z.strictObject({ brand_id: BrandId });
+export const BrandSettingsResponse = z.strictObject({
+  flow_gate_mode: FlowGateMode,
+  paused: z.boolean(),
+  amount_buckets: AmountBuckets,
+  ab_config: AbConfig.nullable(),
+  keyword_default: Keyword.nullable(),
+  form_route: FormRoute,
+});
+export type BrandSettingsResponse = z.infer<typeof BrandSettingsResponse>;
+
+/**
+ * Authenticated Worker context headers; the existing submitLead JSON shape is unchanged.
+ * submitLead requires x-consent-brand = encodeURIComponent(configured display name).
+ * Forward Sec-GPC verbatim when 0/1; absence means no signal was received.
+ */
+export const SUBMIT_CONTEXT_HEADERS = { gpc: "sec-gpc", consent_brand: "x-consent-brand" } as const;
+
 // --- errors and routing table -----------------------------------------------------------------
 
 /** Non-2xx RPC body. `forbidden_brand` = brand_id outside the caller's account (CO-2). */
@@ -186,6 +206,7 @@ export const LeadsRpc = {
   zip: { path: "/rpc/zip", request: ZipRequest, response: ZipRpcResponse },
   issueHandoff: { path: "/rpc/issueHandoff", request: IssueHandoffRequest, response: IssueHandoffResponse },
   verifyHandoff: { path: "/rpc/verifyHandoff", request: VerifyHandoffRequest, response: VerifyHandoffResponse },
+  brandSettings: { path: "/rpc/brandSettings", request: BrandSettingsRequest, response: BrandSettingsResponse },
 } as const;
 export type LeadsRpcMethod = keyof typeof LeadsRpc;
 export type LeadsRpcRequest<M extends LeadsRpcMethod> = z.input<(typeof LeadsRpc)[M]["request"]>;

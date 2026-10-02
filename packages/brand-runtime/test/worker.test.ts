@@ -265,7 +265,7 @@ describe("pause and visitor parity", () => {
       expect(await browser.text()).toBe(await bot.text());
     }
   });
-  it("paused landing/form/go/API share the same neutral page and make no core calls", async () => {
+  it("paused landing/form/go/API share the same neutral page and only refresh public settings", async () => {
     const { get, core, assets } = setup({ paused: true });
     const bodies = [];
     for (const path of ["/", `/request?${HANDOFF}`, "/go", "/api/health"]) {
@@ -280,7 +280,8 @@ describe("pause and visitor parity", () => {
     expect(bodies[0]).toContain("Temporarily unavailable");
     expect(bodies[0]).not.toMatch(/anjuna|aurum|Brand A/i);
     expect(assets.fetch).not.toHaveBeenCalled();
-    expect(Object.values(core.calls).flat()).toHaveLength(0);
+    expect(core.calls.brandSettings).toEqual([{ brand_id: "brand-a" }]);
+    expect(Object.entries(core.calls).filter(([method]) => method !== "brandSettings").flatMap(([, calls]) => calls)).toHaveLength(0);
     expect((await get("/admin")).status).toBe(404);
   });
   it("a config loader can change pause and gate settings without rebuilding the worker", async () => {

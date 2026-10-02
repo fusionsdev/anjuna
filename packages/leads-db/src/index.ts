@@ -15,6 +15,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0004_brand_runtime.sql",
   "0005_mailing_outbox.sql",
   "0006_account_credentials.sql",
+  "0007_core_rpc.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
@@ -101,6 +102,7 @@ export interface BrandRuntimeRow {
   /** JSON-encoded {@link AbConfig}, or null when the brand runs no test. */
   ab_config_json: string | null;
   keyword_default: string | null;
+  form_route: string;
   created_at: string;
   updated_at: string;
 }

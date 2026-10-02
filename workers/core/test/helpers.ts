@@ -17,6 +17,7 @@ import {
 
 export const ROOT = resolve(import.meta.dirname, "../../..");
 export const DRAIN_TOKEN = "core-test-drain-only";
+export const HANDOFF_KEY = "core-test-handoff-only-32-byte-key";
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export const fixtureText = (file: string) => readFileSync(join(ROOT, "packages/contracts/fixtures", file), "utf8");
 export const goldenRows = () => PendingResponse.parse(JSON.parse(fixtureText("drain/pending.response.json"))).conversions;
@@ -29,7 +30,7 @@ async function bundle(entry: string): Promise<string> {
   return result.outputFiles[0]!.text;
 }
 
-export async function createHarness() {
+export async function createHarness(options: { brand?: boolean } = {}) {
   const [production, testWorker, leadsMigrations, factoryMigrations] = await Promise.all([
     bundle("src/index.ts"), bundle("test/worker.ts"),
     readD1Migrations(join(ROOT, "packages/leads-db/migrations")),
@@ -39,7 +40,7 @@ export async function createHarness() {
     modules: true, compatibilityDate: "2026-08-01",
     compatibilityFlags: ["global_fetch_strictly_public"],
     d1Databases: { LEADS: "core-test-leads", FACTORY: "core-test-factory" },
-    bindings: { DRAIN_TOKEN },
+    bindings: { DRAIN_TOKEN, HANDOFF_KEY },
     outboundService: () => { throw new Error("External requests forbidden in core tests"); },
   };
   const mf = new Miniflare(convertV4MiniflareOptions({
@@ -48,6 +49,12 @@ export async function createHarness() {
       { ...common, name: "production", script: production },
       { ...common, name: "test-core", script: testWorker },
       { ...common, name: "no-drain-token", script: production, bindings: {} },
+      ...(options.brand ? [{
+        name: "brand", modules: true, compatibilityDate: "2026-08-01",
+        compatibilityFlags: ["global_fetch_strictly_public"],
+        serviceBindings: { CORE: "production" }, script: await bundle("test/brand-worker.ts"),
+        outboundService: () => { throw new Error("External requests forbidden in brand tests"); },
+      }] : []),
       {
         name: "panel", modules: true, compatibilityDate: "2026-08-01",
         serviceBindings: {
@@ -75,7 +82,7 @@ export async function createHarness() {
         await db.batch([db.prepare("DROP VIEW leads"), db.prepare("ALTER TABLE fixture_leads RENAME TO leads")]);
         hiddenOrphan = false;
       }
-      await db.batch(["conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials"]
+      await db.batch(["continuations", "mailing_outbox", "consent_evidence", "click_sessions", "zip_lookup", "conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials"]
         .map((table) => db.prepare(`DELETE FROM ${table}`)));
     },
     async seedBrand(id = "brand-a", token = "T", account = "account-a") {
