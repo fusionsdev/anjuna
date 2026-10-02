@@ -1,0 +1,33 @@
+{
+  "name": "@anjuna/template-cert",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Template certification linter (T11): checks a static dist/ (or its ZIP) against the landing template contract and prints a bilingual repair report.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "bin": {
+    "check-template": "./src/cli.ts"
+  },
+  "files": ["src", "dist"],
+  "scripts": {
+    "check-template": "bun run src/cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@anjuna/contracts": "workspace:*",
+    "node-html-parser": "^9.0.4"
+  },
+  "devDependencies": {
+    "@anjuna/template-astro-starter": "workspace:*",
+    "@types/node": "^26.6.3",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}
