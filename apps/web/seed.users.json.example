@@ -1,0 +1,4 @@
+{
+  "owner": "owner@example.invalid",
+  "employees": ["employee1@example.invalid", "employee2@example.invalid"]
+}

@@ -22,7 +22,7 @@ Clone them outside this repo, for example `git clone --depth 1 -b anjuna-port-ba
 3. **No cloaking.** No response may vary by user agent, IP, ASN, referrer, gclid or bot detection. The flow gate depends only on what the visitor did (valid amount + ZIP from the landing page).
 4. **Brand bytes stay clean.** Nothing a brand serves may contain another brand's identifiers, the strings "anjuna" or "aurum", a PostHog key or a Sentry DSN.
 5. **Cloudflare only.** D1 for all data. R2 only for sealed template/form artifacts and certification evidence; lead data never goes to R2. Workers and Workflows for compute.
-6. **No secrets in git.** Never commit `.dev.vars`, tokens, account IDs or database IDs. Use placeholders.
+6. **No secrets in git.** Never commit `.dev.vars`, API tokens or secrets. Account IDs are allowed in wrangler config (they guard against deploying to the wrong account). D1 database IDs use placeholders until the databases are created.
 7. **No deploys and no real external calls.** Do not deploy to Cloudflare, call LeadsGate, or touch the drain. Those are owner-gated (Wave 4).
 
 ## How to work
