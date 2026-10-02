@@ -108,11 +108,29 @@ function parseD1Id(output: string): string {
 const prefix = cfg.name;
 console.log(`\n── Bootstrapping tenant "${cfg.name}" (account ${cfg.accountId}) ──\n`);
 
+/** Create D1 or return existing ID if already provisioned. */
+function createOrGetD1(name: string): string {
+  try {
+    return parseD1Id(wrangler(`d1 create ${name}`));
+  } catch (err: unknown) {
+    const stderr = String((err as NodeJS.ErrnoException & { stderr?: unknown }).stderr ?? (err as Error).message ?? "");
+    if (!stderr.includes("already exists")) throw err;
+    console.log(`  ${name} already exists — fetching ID…`);
+    const json = wrangler(`d1 list --json`);
+    const list = JSON.parse(json) as Array<{ name: string; uuid?: string; database_id?: string }>;
+    const found = list.find((db) => db.name === name);
+    if (!found) throw new Error(`DB "${name}" already exists but not found in d1 list output`);
+    const id = found.uuid ?? found.database_id;
+    if (!id) throw new Error(`DB "${name}" entry has no uuid/database_id field`);
+    return id;
+  }
+}
+
 // 1. D1 databases
 console.log("Creating D1 databases…");
-const leadsId = parseD1Id(wrangler(`d1 create ${prefix}-leads`));
-const factoryId = parseD1Id(wrangler(`d1 create ${prefix}-factory`));
-const authId = parseD1Id(wrangler(`d1 create ${prefix}-auth`));
+const leadsId = createOrGetD1(`${prefix}-leads`);
+const factoryId = createOrGetD1(`${prefix}-factory`);
+const authId = createOrGetD1(`${prefix}-auth`);
 console.log(`  leads:   ${leadsId}`);
 console.log(`  factory: ${factoryId}`);
 console.log(`  auth:    ${authId}`);
