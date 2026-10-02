@@ -1,0 +1,696 @@
+import {
+  ADMIN_ERROR_STATUS,
+  AuditQuery,
+  BrandId,
+  BrandPatchRequest,
+  BrandStatusChangeRequest,
+  LeadAggregatesQuery,
+  LeadId,
+  adminContextFromHeaders,
+  authorize,
+  leadOutcome,
+  matchAdminRoute,
+  type AbConfig,
+  type AdminError,
+  type AdminRequestContext,
+  type AuditEntry,
+  type BrandConfig,
+  type BrandPatchField,
+  type BrandPatchResponse,
+  type BrandStatus,
+  type BrandStatusChangeResponse,
+  type LeadAggregateRow,
+  type LeadDetail,
+} from "@anjuna/contracts";
+import type { Env } from "../env.js";
+import { json } from "../http.js";
+
+const JSON_BODY_LIMIT = 32 * 1024;
+
+interface BrandRow {
+  brand_id: string;
+  account: string;
+  hostnames: string;
+  drain_key: string;
+  postback_token_hash: string | null;
+  aid: string;
+  prepop_base: string;
+  amount_buckets: string;
+  flow_gate_mode: string;
+  paused: number;
+  ab_config_json: string | null;
+  keyword_default: string | null;
+  created_at: string;
+  updated_at: string;
+  form_version?: string | null;
+}
+
+interface BrandStatsRow extends BrandRow {
+  leads_7d: number;
+  sold_7d: number;
+  pending_7d: number;
+}
+
+interface LeadRow {
+  lead_id: string;
+  brand: string;
+  hostname: string;
+  status: string;
+  form_version: string;
+  form_variant: string;
+  experiment_id: string | null;
+  variant: string | null;
+  keyword: string | null;
+  requested_amount: number;
+  loan_purpose: string;
+  first_name: string;
+  last_name: string;
+  birth_date: string;
+  email: string;
+  home_phone: string;
+  work_phone: string | null;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  address_length_months: number;
+  own_home: number;
+  income_type: string;
+  employer: string;
+  job_title: string;
+  employed_months: number;
+  pay_date1: string;
+  pay_frequency: string;
+  direct_deposit: number;
+  monthly_income: number;
+  created_at: string;
+  updated_at: string | null;
+}
+
+interface AuditRow {
+  id: number;
+  actor_id: string;
+  actor_role: "owner" | "employee" | "system";
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  before_json: string | null;
+  after_json: string | null;
+  created_at: string;
+}
+
+interface ParseSchema<T> {
+  safeParse(value: unknown):
+    | { success: true; data: T }
+    | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function adminError(
+  context: AdminRequestContext | null,
+  error: AdminError,
+): Response {
+  const body = context ? { ...error, request_id: context.request_id } : error;
+  return json(body, ADMIN_ERROR_STATUS[error.error]);
+}
+
+function invalid(
+  context: AdminRequestContext,
+  issues: Array<{ path: string; message: string }>,
+): Response {
+  return adminError(context, { error: "invalid", issues });
+}
+
+function schemaIssues(issues: Array<{ path: PropertyKey[]; message: string }>) {
+  return issues.map((issue) => ({
+    path: issue.path.map(String).join(".") || "body",
+    message: issue.message,
+  }));
+}
+
+function parseWith<T>(
+  schema: ParseSchema<T>,
+  value: unknown,
+  context: AdminRequestContext,
+): T | Response {
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : invalid(context, schemaIssues(parsed.error.issues));
+}
+
+async function readJsonObject(
+  request: Request,
+  context: AdminRequestContext,
+): Promise<JsonRecord | Response> {
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > JSON_BODY_LIMIT) {
+    return invalid(context, [{ path: "body", message: "Request body is too large" }]);
+  }
+
+  const text = await request.text();
+  if (text.length > JSON_BODY_LIMIT) {
+    return invalid(context, [{ path: "body", message: "Request body is too large" }]);
+  }
+  if (text.trim() === "") return {};
+
+  try {
+    const value: unknown = JSON.parse(text);
+    if (value === null || Array.isArray(value) || typeof value !== "object") {
+      return invalid(context, [{ path: "body", message: "Expected an object" }]);
+    }
+    return value as JsonRecord;
+  } catch {
+    return invalid(context, [{ path: "body", message: "Invalid JSON" }]);
+  }
+}
+
+function parseQuery(url: URL): JsonRecord {
+  return Object.fromEntries(url.searchParams);
+}
+
+function nextTimestamp(previous: string): string {
+  const previousMs = Date.parse(previous);
+  return new Date(Math.max(Date.now(), Number.isFinite(previousMs) ? previousMs + 1 : 0)).toISOString();
+}
+
+function lowercaseAbConfig(value: unknown): AbConfig | null {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid ab_config_json in brand_runtime");
+  }
+  const config = value as { experiment_id?: unknown; variants?: unknown };
+  if (!Array.isArray(config.variants)) throw new Error("Invalid ab_config_json in brand_runtime");
+  return {
+    experiment_id: String(config.experiment_id),
+    variants: config.variants.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new Error("Invalid ab_config_json in brand_runtime");
+      }
+      const variant = item as { id?: unknown; weight?: unknown };
+      return { id: String(variant.id).toLowerCase(), weight: Number(variant.weight) };
+    }),
+  };
+}
+
+function parseJson(text: string | null): unknown {
+  return text === null ? null : JSON.parse(text);
+}
+
+function brandConfig(row: BrandRow): BrandConfig {
+  return {
+    brand_id: row.brand_id,
+    account: row.account,
+    hostnames: parseJson(row.hostnames) as string[],
+    status: row.paused === 1 ? "paused" : "live",
+    form_version: row.form_version ?? null,
+    keyword_default: row.keyword_default,
+    amount_buckets: parseJson(row.amount_buckets) as number[],
+    ab_config: lowercaseAbConfig(parseJson(row.ab_config_json)),
+    flow_gate_mode: row.flow_gate_mode as BrandConfig["flow_gate_mode"],
+    aid: row.aid,
+    prepop_base: row.prepop_base,
+    drain_key: row.drain_key,
+    postback_token: row.postback_token_hash ? "set" : "not_set",
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+async function brandRuntimeHasFormVersion(db: D1Database): Promise<boolean> {
+  const columns = await db.prepare("PRAGMA table_info(brand_runtime)").all<{ name: string }>();
+  return columns.results.some((column) => column.name === "form_version");
+}
+
+function brandColumns(includeFormVersion: boolean, table = ""): string {
+  const prefix = table ? `${table}.` : "";
+  const columns = [
+    "brand_id", "account", "hostnames", "drain_key", "postback_token_hash", "aid",
+    "prepop_base", "amount_buckets", "flow_gate_mode", "paused", "ab_config_json",
+    "keyword_default", "created_at", "updated_at",
+    ...(includeFormVersion ? ["form_version"] : []),
+  ];
+  return columns.map((column) => `${prefix}${column} AS ${column}`).join(", ");
+}
+
+async function getBrandRow(db: D1Database, brandId: string): Promise<BrandRow | null> {
+  const includeFormVersion = await brandRuntimeHasFormVersion(db);
+  return db.prepare(`SELECT ${brandColumns(includeFormVersion)} FROM brand_runtime WHERE brand_id = ?1`)
+    .bind(brandId).first<BrandRow>();
+}
+
+async function writeAudit(
+  env: Env,
+  context: AdminRequestContext,
+  action: "brand.update" | "brand.pause" | "brand.resume",
+  brandId: string,
+  oldValue: JsonRecord,
+  newValue: JsonRecord,
+  at: string,
+): Promise<number> {
+  const result = await env.FACTORY.prepare(
+    `INSERT INTO audit_log
+      (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+     VALUES (?1, ?2, ?3, 'brand', ?4, ?5, ?6, ?7)`,
+  ).bind(
+    context.actor_id,
+    context.actor_role,
+    action,
+    brandId,
+    JSON.stringify(oldValue),
+    JSON.stringify(newValue),
+    at,
+  ).run();
+  return result.meta.last_row_id;
+}
+
+async function listBrands(env: Env): Promise<Response> {
+  const generatedAt = new Date().toISOString();
+  const threshold = new Date(Date.parse(generatedAt) - 7 * 86_400_000).toISOString();
+  const includeFormVersion = await brandRuntimeHasFormVersion(env.LEADS);
+  const rows = await env.LEADS.prepare(
+    `SELECT ${brandColumns(includeFormVersion, "br")},
+       COUNT(l.lead_id) AS leads_7d,
+       SUM(CASE WHEN l.status = 'soldLead' THEN 1 ELSE 0 END) AS sold_7d,
+       SUM(CASE WHEN l.status NOT IN ('soldLead', 'rejectLead') THEN 1 ELSE 0 END) AS pending_7d
+     FROM brand_runtime br
+     LEFT JOIN leads l ON l.brand = br.brand_id AND julianday(l.created_at) >= julianday(?1)
+     GROUP BY br.brand_id
+     ORDER BY br.brand_id`,
+  ).bind(threshold).all<BrandStatsRow>();
+
+  return json({
+    brands: rows.results.map((row) => {
+      const config = brandConfig(row);
+      return {
+        brand_id: config.brand_id,
+        hostnames: config.hostnames,
+        status: config.status,
+        flow_gate_mode: config.flow_gate_mode,
+        ab_config: config.ab_config,
+        form_version: config.form_version,
+        stats_7d: {
+          leads: Number(row.leads_7d),
+          sold: Number(row.sold_7d),
+          pending: Number(row.pending_7d),
+        },
+      };
+    }),
+    generated_at: generatedAt,
+  });
+}
+
+async function getBrand(
+  env: Env,
+  context: AdminRequestContext,
+  brandId: string,
+): Promise<Response> {
+  const row = await getBrandRow(env.LEADS, brandId);
+  if (!row) return adminError(context, { error: "not_found", resource: "brand" });
+  return json({ brand: brandConfig(row) });
+}
+
+function equalJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function randomPostbackToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const binary = String.fromCharCode(...bytes);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function patchBrand(
+  request: Request,
+  env: Env,
+  context: AdminRequestContext,
+  brandId: string,
+): Promise<Response> {
+  const raw = await readJsonObject(request, context);
+  if (raw instanceof Response) return raw;
+
+  const permission = authorize("patchBrand", context.actor_role, raw);
+  if (!permission.ok) return adminError(context, permission.error);
+
+  const patch = parseWith(BrandPatchRequest, raw, context);
+  if (patch instanceof Response) return patch;
+
+  const row = await getBrandRow(env.LEADS, brandId);
+  if (!row) return adminError(context, { error: "not_found", resource: "brand" });
+  const before = brandConfig(row);
+  if (patch.expected_updated_at !== undefined && patch.expected_updated_at !== row.updated_at) {
+    return adminError(context, {
+      error: "conflict",
+      message: "Brand changed since it was loaded",
+      current_updated_at: row.updated_at,
+    });
+  }
+
+  const changes: Array<{ field: BrandPatchField; column: string; stored: unknown; old: unknown; next: unknown }> = [];
+  const candidates: Array<[BrandPatchField, string, unknown, unknown, unknown]> = [
+    ["keyword_default", "keyword_default", patch.keyword_default, before.keyword_default, patch.keyword_default],
+    ["amount_buckets", "amount_buckets", patch.amount_buckets, before.amount_buckets,
+      patch.amount_buckets === undefined ? undefined : JSON.stringify(patch.amount_buckets)],
+    ["ab_config", "ab_config_json", patch.ab_config, before.ab_config,
+      patch.ab_config === undefined ? undefined : patch.ab_config === null ? null : JSON.stringify(patch.ab_config)],
+    ["flow_gate_mode", "flow_gate_mode", patch.flow_gate_mode, before.flow_gate_mode, patch.flow_gate_mode],
+    ["aid", "aid", patch.aid, before.aid, patch.aid],
+    ["prepop_base", "prepop_base", patch.prepop_base, before.prepop_base, patch.prepop_base],
+    ["drain_key", "drain_key", patch.drain_key, before.drain_key, patch.drain_key],
+  ];
+  for (const [field, column, requested, old, stored] of candidates) {
+    if (requested !== undefined && !equalJson(requested, old)) {
+      changes.push({ field, column, stored, old, next: requested });
+    }
+  }
+
+  let issuedPostbackToken: string | undefined;
+  if (patch.rotate_postback_token === true) {
+    issuedPostbackToken = randomPostbackToken();
+    changes.push({
+      field: "rotate_postback_token",
+      column: "postback_token_hash",
+      stored: await sha256Hex(issuedPostbackToken),
+      old: before.postback_token,
+      next: "set",
+    });
+  }
+
+  if (changes.length === 0) {
+    const response: BrandPatchResponse = { brand: before, changed: [], audit_id: null };
+    return json(response);
+  }
+
+  const updatedAt = nextTimestamp(row.updated_at);
+  const assignments = changes.map((change, index) => `${change.column} = ?${index + 1}`);
+  assignments.push(`updated_at = ?${changes.length + 1}`);
+  const update = await env.LEADS.prepare(
+    `UPDATE brand_runtime SET ${assignments.join(", ")}
+     WHERE brand_id = ?${changes.length + 2} AND updated_at = ?${changes.length + 3}`,
+  ).bind(
+    ...changes.map((change) => change.stored),
+    updatedAt,
+    brandId,
+    row.updated_at,
+  ).run();
+  if (update.meta.changes !== 1) {
+    const current = await getBrandRow(env.LEADS, brandId);
+    if (!current) return adminError(context, { error: "not_found", resource: "brand" });
+    return adminError(context, {
+      error: "conflict",
+      message: "Brand changed since it was loaded",
+      current_updated_at: current.updated_at,
+    });
+  }
+
+  const oldValue: JsonRecord = {};
+  const newValue: JsonRecord = {};
+  for (const change of changes) {
+    if (change.field === "rotate_postback_token") {
+      oldValue.postback_token = change.old;
+      newValue.postback_token = "set";
+      newValue.postback_token_rotated = true;
+    } else {
+      oldValue[change.field] = change.old;
+      newValue[change.field] = change.next;
+    }
+  }
+  const auditId = await writeAudit(env, context, "brand.update", brandId, oldValue, newValue, updatedAt);
+  const updated = await getBrandRow(env.LEADS, brandId);
+  if (!updated) throw new Error("Updated brand disappeared");
+
+  const response: BrandPatchResponse = {
+    brand: brandConfig(updated),
+    changed: changes.map((change) => change.field),
+    audit_id: auditId,
+    ...(issuedPostbackToken ? { issued_postback_token: issuedPostbackToken } : {}),
+  };
+  return json(response);
+}
+
+async function changeBrandStatus(
+  request: Request,
+  env: Env,
+  context: AdminRequestContext,
+  brandId: string,
+  status: BrandStatus,
+): Promise<Response> {
+  const body = await readJsonObject(request, context);
+  if (body instanceof Response) return body;
+  const parsed = parseWith(BrandStatusChangeRequest, body, context);
+  if (parsed instanceof Response) return parsed;
+
+  const row = await getBrandRow(env.LEADS, brandId);
+  if (!row) return adminError(context, { error: "not_found", resource: "brand" });
+  const current: BrandStatus = row.paused === 1 ? "paused" : "live";
+  if (current === status) {
+    const response: BrandStatusChangeResponse = { brand_id: brandId, status, changed: false, audit_id: null };
+    return json(response);
+  }
+
+  const updatedAt = nextTimestamp(row.updated_at);
+  const update = await env.LEADS.prepare(
+    "UPDATE brand_runtime SET paused = ?1, updated_at = ?2 WHERE brand_id = ?3 AND paused = ?4",
+  ).bind(status === "paused" ? 1 : 0, updatedAt, brandId, row.paused).run();
+  if (update.meta.changes !== 1) {
+    const currentRow = await getBrandRow(env.LEADS, brandId);
+    if (!currentRow) return adminError(context, { error: "not_found", resource: "brand" });
+    const currentStatus: BrandStatus = currentRow.paused === 1 ? "paused" : "live";
+    if (currentStatus === status) {
+      return json({ brand_id: brandId, status, changed: false, audit_id: null });
+    }
+    return adminError(context, {
+      error: "conflict",
+      message: "Brand changed since it was loaded",
+      current_updated_at: currentRow.updated_at,
+    });
+  }
+
+  const action = status === "paused" ? "brand.pause" : "brand.resume";
+  const newValue: JsonRecord = { status };
+  if (parsed.reason !== undefined) newValue.reason = parsed.reason;
+  const auditId = await writeAudit(env, context, action, brandId, { status: current }, newValue, updatedAt);
+  const response: BrandStatusChangeResponse = { brand_id: brandId, status, changed: true, audit_id: auditId };
+  return json(response);
+}
+
+async function leadAggregates(
+  url: URL,
+  env: Env,
+  context: AdminRequestContext,
+): Promise<Response> {
+  const query = parseWith(LeadAggregatesQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+
+  const toExclusive = new Date(`${query.to}T00:00:00.000Z`);
+  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+  const brandFilter = query.brand_id === undefined ? "" : "AND brand = ?3";
+  const bindings: unknown[] = [
+    `${query.from}T00:00:00.000Z`,
+    toExclusive.toISOString(),
+    ...(query.brand_id === undefined ? [] : [query.brand_id]),
+  ];
+  const rows = await env.LEADS.prepare(
+    `SELECT brand AS brand_id, substr(created_at, 1, 10) AS day,
+       CASE WHEN status = 'soldLead' THEN 'sold'
+            WHEN status = 'rejectLead' THEN 'rejected'
+            ELSE 'pending' END AS outcome,
+       COUNT(*) AS count
+     FROM leads
+     WHERE julianday(created_at) >= julianday(?1) AND julianday(created_at) < julianday(?2)
+       ${brandFilter}
+     GROUP BY brand, substr(created_at, 1, 10), outcome
+     ORDER BY brand, day,
+       CASE outcome WHEN 'pending' THEN 0 WHEN 'sold' THEN 1 ELSE 2 END`,
+  ).bind(...bindings).all<{ brand_id: string; day: string; outcome: string; count: number }>();
+
+  const responseRows: LeadAggregateRow[] = rows.results.map((row) => ({
+    brand_id: row.brand_id,
+    day: row.day,
+    status: row.outcome as LeadAggregateRow["status"],
+    count: Number(row.count),
+  }));
+  return json({ from: query.from, to: query.to, timezone: "UTC", rows: responseRows });
+}
+
+async function getLead(
+  env: Env,
+  context: AdminRequestContext,
+  leadId: string,
+): Promise<Response> {
+  const row = await env.LEADS.prepare("SELECT * FROM leads WHERE lead_id = ?1").bind(leadId).first<LeadRow>();
+  if (!row) return adminError(context, { error: "not_found", resource: "lead" });
+  const postbacks = await env.LEADS.prepare(
+    "SELECT event_type, payout, created_at FROM postback_events WHERE lead_id = ?1 ORDER BY created_at, id",
+  ).bind(leadId).all<{ event_type: string; payout: number; created_at: string }>();
+  const detail: LeadDetail = {
+    lead_id: row.lead_id,
+    brand_id: row.brand,
+    hostname: row.hostname,
+    status: row.status,
+    outcome: leadOutcome(row.status),
+    form_version: row.form_version,
+    form_variant: row.form_variant,
+    experiment_id: row.experiment_id,
+    variant: row.variant?.toLowerCase() ?? null,
+    keyword: row.keyword,
+    requested_amount: Number(row.requested_amount),
+    loan_purpose: row.loan_purpose,
+    applicant: {
+      first_name: row.first_name,
+      last_name: row.last_name,
+      birth_date: row.birth_date,
+      email: row.email,
+      home_phone: row.home_phone,
+      work_phone: row.work_phone,
+      address: row.address,
+      city: row.city,
+      state: row.state,
+      zip: row.zip,
+      address_length_months: Number(row.address_length_months),
+      own_home: row.own_home === 1,
+      income_type: row.income_type,
+      employer: row.employer,
+      job_title: row.job_title,
+      employed_months: Number(row.employed_months),
+      pay_date1: row.pay_date1,
+      pay_frequency: row.pay_frequency,
+      direct_deposit: row.direct_deposit === 1,
+      monthly_income: Number(row.monthly_income),
+    },
+    postbacks: postbacks.results.map((event) => ({
+      event_type: event.event_type,
+      payout: Number(event.payout),
+      created_at: event.created_at,
+    })),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+  return json({ lead: detail });
+}
+
+function encodeCursor(id: number): string {
+  return btoa(String(id)).replace(/=+$/, "");
+}
+
+function decodeCursor(cursor: string): number | null {
+  try {
+    const value = Number(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function auditEntry(row: AuditRow): AuditEntry {
+  return {
+    id: Number(row.id),
+    actor_id: row.actor_id,
+    actor_role: row.actor_role,
+    action: row.action,
+    target: { type: row.entity_type, id: row.entity_id },
+    old: parseJson(row.before_json) as AuditEntry["old"],
+    new: parseJson(row.after_json) as AuditEntry["new"],
+    at: row.created_at,
+  };
+}
+
+async function listAudit(
+  url: URL,
+  env: Env,
+  context: AdminRequestContext,
+  scope: "own" | "all",
+): Promise<Response> {
+  const query = parseWith(AuditQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+  if (scope === "own" && query.actor_id !== undefined && query.actor_id !== context.actor_id) {
+    return adminError(context, { error: "forbidden_role", required_role: "owner" });
+  }
+
+  const cursorId = query.cursor === undefined ? null : decodeCursor(query.cursor);
+  if (query.cursor !== undefined && cursorId === null) {
+    return invalid(context, [{ path: "cursor", message: "Invalid cursor" }]);
+  }
+
+  const clauses: string[] = [];
+  const values: unknown[] = [];
+  const add = (sql: string, value: unknown) => {
+    values.push(value);
+    clauses.push(`${sql} ?${values.length}`);
+  };
+  if (scope === "own") add("actor_id =", context.actor_id);
+  else if (query.actor_id !== undefined) add("actor_id =", query.actor_id);
+  if (query.target_type !== undefined) add("entity_type =", query.target_type);
+  if (query.target_id !== undefined) add("entity_id =", query.target_id);
+  if (cursorId !== null) add("id <", cursorId);
+  const limit = query.limit ?? 50;
+  values.push(limit + 1);
+
+  const rows = await env.FACTORY.prepare(
+    `SELECT id, actor_id, actor_role, action, entity_type, entity_id,
+       before_json, after_json, created_at
+     FROM audit_log
+     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY id DESC
+     LIMIT ?${values.length}`,
+  ).bind(...values).all<AuditRow>();
+  const hasMore = rows.results.length > limit;
+  const page = rows.results.slice(0, limit);
+  return json({
+    entries: page.map(auditEntry),
+    next_cursor: hasMore && page.length > 0 ? encodeCursor(page[page.length - 1]!.id) : null,
+  });
+}
+
+function routeParam(
+  schema: ParseSchema<string>,
+  value: string,
+  path: string,
+  context: AdminRequestContext,
+): string | Response {
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : invalid(context, schemaIssues(
+    parsed.error.issues.map((issue) => ({ ...issue, path: [path, ...issue.path] })),
+  ));
+}
+
+export async function handleAdminRequest(request: Request, env: Env): Promise<Response> {
+  const context = adminContextFromHeaders(request.headers);
+  if (!context) return adminError(null, { error: "unauthorized" });
+
+  let route: ReturnType<typeof matchAdminRoute>;
+  try {
+    route = matchAdminRoute(request.method, new URL(request.url).pathname);
+  } catch {
+    return adminError(context, { error: "not_found", resource: "route" });
+  }
+  if (!route) return adminError(context, { error: "not_found", resource: "route" });
+
+  const endpointPermission = authorize(route.endpoint, context.actor_role);
+  if (!endpointPermission.ok) return adminError(context, endpointPermission.error);
+
+  if ("id" in route.params) {
+    const brandId = routeParam(BrandId, route.params.id!, "brand_id", context);
+    if (brandId instanceof Response) return brandId;
+    if (route.endpoint === "getBrand") return getBrand(env, context, brandId);
+    if (route.endpoint === "patchBrand") return patchBrand(request, env, context, brandId);
+    if (route.endpoint === "pauseBrand") return changeBrandStatus(request, env, context, brandId, "paused");
+    if (route.endpoint === "resumeBrand") return changeBrandStatus(request, env, context, brandId, "live");
+  }
+
+  if (route.endpoint === "listBrands") return listBrands(env);
+  if (route.endpoint === "leadAggregates") return leadAggregates(new URL(request.url), env, context);
+  if (route.endpoint === "getLead") {
+    const leadId = routeParam(LeadId, route.params.lead_id!, "lead_id", context);
+    return leadId instanceof Response ? leadId : getLead(env, context, leadId);
+  }
+  if (route.endpoint === "listAudit") {
+    return listAudit(new URL(request.url), env, context, endpointPermission.scope);
+  }
+
+  return adminError(context, { error: "not_found", resource: "route" });
+}
