@@ -72,6 +72,23 @@
         "vitest": "^4.1.0",
       },
     },
+    "packages/brand-runtime": {
+      "name": "@anjuna/brand-runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@anjuna/contracts": "workspace:*",
+        "zod": "^4.1.0",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "^0.22.0",
+        "@cloudflare/workers-types": "^5.20261001.1",
+        "@types/node": "^26.6.3",
+        "esbuild": "0.28.1",
+        "miniflare": "5.20260815.0-alpha",
+        "typescript": "^5.9.0",
+        "vitest": "^4.1.0",
+      },
+    },
     "packages/contracts": {
       "name": "@anjuna/contracts",
       "version": "0.0.0",
@@ -181,6 +198,8 @@
   },
   "packages": {
     "@anjuna/auth-db": ["@anjuna/auth-db@workspace:packages/auth-db"],
+
+    "@anjuna/brand-runtime": ["@anjuna/brand-runtime@workspace:packages/brand-runtime"],
 
     "@anjuna/contracts": ["@anjuna/contracts@workspace:packages/contracts"],
 
