@@ -1,0 +1,3 @@
+# Local seed input and output: real emails and password hashes never go to git.
+seed.users.json
+seed.generated.sql
