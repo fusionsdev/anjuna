@@ -78,8 +78,16 @@ jobs:
 
       - name: Smoke test web (aduplift)
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://app.aduplift.ai/)
-          test "$STATUS" = "200" || (echo "web smoke test failed: got $STATUS"; exit 1)
+          # The web app sits behind Cloudflare Access: unauthenticated requests get a
+          # 302 to <team>.cloudflareaccess.com. Accept that (or 200), nothing else.
+          RESP=$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" https://app.aduplift.ai/)
+          STATUS=${RESP%% *}
+          LOCATION=${RESP#* }
+          if [ "$STATUS" = "200" ] || { [ "$STATUS" = "302" ] && [[ "$LOCATION" == *cloudflareaccess.com* ]]; }; then
+            echo "web smoke test ok: $STATUS $LOCATION"
+          else
+            echo "web smoke test failed: got $STATUS $LOCATION"; exit 1
+          fi
 
   # ─────────────────────────────────────────────────────────────────────────
   # Friend tenant — deploys to friend's Cloudflare account (separate token).
@@ -118,7 +126,7 @@ jobs:
 
       - name: Smoke test core (friend)
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.FRIEND_CORE_DOMAIN }}/api/admin/brands)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.FRIEND_CORE_DOMAIN }}/api/conversions/pending)
           test "$STATUS" = "401" || (echo "friend core smoke test failed: got $STATUS"; exit 1)
 
       - name: Deploy web (friend)
@@ -130,5 +138,13 @@ jobs:
 
       - name: Smoke test web (friend)
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.FRIEND_APP_DOMAIN }}/)
-          test "$STATUS" = "200" || (echo "friend web smoke test failed: got $STATUS"; exit 1)
+          # The web app sits behind Cloudflare Access: unauthenticated requests get a
+          # 302 to <team>.cloudflareaccess.com. Accept that (or 200), nothing else.
+          RESP=$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" https://${{ vars.FRIEND_APP_DOMAIN }}/)
+          STATUS=${RESP%% *}
+          LOCATION=${RESP#* }
+          if [ "$STATUS" = "200" ] || { [ "$STATUS" = "302" ] && [[ "$LOCATION" == *cloudflareaccess.com* ]]; }; then
+            echo "friend web smoke test ok: $STATUS $LOCATION"
+          else
+            echo "friend web smoke test failed: got $STATUS $LOCATION"; exit 1
+          fi
