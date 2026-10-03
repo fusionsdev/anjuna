@@ -1,0 +1,38 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-core",
+  "main": "src/index.ts",
+  "account_id": "6cb8500c35210800451bd9a535482850",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": [
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "core.aduplift.ai",
+      "custom_domain": true
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "*/15 * * * *"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "LEADS",
+      "database_name": "aduplift-leads",
+      "database_id": "e26523d5-7215-4550-af13-0b4e9364e099",
+      "migrations_dir": "../../packages/leads-db/migrations"
+    },
+    {
+      "binding": "FACTORY",
+      "database_name": "aduplift-factory",
+      "database_id": "2eb875cb-ae24-4d06-bf15-8df306046980",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ]
+}

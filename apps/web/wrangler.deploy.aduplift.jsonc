@@ -4,10 +4,18 @@
   "main": "src/server/index.ts",
   "account_id": "6cb8500c35210800451bd9a535482850",
   "compatibility_date": "2026-08-01",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "app.aduplift.ai", "custom_domain": true }],
+  "routes": [
+    {
+      "pattern": "app.aduplift.ai",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": "./dist/client",
     "binding": "ASSETS",
@@ -17,23 +25,28 @@
   "d1_databases": [
     {
       "binding": "AUTH",
-      "database_name": "anjuna-auth",
-      "database_id": "<AUTH_D1_ID>",
+      "database_name": "aduplift-auth",
+      "database_id": "b75cb173-0eac-4bd6-8ef2-51a3eb80f230",
       "migrations_dir": "../../packages/auth-db/migrations"
     },
     {
       "binding": "FACTORY",
-      "database_name": "anjuna-factory",
-      "database_id": "0c83781e-5f79-4a65-ae1b-ea655ac5c0ba",
+      "database_name": "aduplift-factory",
+      "database_id": "2eb875cb-ae24-4d06-bf15-8df306046980",
       "migrations_dir": "../../packages/factory-db/migrations"
     }
   ],
-  "services": [{ "binding": "CORE", "service": "anjuna-core", "entrypoint": "AdminService" }],
+  "services": [
+    {
+      "binding": "CORE",
+      "service": "anjuna-core",
+      "entrypoint": "AdminService"
+    }
+  ],
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "aduplift.cloudflareaccess.com",
-    "ACCESS_AUD": "644bf3613e70f100e38474630d140e3702243de4b9d730eac29262de429120b1",
+    "ACCESS_TEAM_DOMAIN": "<FILL: aduplift Access team domain>",
+    "ACCESS_AUD": "<FILL: aduplift Access AUD tag>",
     "BETTER_AUTH_URL": "https://app.aduplift.ai",
     "MOCK_CORE": "0"
   }
-  // Secrets (wrangler secret put): BETTER_AUTH_SECRET
 }

@@ -22,6 +22,11 @@ const config: TenantConfig = {
   },
   ownerEmail: "owner@aduplift.ai",
   r2Templates: "anjuna-templates",
+  d1: {
+    leads:   "e26523d5-7215-4550-af13-0b4e9364e099",
+    factory: "2eb875cb-ae24-4d06-bf15-8df306046980",
+    auth:    "b75cb173-0eac-4bd6-8ef2-51a3eb80f230",
+  },
 };
 
 export default config;
