@@ -52,17 +52,17 @@ jobs:
 
       - name: Apply D1 migrations (aduplift)
         run: |
-          bun x wrangler d1 migrations apply anjuna-leads   --remote --config workers/core/wrangler.deploy.jsonc
-          bun x wrangler d1 migrations apply anjuna-factory --remote --config workers/core/wrangler.deploy.jsonc
-          bun x wrangler d1 migrations apply anjuna-auth    --remote --config apps/web/wrangler.deploy.aduplift.jsonc
+          bun x wrangler d1 migrations apply aduplift-leads   --remote --config workers/core/wrangler.deploy.aduplift.jsonc
+          bun x wrangler d1 migrations apply aduplift-factory --remote --config workers/core/wrangler.deploy.aduplift.jsonc
+          bun x wrangler d1 migrations apply aduplift-auth    --remote --config apps/web/wrangler.deploy.aduplift.jsonc
 
       - name: Deploy core (aduplift)
-        run: bun x wrangler deploy --config workers/core/wrangler.deploy.jsonc
+        run: bun x wrangler deploy --config workers/core/wrangler.deploy.aduplift.jsonc
 
       - name: Set core secrets (aduplift)
         run: |
-          echo "${{ secrets.DRAIN_TOKEN }}"          | bun x wrangler secret put DRAIN_TOKEN          --config workers/core/wrangler.deploy.jsonc
-          echo "${{ secrets.POSTBACK_TOKEN_SALT }}"  | bun x wrangler secret put POSTBACK_TOKEN_SALT  --config workers/core/wrangler.deploy.jsonc
+          echo "${{ secrets.DRAIN_TOKEN }}"          | bun x wrangler secret put DRAIN_TOKEN          --config workers/core/wrangler.deploy.aduplift.jsonc
+          echo "${{ secrets.POSTBACK_TOKEN_SALT }}"  | bun x wrangler secret put POSTBACK_TOKEN_SALT  --config workers/core/wrangler.deploy.aduplift.jsonc
 
       - name: Smoke test core (aduplift)
         run: |
