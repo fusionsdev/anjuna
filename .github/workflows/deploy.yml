@@ -96,6 +96,9 @@ jobs:
   deploy-friend:
     name: Deploy (friend)
     needs: deploy-aduplift
+    # Friend's Cloudflare account and wrangler.deploy.friend.jsonc files do not exist
+    # yet (Wave 4 O7, owner-gated). Set repo variable FRIEND_ENABLED=true to turn on.
+    if: ${{ vars.FRIEND_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: friend
     env:
