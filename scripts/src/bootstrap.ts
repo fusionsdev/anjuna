@@ -135,11 +135,30 @@ console.log(`  leads:   ${leadsId}`);
 console.log(`  factory: ${factoryId}`);
 console.log(`  auth:    ${authId}`);
 
+/**
+ * wrangler d1 migrations apply has no --migrations-dir flag in v4.
+ * Write a temp config that specifies the DB + migrations_dir, apply, then delete.
+ */
+function applyMigrations(dbName: string, dbId: string, migrationsDir: string): void {
+  const tempCfg = join(process.cwd(), `.bootstrap-wrangler-${dbName}.json`);
+  const cfg = {
+    name: `bootstrap-${dbName}`,
+    compatibility_date: "2026-08-01",
+    d1_databases: [{ binding: "DB", database_name: dbName, database_id: dbId, migrations_dir: migrationsDir }],
+  };
+  writeFileSync(tempCfg, JSON.stringify(cfg), "utf8");
+  try {
+    wrangler(`d1 migrations apply DB --remote -c "${tempCfg}"`);
+  } finally {
+    try { import("node:fs").then(({ unlinkSync }) => unlinkSync(tempCfg)); } catch {}
+  }
+}
+
 // 2. Apply migrations
 console.log("\nApplying migrations…");
-wrangler(`d1 migrations apply ${prefix}-leads   --remote --migrations-dir packages/leads-db/migrations`);
-wrangler(`d1 migrations apply ${prefix}-factory --remote --migrations-dir packages/factory-db/migrations`);
-wrangler(`d1 migrations apply ${prefix}-auth    --remote --migrations-dir packages/auth-db/migrations`);
+applyMigrations(`${prefix}-leads`,   leadsId,   "packages/leads-db/migrations");
+applyMigrations(`${prefix}-factory`, factoryId, "packages/factory-db/migrations");
+applyMigrations(`${prefix}-auth`,    authId,    "packages/auth-db/migrations");
 console.log("  Migrations applied.");
 
 // 3. R2 bucket
