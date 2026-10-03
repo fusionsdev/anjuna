@@ -196,6 +196,29 @@
         "vitest": "^4.1.0",
       },
     },
+    "scripts": {
+      "name": "@anjuna/scripts",
+      "version": "0.0.0",
+      "dependencies": {
+        "@anjuna/auth-db": "workspace:*",
+        "@anjuna/tenants": "workspace:*",
+        "better-auth": "^1.7.7",
+        "zod": "^4.1.0",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261001.1",
+        "@types/node": "^26.6.3",
+        "typescript": "^5.9.0",
+        "vitest": "^4.1.0",
+      },
+    },
+    "tenants": {
+      "name": "@anjuna/tenants",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "^4.1.0",
+      },
+    },
     "workers/core": {
       "name": "@anjuna/core",
       "version": "0.0.0",
@@ -257,11 +280,15 @@
 
     "@anjuna/mailing": ["@anjuna/mailing@workspace:packages/mailing"],
 
+    "@anjuna/scripts": ["@anjuna/scripts@workspace:scripts"],
+
     "@anjuna/template-astro-starter": ["@anjuna/template-astro-starter@workspace:packages/template-astro-starter"],
 
     "@anjuna/template-cert": ["@anjuna/template-cert@workspace:packages/template-cert"],
 
     "@anjuna/template-mcp": ["@anjuna/template-mcp@workspace:workers/template-mcp"],
+
+    "@anjuna/tenants": ["@anjuna/tenants@workspace:tenants"],
 
     "@anjuna/web": ["@anjuna/web@workspace:apps/web"],
 
