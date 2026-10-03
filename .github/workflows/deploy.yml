@@ -77,9 +77,23 @@ jobs:
           echo "${{ secrets.BETTER_AUTH_SECRET }}" | bun x wrangler secret put BETTER_AUTH_SECRET --config apps/web/wrangler.deploy.aduplift.jsonc
 
       - name: Smoke test web (aduplift)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://app.aduplift.ai/)
+          # Access redirects anonymous requests to its login page. Authenticate CI;
+          # never follow redirects or count the login page as a healthy deployment.
+          : "${CF_ACCESS_CLIENT_ID:?Set CF_ACCESS_CLIENT_ID in the aduplift environment}"
+          : "${CF_ACCESS_CLIENT_SECRET:?Set CF_ACCESS_CLIENT_SECRET in the aduplift environment}"
+          PAGE=$(mktemp)
+          trap 'rm -f "$PAGE"' EXIT
+          STATUS=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --header "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            --header "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            --output "$PAGE" --write-out "%{http_code}" https://app.aduplift.ai/)
           test "$STATUS" = "200" || (echo "web smoke test failed: got $STATUS"; exit 1)
+          cmp --silent apps/web/dist/client/index.html "$PAGE" || \
+            (echo "web smoke test failed: response does not match the deployed SPA build"; exit 1)
 
   # ─────────────────────────────────────────────────────────────────────────
   # Friend tenant — deploys to friend's Cloudflare account (separate token).
@@ -129,6 +143,19 @@ jobs:
           echo "${{ secrets.FRIEND_BETTER_AUTH_SECRET }}" | bun x wrangler secret put BETTER_AUTH_SECRET --config apps/web/wrangler.deploy.friend.jsonc
 
       - name: Smoke test web (friend)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.FRIEND_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.FRIEND_CF_ACCESS_CLIENT_SECRET }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.FRIEND_APP_DOMAIN }}/)
+          : "${CF_ACCESS_CLIENT_ID:?Set FRIEND_CF_ACCESS_CLIENT_ID in the friend environment}"
+          : "${CF_ACCESS_CLIENT_SECRET:?Set FRIEND_CF_ACCESS_CLIENT_SECRET in the friend environment}"
+          PAGE=$(mktemp)
+          trap 'rm -f "$PAGE"' EXIT
+          STATUS=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --header "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            --header "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            --output "$PAGE" --write-out "%{http_code}" https://${{ vars.FRIEND_APP_DOMAIN }}/)
           test "$STATUS" = "200" || (echo "friend web smoke test failed: got $STATUS"; exit 1)
+          cmp --silent apps/web/dist/client/index.html "$PAGE" || \
+            (echo "friend web smoke test failed: response does not match the deployed SPA build"; exit 1)
+
