@@ -1,0 +1,52 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-web",
+  "main": "src/server/index.ts",
+  "account_id": "6cb8500c35210800451bd9a535482850",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "app.aduplift.ai",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "AUTH",
+      "database_name": "aduplift-auth",
+      "database_id": "b75cb173-0eac-4bd6-8ef2-51a3eb80f230",
+      "migrations_dir": "../../packages/auth-db/migrations"
+    },
+    {
+      "binding": "FACTORY",
+      "database_name": "aduplift-factory",
+      "database_id": "2eb875cb-ae24-4d06-bf15-8df306046980",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ],
+  "services": [
+    {
+      "binding": "CORE",
+      "service": "anjuna-core",
+      "entrypoint": "AdminService"
+    }
+  ],
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "aduplift.cloudflareaccess.com",
+    "ACCESS_AUD": "644bf3613e70f100e38474630d140e3702243de4b9d730eac29262de429120b1",
+    "BETTER_AUTH_URL": "https://app.aduplift.ai",
+    "MOCK_CORE": "0"
+  }
+}
