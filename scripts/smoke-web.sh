@@ -20,9 +20,31 @@ fi
 
 PAGE=$(mktemp)
 trap 'rm -f "$PAGE"' EXIT
-# Do not follow redirects, including when a configured token is rejected.
-RESP=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
-  "${HEADERS[@]}" --output "$PAGE" --write-out '%{http_code} %{redirect_url}' "$URL")
+
+MAX_RETRIES=${SMOKE_DNS_RETRIES:-5}
+RETRY_DELAY=${SMOKE_DNS_RETRY_DELAY:-15}
+ATTEMPT=0
+RESP=""
+while true; do
+  ATTEMPT=$(( ATTEMPT + 1 ))
+  CURL_RC=0
+  # Do not follow redirects, including when a configured token is rejected.
+  RESP=$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+    "${HEADERS[@]}" --output "$PAGE" --write-out '%{http_code} %{redirect_url}' "$URL") || CURL_RC=$?
+  if [[ "$CURL_RC" -eq 6 ]]; then
+    if [[ "$ATTEMPT" -ge "$MAX_RETRIES" ]]; then
+      echo "web smoke failed: DNS resolution failed for $URL after $MAX_RETRIES attempts (curl exit 6)"
+      exit 1
+    fi
+    echo "web smoke: DNS not ready for $URL (curl exit 6), retry $ATTEMPT/$MAX_RETRIES in ${RETRY_DELAY}s"
+    sleep "$RETRY_DELAY"
+    continue
+  elif [[ "$CURL_RC" -ne 0 ]]; then
+    echo "web smoke failed: curl error $CURL_RC for $URL"
+    exit 1
+  fi
+  break
+done
 STATUS=${RESP%% *}
 LOCATION=${RESP#* }
 if [[ "$STATUS" == 200 ]]; then
