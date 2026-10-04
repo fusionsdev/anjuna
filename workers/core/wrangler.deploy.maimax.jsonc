@@ -1,0 +1,38 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-core",
+  "main": "src/index.ts",
+  "account_id": "c1a44deffd54a8ce35cb9e68abeb7b11",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": [
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "core.maimax.fit",
+      "custom_domain": true
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "*/15 * * * *"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "LEADS",
+      "database_name": "maimax-leads",
+      "database_id": "e22ee9b3-1c94-4c97-ad3a-fca721910bc8",
+      "migrations_dir": "../../packages/leads-db/migrations"
+    },
+    {
+      "binding": "FACTORY",
+      "database_name": "maimax-factory",
+      "database_id": "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ]
+}

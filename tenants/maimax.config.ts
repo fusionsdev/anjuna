@@ -29,6 +29,11 @@ const config: TenantConfig = {
   },
   // REPLACE: maimax owner login email.
   ownerEmail: "owner@maimax.fit",
+  d1: {
+    leads:   "e22ee9b3-1c94-4c97-ad3a-fca721910bc8",
+    factory: "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
+    auth:    "e60dae52-ecb6-4640-901f-e2e796364c44",
+  },
 };
 
 export default config;
