@@ -65,13 +65,13 @@ jobs:
           echo "${{ secrets.POSTBACK_TOKEN_SALT }}"  | bun x wrangler secret put POSTBACK_TOKEN_SALT  --config workers/core/wrangler.deploy.aduplift.jsonc
 
       - name: Set listmonk secrets (aduplift)
-        if: ${{ secrets.LISTMONK_URL != '' }}
         env:
           LISTMONK_URL: ${{ secrets.LISTMONK_URL }}
           LISTMONK_USER: ${{ secrets.LISTMONK_USER }}
           LISTMONK_TOKEN: ${{ secrets.LISTMONK_TOKEN }}
           LISTMONK_LIST_MAP: ${{ secrets.LISTMONK_LIST_MAP }}
         run: |
+          [ -z "$LISTMONK_URL" ] && echo "LISTMONK_URL not set, skipping" && exit 0
           echo "$LISTMONK_URL"      | bun x wrangler secret put LISTMONK_URL      --config workers/core/wrangler.deploy.aduplift.jsonc
           echo "$LISTMONK_USER"     | bun x wrangler secret put LISTMONK_USER     --config workers/core/wrangler.deploy.aduplift.jsonc
           echo "$LISTMONK_TOKEN"    | bun x wrangler secret put LISTMONK_TOKEN    --config workers/core/wrangler.deploy.aduplift.jsonc
@@ -135,13 +135,13 @@ jobs:
           echo "${{ secrets.MAIMAX_POSTBACK_TOKEN_SALT }}" | bun x wrangler secret put POSTBACK_TOKEN_SALT --config workers/core/wrangler.deploy.maimax.jsonc
 
       - name: Set listmonk secrets (maimax)
-        if: ${{ secrets.MAIMAX_LISTMONK_URL != '' }}
         env:
           LISTMONK_URL: ${{ secrets.MAIMAX_LISTMONK_URL }}
           LISTMONK_USER: ${{ secrets.MAIMAX_LISTMONK_USER }}
           LISTMONK_TOKEN: ${{ secrets.MAIMAX_LISTMONK_TOKEN }}
           LISTMONK_LIST_MAP: ${{ secrets.MAIMAX_LISTMONK_LIST_MAP }}
         run: |
+          [ -z "$LISTMONK_URL" ] && echo "MAIMAX_LISTMONK_URL not set, skipping" && exit 0
           echo "$LISTMONK_URL"      | bun x wrangler secret put LISTMONK_URL      --config workers/core/wrangler.deploy.maimax.jsonc
           echo "$LISTMONK_USER"     | bun x wrangler secret put LISTMONK_USER     --config workers/core/wrangler.deploy.maimax.jsonc
           echo "$LISTMONK_TOKEN"    | bun x wrangler secret put LISTMONK_TOKEN    --config workers/core/wrangler.deploy.maimax.jsonc
