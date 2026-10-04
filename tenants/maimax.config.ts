@@ -20,6 +20,8 @@ const config: TenantConfig = {
   prepopBase: "https://go.personalloanpro.com/aff_c",
   // REPLACE: maimax drain (AdKit) endpoint.
   drainUrl: "https://drain.aduplift.ai",
+  // REPLACE: maimax listmonk base URL once the listmonk instance is deployed.
+  listmonkUrl: undefined,
   secrets: {
     // GitHub Actions secret names in the `maimax` Environment — must differ from aduplift secrets.
     cloudflareApiToken: "MAIMAX_CLOUDFLARE_API_TOKEN",
