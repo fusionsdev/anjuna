@@ -44,8 +44,8 @@
     }
   ],
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "<FILL: maimax Access team domain>",
-    "ACCESS_AUD": "<FILL: maimax Access AUD tag>",
+    "ACCESS_TEAM_DOMAIN": "snowy-forest-7b45.cloudflareaccess.com",
+    "ACCESS_AUD": "792df5aed44413b8808173bad3c4ec805dfc993fe790aa808d0d82af639f74d2",
     "BETTER_AUTH_URL": "https://app.maimax.fit",
     "MOCK_CORE": "0"
   }
