@@ -1,0 +1,46 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-factory",
+  "main": "src/index.ts",
+  "account_id": "6cb8500c35210800451bd9a535482850",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "FACTORY",
+      "database_name": "anjuna-factory",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "anjuna-artifacts"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "install-brand",
+      "binding": "INSTALL_WORKFLOW",
+      "class_name": "InstallBrandWorkflow"
+    },
+    {
+      "name": "rollback-brand",
+      "binding": "ROLLBACK_WORKFLOW",
+      "class_name": "RollbackBrandWorkflow"
+    },
+    {
+      "name": "upgrade-all",
+      "binding": "UPGRADE_WORKFLOW",
+      "class_name": "UpgradeAllWorkflow"
+    }
+  ],
+  "vars": {
+    "CF_ACCOUNT_ID": "6cb8500c35210800451bd9a535482850"
+  }
+  // Secrets (set via `wrangler secret put`, never committed):
+  //   CF_API_TOKEN — scoped: Workers Scripts:Edit, Workers Domains:Edit, DNS:Read, Zones:Read
+}
