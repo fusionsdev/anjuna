@@ -76,10 +76,19 @@ describe("rate limit", () => {
 });
 
 describe("tools over streamable HTTP", () => {
-  it("lists exactly the four tools", async () => {
+  it("lists all tools including certification pipeline", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["check_github_repo", "check_template", "get_template_contract", "similarity_check"]);
+    const names = tools.map((t) => t.name).sort();
+    // Original four tools.
+    expect(names).toContain("check_github_repo");
+    expect(names).toContain("check_template");
+    expect(names).toContain("get_template_contract");
+    expect(names).toContain("similarity_check");
+    // T11 certification pipeline tools.
+    expect(names).toContain("import_template_version");
+    expect(names).toContain("certify_template_version");
+    expect(names).toContain("seal_template_version");
     await client.close();
   });
 
