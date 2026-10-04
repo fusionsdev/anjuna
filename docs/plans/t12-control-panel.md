@@ -10,7 +10,7 @@ Status: approved by owner 2026-10-02. Linear: FUS-347 (split into T12-0, T12a an
 | 2 | Stack | React + Vite SPA plus one Worker that serves the SPA and the panel API (BFF). Same toolchain as `apps/lead-form`. |
 | 3 | Outer protection | Cloudflare Access in front of `app.aduplift.ai` (owner email allowlist), configured in the dashboard. better-auth still handles roles inside. |
 | 4 | UI language | Thai labels, technical terms in English (as in the prototype). |
-| 5 | Users per tenant | 1 owner + 2 employees. Friend's tenant (T17): the friend is owner, with 2 employees of his own. Users are seeded per tenant from tenant config. |
+| 5 | Users per tenant | 1 owner + 2 employees. Maimax tenant (T17): the maimax operator is owner, with 2 employees of their own. Users are seeded per tenant from tenant config. |
 
 ## Data sources
 

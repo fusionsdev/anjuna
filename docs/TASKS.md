@@ -32,7 +32,7 @@ Legend: **[P]** = can run in parallel with the other [P] tasks of the same wave 
 | O4 | LeadsGate: confirm `aid` for the test brand, and add postback entries (Sold, Reject) for the test domain pointing at `https://core.aduplift.ai/api/postback?...`. | T13 |
 | O5 | VPS drain: permission to point a copy of `drain.mjs` at core (peek mode first). | T14 |
 | O6 | listmonk: instance URL + API user for the mailing list. | T8 |
-| O7 | Friend's installation: his own Cloudflare account + scoped token (into a GitHub Environment), core domain, LeadsGate aid/postback, drain/AdKit target, listmonk. Same items as O1–O6, for his tenant. | T17, friend go-live |
+| O7 | Maimax installation: its own Cloudflare account + scoped token (into a GitHub Environment), core domain, LeadsGate aid/postback, drain/AdKit target, listmonk. Same items as O1–O6, for that tenant. | T17, maimax go-live |
 
 ---
 
@@ -166,18 +166,18 @@ Legend: **[P]** = can run in parallel with the other [P] tasks of the same wave 
   - mailing status.
 - **Accept:** Employee can create and install a brand from Domain + Keyword; Owner-only actions are guarded; every config change is audit-logged. **Blocks:** T16.
 
-### T17 [P] Tenant bootstrap + managed deploy (friend's installation) · Agent: claude + codex
-**Context:** the owner also operates a second, fully separate installation for a friend. The friend has his own Cloudflare account, LeadsGate (aid, postback token), drain/AdKit, Google Ads, listmonk and data. The owner builds and operates it. This is the same product installed twice, **not** multi-tenant: no shared D1, no `tenant_id`, nothing that could route the friend's leads or conversions into the owner's systems.
+### T17 [P] Tenant bootstrap + managed deploy (maimax installation) · Agent: claude + codex
+**Context:** the owner also operates a second, fully separate installation for maimax. Maimax has its own Cloudflare account, LeadsGate (aid, postback token), drain/AdKit, Google Ads, listmonk and data. The owner builds and operates it. This is the same product installed twice, **not** multi-tenant: no shared D1, no `tenant_id`, nothing that could route maimax leads or conversions into the owner's systems.
 - **Do:**
   - `tenants/<name>.config.ts`, validated with Zod: core domain, account IDs, LeadsGate `aid` + prepop base, drain URL, listmonk URL, alert channel. Secrets are referenced by name only.
   - `bootstrap` command (alchemy stage per tenant): create D1 (`leads`, `factory`, `auth`), R2, Workers, Workflows and the core Custom Domain in that tenant's account; run migrations; seed the owner login.
-  - CI deploy matrix: one GitHub Environment per tenant holding that tenant's Cloudflare token and secrets. A release tag deploys core + control panel to each tenant in turn (owner first, friend second), with the smoke test after each.
+  - CI deploy matrix: one GitHub Environment per tenant holding that tenant's Cloudflare token and secrets. A release tag deploys core + control panel to each tenant in turn (owner first, maimax second), with the smoke test after each.
   - Each tenant's brand installs (T10) run with that tenant's token only.
 - **Accept:**
   - Bootstrap on an empty test account produces a working core + control panel.
   - The same release deploys to two tenants with separate state; a cross-tenant grep finds no shared IDs or secrets.
   - A tenant's token cannot touch the other tenant's account.
-- **Blocks:** friend go-live.
+- **Blocks:** maimax go-live.
 
 ---
 

@@ -80,15 +80,15 @@ it("validates workflow YAML, shell syntax, tenant wiring and preserved main fixe
   const workflow = document.toJS() as {
     jobs: Record<string, { needs?: string; if?: string; steps: { name?: string; run?: string; env?: Record<string, string> }[] }>;
   };
-  expect(workflow.jobs["deploy-friend"]?.if).toBe("${{ vars.FRIEND_ENABLED == 'true' }}");
-  expect(workflow.jobs["deploy-friend"]?.needs).toBe("deploy-aduplift");
-  for (const tenant of ["aduplift", "friend"]) {
+  expect(workflow.jobs["deploy-maimax"]?.if).toBe("${{ vars.MAIMAX_ENABLED == 'true' }}");
+  expect(workflow.jobs["deploy-maimax"]?.needs).toBe("deploy-aduplift");
+  for (const tenant of ["aduplift", "maimax"]) {
     const steps = workflow.jobs[`deploy-${tenant}`]?.steps;
     const web = steps?.find((step) => step.name === `Smoke test web (${tenant})`);
-    const prefix = tenant === "friend" ? "FRIEND_" : "";
+    const prefix = tenant === "maimax" ? "MAIMAX_" : "";
     expect(web?.env?.CF_ACCESS_CLIENT_ID).toBe(`\${{ secrets.${prefix}CF_ACCESS_CLIENT_ID }}`);
     expect(web?.env?.CF_ACCESS_CLIENT_SECRET).toBe(`\${{ secrets.${prefix}CF_ACCESS_CLIENT_SECRET }}`);
-    const url = tenant === "friend" ? "https://${{ vars.FRIEND_APP_DOMAIN }}/" : "https://app.aduplift.ai/";
+    const url = tenant === "maimax" ? "https://${{ vars.MAIMAX_APP_DOMAIN }}/" : "https://app.aduplift.ai/";
     expect(web?.run?.trim()).toBe(`bash scripts/smoke-web.sh "${url}" apps/web/dist/client/index.html`);
     const core = steps?.find((step) => step.name === `Smoke test core (${tenant})`);
     expect(core?.run).toContain("/api/conversions/pending");

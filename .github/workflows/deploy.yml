@@ -5,7 +5,7 @@ on:
     tags:
       - "v*"
 
-# Each tenant deploys sequentially: owner first, friend second.
+# Each tenant deploys sequentially: owner first, maimax second.
 # Each job uses its own GitHub Environment, which holds that tenant's
 # CLOUDFLARE_API_TOKEN and secrets — a token cannot touch the other tenant's account.
 
@@ -84,19 +84,19 @@ jobs:
           bash scripts/smoke-web.sh "https://app.aduplift.ai/" apps/web/dist/client/index.html
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Friend tenant — deploys to friend's Cloudflare account (separate token).
+  # Maimax tenant — deploys to the maimax Cloudflare account (separate token).
   # Waits for aduplift to succeed first.
   # ─────────────────────────────────────────────────────────────────────────
-  deploy-friend:
-    name: Deploy (friend)
+  deploy-maimax:
+    name: Deploy (maimax)
     needs: deploy-aduplift
-    # Friend's Cloudflare account and wrangler.deploy.friend.jsonc files do not exist
-    # yet (Wave 4 O7, owner-gated). Set repo variable FRIEND_ENABLED=true to turn on.
-    if: ${{ vars.FRIEND_ENABLED == 'true' }}
+    # Maimax's Cloudflare account and wrangler.deploy.maimax.jsonc files do not exist
+    # yet (Wave 4 O7, owner-gated). Set repo variable MAIMAX_ENABLED=true to turn on.
+    if: ${{ vars.MAIMAX_ENABLED == 'true' }}
     runs-on: ubuntu-latest
-    environment: friend
+    environment: maimax
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.FRIEND_CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.MAIMAX_CLOUDFLARE_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -107,35 +107,35 @@ jobs:
         with:
           name: dist
 
-      - name: Apply D1 migrations (friend)
+      - name: Apply D1 migrations (maimax)
         run: |
-          bun x wrangler d1 migrations apply friend-leads   --remote --config workers/core/wrangler.deploy.friend.jsonc
-          bun x wrangler d1 migrations apply friend-factory --remote --config workers/core/wrangler.deploy.friend.jsonc
-          bun x wrangler d1 migrations apply friend-auth    --remote --config apps/web/wrangler.deploy.friend.jsonc
+          bun x wrangler d1 migrations apply maimax-leads   --remote --config workers/core/wrangler.deploy.maimax.jsonc
+          bun x wrangler d1 migrations apply maimax-factory --remote --config workers/core/wrangler.deploy.maimax.jsonc
+          bun x wrangler d1 migrations apply maimax-auth    --remote --config apps/web/wrangler.deploy.maimax.jsonc
 
-      - name: Deploy core (friend)
-        run: bun x wrangler deploy --config workers/core/wrangler.deploy.friend.jsonc
+      - name: Deploy core (maimax)
+        run: bun x wrangler deploy --config workers/core/wrangler.deploy.maimax.jsonc
 
-      - name: Set core secrets (friend)
+      - name: Set core secrets (maimax)
         run: |
-          echo "${{ secrets.FRIEND_DRAIN_TOKEN }}"         | bun x wrangler secret put DRAIN_TOKEN         --config workers/core/wrangler.deploy.friend.jsonc
-          echo "${{ secrets.FRIEND_POSTBACK_TOKEN_SALT }}" | bun x wrangler secret put POSTBACK_TOKEN_SALT --config workers/core/wrangler.deploy.friend.jsonc
+          echo "${{ secrets.MAIMAX_DRAIN_TOKEN }}"         | bun x wrangler secret put DRAIN_TOKEN         --config workers/core/wrangler.deploy.maimax.jsonc
+          echo "${{ secrets.MAIMAX_POSTBACK_TOKEN_SALT }}" | bun x wrangler secret put POSTBACK_TOKEN_SALT --config workers/core/wrangler.deploy.maimax.jsonc
 
-      - name: Smoke test core (friend)
+      - name: Smoke test core (maimax)
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.FRIEND_CORE_DOMAIN }}/api/conversions/pending)
-          test "$STATUS" = "401" || (echo "friend core smoke test failed: got $STATUS"; exit 1)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.MAIMAX_CORE_DOMAIN }}/api/conversions/pending)
+          test "$STATUS" = "401" || (echo "maimax core smoke test failed: got $STATUS"; exit 1)
 
-      - name: Deploy web (friend)
-        run: bun x wrangler deploy --config apps/web/wrangler.deploy.friend.jsonc
+      - name: Deploy web (maimax)
+        run: bun x wrangler deploy --config apps/web/wrangler.deploy.maimax.jsonc
 
-      - name: Set web secrets (friend)
+      - name: Set web secrets (maimax)
         run: |
-          echo "${{ secrets.FRIEND_BETTER_AUTH_SECRET }}" | bun x wrangler secret put BETTER_AUTH_SECRET --config apps/web/wrangler.deploy.friend.jsonc
+          echo "${{ secrets.MAIMAX_BETTER_AUTH_SECRET }}" | bun x wrangler secret put BETTER_AUTH_SECRET --config apps/web/wrangler.deploy.maimax.jsonc
 
-      - name: Smoke test web (friend)
+      - name: Smoke test web (maimax)
         env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.FRIEND_CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.FRIEND_CF_ACCESS_CLIENT_SECRET }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.MAIMAX_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.MAIMAX_CF_ACCESS_CLIENT_SECRET }}
         run: |
-          bash scripts/smoke-web.sh "https://${{ vars.FRIEND_APP_DOMAIN }}/" apps/web/dist/client/index.html
+          bash scripts/smoke-web.sh "https://${{ vars.MAIMAX_APP_DOMAIN }}/" apps/web/dist/client/index.html

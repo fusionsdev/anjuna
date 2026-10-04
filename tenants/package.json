@@ -6,7 +6,7 @@
   "exports": {
     "./schema": "./schema.ts",
     "./aduplift.config": "./aduplift.config.ts",
-    "./friend.config": "./friend.config.ts"
+    "./maimax.config": "./maimax.config.ts"
   },
   "dependencies": {
     "zod": "^4.1.0"
