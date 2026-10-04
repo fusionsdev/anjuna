@@ -4,7 +4,7 @@
  *
  * Usage:
  *   bun run bootstrap --tenant aduplift
- *   bun run bootstrap --tenant friend --owner-password <password>
+ *   bun run bootstrap --tenant maimax --owner-password <password>
  *
  * Prerequisites:
  *   - CLOUDFLARE_API_TOKEN must be set in env (or .dev.vars) with the tenant's scoped token.

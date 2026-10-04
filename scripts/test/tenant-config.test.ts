@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TenantConfig, TenantSecrets } from "@anjuna/tenants/schema";
 import aduplift from "@anjuna/tenants/aduplift.config";
-import friend from "@anjuna/tenants/friend.config";
+import maimax from "@anjuna/tenants/maimax.config";
 
 describe("TenantConfig schema", () => {
   it("accepts a valid full config", () => {
@@ -86,13 +86,13 @@ describe("aduplift config", () => {
   });
 });
 
-describe("friend config", () => {
+describe("maimax config", () => {
   it("is a valid TenantConfig", () => {
-    expect(TenantConfig.safeParse(friend).success).toBe(true);
+    expect(TenantConfig.safeParse(maimax).success).toBe(true);
   });
 
   it("secrets are name-references, not values", () => {
-    for (const name of Object.values(friend.secrets)) {
+    for (const name of Object.values(maimax.secrets)) {
       expect(name).toMatch(/^[A-Z][A-Z0-9_]*$/);
     }
   });
@@ -100,31 +100,31 @@ describe("friend config", () => {
 
 describe("cross-tenant isolation", () => {
   it("tenants have different names", () => {
-    expect(aduplift.name).not.toBe(friend.name);
+    expect(aduplift.name).not.toBe(maimax.name);
   });
 
   it("tenants have different accountIds", () => {
-    // Friend uses a placeholder — it won't match the owner's real account ID.
-    expect(aduplift.accountId).not.toBe(friend.accountId);
+    // Maimax uses a placeholder — it won't match the owner's real account ID.
+    expect(aduplift.accountId).not.toBe(maimax.accountId);
   });
 
   it("tenants have different secret names (scoped to each tenant)", () => {
     const ownerSecrets = new Set(Object.values(aduplift.secrets));
-    const friendSecrets = new Set(Object.values(friend.secrets));
+    const maimaxSecrets = new Set(Object.values(maimax.secrets));
     // No overlap — each tenant's secret names are distinct so they map to
     // different GitHub Actions secrets in different Environments.
-    for (const s of friendSecrets) {
+    for (const s of maimaxSecrets) {
       expect(ownerSecrets.has(s)).toBe(false);
     }
   });
 
-  it("owner config contains no friend-prefixed secret names", () => {
+  it("owner config contains no maimax-prefixed secret names", () => {
     const json = JSON.stringify(aduplift);
-    expect(json).not.toContain("FRIEND_");
+    expect(json).not.toContain("MAIMAX_");
   });
 
-  it("friend config contains no owner account ID", () => {
-    const json = JSON.stringify(friend);
+  it("maimax config contains no owner account ID", () => {
+    const json = JSON.stringify(maimax);
     expect(json).not.toContain(aduplift.accountId);
   });
 });

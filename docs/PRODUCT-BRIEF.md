@@ -24,7 +24,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 
 ```
 
-**An internal factory** (control panel + Cloudflare Workflows) creates, installs, upgrades, pauses and rolls back brands. The same product is also installed and operated for a second tenant, the friend's installation.
+**An internal factory** (control panel + Cloudflare Workflows) creates, installs, upgrades, pauses and rolls back brands. The same product is also installed and operated for a second tenant, the maimax installation.
 
 **Guiding principle.** V1 has handled about 1,000 production leads. Port V1 behavior as-is and change only what the new architecture requires. A theoretical edge case is not a requirement.
 
@@ -37,7 +37,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 5. The landing H1 and the form header match the ad keyword (message match).
 6. Each brand can A/B test form variants with a configurable traffic split.
 7. Operators can run many brands: bulk upgrade, pause, rollback, alerts and a funnel report.
-8. The platform can be reinstalled in another Cloudflare account (the friend's installation) and operated from the same CI.
+8. The platform can be reinstalled in another Cloudflare account (the maimax installation) and operated from the same CI.
 
 ## 3\. Non-goals
 
@@ -53,7 +53,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 
 | User | Needs |
 | --- | --- |
-| **Owner** | Approves templates, configures brands, runs install/upgrade/rollback, watches the funnel and alerts, operates the friend's installation. |
+| **Owner** | Approves templates, configures brands, runs install/upgrade/rollback, watches the funnel and alerts, operates the maimax installation. |
 | **Employee** | Creates a brand from Domain + Keyword using a sealed template, and follows the add-brand checklist. |
 | **Visitor (applicant)** | Gets a fast landing page and form on the same origin, and gives clear consent before being handed off to a lender partner. |
 | **Google reviewer / AdsBot** | Sees exactly what visitors see: the same HTML for every user agent. |
@@ -67,7 +67,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 4. As an **employee**, I enter Domain + Keyword, pick a sealed template and click Install. The brand goes live after automatic smoke tests pass, or rolls back automatically if they fail.
 5. As the **owner**, I set Brand X's form split to A 50% / B 50% and compare revenue per form view for each variant.
 6. As the **owner**, I can pause a brand instantly, roll it back to its previous version, or upgrade all brands (canary first).
-7. As the **owner**, I release once and CI deploys to my installation and then to my friend's, each with its own account and secrets.
+7. As the **owner**, I release once and CI deploys to my installation and then to maimax, each with its own account and secrets.
 
 ## 6\. Functional requirements
 
@@ -129,13 +129,13 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 | FA-5 | **Alerts.**• A conversion pending longer than N hours.• A brand with leads but no postbacks in 24 hours.• Submit error rate.• Reject rate per brand. |
 | FA-6 | **Funnel report.** click → /go → form view → submit → sold → revenue, broken down by brand × keyword × A/B variant. |
 
-### 6.6 Tenants (friend's installation)
+### 6.6 Tenants (maimax installation)
 
 | ID | Requirement |
 | --- | --- |
 | TN-1 | `tenants/<name>.config.ts`, validated with Zod: core domain, account IDs, LeadsGate aid and prepop base, drain URL, listmonk URL, alert channel. Secrets appear only as names, never as values. |
 | TN-2 | A `bootstrap` command (an alchemy stage per tenant) creates D1, R2, Workers, Workflows and the core Custom Domain in that tenant's account, runs migrations and seeds the owner login. |
-| TN-3 | A CI deploy matrix with one GitHub Environment per tenant. Each release deploys to the owner first and the friend second, with a smoke test after each. One tenant's token cannot touch the other tenant's account. |
+| TN-3 | A CI deploy matrix with one GitHub Environment per tenant. Each release deploys to the owner first and maimax second, with a smoke test after each. One tenant's token cannot touch the other tenant's account. |
 
 ## 7\. Key flows
 
@@ -215,7 +215,7 @@ anjuna-core @ core.aduplift.ai  (D1 leads, cron: mailing, alerts)
 
 | Wave | Tasks (parallel) | Depends on |
 | --- | --- | --- |
-| 0 — Owner | O1 new account + `aduplift.ai` · O2 scoped token in CI secrets · O3 test domain · O4 LeadsGate aid + postback entries · O5 drain access · O6 listmonk · O7 the friend's equivalents | — |
+| 0 — Owner | O1 new account + `aduplift.ai` · O2 scoped token in CI secrets · O3 test domain · O4 LeadsGate aid + postback entries · O5 drain access · O6 listmonk · O7 the maimax equivalents | — |
 | 1 | T1 ADRs + AGENTS.md · T2 D1 schemas · T3 Zod contracts + V1 golden fixtures · T4 Anjuna Form · T5 template starters (Astro + KeywordSlot) | — |
 | 2 | T6 core (V1 port) · T7 brand runtime · T8 mailing → listmonk · T9 alerts + funnel data | T2, T3 |
 | 3 | T10 install/rollback/upgrade-all Workflows · T11 template certification + seal · T12 control panel · T17 tenant bootstrap + CI matrix | Wave 2 |

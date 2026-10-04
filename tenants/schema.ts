@@ -28,7 +28,7 @@ export const TenantD1 = z.strictObject({
 export type TenantD1 = z.infer<typeof TenantD1>;
 
 export const TenantConfig = z.strictObject({
-  /** Unique lowercase slug, e.g. `"aduplift"` or `"friend"`. Used as a name prefix for resources. */
+  /** Unique lowercase slug, e.g. `"aduplift"` or `"maimax"`. Used as a name prefix for resources. */
   name: z.string().regex(slug, "slug: lowercase, hyphens OK, must start with letter"),
   /** Cloudflare account ID for this tenant. Account IDs are not secrets. */
   accountId: z.string().length(32, "Cloudflare account IDs are 32 hex characters"),

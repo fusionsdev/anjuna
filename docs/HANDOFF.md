@@ -57,4 +57,4 @@ Live on the Cloudflare account "AdUplift" (`6cb8500c35210800451bd9a535482850`; n
 4. T13/T14: a real LeadsGate test-sold and a real drain run. These need the owner and the manager.
 5. T16: the first brand, on a unique builder template.
 
-Not needed for the first brand: T10 install Workflows, T17 the friend's tenant.
+Not needed for the first brand: T10 install Workflows, T17 the maimax tenant.
