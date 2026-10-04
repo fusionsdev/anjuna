@@ -9,8 +9,7 @@
 
 import { runChecks } from "@anjuna/template-cert";
 import type { Source } from "@anjuna/template-cert";
-import { unzipSync } from "fflate";
-import type { FileMap } from "./archive.js";
+import { readZip, type FileMap } from "./archive.js";
 import { computeFingerprint } from "./fingerprint.js";
 import { otherBrands, similarityCheck } from "./tools.js";
 import type { Env } from "./env.js";
@@ -21,15 +20,6 @@ import { takeScreenshot } from "./screenshots.js";
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function unzipToMap(bytes: Uint8Array): FileMap {
-  const out = unzipSync(bytes);
-  const map: FileMap = new Map();
-  for (const [path, data] of Object.entries(out)) {
-    if (!path.endsWith("/")) map.set(path, data);
-  }
-  return map;
 }
 
 function toSource(files: FileMap, label: string): Source {
@@ -76,8 +66,6 @@ export interface ImportResult {
  * @param zipBytes  Raw bytes of the dist/ zip archive.
  * @param params    template_id (caller-chosen), template_name, framework, created_by.
  */
-const MAX_ZIP_BYTES = 30 * 1024 * 1024;
-
 export async function importTemplateVersion(
   db: D1Database,
   r2: R2Bucket,
@@ -89,7 +77,8 @@ export async function importTemplateVersion(
     created_by: string;
   },
 ): Promise<ImportResult> {
-  if (zipBytes.byteLength > MAX_ZIP_BYTES) throw new Error(`ZIP exceeds ${MAX_ZIP_BYTES / (1024 * 1024)} MB limit`);
+  // Validate before any D1 or R2 side effects, using the same limits as certification.
+  readZip(zipBytes);
   const sha256 = await sha256Hex(zipBytes);
   const now = iso();
 
@@ -169,7 +158,7 @@ export async function certifyTemplateVersion(
   const obj = await r2.get(tv.r2_key);
   if (!obj) throw new Error(`R2 object not found: ${tv.r2_key}`);
   const zipBytes = new Uint8Array(await obj.arrayBuffer());
-  const files = unzipToMap(zipBytes);
+  const files = readZip(zipBytes);
   const source = toSource(files, template_version_id);
 
   const checks: CertCheckRow[] = [];

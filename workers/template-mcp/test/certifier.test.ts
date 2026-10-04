@@ -1,3 +1,4 @@
+import { LIMITS } from "../src/archive";
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { certifyTemplateVersion, importTemplateVersion, sealTemplateVersion } from "../src/certifier";
@@ -65,6 +66,52 @@ describe("importTemplateVersion", () => {
     await expect(
       importTemplateVersion(env.FACTORY, env.ARTIFACTS, bigZip, { template_id: "big", template_name: "Big", framework: "astro", created_by: "u" }),
     ).rejects.toThrow();
+  });
+});
+
+// Exercise both entry points: certification must also reject archives stored by
+// older importers, so replace a draft's object directly rather than re-import it.
+const unsafeArchives = [
+  { name: "11 MiB expanded file", code: "file_too_large", zip: () =>
+    toZip(withFile(goodSite(), "large.txt", new Uint8Array(11 * 1024 * 1024))) },
+  { name: "total expansion over 100 MiB", code: "too_large", zip: () => {
+    const files = goodSite();
+    const chunk = new Uint8Array(LIMITS.maxFileBytes);
+    for (let i = 0; i < 11; i++) files.set(`chunk-${i}.txt`, chunk);
+    return toZip(files);
+  } },
+  { name: "more than 2000 files", code: "too_many_files", zip: () => {
+    const files = goodSite();
+    for (let i = 0; i < LIMITS.maxFiles; i++) files.set(`file-${i}.txt`, new Uint8Array());
+    return toZip(files);
+  } },
+  ...["../escape.html", "nested/../../escape.html", "/absolute.html", "C:/absolute.html"].map((path) => ({
+    name: path, code: path.includes("..") ? "zip_slip" : "unsafe_path",
+    zip: () => toZip(withFile(goodSite(), path, "unsafe")),
+  })),
+];
+
+describe("pipeline archive validation", () => {
+  it.each(unsafeArchives)("import rejects $name before writing", async ({ zip, code }) => {
+    const before = (await env.ARTIFACTS.list()).objects.map((obj) => obj.key);
+    const auditBefore = (await env.FACTORY.prepare("SELECT * FROM audit_log").all()).results;
+    await expect(seedTemplateVersion(zip())).rejects.toMatchObject({ code });
+    expect((await env.FACTORY.prepare("SELECT * FROM templates").all()).results).toHaveLength(0);
+    expect((await env.FACTORY.prepare("SELECT * FROM template_versions").all()).results).toHaveLength(0);
+    expect((await env.FACTORY.prepare("SELECT * FROM audit_log").all()).results).toEqual(auditBefore);
+    expect((await env.ARTIFACTS.list()).objects.map((obj) => obj.key)).toEqual(before);
+  });
+
+  it.each(unsafeArchives)("certify rejects stored $name before rendering", async ({ zip, code }) => {
+    const id = await seedTemplateVersion();
+    const row = await env.FACTORY.prepare("SELECT r2_key FROM template_versions WHERE template_version_id = ?")
+      .bind(id).first<{ r2_key: string }>();
+    await env.ARTIFACTS.put(row!.r2_key, zip());
+    await expect(certifyTemplateVersion(browserEnv, id)).rejects.toMatchObject({ code });
+    expect(takeScreenshot).not.toHaveBeenCalled();
+    expect((await env.FACTORY.prepare("SELECT * FROM certifications").all()).results).toHaveLength(0);
+    expect((await env.FACTORY.prepare("SELECT status FROM template_versions WHERE template_version_id = ?")
+      .bind(id).first())?.status).toBe("draft");
   });
 });
 
