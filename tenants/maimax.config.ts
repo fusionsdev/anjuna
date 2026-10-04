@@ -19,7 +19,7 @@ const config: TenantConfig = {
   leadsGateAid: "17244",
   prepopBase: "https://go.personalloanpro.com/aff_c",
   // REPLACE: maimax drain (AdKit) endpoint.
-  drainUrl: "https://drain.friend.invalid",
+  drainUrl: "https://drain.aduplift.ai",
   secrets: {
     // GitHub Actions secret names in the `maimax` Environment — must differ from aduplift secrets.
     cloudflareApiToken: "MAIMAX_CLOUDFLARE_API_TOKEN",
