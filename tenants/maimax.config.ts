@@ -10,7 +10,7 @@ import type { TenantConfig } from "./schema";
 const config: TenantConfig = {
   name: "maimax",
   // REPLACE: maimax Cloudflare account ID (32 hex chars, from Cloudflare dashboard).
-  accountId: "515f15b69f7131ec7fe8f6bf785ee7d7",
+  accountId: "c1a44deffd54a8ce35cb9e68abeb7b11",
   // Owner-provided hostname of the maimax core Worker.
   coreDomain: "core.maimax.fit",
   // Owner-provided hostname of the maimax control panel Worker.
