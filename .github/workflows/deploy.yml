@@ -77,17 +77,11 @@ jobs:
           echo "${{ secrets.BETTER_AUTH_SECRET }}" | bun x wrangler secret put BETTER_AUTH_SECRET --config apps/web/wrangler.deploy.aduplift.jsonc
 
       - name: Smoke test web (aduplift)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          # The web app sits behind Cloudflare Access: unauthenticated requests get a
-          # 302 to <team>.cloudflareaccess.com. Accept that (or 200), nothing else.
-          RESP=$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" https://app.aduplift.ai/)
-          STATUS=${RESP%% *}
-          LOCATION=${RESP#* }
-          if [ "$STATUS" = "200" ] || { [ "$STATUS" = "302" ] && [[ "$LOCATION" == *cloudflareaccess.com* ]]; }; then
-            echo "web smoke test ok: $STATUS $LOCATION"
-          else
-            echo "web smoke test failed: got $STATUS $LOCATION"; exit 1
-          fi
+          bash scripts/smoke-web.sh "https://app.aduplift.ai/" apps/web/dist/client/index.html
 
   # ─────────────────────────────────────────────────────────────────────────
   # Friend tenant — deploys to friend's Cloudflare account (separate token).
@@ -140,14 +134,8 @@ jobs:
           echo "${{ secrets.FRIEND_BETTER_AUTH_SECRET }}" | bun x wrangler secret put BETTER_AUTH_SECRET --config apps/web/wrangler.deploy.friend.jsonc
 
       - name: Smoke test web (friend)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.FRIEND_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.FRIEND_CF_ACCESS_CLIENT_SECRET }}
         run: |
-          # The web app sits behind Cloudflare Access: unauthenticated requests get a
-          # 302 to <team>.cloudflareaccess.com. Accept that (or 200), nothing else.
-          RESP=$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" https://${{ vars.FRIEND_APP_DOMAIN }}/)
-          STATUS=${RESP%% *}
-          LOCATION=${RESP#* }
-          if [ "$STATUS" = "200" ] || { [ "$STATUS" = "302" ] && [[ "$LOCATION" == *cloudflareaccess.com* ]]; }; then
-            echo "friend web smoke test ok: $STATUS $LOCATION"
-          else
-            echo "friend web smoke test failed: got $STATUS $LOCATION"; exit 1
-          fi
+          bash scripts/smoke-web.sh "https://${{ vars.FRIEND_APP_DOMAIN }}/" apps/web/dist/client/index.html
