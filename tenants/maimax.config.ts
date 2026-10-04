@@ -10,13 +10,13 @@ import type { TenantConfig } from "./schema";
 const config: TenantConfig = {
   name: "maimax",
   // REPLACE: maimax Cloudflare account ID (32 hex chars, from Cloudflare dashboard).
-  accountId: "00000000000000000000000000000000",
+  accountId: "515f15b69f7131ec7fe8f6bf785ee7d7",
   // Owner-provided hostname of the maimax core Worker.
   coreDomain: "core.maimax.fit",
   // Owner-provided hostname of the maimax control panel Worker.
   appDomain: "app.maimax.fit",
   // REPLACE: LeadsGate affiliate ID for the maimax account.
-  leadsGateAid: "REPLACE_WITH_FRIEND_AID",
+  leadsGateAid: "17244",
   prepopBase: "https://go.personalloanpro.com/aff_c",
   // REPLACE: maimax drain (AdKit) endpoint.
   drainUrl: "https://drain.friend.invalid",
@@ -28,7 +28,7 @@ const config: TenantConfig = {
     postbackTokenSalt: "MAIMAX_POSTBACK_TOKEN_SALT",
   },
   // REPLACE: maimax owner login email.
-  ownerEmail: "owner@friend.invalid",
+  ownerEmail: "owner@maimax.fit",
 };
 
 export default config;
