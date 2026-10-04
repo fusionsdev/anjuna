@@ -6,7 +6,7 @@ declare global {
       MCP_OBJECT: DurableObjectNamespace;
       /** R2: sealed template archives and screenshot artifacts (T11). */
       ARTIFACTS: R2Bucket;
-      /** Cloudflare Browser Rendering binding — absent unless bound. Screenshot step skips when missing. */
+      /** Cloudflare Browser Rendering binding — absent unless bound. Certification fails when missing. */
       BROWSER?: Fetcher;
       /** Optional read-only GitHub token (secret) so check_github_repo can read private repos. */
       GITHUB_TOKEN?: string;

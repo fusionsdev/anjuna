@@ -12,8 +12,9 @@ import type { Source } from "@anjuna/template-cert";
 import { unzipSync } from "fflate";
 import type { FileMap } from "./archive.js";
 import { computeFingerprint } from "./fingerprint.js";
-import { similarityCheck, similarityThreshold } from "./tools.js";
+import { otherBrands, similarityCheck } from "./tools.js";
 import type { Env } from "./env.js";
+import { takeScreenshot } from "./screenshots.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,25 @@ function toSource(files: FileMap, label: string): Source {
 
 function iso(): string {
   return new Date().toISOString();
+}
+
+function audit(db: D1Database, action: string, id: string, actor: string, role: "owner" | "system", before: unknown, after: unknown, now: string) {
+  return db.prepare(`INSERT INTO audit_log
+    (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+    SELECT ?1, ?2, ?3, 'template_version', ?4, ?5, ?6, ?7 WHERE changes() > 0`)
+    .bind(actor, role, action, id, JSON.stringify(before), JSON.stringify(after), now);
+}
+
+const viewports = [
+  { check_name: "screenshot_desktop" as const, width: 1280, height: 800 },
+  { check_name: "screenshot_mobile" as const, width: 390, height: 844 },
+];
+
+async function requireArtifact(r2: R2Bucket, key: string): Promise<void> {
+  const artifact = await r2.head(key);
+  if (!artifact || artifact.size === 0 || artifact.httpMetadata?.contentType !== "image/png") {
+    throw new Error(`Missing PNG screenshot artifact: ${key}. Re-run certification.`);
+  }
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -74,12 +94,11 @@ export async function importTemplateVersion(
   const now = iso();
 
   // Ensure the parent template row exists.
-  await db
+  const parent = db
     .prepare(
       "INSERT OR IGNORE INTO templates (template_id, name, framework, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
     )
-    .bind(params.template_id, params.template_name, params.framework, params.created_by, now)
-    .run();
+    .bind(params.template_id, params.template_name, params.framework, params.created_by, now);
 
   // Next version number for this template.
   const row = await db
@@ -95,14 +114,15 @@ export async function importTemplateVersion(
   await r2.put(r2_key, zipBytes, { httpMetadata: { contentType: "application/zip" } });
 
   // Insert the template_version row.
-  await db
+  await db.batch([parent, db
     .prepare(
       `INSERT INTO template_versions
          (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, 'draft', ?6, ?7)`,
     )
-    .bind(template_version_id, params.template_id, version, sha256, r2_key, params.created_by, now)
-    .run();
+    .bind(template_version_id, params.template_id, version, sha256, r2_key, params.created_by, now),
+    audit(db, "template.import", template_version_id, params.created_by, "system", null, { status: "draft", sha256, r2_key }, now),
+  ]);
 
   return { template_version_id, template_id: params.template_id, version, sha256, r2_key };
 }
@@ -128,7 +148,7 @@ export interface CertifyResult {
  * Updates template_versions.status to 'certified' or 'rejected'.
  *
  * Browser Rendering screenshots require env.BROWSER (owner-gated, Wave 4).
- * When env.BROWSER is absent the screenshot checks are skipped and a note is included.
+ * Missing Browser Rendering or screenshot evidence rejects certification.
  */
 export async function certifyTemplateVersion(
   env: Pick<Env, "FACTORY" | "ARTIFACTS" | "BROWSER" | "SIMILARITY_THRESHOLD">,
@@ -146,9 +166,6 @@ export async function certifyTemplateVersion(
   if (!tv) throw new Error(`template_version ${template_version_id} not found`);
   if (tv.status === "sealed") throw new Error("Template version is already sealed");
 
-  // Update status to 'certifying'.
-  await db.prepare("UPDATE template_versions SET status = 'certifying' WHERE template_version_id = ?1").bind(template_version_id).run();
-
   const obj = await r2.get(tv.r2_key);
   if (!obj) throw new Error(`R2 object not found: ${tv.r2_key}`);
   const zipBytes = new Uint8Array(await obj.arrayBuffer());
@@ -159,7 +176,8 @@ export async function certifyTemplateVersion(
   const repair_messages: string[] = [];
 
   // ── 1. Lint ─────────────────────────────────────────────────────────────────
-  const lintResult = runChecks(source);
+  const denyDomains = (await otherBrands(env, brand_id)).map((brand) => brand.domain);
+  const lintResult = runChecks(source, { denyDomains });
   const lintPass = lintResult.ok;
   const lintDetails = {
     errors: lintResult.errors,
@@ -185,45 +203,39 @@ export async function certifyTemplateVersion(
     repair_messages.push(...similarity.fixes);
   }
 
-  // Store fingerprint for future similarity checks (regardless of pass/fail — for the record).
-  await db
-    .prepare("INSERT OR REPLACE INTO template_fingerprints (template_version_id, fingerprint_json, created_at) VALUES (?1, ?2, ?3)")
-    .bind(template_version_id, JSON.stringify(fingerprint), now)
-    .run();
-
-  // ── 3. Screenshots (Browser Rendering — Wave 4 gated) ──────────────────────
-  if (env.BROWSER) {
-    const htmlEntry = files.get("index.html") ?? files.get("index.htm");
-    const html = htmlEntry ? new TextDecoder().decode(htmlEntry) : "<html><body><p>No index.html</p></body></html>";
-    for (const viewport of [
-      { check_name: "screenshot_desktop" as const, width: 1280, height: 800 },
-      { check_name: "screenshot_mobile" as const, width: 390, height: 844 },
-    ]) {
-      try {
-        const screenshotBytes = await takeScreenshot(env.BROWSER, html, viewport.width, viewport.height);
-        const key = `screenshots/${template_version_id}/${viewport.check_name}.png`;
-        await r2.put(key, screenshotBytes, { httpMetadata: { contentType: "image/png" } });
-        checks.push({ check_name: viewport.check_name, result: "pass", details: { width: viewport.width, height: viewport.height }, artifact_r2_key: key });
-      } catch (err) {
-        checks.push({ check_name: viewport.check_name, result: "fail", details: { error: String(err) } });
-      }
+  // Both screenshots are mandatory, including when the binding is absent.
+  const runId = crypto.randomUUID();
+  for (const viewport of viewports) {
+    try {
+      if (!env.BROWSER) throw new Error("Bind BROWSER and re-run certification to capture desktop and mobile evidence.");
+      const screenshotBytes = await takeScreenshot(env.BROWSER, files, viewport.width, viewport.height);
+      if (!screenshotBytes.byteLength) throw new Error("Browser returned an empty screenshot; re-run certification.");
+      const key = `screenshots/${template_version_id}/${runId}/${viewport.check_name}.png`;
+      await r2.put(key, screenshotBytes, { httpMetadata: { contentType: "image/png" } });
+      await requireArtifact(r2, key);
+      checks.push({ check_name: viewport.check_name, result: "pass", details: { width: viewport.width, height: viewport.height }, artifact_r2_key: key });
+    } catch (err) {
+      checks.push({ check_name: viewport.check_name, result: "fail", details: { error: String(err) } });
+      repair_messages.push(`[${viewport.check_name}] ${String(err)}`);
     }
   }
 
   // ── Persist certification rows ─────────────────────────────────────────────
-  await db.batch(
-    checks.map((c) =>
+  const allPass = checks.every((c) => c.result === "pass");
+  const newStatus = allPass ? "certified" : "rejected";
+  await db.batch([
+    db.prepare("INSERT OR REPLACE INTO template_fingerprints (template_version_id, fingerprint_json, created_at) VALUES (?1, ?2, ?3)")
+      .bind(template_version_id, JSON.stringify(fingerprint), now),
+    ...checks.map((c) =>
       db
         .prepare(
           "INSERT INTO certifications (template_version_id, check_name, result, details_json, artifact_r2_key, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .bind(template_version_id, c.check_name, c.result, JSON.stringify(c.details), c.artifact_r2_key ?? null, now),
     ),
-  );
-
-  const allPass = checks.every((c) => c.result === "pass");
-  const newStatus = allPass ? "certified" : "rejected";
-  await db.prepare("UPDATE template_versions SET status = ?1 WHERE template_version_id = ?2").bind(newStatus, template_version_id).run();
+    db.prepare("UPDATE template_versions SET status = ?1 WHERE template_version_id = ?2").bind(newStatus, template_version_id),
+    audit(db, "template.certify", template_version_id, "system", "system", { status: tv.status }, { status: newStatus, checks }, now),
+  ]);
 
   return { template_version_id, status: newStatus, checks, repair_messages };
 }
@@ -242,6 +254,7 @@ export interface SealResult {
  */
 export async function sealTemplateVersion(
   db: D1Database,
+  r2: R2Bucket,
   ownerSecret: string | undefined,
   envOwnerSecret: string | undefined,
   template_version_id: string,
@@ -257,35 +270,28 @@ export async function sealTemplateVersion(
   if (!tv) throw new Error(`template_version ${template_version_id} not found`);
   if (tv.status !== "certified") throw new Error(`Cannot seal: status is '${tv.status}', expected 'certified'`);
 
+  // Only the latest result for each viewport counts; old passes cannot mask a failed retry.
+  const { results } = await db.prepare(`SELECT id, check_name, result, artifact_r2_key FROM certifications
+    WHERE id IN (SELECT MAX(id) FROM certifications WHERE template_version_id = ?1 GROUP BY check_name)`)
+    .bind(template_version_id).all<{ id: number; check_name: string; result: string; artifact_r2_key: string | null }>();
+  for (const viewport of viewports) {
+    const check = results.find((row) => row.check_name === viewport.check_name);
+    if (check?.result !== "pass" || !check.artifact_r2_key) {
+      throw new Error(`Cannot seal: missing passing ${viewport.check_name} evidence. Re-run certification.`);
+    }
+    await requireArtifact(r2, check.artifact_r2_key);
+  }
+
   const sealed_at = iso();
-  await db
-    .prepare("UPDATE template_versions SET status = 'sealed', sealed_by = ?2, sealed_at = ?3 WHERE template_version_id = ?1")
-    .bind(template_version_id, sealed_by, sealed_at)
-    .run();
+  const latestCheckId = Math.max(...results.map((row) => row.id));
+  const [update] = await db.batch([
+    db.prepare(`UPDATE template_versions SET status = 'sealed', sealed_by = ?2, sealed_at = ?3
+      WHERE template_version_id = ?1 AND status = 'certified'
+      AND (SELECT MAX(id) FROM certifications WHERE template_version_id = ?1) = ?4`)
+      .bind(template_version_id, sealed_by, sealed_at, latestCheckId),
+    audit(db, "template.seal", template_version_id, sealed_by, "owner", { status: "certified" }, { status: "sealed", sealed_by, sealed_at }, sealed_at),
+  ]);
+  if (!update?.meta.changes) throw new Error("Cannot seal: certification changed. Retry after certification completes.");
 
   return { template_version_id, sealed_by, sealed_at };
-}
-
-// ── Browser Rendering helper (Wave 4) ─────────────────────────────────────────
-
-/**
- * Takes a screenshot of `html` at the given viewport using Cloudflare Browser Rendering.
- * Only called when env.BROWSER is bound (production / Wave 4).
- */
-async function takeScreenshot(browser: Fetcher, html: string, width: number, height: number): Promise<Uint8Array> {
-  // Cloudflare Browser Rendering is accessed via @cloudflare/puppeteer, which uses the BROWSER binding.
-  // Dynamic import avoids a hard dep in test environments where puppeteer is absent.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const puppeteer: any = await import("@cloudflare/puppeteer" as string).catch(() => null);
-  if (!puppeteer) throw new Error("@cloudflare/puppeteer not available");
-  const b = await puppeteer.default.launch(browser as unknown as Parameters<typeof puppeteer.default.launch>[0]);
-  try {
-    const page = await b.newPage();
-    await page.setViewport({ width, height });
-    await page.setContent(html, { waitUntil: "networkidle0" });
-    const buf = await page.screenshot({ type: "png" });
-    return new Uint8Array(buf as ArrayBuffer);
-  } finally {
-    await b.close();
-  }
 }

@@ -35,7 +35,7 @@ function loadSource(args: { zip_base64?: string; url?: string }): Promise<Loaded
   return args.zip_base64 !== undefined ? loadZipBase64(args.zip_base64) : loadFromUrl(args.url!);
 }
 
-async function otherBrands(env: Env, brandId?: string): Promise<OtherBrand[]> {
+export async function otherBrands(env: Pick<Env, "FACTORY">, brandId?: string): Promise<OtherBrand[]> {
   const { results } = await env.FACTORY.prepare("SELECT name, domain FROM brands WHERE brand_id != ?1 AND status != 'retired'")
     .bind(brandId ?? "")
     .all<OtherBrand>();
@@ -263,7 +263,7 @@ export function registerTools(server: McpServer, env: Env): void {
     {
       title: "Run certification checks on a template version",
       description:
-        "Run lint, identity scan, and (if Browser Rendering is bound) screenshots on a template_version. " +
+        "Run lint, identity scan, and required desktop/mobile Browser Rendering screenshots on a template_version. " +
         "Writes certification rows to D1 and sets status to 'certified' or 'rejected'. " +
         "Pass all checks before calling seal_template_version. " +
         "Returns a repair_messages array with actionable fixes for every failing check.",
@@ -299,7 +299,7 @@ export function registerTools(server: McpServer, env: Env): void {
     },
     async (args) => {
       try {
-        const result = await sealTemplateVersion(env.FACTORY, args.owner_secret, env.OWNER_SECRET, args.template_version_id, args.sealed_by);
+        const result = await sealTemplateVersion(env.FACTORY, env.ARTIFACTS, args.owner_secret, env.OWNER_SECRET, args.template_version_id, args.sealed_by);
         return text({ pass: true, ...result });
       } catch (error) {
         return failure(error);

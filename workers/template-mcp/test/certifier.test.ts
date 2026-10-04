@@ -1,14 +1,17 @@
-import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { certifyTemplateVersion, importTemplateVersion, sealTemplateVersion } from "../src/certifier";
 import { goodSite, toZip, withFile, withIndex } from "./fixtures";
-import { setupDb, resetDb } from "./helpers";
+import { setupDb, resetDb, addBrand } from "./helpers";
 
 beforeAll(setupDb);
-beforeEach(resetDb);
-
-const enc = (s: string) => new TextEncoder().encode(s);
+vi.mock("../src/screenshots", () => ({ takeScreenshot: vi.fn() }));
+import { takeScreenshot } from "../src/screenshots";
+const browserEnv = { ...env, BROWSER: {} as Fetcher };
+beforeEach(async () => {
+  await resetDb();
+  vi.mocked(takeScreenshot).mockReset().mockResolvedValue(new Uint8Array([137, 80, 78, 71]));
+});
 
 const goodZip = () => toZip(goodSite());
 
@@ -68,7 +71,7 @@ describe("importTemplateVersion", () => {
 describe("certifyTemplateVersion — T5 starters", () => {
   it("good template (goodSite) passes lint and identity scan → certified", async () => {
     const tvId = await seedTemplateVersion(goodZip());
-    const result = await certifyTemplateVersion(env, tvId);
+    const result = await certifyTemplateVersion(browserEnv, tvId);
     const lintCheck = result.checks.find((c) => c.check_name === "lint");
     const idCheck = result.checks.find((c) => c.check_name === "identity_scan");
     expect(lintCheck?.result).toBe("pass");
@@ -79,14 +82,14 @@ describe("certifyTemplateVersion — T5 starters", () => {
 
   it("writes certification rows to D1", async () => {
     const tvId = await seedTemplateVersion(goodZip());
-    await certifyTemplateVersion(env, tvId);
+    await certifyTemplateVersion(browserEnv, tvId);
     const rows = await env.FACTORY.prepare("SELECT check_name, result FROM certifications WHERE template_version_id = ?").bind(tvId).all<{ check_name: string; result: string }>();
-    expect(rows.results.length).toBeGreaterThanOrEqual(2);
+    expect(rows.results).toHaveLength(4);
   });
 
   it("stores fingerprint in template_fingerprints", async () => {
     const tvId = await seedTemplateVersion(goodZip());
-    await certifyTemplateVersion(env, tvId);
+    await certifyTemplateVersion(browserEnv, tvId);
     const fp = await env.FACTORY.prepare("SELECT fingerprint_json FROM template_fingerprints WHERE template_version_id = ?").bind(tvId).first<{ fingerprint_json: string }>();
     expect(fp).toBeTruthy();
     const parsed = JSON.parse(fp!.fingerprint_json);
@@ -97,7 +100,7 @@ describe("certifyTemplateVersion — T5 starters", () => {
 describe("certifyTemplateVersion — rejection", () => {
   it("template with external script → rejected with repair message", async () => {
     const tvId = await seedTemplateVersion(withExternalScript());
-    const result = await certifyTemplateVersion(env, tvId);
+    const result = await certifyTemplateVersion(browserEnv, tvId);
     const lintCheck = result.checks.find((c) => c.check_name === "lint");
     expect(lintCheck?.result).toBe("fail");
     expect(result.status).toBe("rejected");
@@ -107,7 +110,7 @@ describe("certifyTemplateVersion — rejection", () => {
 
   it("template with missing KeywordSlot → rejected with repair message", async () => {
     const tvId = await seedTemplateVersion(noKeywordSlot());
-    const result = await certifyTemplateVersion(env, tvId);
+    const result = await certifyTemplateVersion(browserEnv, tvId);
     const lintCheck = result.checks.find((c) => c.check_name === "lint");
     expect(lintCheck?.result).toBe("fail");
     expect(result.status).toBe("rejected");
@@ -116,7 +119,7 @@ describe("certifyTemplateVersion — rejection", () => {
 
   it("sets status to rejected in D1 on failure", async () => {
     const tvId = await seedTemplateVersion(withExternalScript());
-    await certifyTemplateVersion(env, tvId);
+    await certifyTemplateVersion(browserEnv, tvId);
     const tv = await env.FACTORY.prepare("SELECT status FROM template_versions WHERE template_version_id = ?").bind(tvId).first<{ status: string }>();
     expect(tv?.status).toBe("rejected");
   });
@@ -125,8 +128,8 @@ describe("certifyTemplateVersion — rejection", () => {
 describe("sealTemplateVersion", () => {
   it("seals a certified version", async () => {
     const tvId = await seedTemplateVersion(goodZip(), "seal1");
-    await certifyTemplateVersion(env, tvId);
-    const result = await sealTemplateVersion(env.FACTORY, "test-owner-secret", env.OWNER_SECRET, tvId, "owner-user");
+    await certifyTemplateVersion(browserEnv, tvId);
+    const result = await sealTemplateVersion(env.FACTORY, env.ARTIFACTS, "test-owner-secret", env.OWNER_SECRET, tvId, "owner-user");
     expect(result.sealed_by).toBe("owner-user");
     const tv = await env.FACTORY.prepare("SELECT status, sealed_by, sealed_at FROM template_versions WHERE template_version_id = ?").bind(tvId).first<{ status: string; sealed_by: string; sealed_at: string }>();
     expect(tv?.status).toBe("sealed");
@@ -136,24 +139,118 @@ describe("sealTemplateVersion", () => {
 
   it("rejects wrong owner secret", async () => {
     const tvId = await seedTemplateVersion(goodZip(), "seal2");
-    await certifyTemplateVersion(env, tvId);
+    await certifyTemplateVersion(browserEnv, tvId);
     await expect(
-      sealTemplateVersion(env.FACTORY, "wrong-secret", env.OWNER_SECRET, tvId, "owner-user"),
+      sealTemplateVersion(env.FACTORY, env.ARTIFACTS, "wrong-secret", env.OWNER_SECRET, tvId, "owner-user"),
     ).rejects.toThrow("Invalid owner secret");
   });
 
   it("rejects sealing a draft (not yet certified)", async () => {
     const tvId = await seedTemplateVersion(goodZip(), "seal3");
     await expect(
-      sealTemplateVersion(env.FACTORY, "test-owner-secret", env.OWNER_SECRET, tvId, "owner-user"),
+      sealTemplateVersion(env.FACTORY, env.ARTIFACTS, "test-owner-secret", env.OWNER_SECRET, tvId, "owner-user"),
     ).rejects.toThrow("certified");
   });
 
   it("rejects sealing a rejected version", async () => {
     const tvId = await seedTemplateVersion(withExternalScript(), "seal4");
-    await certifyTemplateVersion(env, tvId);
+    await certifyTemplateVersion(browserEnv, tvId);
     await expect(
-      sealTemplateVersion(env.FACTORY, "test-owner-secret", env.OWNER_SECRET, tvId, "owner-user"),
+      sealTemplateVersion(env.FACTORY, env.ARTIFACTS, "test-owner-secret", env.OWNER_SECRET, tvId, "owner-user"),
     ).rejects.toThrow("certified");
+  });
+});
+
+
+describe("certification evidence and audit regressions", () => {
+  const seal = (id: string) => sealTemplateVersion(env.FACTORY, env.ARTIFACTS, "test-owner-secret", env.OWNER_SECRET, id, "owner-user");
+
+  it("rejects another registered brand domain with repair text", async () => {
+    await addBrand("competitor", "Competitor", "competitor.example");
+    const id = await seedTemplateVersion(toZip(goodSite({ extraBody: "<p>competitor.example</p>" })));
+    const result = await certifyTemplateVersion(browserEnv, id);
+    expect(result.status).toBe("rejected");
+    expect(result.repair_messages.join(" ")).toContain("competitor.example");
+    await expect(seal(id)).rejects.toThrow("certified");
+  });
+
+  it("excludes the specified brand's own domain", async () => {
+    await addBrand("own", "Own", "own.example");
+    const id = await seedTemplateVersion(toZip(goodSite({ extraBody: "<p>own.example</p>" })));
+    expect((await certifyTemplateVersion(browserEnv, id, "own")).status).toBe("certified");
+  });
+
+  it("rejects without BROWSER and reports both missing screenshots", async () => {
+    const id = await seedTemplateVersion();
+    const result = await certifyTemplateVersion(env, id);
+    expect(result.status).toBe("rejected");
+    expect(result.checks.filter((c) => c.result === "fail").map((c) => c.check_name)).toEqual(["screenshot_desktop", "screenshot_mobile"]);
+    expect(result.repair_messages.join(" ")).toContain("Bind BROWSER");
+    expect(takeScreenshot).not.toHaveBeenCalled();
+    await expect(seal(id)).rejects.toThrow("certified");
+  });
+
+  it("persists both viewport artifacts before certification", async () => {
+    const id = await seedTemplateVersion();
+    const result = await certifyTemplateVersion(browserEnv, id);
+    expect(vi.mocked(takeScreenshot).mock.calls.map((c) => c.slice(2))).toEqual([[1280, 800], [390, 844]]);
+    for (const check of result.checks.filter((c) => c.check_name.startsWith("screenshot"))) {
+      expect(check.result).toBe("pass");
+      expect((await env.ARTIFACTS.head(check.artifact_r2_key!))?.size).toBeGreaterThan(0);
+    }
+  });
+
+  it("rejects a failed mobile capture even after an earlier successful run", async () => {
+    const id = await seedTemplateVersion();
+    await certifyTemplateVersion(browserEnv, id);
+    vi.mocked(takeScreenshot).mockResolvedValueOnce(new Uint8Array([1])).mockRejectedValueOnce(new Error("mobile capture failed"));
+    const result = await certifyTemplateVersion(browserEnv, id);
+    expect(result.status).toBe("rejected");
+    expect(result.repair_messages.join(" ")).toContain("mobile capture failed");
+    // Even a legacy/stale certified status must not let old passing evidence through.
+    await env.FACTORY.prepare("UPDATE template_versions SET status = 'certified' WHERE template_version_id = ?").bind(id).run();
+    await expect(seal(id)).rejects.toThrow("screenshot_mobile");
+  });
+
+  it("rejects empty screenshots", async () => {
+    const id = await seedTemplateVersion();
+    vi.mocked(takeScreenshot).mockResolvedValue(new Uint8Array());
+    expect((await certifyTemplateVersion(browserEnv, id)).status).toBe("rejected");
+  });
+
+  it.each(["screenshot_desktop", "screenshot_mobile"])("blocks seal without %s check or artifact", async (name) => {
+    const id = await seedTemplateVersion();
+    const result = await certifyTemplateVersion(browserEnv, id);
+    const key = result.checks.find((c) => c.check_name === name)!.artifact_r2_key!;
+    await env.ARTIFACTS.delete(key);
+    await expect(seal(id)).rejects.toThrow("Missing PNG");
+    await env.FACTORY.prepare("DELETE FROM certifications WHERE template_version_id = ? AND check_name = ?").bind(id, name).run();
+    await expect(seal(id)).rejects.toThrow(name);
+  });
+
+  it("audits import, certify, and owner seal without secrets", async () => {
+    const id = await seedTemplateVersion(goodZip(), "audited");
+    await certifyTemplateVersion(browserEnv, id);
+    await seal(id);
+    const { results } = await env.FACTORY.prepare("SELECT * FROM audit_log WHERE entity_id = ? ORDER BY id").bind(id).all();
+    expect(results.map((r) => r.action)).toEqual(["template.import", "template.certify", "template.seal"]);
+    expect(results[0]?.actor_id).toBe("test-user");
+    expect(results[2]?.actor_id).toBe("owner-user");
+    expect(results[2]?.actor_role).toBe("owner");
+    expect(JSON.stringify(results)).not.toContain("test-owner-secret");
+  });
+
+  it("rolls back seal when its audit insertion fails", async () => {
+    const id = await seedTemplateVersion(goodZip(), "rollback");
+    await certifyTemplateVersion(browserEnv, id);
+    await env.FACTORY.exec("CREATE TRIGGER fail_seal_audit BEFORE INSERT ON audit_log WHEN NEW.action = 'template.seal' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;");
+    try {
+      await expect(seal(id)).rejects.toThrow("audit unavailable");
+      const row = await env.FACTORY.prepare("SELECT status, sealed_by, sealed_at FROM template_versions WHERE template_version_id = ?").bind(id).first();
+      expect(row).toEqual({ status: "certified", sealed_by: null, sealed_at: null });
+      expect((await env.FACTORY.prepare("SELECT id FROM audit_log WHERE entity_id = ? AND action = 'template.seal'").bind(id).all()).results).toHaveLength(0);
+    } finally {
+      await env.FACTORY.exec("DROP TRIGGER fail_seal_audit;");
+    }
   });
 });
