@@ -1,0 +1,52 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-web",
+  "main": "src/server/index.ts",
+  "account_id": "c1a44deffd54a8ce35cb9e68abeb7b11",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "app.maimax.fit",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "AUTH",
+      "database_name": "maimax-auth",
+      "database_id": "e60dae52-ecb6-4640-901f-e2e796364c44",
+      "migrations_dir": "../../packages/auth-db/migrations"
+    },
+    {
+      "binding": "FACTORY",
+      "database_name": "maimax-factory",
+      "database_id": "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ],
+  "services": [
+    {
+      "binding": "CORE",
+      "service": "anjuna-core",
+      "entrypoint": "AdminService"
+    }
+  ],
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "snowy-forest-7b45.cloudflareaccess.com",
+    "ACCESS_AUD": "792df5aed44413b8808173bad3c4ec805dfc993fe790aa808d0d82af639f74d2",
+    "BETTER_AUTH_URL": "https://app.maimax.fit",
+    "MOCK_CORE": "0"
+  }
+}
