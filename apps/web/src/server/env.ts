@@ -6,6 +6,8 @@ export interface Env {
   FACTORY: D1Database;
   /** Service Binding to the `anjuna-core` Worker (admin API). */
   CORE?: Fetcher; // absent until T6 deploys anjuna-core; MOCK_CORE=1 is used meanwhile
+  /** Service Binding to the `anjuna-factory` Worker (install / rollback / upgrade-all Workflows). */
+  FACTORY_WORKER?: Fetcher; // absent until T10 deploys; routes fall back to queued D1 rows
   /** Static assets (the SPA). */
   ASSETS: Fetcher;
 

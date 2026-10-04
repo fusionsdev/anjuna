@@ -5,6 +5,9 @@
 import { AuditEntry, type AdminRole, type AuditEntry as AuditEntryT } from "@anjuna/contracts";
 
 export const PANEL_AUDIT_PREFIXES = ["auth.", "user."] as const;
+/** Factory actions that originate in the panel (brand lifecycle, install start). */
+const FACTORY_AUDIT_PREFIXES = ["brand.create", "install.start"] as const;
+const isFactoryAudit = (action: string): boolean => FACTORY_AUDIT_PREFIXES.some((p) => action === p || action.startsWith(p + "."));
 
 export const isPanelAudit = (action: string): boolean => PANEL_AUDIT_PREFIXES.some((p) => action.startsWith(p));
 
@@ -16,6 +19,26 @@ export interface PanelAuditInput {
   entity_id: string;
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
+}
+
+export async function writeFactoryAudit(db: D1Database, a: PanelAuditInput): Promise<void> {
+  if (!isFactoryAudit(a.action)) throw new Error(`Not a factory audit action: ${a.action}`);
+  await db
+    .prepare(
+      `INSERT INTO audit_log (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+    )
+    .bind(
+      a.actor_id,
+      a.actor_role,
+      a.action,
+      a.entity_type,
+      a.entity_id,
+      a.before ? JSON.stringify(a.before) : null,
+      a.after ? JSON.stringify(a.after) : null,
+      new Date().toISOString(),
+    )
+    .run();
 }
 
 export async function writePanelAudit(db: D1Database, a: PanelAuditInput): Promise<void> {
