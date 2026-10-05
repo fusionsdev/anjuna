@@ -18,8 +18,8 @@ const config: TenantConfig = {
   // REPLACE: LeadsGate affiliate ID for the maimax account.
   leadsGateAid: "17244",
   prepopBase: "https://go.personalloanpro.com/aff_c",
-  // REPLACE: maimax drain (AdKit) endpoint.
-  drainUrl: "https://drain.aduplift.ai",
+  // maimax drain VPS (143.14.147.127) — /opt/drain/drain.mjs polls core.maimax.fit.
+  drainUrl: "http://143.14.147.127",
   // REPLACE: maimax listmonk base URL once the listmonk instance is deployed.
   listmonkUrl: undefined,
   secrets: {
