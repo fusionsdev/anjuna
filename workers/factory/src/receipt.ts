@@ -1,4 +1,5 @@
 import type { InstallStep } from "@anjuna/factory-db";
+import { cleanKeyword, InitialRuntime } from "@anjuna/contracts";
 
 export const INSTALL_MUTATION_STEPS = [
   "validate", "save_rollback", "render", "upload_assets", "upload_script", "deploy",
@@ -35,15 +36,16 @@ export function deriveAuthoritativeRuntime(
   brandId: string,
   tenant: TenantRuntimeDefaults,
   artifact: RegisteredFormArtifact,
-): Omit<TenantRuntimeDefaults, "amount_buckets" | "form_version"> & { amount_buckets: number[]; form_version: string; drain_key: string } {
+): InitialRuntime {
   const bundle = artifact.bundle_form_version;
   if (!bundle) throw new Error("Registered form artifact has no registered bundle form version");
-  return {
-    ...tenant,
+  return InitialRuntime.parse({
+    aid: tenant.aid, prepop_base: tenant.prepop_base,
+    form_route: tenant.form_route, keyword_default: cleanKeyword(tenant.keyword_default),
     amount_buckets: [...tenant.amount_buckets],
     form_version: bundle,
     drain_key: opaqueHex(brandId),
-  };
+  });
 }
 
 /** A stable routing identifier that cannot reveal the brand id to the drain. */
@@ -298,7 +300,8 @@ export async function setInstallStatus(
       .bind(status, error ?? null, now, installId)
       .run();
     if (brandId && !options.retainBrandLock && !options.preserveBrandStatus) {
-      const brandStatus = status === "ready" ? "live" : status === "rolled_back" ? "live" : "failed";
+      const previous = await db.prepare("SELECT current_revision_id FROM brands WHERE brand_id=?").bind(brandId).first<{ current_revision_id: string | null }>();
+      const brandStatus = status === "ready" || status === "rolled_back" || previous?.current_revision_id ? "live" : "failed";
       await db.prepare("UPDATE brands SET status = ?, updated_at = ? WHERE brand_id = ?")
         .bind(brandStatus, now, brandId).run();
     }
@@ -319,7 +322,7 @@ export async function rejectQueuedInstall(
   await db.prepare("UPDATE installs SET status = 'failed', error = ?, finished_at = ? WHERE install_id = ? AND status IN ('queued', 'running')")
     .bind(JSON.stringify(evidence), now, installId).run();
   if (releaseBrandLock) {
-    await db.prepare("UPDATE brands SET status = 'failed', updated_at = ? WHERE brand_id = ? AND status = 'installing'")
+    await db.prepare("UPDATE brands SET status = CASE WHEN current_revision_id IS NULL THEN 'failed' ELSE 'live' END, updated_at = ? WHERE brand_id = ? AND status = 'installing'")
       .bind(now, brandId).run();
   }
   await db.prepare("INSERT OR IGNORE INTO install_receipts (install_id, step, status, output_json, created_at) VALUES (?, 'validate', 'failed', ?, ?)")

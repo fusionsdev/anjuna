@@ -1,0 +1,61 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-factory",
+  "main": "src/index.ts",
+  "account_id": "c1a44deffd54a8ce35cb9e68abeb7b11",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "FACTORY",
+      "database_name": "anjuna-factory",
+      "database_id": "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "anjuna-artifacts"
+    }
+  ],
+  "services": [
+    {
+      "binding": "CORE_LIFECYCLE",
+      "service": "anjuna-core",
+      "entrypoint": "FactoryLifecycleService"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "install-brand",
+      "binding": "INSTALL_WORKFLOW",
+      "class_name": "InstallBrandWorkflow"
+    },
+    {
+      "name": "rollback-brand",
+      "binding": "ROLLBACK_WORKFLOW",
+      "class_name": "RollbackBrandWorkflow"
+    },
+    {
+      "name": "upgrade-all",
+      "binding": "UPGRADE_WORKFLOW",
+      "class_name": "UpgradeAllWorkflow"
+    }
+  ],
+  "vars": {
+    "CF_ACCOUNT_ID": "c1a44deffd54a8ce35cb9e68abeb7b11",
+    "CORE_ACCOUNT": "maimax",
+    "CORE_DOMAIN": "core.maimax.fit",
+    "CORE_SERVICE_NAME": "anjuna-core",
+    "DEFAULT_FORM_ROUTE": "/request",
+    "DEFAULT_AMOUNT_BUCKETS": "[100,200,300,500,1000]",
+    "LEADSGATE_AID": "17244",
+    "LEADSGATE_PREPOP_BASE": "https://go.personalloanpro.com/aff_c"
+  }
+}

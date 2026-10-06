@@ -47,10 +47,13 @@
   ],
   "vars": {
     "CF_ACCOUNT_ID": "6cb8500c35210800451bd9a535482850",
-    "CORE_ACCOUNT": "owner-account",
+    "CORE_ACCOUNT": "aduplift",
     "CORE_DOMAIN": "core.aduplift.ai",
-    "LEADSGATE_AID": "tenant-aid",
-    "LEADSGATE_PREPOP_BASE": "https://prepop.example"
+    "CORE_SERVICE_NAME": "anjuna-core",
+    "DEFAULT_FORM_ROUTE": "/request",
+    "DEFAULT_AMOUNT_BUCKETS": "[100,200,300,500,1000]",
+    "LEADSGATE_AID": "10001",
+    "LEADSGATE_PREPOP_BASE": "https://go.personalloanpro.com/aff_c"
   }
   // Secrets (set via `wrangler secret put`, never committed):
   //   CF_API_TOKEN — scoped: Workers Scripts:Edit, Workers Domains:Edit, DNS:Read, Zones:Read

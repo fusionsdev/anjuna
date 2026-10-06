@@ -27,6 +27,13 @@ function makeForm(chunkName = "index-abc123.js"): Map<string, Uint8Array> {
 }
 
 describe("renderBrand", () => {
+  it("accepts analytics SDK vocabulary and the neutral Sentry placeholder", async () => {
+    const form = makeForm();
+    form.set("/_f/assets/index-abc123.js", makeFile('window.posthog={};const dsn="https://public@placeholder.invalid/0";console.log("Sentry");'));
+    const site = makeSite();
+    site.set("assets/site.css", makeFile(".brand-logo { color: red }"));
+    await expect(renderBrand(site, form, "brand_0123456789abcdef", "rev-1")).resolves.toBeDefined();
+  });
   it("renames /_f/assets/*.js and *.css chunks to opaque deterministic names", async () => {
     const { files, saltPrefix } = await renderBrand(makeSite(), makeForm(), "brand-1", "rev-1");
     expect(saltPrefix).toHaveLength(8);
@@ -112,10 +119,10 @@ describe("renderBrand", () => {
   it.each([
     ["platform marker in content", "/_f/index.html", "anjuna", "harbor-brand"],
     ["legacy marker in content", "/_f/index.html", "aurum", "harbor-brand"],
-    ["cross-brand ID in content", "/_f/index.html", "brand-rival", "harbor-brand"],
+    ["generated cross-brand ID", "/_f/index.html", "brand_0123456789abcdef", "harbor-brand"],
     ["PostHog key in content", "/_f/index.html", "phc_0123456789abcdef", "harbor-brand"],
     ["Sentry DSN in content", "/_f/index.html", "https://public@sentry.example/1", "harbor-brand"],
-    ["DSN marker in content", "/_f/index.html", "dsn=secret", "harbor-brand"],
+    ["self-hosted DSN", "/_f/index.html", "https://public@errors.example/1", "harbor-brand"],
     ["forbidden identity in filename", "/_f/assets/aurum.js", "console.log('clean')", "harbor-brand"],
   ])("rejects real negative fixture: %s", async (_name, path, content, brandId) => {
     const form = new Map<string, Uint8Array>([
@@ -161,7 +168,7 @@ describe("factory lifecycle client", () => {
 });
 
 describe("brand upload bindings", () => {
-  it("pins CORE to the default core handler and emits CORE_TOKEN as secret_text", async () => {
+  it("preserves the configured tenant CORE handler and emits CORE_TOKEN as secret_text", async () => {
     let metadata: Record<string, unknown> | undefined;
     const fetcher = async (_input: string, init?: RequestInit) => {
       const form = init?.body as FormData;
@@ -169,11 +176,11 @@ describe("brand upload bindings", () => {
       return Response.json({ success: true, result: { id: "script", etag: "etag" } });
     };
     await uploadScript("token", "account", "brand-a", "export default {}", {
-      main_module: "worker.js", bindings: [], compatibility_date: "2026-08-01",
+      main_module: "worker.js", bindings: [{ type: "service", name: "CORE", service: "tenant-core" }], compatibility_date: "2026-08-01",
       brand_id: "brand-a", core_token: "core-secret",
     }, fetcher);
     expect(metadata?.bindings).toEqual(expect.arrayContaining([
-      { type: "service", name: "CORE", service: "anjuna-core" },
+      { type: "service", name: "CORE", service: "tenant-core" },
       { type: "secret_text", name: "CORE_TOKEN", text: "core-secret" },
     ]));
     expect(JSON.stringify(metadata?.bindings)).not.toContain("LeadsRpc");

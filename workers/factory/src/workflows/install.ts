@@ -16,6 +16,7 @@ export interface InstallParams {
 
 interface BrandRow {
   brand_id: string;
+  name: string;
   account: string;
   domain: string;
   keyword_default: string | null;
@@ -54,18 +55,22 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
   async run(event: WorkflowEvent<InstallParams>, step: WorkflowStep): Promise<void> {
     const { install_id, brand_id, revision_id } = event.payload;
     const { FACTORY: db, ARTIFACTS, CF_ACCOUNT_ID, CF_API_TOKEN } = this.env;
+    const terminal = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
+    if (terminal?.status === "ready" || terminal?.status === "rolled_back") return;
     let mutationStarted = false;
 
     try {
-      await setInstallStatus(db, install_id, "running", undefined, brand_id);
+      await step.do("claim_install", () => setInstallStatus(db, install_id, "running", undefined, brand_id));
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      const { zone_id, domain, account, previous_revision_id, initial_runtime } = await step.do("validate", async () => {
+      const { zone_id, domain, name, account, previous_revision_id, initial_runtime } = await step.do("validate", async () => {
         return withReceipt(db, install_id, "validate", async () => {
           const brand = await db
-            .prepare("SELECT brand_id, account, domain, keyword_default, current_revision_id FROM brands WHERE brand_id = ?")
+            .prepare("SELECT brand_id, name, account, domain, keyword_default, current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
             .first<BrandRow>();
           if (!brand) throw new Error(`Brand ${brand_id} not found`);
+          if (brand.account !== this.env.CORE_ACCOUNT) throw new Error("Brand does not belong to configured factory account");
+          if (!this.env.CORE_SERVICE_NAME) throw new Error("Core service binding name is missing");
 
           const revision = await db
             .prepare("SELECT brand_id, template_version_id, form_artifact_id, config_json, worker_version_id FROM brand_revisions WHERE revision_id = ?")
@@ -91,8 +96,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             account: brand.account,
             aid: this.env.LEADSGATE_AID,
             prepop_base: this.env.LEADSGATE_PREPOP_BASE,
-            amount_buckets: [500, 750, 1000, 1500, 2500, 5000],
-            form_route: "/request",
+            amount_buckets: JSON.parse(this.env.DEFAULT_AMOUNT_BUCKETS),
+            form_route: this.env.DEFAULT_FORM_ROUTE,
             keyword_default: brand.keyword_default ?? "",
             form_version: "",
           };
@@ -116,6 +121,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           return {
             zone_id: zone.id,
             domain: brand.domain,
+            name: brand.name,
             account: brand.account,
             previous_revision_id: brand.current_revision_id,
             initial_runtime: deriveAuthoritativeRuntime(brand_id, tenant, artifact),
@@ -168,6 +174,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
 
       // ── Step 4: Upload assets ──────────────────────────────────────────────
+      // Re-evaluated on replay even when the following step returns cached output.
+      mutationStarted = true;
       const { assets_jwt } = await step.do("upload_assets", async () => {
         return withReceipt(db, install_id, "upload_assets", async () => {
           const renderObj = await ARTIFACTS.get(render_r2_key);
@@ -230,8 +238,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               bindings: [
                 { type: "plain_text", name: "BRAND_ID", text: brand_id },
                 { type: "plain_text", name: "HOSTNAME", text: domain },
-                { type: "json", name: "BRAND_CONFIG", json: assembleBrandConfig(config, initial_runtime, domain) },
-                { type: "service", name: "CORE", service: "anjuna-core" },
+                { type: "json", name: "BRAND_CONFIG", json: { ...assembleBrandConfig(config, initial_runtime, domain), brand_id, brand: name } },
+                { type: "service", name: "CORE", service: this.env.CORE_SERVICE_NAME },
               ],
               compatibility_date: "2026-08-01",
               compatibility_flags: ["global_fetch_strictly_public"],
@@ -309,7 +317,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           const result = await client.applyRuntime({
             install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
             expected_revision_id: previous_revision_id, target_revision_id: revision_id,
-            actor_id: "system", actor_role: "owner",
+            actor_id: "system", actor_role: "owner", initial_runtime,
           });
           await client.verifyRuntime(brand_id, account, revision_id, install_id);
           return result;
@@ -331,7 +339,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
         });
       });
 
-      await setInstallStatus(db, install_id, "ready", undefined, brand_id);
+      await step.do("finish_install", () => setInstallStatus(db, install_id, "ready", undefined, brand_id));
     } catch (err) {
       const errorMessage = String(err);
       if (errorMessage.includes("lifecycle mutation in progress")) {

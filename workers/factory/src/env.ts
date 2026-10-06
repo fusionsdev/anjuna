@@ -19,6 +19,9 @@ declare global {
       CORE_TOKEN: string;
       CORE_ACCOUNT: string;
       CORE_DOMAIN: string;
+      CORE_SERVICE_NAME: string;
+      DEFAULT_FORM_ROUTE: string;
+      DEFAULT_AMOUNT_BUCKETS: string;
       LEADSGATE_AID: string;
       LEADSGATE_PREPOP_BASE: string;
     }

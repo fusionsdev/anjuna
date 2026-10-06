@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { InstallWithReceipts } from "@anjuna/contracts";
+import { InstallWithReceipts, LifecycleBrandSummary } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
@@ -24,6 +24,37 @@ beforeEach(async () => {
 const post = (cookie: string, path: string, body: unknown) => call(path, { cookie, method: "POST", body });
 
 describe("truthful lifecycle BFF", () => {
+  it("rejects duplicate domains without a second brand or revision", async () => {
+    const input = { domain: "duplicate-lifecycle.example", keyword_default: "quick loan", template_version_id: "tv-1" };
+    expect((await post(employee, "/api/brands/drafts", input)).status).toBe(201);
+    expect((await post(employee, "/api/brands/drafts", input)).status).toBe(409);
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM brand_revisions r JOIN brands b ON b.brand_id=r.brand_id WHERE b.domain=?").bind(input.domain).first()).toEqual({ n: 1 });
+  });
+
+  it("persists verified checklist evidence once and scopes lifecycle audit by actor", async () => {
+    const response = await post(employee, "/api/brands/drafts", { domain: "checklist-proof.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await response.json() as { brand: { brand_id: string } };
+    let verifications = 0;
+    const core = { fetch: async (request: Request) => {
+      verifications++;
+      expect(await request.json()).toEqual({ brand_id: brand.brand_id, lead_id: "sold-proof" });
+      return Response.json({ verified: true, event_id: "event-proof", event_at: "2026-10-06T00:00:00.000Z" });
+    } } as unknown as Fetcher;
+    const attest = () => call(`/api/brands/${brand.brand_id}/checklist`, { cookie: employee, method: "POST", body: { item: "test_sold", lead_id: "sold-proof" }, env: makeEnv({ CORE_LIFECYCLE: core }) });
+    expect((await attest()).status).toBe(200);
+    expect(await (await attest()).json()).toMatchObject({ idempotent: true, evidence: { event_id: "event-proof" } });
+    expect(verifications).toBe(1);
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log WHERE entity_id=? AND action='checklist.attest'").bind(brand.brand_id).first()).toEqual({ n: 1 });
+    const own = await post(owner, "/api/brands/drafts", { domain: "owner-audit-proof.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const ownerBrand = (await own.json() as { brand: { brand_id: string } }).brand.brand_id;
+    const employeeAudit = JSON.stringify(await (await call("/api/audit?limit=200", { cookie: employee })).json());
+    const ownerAudit = JSON.stringify(await (await call("/api/audit?limit=200", { cookie: owner })).json());
+    expect(employeeAudit).toContain(brand.brand_id);
+    expect(employeeAudit).not.toContain(ownerBrand);
+    expect(ownerAudit).toContain(brand.brand_id);
+    expect(ownerAudit).toContain(ownerBrand);
+  });
+
   it("registers artifacts and makes legacy payload backfill set-once and owner-only", async () => {
     const created = await post(owner, "/api/form-artifacts", {
       form_artifact_id: "fa-new", template_version_id: "tv-1", git_sha: "abcdef2",
@@ -70,7 +101,16 @@ describe("truthful lifecycle BFF", () => {
     expect(response.status).toBe(201);
     expect((await response.json() as { brand: { domain: string } }).brand.domain).toBe("apex-normalized.example.test");
     const revision = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id = (SELECT brand_id FROM brands WHERE domain='apex-normalized.example.test')").first<{ config_json: string }>();
-    expect(JSON.parse(revision!.config_json)).toMatchObject({ form_route: "/request", amount_buckets: [100, 200, 300, 500, 1000], aid: "30003" });
+    expect(JSON.parse(revision!.config_json)).toEqual({ keyword_default: "Quick Loan" });
+  });
+
+  it("returns renderable lifecycle rows and normalizes a lowercase draft keyword", async () => {
+    const response = await post(employee, "/api/brands/drafts", { domain: "renderable.test", keyword_default: "quick loan", template_version_id: "tv-1" });
+    const { brand } = await response.json() as { brand: { brand_id: string } };
+    const list = await call("/api/lifecycle/brands", { cookie: employee });
+    const rows = (await list.json() as { brands: unknown[] }).brands.map((row) => LifecycleBrandSummary.parse(row));
+    expect(rows.find((row) => row.brand_id === brand.brand_id)).toMatchObject({ hostnames: ["renderable.test", "www.renderable.test"], runtime_sync_status: "queued" });
+    expect(await env.FACTORY.prepare("SELECT keyword_default FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ keyword_default: "Quick Loan" });
   });
 
   it("persists dispatch failures, sends exact immutable payloads, and retries the same install", async () => {

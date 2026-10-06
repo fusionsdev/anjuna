@@ -147,24 +147,30 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
          `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
          SELECT ?, ?, 'upgrade', current_revision_id, ?, 1, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
       ).bind(canaryInstallId, params.canary_brand_id, revision_id, params.started_by, params.started_role, now, params.canary_brand_id).run();
-      await setInstallStatus(db, canaryInstallId, "running", undefined, params.canary_brand_id);
+      const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(canaryInstallId).first<{ status: string }>();
+      if (existing?.status !== "queued") return;
+      let claimed = false;
       try {
+        await setInstallStatus(db, canaryInstallId, "running", undefined, params.canary_brand_id);
+        claimed = true;
         await this.env.INSTALL_WORKFLOW.create({ id: canaryInstallId, params: { install_id: canaryInstallId, brand_id: params.canary_brand_id, revision_id } });
       } catch (error) {
-        await rejectQueuedInstall(db, canaryInstallId, params.canary_brand_id, String(error), true);
+        await rejectQueuedInstall(db, canaryInstallId, params.canary_brand_id, String(error), claimed);
         throw error;
       }
-      for (let i = 0; i < 60; i++) {
-        // Workflow step names are replay/cache keys; each poll must have its
-        // own deterministic name so a replay cannot reuse the first sleep.
-        await step.sleep(canarySleepStepName(i), "10 seconds");
+    });
+    let ready = false;
+    for (let i = 0; i < 60; i++) {
+      await step.sleep(canarySleepStepName(i), "10 seconds");
+      const evidence = await step.do(`canary_status_${i}`, async () => {
         const status = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(canaryInstallId).first<{ status: string }>();
         const core = await db.prepare("SELECT status FROM install_receipts WHERE install_id = ? AND step = 'sync_runtime'").bind(canaryInstallId).first<{ status: string }>();
-        if (canaryGate({ install: status?.status ?? "missing", core: core?.status === "ok" ? "ready" : core?.status ?? "pending" })) return;
-        if (status?.status === "failed" || status?.status === "rolled_back") throw new Error(`Canary install failed (status=${status.status})`);
-      }
-      throw new Error("Canary install did not reach READY");
-    });
+        return { install: status?.status ?? "missing", core: core?.status === "ok" ? "ready" : core?.status ?? "pending" };
+      });
+      if (canaryGate(evidence)) { ready = true; break; }
+      if (evidence.install === "failed" || evidence.install === "rolled_back") throw new Error(`Canary install failed (status=${evidence.install})`);
+    }
+    if (!ready) throw new Error("Canary install did not reach READY");
 
     await step.do("bulk_installs", async () => {
       const remaining = brand_ids.filter((brand_id) => brand_id !== params.canary_brand_id);
@@ -176,11 +182,15 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
           `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
            SELECT ?, ?, 'upgrade', current_revision_id, ?, 0, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
         ).bind(install_id, brand_id, revision_id, params.started_by, params.started_role, new Date().toISOString(), brand_id).run();
+        const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
+        if (existing?.status !== "queued") continue;
+        let claimed = false;
         try {
           await setInstallStatus(db, install_id, "running", undefined, brand_id);
+          claimed = true;
           await this.env.INSTALL_WORKFLOW.create({ id: install_id, params: { install_id, brand_id, revision_id } });
         } catch (error) {
-          await rejectQueuedInstall(db, install_id, brand_id, String(error), true);
+          await rejectQueuedInstall(db, install_id, brand_id, String(error), claimed);
         }
       }
       return { started: remaining.length };

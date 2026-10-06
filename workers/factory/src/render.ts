@@ -103,9 +103,13 @@ export async function renderBrand(
 
 /** Reject readable platform, cross-brand, analytics-key, and DSN bytes. */
 export function assertCleanBrandBytes(files: FileMap, brandId: string): void {
-  const forbidden = new RegExp(`anjuna|aurum|${escapeRegExp(brandId)}|brand-[a-z0-9-]+|posthog|sentry|dsn|phc_[a-z0-9]+|api[_-]?key`, "i");
+  const identity = new RegExp(`anjuna|aurum|${escapeRegExp(brandId)}|brand_[0-9a-f]{16}`, "i");
+  const credentials = /ph[cx]_[a-z0-9]{16,}|https?:\/\/[^\s"'<>/@]+(?::[^\s"'<>/@]+)?@[a-z0-9.-]+(?::\d+)?\/\d+|[a-z0-9-]+\.ingest(?:\.[a-z]{2})?\.sentry\.io/i;
   for (const [path, bytes] of files) {
-    if (forbidden.test(path) || forbidden.test(DEC.decode(bytes))) {
+    const content = DEC.decode(bytes);
+    // This neutral DSN is replaced by the same-origin proxy; SDK names are not credentials.
+    const withoutPlaceholder = content.replaceAll("https://public@placeholder.invalid/0", "");
+    if (identity.test(path) || identity.test(content) || credentials.test(path) || credentials.test(withoutPlaceholder)) {
       throw new Error(`Brand bytes contain forbidden identity in ${path}`);
     }
   }

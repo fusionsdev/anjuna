@@ -118,6 +118,7 @@ export const ApplyRuntimeRequest = z.strictObject({
   actor_id: ActorId,
   actor_role: AdminRole,
   initial_runtime: InitialRuntime.optional(),
+  bundle_form_version: FormVersion.optional(),
 });
 export type ApplyRuntimeRequest = z.infer<typeof ApplyRuntimeRequest>;
 
@@ -205,9 +206,9 @@ export const LifecycleBrandSummary = z.strictObject({
   brand_id: BrandId,
   account: Id,
   hostnames: z.array(Hostname).min(1),
-  status: LifecycleStatus,
+  status: z.union([LifecycleStatus, z.enum(["unmanaged", "paused", "retired"])]),
   current_revision_id: Id.nullable(),
-  runtime_sync_status: RuntimeSyncStatus,
+  runtime_sync_status: z.union([RuntimeSyncStatus, z.literal("sync_error")]),
   bundle_form_version: FormVersion.nullable(),
   payload_version: PayloadVersion.nullable(),
 });

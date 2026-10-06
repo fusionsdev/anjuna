@@ -114,6 +114,14 @@ describe("private factory lifecycle service", () => {
     expect(response.status).toBe(403);
   });
 
+  it("preserves an operator pause while switching a runtime revision", async () => {
+    await h.db.prepare("UPDATE brand_runtime SET paused=1 WHERE brand_id='brand-a'").run();
+    const current = await h.db.prepare("SELECT applied_revision_id FROM brand_runtime WHERE brand_id='brand-a'").first<{ applied_revision_id: string }>();
+    const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({ install_id: "install-paused", expected_revision_id: current!.applied_revision_id, target_revision_id: "revision-paused", initial_runtime: undefined })));
+    expect(await response.json()).toMatchObject({ state: "applied", paused: true });
+    expect(await h.db.prepare("SELECT paused FROM brand_runtime WHERE brand_id='brand-a'").first()).toEqual({ paused: 1 });
+  });
+
   it("detaches by pausing while retaining hostnames and supports a runtime preflight", async () => {
     const current = await h.db.prepare("SELECT applied_revision_id FROM brand_runtime WHERE brand_id = 'brand-a'").first<{ applied_revision_id: string }>();
     const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({ install_id: "install-detach", expected_revision_id: current!.applied_revision_id, target_revision_id: null, initial_runtime: undefined })));

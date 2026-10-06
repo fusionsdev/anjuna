@@ -76,11 +76,12 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
 
   const timestamp = now();
   const detached = input.target_revision_id === null;
+  const paused = detached || Boolean(current?.paused);
   const nextRevision = input.target_revision_id;
   const auditAfter = JSON.stringify({
     applied_revision_id: nextRevision,
     last_lifecycle_install_id: input.install_id,
-    paused: detached,
+    paused,
   });
   const auditBefore = current ? JSON.stringify({
     applied_revision_id: current.applied_revision_id,
@@ -104,12 +105,12 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
         VALUES (?1, ?2, 'lifecycle.runtime.apply', 'brand_runtime', ?3, ?4, ?5, ?6)`)
         .bind(input.actor_id, input.actor_role, input.brand_id, auditBefore, auditAfter, timestamp).run();
   } else {
-    const nextFormVersion = input.initial_runtime?.form_version ?? current.form_version;
+    const nextFormVersion = input.bundle_form_version ?? input.initial_runtime?.form_version ?? current.form_version;
     const update = await env.LEADS.prepare(`UPDATE brand_runtime SET hostnames = ?1, form_version = ?2,
         applied_revision_id = ?3, last_lifecycle_install_id = ?4, paused = ?5, updated_at = ?6
         WHERE brand_id = ?7 AND applied_revision_id IS ?8 AND last_lifecycle_install_id IS NOT ?4`)
         .bind(JSON.stringify(input.hostnames), nextFormVersion, nextRevision, input.install_id,
-          detached ? 1 : 0, timestamp, input.brand_id, input.expected_revision_id).run();
+          paused ? 1 : 0, timestamp, input.brand_id, input.expected_revision_id).run();
     // LEADS and FACTORY are separate D1 databases. The CAS update must win before we
     // append the Factory audit; a zero-row update is a competing/stale install, never applied.
     if (update.meta.changes !== 1) return conflict("Runtime revision is stale");
@@ -122,7 +123,7 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
   }
   const response: ApplyRuntimeResponse = {
     state: detached ? "detached" : "applied", install_id: input.install_id,
-    applied_revision_id: nextRevision, paused: detached,
+    applied_revision_id: nextRevision, paused,
   };
   return json(response);
 }

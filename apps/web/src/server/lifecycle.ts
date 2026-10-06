@@ -3,6 +3,8 @@ import {
   BackfillPayloadVersionRequest,
   VerifySoldLeadResponse,
   RuntimeListResponse,
+  cleanKeyword,
+  LifecycleBrandSummary,
   adminContextToHeaders,
   type AdminRequestContext,
 } from "@anjuna/contracts";
@@ -23,7 +25,7 @@ const Artifact = z.strictObject({
 });
 const Draft = z.strictObject({
   domain: z.string().min(1).max(253).transform((value) => value.toLowerCase().replace(/\.$/, "")).refine((value) => !value.startsWith("www."), "Use the apex domain, not a www hostname").refine((value) => /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/.test(value), "Must be a valid apex domain"),
-  keyword_default: z.string().min(1).max(60), template_version_id: Id,
+  keyword_default: z.string().min(1).max(60).transform(cleanKeyword).refine((value) => Boolean(value), "Keyword is empty after normalization"), template_version_id: Id,
 });
 const Upgrade = z.strictObject({
   from_template_version_id: Id, to_template_version_id: Id, form_artifact_id: Id,
@@ -115,7 +117,7 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   const brandId = `brand_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const revisionId = `${brandId}_rev_1`;
   const now = new Date().toISOString();
-  const config = JSON.stringify({ amount_buckets: defaults.amount_buckets, account: defaults.account, aid: defaults.aid, prepop_base: defaults.prepop_base, form_route: defaults.form_route, keyword_default, form_version: artifact.bundle_form_version });
+  const config = JSON.stringify({ keyword_default });
   try { await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, domain.split(".")[0]!.replaceAll("-", " "), defaults.account, domain, keyword_default, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,1,?3,?4,?5,?6,?7)").bind(revisionId, brandId, template_version_id, artifact.form_artifact_id, config, ctx.actor_id, now),
@@ -252,18 +254,25 @@ async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string
   return parsed.success ? new Map(parsed.data.brands.map((brand) => [brand.brand_id, brand])) : new Map();
 }
 
-function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never): FactoryBrandRow {
+function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never): LifecycleBrandSummary {
   const state = runtime.get(row.brand_id);
-  return { ...row, runtime_sync_status: state ? (state.applied_revision_id === row.current_revision_id ? "ready" : "sync_error") : "sync_error" };
+  return LifecycleBrandSummary.parse({
+    brand_id: row.brand_id, account: row.account,
+    hostnames: state?.hostnames ?? [row.domain, `www.${row.domain}`], status: row.status,
+    current_revision_id: row.current_revision_id,
+    bundle_form_version: state?.bundle_form_version ?? row.bundle_form_version ?? null,
+    payload_version: row.payload_version ?? null,
+    runtime_sync_status: state ? (state.applied_revision_id === row.current_revision_id ? "ready" : "sync_error") : row.status === "draft" ? "queued" : "sync_error",
+  });
 }
 
-async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<FactoryBrandRow[]> {
+async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<LifecycleBrandSummary[]> {
   const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=b.current_revision_id LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
-  const account = results[0]?.account;
+  const account = env.DEFAULT_ACCOUNT ?? results[0]?.account;
   const runtime = account ? await runtimeBrands(env, ctx, account) : new Map();
   const factoryIds = new Set(results.map((row) => row.brand_id));
   const merged = results.map((row) => withRuntimeState(row, runtime));
-  for (const [brandId, state] of runtime) if (!factoryIds.has(brandId)) merged.push({ brand_id: brandId, account: state.account ?? account ?? "", name: null, domain: null, keyword_default: null, status: "unmanaged", current_revision_id: null, template_version_id: null, form_artifact_id: null, bundle_form_version: state.bundle_form_version, payload_version: null, hostnames: state.hostnames, runtime_sync_status: "ready" });
+  for (const [brandId, state] of runtime) if (!factoryIds.has(brandId)) merged.push(LifecycleBrandSummary.parse({ brand_id: brandId, account, status: "unmanaged", current_revision_id: null, bundle_form_version: state.bundle_form_version, payload_version: null, hostnames: state.hostnames, runtime_sync_status: "ready" }));
   return merged;
 }
 

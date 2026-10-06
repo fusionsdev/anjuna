@@ -114,8 +114,7 @@ export async function uploadScript(
   fetcher?: CfFetch,
 ): Promise<ScriptUploadResult> {
   const bindings = [
-    ...metadata.bindings.filter((binding) => binding.name !== "CORE" && binding.name !== "CORE_TOKEN"),
-    { type: "service", name: "CORE", service: "anjuna-core" },
+    ...metadata.bindings.filter((binding) => binding.name !== "CORE_TOKEN"),
     ...(metadata.core_token ? [{ type: "secret_text", name: "CORE_TOKEN", text: metadata.core_token }] : []),
   ];
   const uploadMetadata = { ...metadata, bindings };
