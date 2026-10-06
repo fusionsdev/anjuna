@@ -130,6 +130,23 @@ describe("private factory lifecycle service", () => {
     const forbidden = await h.factoryLifecycle("/runtime-state", "account-a-token", jsonBody({ brand_id: "missing-brand", account: "other-account" }));
     expect(forbidden.status).toBe(403);
   });
+
+  it("accepts distinct form bundle identities through upgrade and rollback without external requests", async () => {
+    const upgrade = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({
+      install_id: "install-upgrade-bundle", expected_revision_id: null, target_revision_id: "revision-bundle-2",
+      initial_runtime: { ...initialRuntime, form_version: "form@bundle-2" },
+    })));
+    expect(upgrade.status).toBe(200);
+    expect(ApplyRuntimeResponse.parse(await upgrade.json())).toMatchObject({ state: "applied", applied_revision_id: "revision-bundle-2" });
+    const rollback = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({
+      install_id: "install-rollback-bundle", expected_revision_id: "revision-bundle-2", target_revision_id: "revision-1",
+      initial_runtime: { ...initialRuntime, form_version: "form@bundle-1" },
+    })));
+    expect(rollback.status).toBe(200);
+    expect(ApplyRuntimeResponse.parse(await rollback.json())).toMatchObject({ state: "applied", applied_revision_id: "revision-1" });
+    const state = await h.factoryLifecycle("/runtime-state", "account-a-token", jsonBody({ brand_id: "brand-a", account: "account-a" }));
+    expect(RuntimeStateResponse.parse(await state.json())).toMatchObject({ applied_revision_id: "revision-1", bundle_form_version: "form@bundle-1" });
+  });
 });
 
 describe("private panel Test-sold verification", () => {

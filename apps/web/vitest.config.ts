@@ -24,7 +24,7 @@ export default defineConfig(async () => {
         },
         {
           // Config checks and the SPA build run in Node.
-          test: { name: "build", environment: "node", include: ["test/**/*.node.test.ts"], testTimeout: 120_000 },
+          test: { name: "build", environment: "node", include: ["test/**/*.node.test.ts", "test/**/*.node.test.tsx"], testTimeout: 120_000 },
         },
       ],
     },
