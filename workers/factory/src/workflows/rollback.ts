@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { attachCustomDomain, deployScript, detachCustomDomain } from "../cf-api.js";
-import { compensationFailureEvidence, setInstallStatus, withReceipt } from "../receipt.js";
+import { compensationFailureEvidence, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../receipt.js";
 import { rollbackTargetBelongsToBrand } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import type { Env } from "../env.js";
@@ -38,7 +38,9 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
     const { FACTORY: db, CF_ACCOUNT_ID, CF_API_TOKEN } = this.env;
     let mutationStarted = false;
 
-    await setInstallStatus(db, install_id, "running", undefined, brand_id);
+    await setInstallStatus(db, install_id, "running", undefined, brand_id, original_install_id
+      ? { compensationForInstallId: original_install_id }
+      : {});
 
     try {
       // ── Step 1: Validate ───────────────────────────────────────────────────
@@ -172,7 +174,9 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
       }
     } catch (err) {
       const message = String(err);
-      await setInstallStatus(db, install_id, "failed", message, brand_id, { retainBrandLock: mutationStarted });
+      await setInstallStatus(db, install_id, "failed", message, brand_id, {
+        retainBrandLock: shouldRetainBrandLockOnFailure(mutationStarted, original_install_id),
+      });
       if (original_install_id) {
         const evidence = compensationFailureEvidence({
           original_install_id,

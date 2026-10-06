@@ -137,6 +137,14 @@ export function compensationInstallId(installId: string): string {
   return `compensate-${installId}`;
 }
 
+export function isLinkedCompensationInstall(installId: string, originalInstallId: string): boolean {
+  return compensationInstallId(originalInstallId) === installId;
+}
+
+export function shouldRetainBrandLockOnFailure(mutationStarted: boolean, originalInstallId?: string): boolean {
+  return mutationStarted || Boolean(originalInstallId);
+}
+
 export function compensationFailureEvidence(input: {
   original_install_id: string;
   compensation_install_id: string;
@@ -225,7 +233,7 @@ export async function setInstallStatus(
   status: "running" | "ready" | "failed" | "rolled_back",
   error?: string,
   brandId?: string,
-  options: { retainBrandLock?: boolean; preserveBrandStatus?: boolean } = {},
+  options: { retainBrandLock?: boolean; preserveBrandStatus?: boolean; compensationForInstallId?: string } = {},
 ): Promise<"claimed" | "resumed" | "updated"> {
   const now = new Date().toISOString();
   if (status === "running") {
@@ -234,18 +242,37 @@ export async function setInstallStatus(
         .bind(installId).first<{ status: string }>();
       if (install?.status === "running") return "resumed";
       if (install?.status !== "running") {
+        const linkedCompensation = options.compensationForInstallId
+          ? isLinkedCompensationInstall(installId, options.compensationForInstallId)
+          : false;
+        if (options.compensationForInstallId && !linkedCompensation) {
+          throw new Error("Compensation install is not authorized for the original install");
+        }
+        if (linkedCompensation) {
+          const original = await db.prepare(
+            "SELECT brand_id, status FROM installs WHERE install_id = ?",
+          ).bind(options.compensationForInstallId).first<{ brand_id: string; status: string }>();
+          if (!original || original.brand_id !== brandId || original.status !== "running") {
+            throw new Error("Compensation install is not authorized for the active original install");
+          }
+          if (install?.status !== "queued") {
+            throw new Error("Compensation install cannot be re-dispatched after it finished");
+          }
+        }
         const active = await db.prepare(
           "SELECT install_id FROM installs WHERE brand_id = ? AND status IN ('queued', 'running') ORDER BY started_at LIMIT 1",
         ).bind(brandId).first<{ install_id: string }>();
         const brand = await db.prepare("SELECT status FROM brands WHERE brand_id = ?")
           .bind(brandId).first<{ status: string }>();
         const decision = lifecycleOperationDecision(brand?.status ?? "missing", active?.install_id ?? null, installId);
-        if (decision === "reject") throw new Error("Brand already has a lifecycle mutation in progress");
+        if (decision === "reject" && !(linkedCompensation && active?.install_id === options.compensationForInstallId)) {
+          throw new Error("Brand already has a lifecycle mutation in progress");
+        }
         const claimed = await db
           .prepare("UPDATE brands SET status = 'installing', updated_at = ? WHERE brand_id = ? AND status IN ('draft', 'live', 'failed')")
           .bind(now, brandId)
           .run();
-        if (!claimed.meta.changes && decision === "claim") throw new Error("Brand already has a lifecycle mutation in progress");
+        if (!claimed.meta.changes && decision === "claim" && !linkedCompensation) throw new Error("Brand already has a lifecycle mutation in progress");
       }
     }
     await db
