@@ -22,7 +22,7 @@ export interface LifecycleState {
 export function reduceLifecycleState(state: LifecycleState | undefined, event: LifecycleEvent): LifecycleState {
   const current: LifecycleState = state ?? { lifecycle_status: "draft", runtime_sync_status: "queued" };
   if (event.type === "brand") {
-    const status = event.brand.status === "live" ? "ready" : event.brand.status === "failed" ? "failed" : event.brand.status === "rolled_back" ? "rolled_back" : event.brand.status === "draft" ? "draft" : "queued";
+    const status = event.brand.status === "live" ? "ready" : event.brand.status === "failed" ? "failed" : event.brand.status === "rolled_back" ? "rolled_back" : event.brand.status === "draft" ? "draft" : "running";
     return { ...current, brand: event.brand, lifecycle_status: status, runtime_sync_status: event.brand.runtime_sync_status === "ready" ? "ready" : event.brand.runtime_sync_status };
   }
   if (event.type === "install") {
@@ -35,5 +35,6 @@ export function reduceLifecycleState(state: LifecycleState | undefined, event: L
 }
 
 export function shouldPollLifecycle(state: LifecycleState | undefined): boolean {
-  return state?.lifecycle_status === "queued" || state?.lifecycle_status === "running" || state?.runtime_sync_status === "queued" || state?.runtime_sync_status === "running";
+  const status = state?.install?.status;
+  return status === "queued" || status === "running";
 }

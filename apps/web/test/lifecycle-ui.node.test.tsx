@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
-import { reduceLifecycleState, type LifecycleEvent } from "../src/client/lifecycle-state";
+import { BrandLifecycle, LifecycleDetail } from "../src/client/screens/BrandLifecycle";
+import { reduceLifecycleState, shouldPollLifecycle, type LifecycleEvent } from "../src/client/lifecycle-state";
 
 describe("lifecycle state reducer", () => {
   it("keeps lifecycle status separate from runtime sync and preserves retry/compensation evidence", () => {
@@ -31,6 +31,36 @@ describe("lifecycle state reducer", () => {
     "represents %s as a stable lifecycle state",
     (status) => expect(reduceLifecycleState(undefined, { type: "status", status }).lifecycle_status).toBe(status),
   );
+
+  it("maps installing to an active running UI state", () => {
+    const state = reduceLifecycleState(undefined, {
+      type: "brand",
+      brand: {
+        brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"],
+        status: "installing", current_revision_id: "rev-1", runtime_sync_status: "running",
+        bundle_form_version: "form@bundle-1", payload_version: "2026-01",
+      },
+    });
+    expect(state.lifecycle_status).toBe("running");
+  });
+
+  it.each(["ready", "failed", "rolled_back"] as const)("does not poll a terminal install (%s)", (status) => {
+    expect(shouldPollLifecycle({
+      lifecycle_status: "running", runtime_sync_status: "running",
+      install: { install_id: "i", brand_id: "b", revision_id: "r", status, runtime_sync_status: "ready", receipts: [] },
+    })).toBe(false);
+  });
+
+  it("polls only from the authoritative queued/running install detail", () => {
+    expect(shouldPollLifecycle({
+      lifecycle_status: "ready", runtime_sync_status: "queued",
+      install: { install_id: "i", brand_id: "b", revision_id: "r", status: "queued", runtime_sync_status: "queued", receipts: [] },
+    })).toBe(true);
+    expect(shouldPollLifecycle({
+      lifecycle_status: "ready", runtime_sync_status: "queued",
+      install: { install_id: "i", brand_id: "b", revision_id: "r", status: "ready", runtime_sync_status: "ready", receipts: [] },
+    })).toBe(false);
+  });
 });
 
 describe("BrandLifecycle SSR", () => {
@@ -50,5 +80,16 @@ describe("BrandLifecycle SSR", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "employee", email: "employee@example.test", role: "employee" }} />);
     expect(html).not.toContain("Upgrade-all");
     expect(html).toContain("สถานะ");
+  });
+
+  it("renders a lead id field for test-sold and persisted checklist evidence", () => {
+    const html = renderToStaticMarkup(<LifecycleDetail
+      me={{ id: "owner", email: "owner@example.test", role: "owner" }}
+      brand={{ brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "draft", current_revision_id: "rev-1", runtime_sync_status: "ready", bundle_form_version: "form@bundle-1", payload_version: "2026-01" }}
+      checklist={{ drain_route: { brand_id: "brand-a", item: "drain_route", actor_id: "owner", verified_at: "2026-01-01T00:00:00Z" } }}
+      leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRetry={() => undefined} onChecklist={() => undefined}
+    />);
+    expect(html).toContain("lead_id");
+    expect(html).toContain("Checklist evidence");
   });
 });
