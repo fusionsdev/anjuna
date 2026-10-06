@@ -74,6 +74,7 @@ describe("factory-db migrations", () => {
         "template_versions",
         "template_fingerprints",
         "templates",
+        "brand_checklist",
       ].sort(),
     );
   });
@@ -110,6 +111,47 @@ describe("factory-db constraints", () => {
     await expect(
       run("INSERT INTO install_receipts (install_id, step, status, created_at) VALUES ('i1', 'publish', 'ok', ?1)", NOW),
     ).rejects.toThrow(/CHECK constraint failed/);
+  });
+
+  it("accepts lifecycle receipt steps and preserves rebuilt receipt rows", async () => {
+    const rows = await env.DB
+      .prepare("SELECT step, status FROM install_receipts WHERE install_id = 'i1' ORDER BY id")
+      .all();
+    expect(rows.results).toHaveLength(INSTALL_STEPS.length);
+    expect(rows.results.map((row) => row.step)).toContain("provision_runtime");
+    expect(rows.results.map((row) => row.step)).toContain("sync_runtime");
+    await expect(
+      run("INSERT INTO install_receipts (install_id, step, status, created_at) VALUES ('i1', 'unknown', 'ok', ?1)", NOW),
+    ).rejects.toThrow(/CHECK constraint failed/);
+  });
+
+  it("allows legacy null payload metadata but makes verified metadata immutable", async () => {
+    await run("UPDATE form_artifacts SET payload_version = '2026-01' WHERE form_artifact_id = 'f1'");
+    await expect(
+      run("UPDATE form_artifacts SET payload_version = '2026-02' WHERE form_artifact_id = 'f1'"),
+    ).rejects.toThrow(/payload_version is immutable/);
+    await run(
+      "INSERT INTO form_artifacts (form_artifact_id, git_sha, r2_key, manifest_sha256, created_at) VALUES ('f2', 'def5678', 'form@def5678', ?1, ?2)",
+      "d".repeat(64),
+      NOW,
+    );
+    const row = await env.DB.prepare("SELECT payload_version FROM form_artifacts WHERE form_artifact_id = 'f2'").first();
+    expect(row).toEqual({ payload_version: null });
+  });
+
+  it("stores one checklist evidence row per brand and item", async () => {
+    await run(
+      `INSERT INTO brand_checklist (brand_id, item, evidence_json, confirmed_by, confirmed_role, confirmed_at)
+       VALUES ('b1', 'drain_route', '{"confirmed":true}', 'u1', 'owner', ?1)`,
+      NOW,
+    );
+    await expect(
+      run(
+        `INSERT INTO brand_checklist (brand_id, item, evidence_json, confirmed_by, confirmed_role, confirmed_at)
+         VALUES ('b1', 'drain_route', '{"confirmed":true}', 'u1', 'owner', ?1)`,
+        NOW,
+      ),
+    ).rejects.toThrow(/UNIQUE constraint failed/);
   });
 
   it("makes a sealed template version immutable", async () => {

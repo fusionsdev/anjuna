@@ -16,6 +16,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0005_mailing_outbox.sql",
   "0006_account_credentials.sql",
   "0007_core_rpc.sql",
+  "0008_lifecycle.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
@@ -103,6 +104,10 @@ export interface BrandRuntimeRow {
   ab_config_json: string | null;
   keyword_default: string | null;
   form_route: string;
+  /** Bundle identity, e.g. form@8ba11d3; distinct from the lead payload version. */
+  form_version: string | null;
+  applied_revision_id: string | null;
+  last_lifecycle_install_id: string | null;
   created_at: string;
   updated_at: string;
 }

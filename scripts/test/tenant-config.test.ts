@@ -12,6 +12,12 @@ describe("TenantConfig schema", () => {
       appDomain: "app.example.com",
       leadsGateAid: "99999",
       prepopBase: "https://go.example.com/aff_c",
+      brandDefaults: {
+        account: "test-tenant",
+        formRoute: "/request",
+        amountBuckets: [100, 200, 500, 1000],
+        payloadVersion: "2026-01",
+      },
       drainUrl: "https://drain.example.com",
       listmonkUrl: "https://mail.example.com",
       alertChannel: "alerts",
@@ -20,6 +26,7 @@ describe("TenantConfig schema", () => {
         betterAuthSecret: "BETTER_AUTH_SECRET",
         drainToken: "DRAIN_TOKEN",
         postbackTokenSalt: "POSTBACK_TOKEN_SALT",
+        coreToken: "CORE_TOKEN",
       },
       ownerEmail: "owner@example.com",
       r2Templates: "test-templates",
@@ -47,6 +54,25 @@ describe("TenantConfig schema", () => {
     expect(r.success).toBe(false);
   });
 
+  it("rejects insecure prepop bases, unsorted buckets, relative routes, and invalid payload versions", () => {
+    const base = {
+      name: "valid",
+      accountId: "a".repeat(32),
+      coreDomain: "core.example.com",
+      appDomain: "app.example.com",
+      leadsGateAid: "1",
+      prepopBase: "https://prepop.example.com",
+      drainUrl: "https://drain.example.com",
+      brandDefaults: { account: "valid", formRoute: "/request", amountBuckets: [100, 200], payloadVersion: "2026-01" },
+      secrets: { cloudflareApiToken: "CF_TOKEN", betterAuthSecret: "AUTH_SECRET", drainToken: "DRAIN_T", postbackTokenSalt: "PB_SALT", coreToken: "CORE_TOKEN" },
+      ownerEmail: "owner@example.com",
+    };
+    expect(TenantConfig.safeParse({ ...base, prepopBase: "http://prepop.example.com" }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, amountBuckets: [200, 100] } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, formRoute: "request" } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, payloadVersion: "latest" } }).success).toBe(false);
+  });
+
   it("accepts config without optional fields", () => {
     const r = TenantConfig.safeParse({
       name: "minimal",
@@ -56,11 +82,13 @@ describe("TenantConfig schema", () => {
       leadsGateAid: "1",
       prepopBase: "https://prepop.example.com",
       drainUrl: "https://drain.example.com",
+      brandDefaults: { account: "minimal", formRoute: "/request", amountBuckets: [100], payloadVersion: "2026-01" },
       secrets: {
         cloudflareApiToken: "CF_TOKEN",
         betterAuthSecret: "AUTH_SECRET",
         drainToken: "DRAIN_T",
         postbackTokenSalt: "PB_SALT",
+        coreToken: "CORE_TOKEN",
       },
       ownerEmail: "owner@minimal.io",
     });
