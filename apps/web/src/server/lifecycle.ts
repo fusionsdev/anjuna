@@ -2,6 +2,7 @@ import {
   AdminRole,
   BackfillPayloadVersionRequest,
   VerifySoldLeadResponse,
+  RuntimeListResponse,
   adminContextToHeaders,
   type AdminRequestContext,
 } from "@anjuna/contracts";
@@ -45,13 +46,19 @@ async function setFailed(db: Db, installId: string, message: string): Promise<vo
     .bind(message.slice(0, 500), new Date().toISOString(), installId).run();
 }
 
-function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: string } | null {
+function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: string; form_route: string; amount_buckets: number[]; payload_version: string } | null {
   const account = env.DEFAULT_ACCOUNT?.trim();
   const aid = env.DEFAULT_AID?.trim();
   const prepop = env.DEFAULT_PREPOP_BASE?.trim();
-  if (!account || !aid || !prepop) return null;
+  const formRoute = env.DEFAULT_FORM_ROUTE?.trim();
+  const payloadVersion = env.DEFAULT_PAYLOAD_VERSION?.trim();
+  if (!account || !aid || !prepop || !formRoute || !payloadVersion || [account, aid, prepop, formRoute, payloadVersion].some((v) => v.includes("<SET_PER_TENANT>"))) return null;
+  let amountBuckets: number[];
+  try { amountBuckets = JSON.parse(env.DEFAULT_AMOUNT_BUCKETS ?? "") as number[]; } catch { return null; }
+  if (!Array.isArray(amountBuckets) || amountBuckets.length === 0 || amountBuckets.some((v) => !Number.isInteger(v) || v < 100 || v > 5000) || amountBuckets.some((v, i) => i > 0 && v <= amountBuckets[i - 1]!)) return null;
   try { if (new URL(prepop).protocol !== "https:") return null; } catch { return null; }
-  return { account, aid, prepop_base: prepop.replace(/\/$/, "") };
+  if (!/^\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(formRoute) || !/^\d{4}-\d{2}$/.test(payloadVersion)) return null;
+  return { account, aid, prepop_base: prepop.replace(/\/$/, ""), form_route: formRoute, amount_buckets: amountBuckets, payload_version: payloadVersion };
 }
 
 async function dispatch(
@@ -93,14 +100,14 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
   const template = await env.FACTORY.prepare("SELECT template_version_id FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'").bind(template_version_id).first();
   if (!template) return json(422, { error: "template_not_sealed" });
-  const artifact = await env.FACTORY.prepare("SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE payload_version = '2026-01' AND bundle_form_version GLOB 'form@*' ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1").first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
+  const artifact = await env.FACTORY.prepare("SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE payload_version = ?1 AND bundle_form_version GLOB 'form@*' ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1").bind(defaults.payload_version).first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
   if (!artifact) return json(422, { error: "compatible_form_artifact_missing" });
   const existing = await env.FACTORY.prepare("SELECT brand_id FROM brands WHERE domain = ?1").bind(domain).first();
   if (existing) return json(409, { error: "conflict", message: "Domain is already registered" });
   const brandId = `brand_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const revisionId = `${brandId}_rev_1`;
   const now = new Date().toISOString();
-  const config = JSON.stringify({ amount_buckets: [500, 1000, 1500, 2500, 3000], account: defaults.account, aid: defaults.aid, prepop_base: defaults.prepop_base, form_route: "/apply", keyword_default, form_version: artifact.bundle_form_version });
+  const config = JSON.stringify({ amount_buckets: defaults.amount_buckets, account: defaults.account, aid: defaults.aid, prepop_base: defaults.prepop_base, form_route: defaults.form_route, keyword_default, form_version: artifact.bundle_form_version });
   try { await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, domain.split(".")[0]!.replaceAll("-", " "), defaults.account, domain, keyword_default, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,1,?3,?4,?5,?6,?7)").bind(revisionId, brandId, template_version_id, artifact.form_artifact_id, config, ctx.actor_id, now),
@@ -128,9 +135,8 @@ async function startInstall(request: Request, env: Env, ctx: AdminRequestContext
 async function rollback(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
-  const body = await request.json().catch(() => ({})) as { to_revision_id?: string | null };
-  let target = body.to_revision_id ?? null;
-  if (body.to_revision_id === undefined && brand.current_revision_id) {
+  let target: string | null = null;
+  if (brand.current_revision_id) {
     const previous = await env.FACTORY.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY finished_at DESC LIMIT 1").bind(brandId, brand.current_revision_id).first<{ to_revision_id: string | null }>();
     target = previous?.to_revision_id ?? null;
   }
@@ -159,7 +165,8 @@ async function artifactRoute(request: Request, env: Env, ctx: AdminRequestContex
   const row = await env.FACTORY.prepare("SELECT payload_version FROM form_artifacts WHERE form_artifact_id = ?1").bind(parsed.data.form_artifact_id).first<{ payload_version: string | null }>();
   if (!row) return json(404, { error: "not_found", resource: "form_artifact" });
   if (row.payload_version !== null) return json(409, { error: "conflict", message: "payload_version is already set" });
-  await env.FACTORY.prepare("UPDATE form_artifacts SET payload_version = ?1 WHERE form_artifact_id = ?2 AND payload_version IS NULL").bind(parsed.data.payload_version, parsed.data.form_artifact_id).run();
+  const update = await env.FACTORY.prepare("UPDATE form_artifacts SET payload_version = ?1 WHERE form_artifact_id = ?2 AND payload_version IS NULL").bind(parsed.data.payload_version, parsed.data.form_artifact_id).run();
+  if (update.meta.changes !== 1) return json(409, { error: "conflict", message: "payload_version is already set" });
   await audit(env.FACTORY, ctx, "form_artifact.backfill", "form_artifact", parsed.data.form_artifact_id, { payload_version: parsed.data.payload_version });
   return json(200, { form_artifact_id: parsed.data.form_artifact_id, payload_version: parsed.data.payload_version });
 }
@@ -180,9 +187,42 @@ async function checklist(request: Request, env: Env, ctx: AdminRequestContext, b
     if (!response.ok || !parsed.success) return json(response.status || 502, { error: "test_sold_not_verified" });
     evidence = { ...evidence, event_id: parsed.data.event_id };
   }
-  await env.FACTORY.prepare("INSERT INTO brand_checklist (brand_id,item,evidence_json,confirmed_by,confirmed_role,confirmed_at) VALUES (?1,?2,?3,?4,?5,?6)").bind(brandId, item, JSON.stringify(evidence), ctx.actor_id, ctx.actor_role, evidence.verified_at).run();
+  await env.FACTORY.prepare("INSERT OR IGNORE INTO brand_checklist (brand_id,item,evidence_json,confirmed_by,confirmed_role,confirmed_at) VALUES (?1,?2,?3,?4,?5,?6)").bind(brandId, item, JSON.stringify(evidence), ctx.actor_id, ctx.actor_role, evidence.verified_at).run();
+  const winner = await env.FACTORY.prepare("SELECT evidence_json FROM brand_checklist WHERE brand_id = ?1 AND item = ?2").bind(brandId, item).first<{ evidence_json: string }>();
+  if (winner && winner.evidence_json !== JSON.stringify(evidence)) return json(200, { brand_id: brandId, item, evidence: JSON.parse(winner.evidence_json), idempotent: true });
   await audit(env.FACTORY, ctx, "checklist.attest", "brand", brandId, { item });
   return json(200, { brand_id: brandId, item, evidence });
+}
+
+type FactoryBrandRow = Record<string, unknown> & { brand_id: string; account: string; current_revision_id: string | null };
+
+async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string): Promise<Map<string, { hostnames: string[]; applied_revision_id: string | null; paused: boolean; bundle_form_version: string | null }>> {
+  if (!env.CORE_LIFECYCLE) return new Map();
+  let response: Response;
+  try {
+    response = await env.CORE_LIFECYCLE.fetch(new Request("https://core/lifecycle/runtime-list", {
+      method: "POST", headers: { ...adminContextToHeaders(ctx), "content-type": "application/json" },
+      body: JSON.stringify({ account }),
+    }));
+  } catch { return new Map(); }
+  if (!response.ok) return new Map();
+  const parsed = RuntimeListResponse.safeParse(await response.json().catch(() => null));
+  return parsed.success ? new Map(parsed.data.brands.map((brand) => [brand.brand_id, brand])) : new Map();
+}
+
+function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never): FactoryBrandRow {
+  const state = runtime.get(row.brand_id);
+  return { ...row, runtime_sync_status: state ? (state.applied_revision_id === row.current_revision_id ? "ready" : "sync_error") : "sync_error" };
+}
+
+async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<FactoryBrandRow[]> {
+  const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=b.current_revision_id LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
+  const account = results[0]?.account;
+  const runtime = account ? await runtimeBrands(env, ctx, account) : new Map();
+  const factoryIds = new Set(results.map((row) => row.brand_id));
+  const merged = results.map((row) => withRuntimeState(row, runtime));
+  for (const [brandId, state] of runtime) if (!factoryIds.has(brandId)) merged.push({ brand_id: brandId, account: state.account ?? account ?? "", name: null, domain: null, keyword_default: null, status: "unmanaged", current_revision_id: null, template_version_id: null, form_artifact_id: null, bundle_form_version: state.bundle_form_version, payload_version: null, hostnames: state.hostnames, runtime_sync_status: "ready" });
+  return merged;
 }
 
 export async function handleLifecycleRoute(request: Request, env: Env, url: URL, path: string, ctx: AdminRequestContext): Promise<Response | undefined> {
@@ -195,13 +235,13 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   }
   if ((path === "/api/lifecycle/brands" || path === "/api/brands/lifecycle") && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-    const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=b.current_revision_id LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all();
-    return json(200, { brands: results });
+    return json(200, { brands: await lifecycleBrandRows(env, ctx) });
   }
   m = path.match(/^\/api\/lifecycle\/brands\/([^/]+)$/);
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-    const row = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=b.current_revision_id LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id WHERE b.brand_id=?1").bind(m[1]).first();
+    const rows = await lifecycleBrandRows(env, ctx);
+    const row = rows.find((candidate) => candidate.brand_id === m![1]);
     return row ? json(200, { brand: row }) : json(404, { error: "not_found", resource: "brand" });
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|checklist)$/);
@@ -249,7 +289,8 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const row = await env.FACTORY.prepare("SELECT i.install_id,i.brand_id,i.to_revision_id,i.status FROM installs i JOIN brands b ON b.brand_id=i.brand_id WHERE i.install_id=?1").bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string; status: string }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
-    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: row.status, receipts: results.map((r) => ({ step: r.step, status: r.status, ...(r.output_json ? { output: JSON.parse(r.output_json) } : {}) })) });
+    const status = (value: string): "queued" | "running" | "ready" | "failed" => value === "ok" ? "ready" : value === "skipped" ? "queued" : value === "failed" ? "failed" : value === "running" ? "running" : "queued";
+    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: row.status === "ok" ? "ready" : row.status, runtime_sync_status: "queued", receipts: results.map((r) => { const output = r.output_json ? JSON.parse(r.output_json) as Record<string, unknown> : undefined; return { step: r.step, status: status(r.status), ...(typeof output?.error === "string" ? { error: output.error } : {}), ...(output ? { output } : {}) }; }) });
   }
   if (path === "/api/upgrade-all" && method === "POST") {
     const g = authorizePanel("upgradeAll", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);

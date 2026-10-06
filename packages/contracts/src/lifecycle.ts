@@ -147,6 +147,13 @@ export const RuntimeStateResponse = z.discriminatedUnion("state", [
 ]);
 export type RuntimeStateResponse = z.infer<typeof RuntimeStateResponse>;
 
+export const RuntimeListRequest = z.strictObject({ account: Id });
+export type RuntimeListRequest = z.infer<typeof RuntimeListRequest>;
+export const RuntimeListResponse = z.object({
+  brands: z.array(z.object({ brand_id: BrandId, account: Id, hostnames: z.array(Hostname), applied_revision_id: Id.nullable(), paused: z.boolean(), bundle_form_version: FormVersion.nullable() })),
+});
+export type RuntimeListResponse = z.infer<typeof RuntimeListResponse>;
+
 export const VerifySoldLeadRequest = z.strictObject({ brand_id: BrandId, lead_id: Id });
 export type VerifySoldLeadRequest = z.infer<typeof VerifySoldLeadRequest>;
 
@@ -187,7 +194,7 @@ export const InstallReceipt = z.strictObject({
 export const InstallWithReceipts = z.strictObject({
   install_id: Id,
   brand_id: BrandId,
-  revision_id: Id,
+  revision_id: Id.nullable(),
   status: InstallStatus,
   runtime_sync_status: RuntimeSyncStatus,
   receipts: z.array(InstallReceipt),

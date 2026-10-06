@@ -46,7 +46,7 @@ describe("truthful lifecycle BFF", () => {
   });
 
   it("rejects draft creation when tenant runtime defaults are not configured", async () => {
-    const envWithoutDefaults = makeEnv({ DEFAULT_ACCOUNT: undefined, DEFAULT_AID: undefined, DEFAULT_PREPOP_BASE: undefined });
+    const envWithoutDefaults = makeEnv({ DEFAULT_ACCOUNT: undefined, DEFAULT_AID: undefined, DEFAULT_PREPOP_BASE: undefined, DEFAULT_FORM_ROUTE: undefined, DEFAULT_AMOUNT_BUCKETS: undefined, DEFAULT_PAYLOAD_VERSION: undefined });
     const response = await call("/api/brands/drafts", { cookie: employee, method: "POST", body: { domain: "missing-config.example", keyword_default: "Quick Loan", template_version_id: "tv-1" }, env: envWithoutDefaults });
     expect(response.status).toBe(503);
   });
@@ -56,6 +56,8 @@ describe("truthful lifecycle BFF", () => {
     const response = await post(employee, "/api/brands/drafts", { domain: "apex-normalized.example.test.", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(response.status).toBe(201);
     expect((await response.json() as { brand: { domain: string } }).brand.domain).toBe("apex-normalized.example.test");
+    const revision = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id = (SELECT brand_id FROM brands WHERE domain='apex-normalized.example.test')").first<{ config_json: string }>();
+    expect(JSON.parse(revision!.config_json)).toMatchObject({ form_route: "/request", amount_buckets: [100, 200, 300, 500, 1000], aid: "30003" });
   });
 
   it("persists dispatch failures, sends exact immutable payloads, and retries the same install", async () => {
@@ -112,9 +114,39 @@ describe("truthful lifecycle BFF", () => {
     await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES ('ins-receipt','smoke','skipped','{\"reason\":\"not-needed\"}',?1)").bind(new Date().toISOString()).run();
     const detail = await call("/api/installs/ins-receipt", { cookie: employee });
     expect(detail.status).toBe(200);
-    expect((await detail.json() as { receipts: unknown[] }).receipts[0]).toMatchObject({ status: "skipped", output: { reason: "not-needed" } });
+    expect((await detail.json() as { receipts: unknown[] }).receipts[0]).toMatchObject({ status: "queued", output: { reason: "not-needed" } });
     const sold = await call(`/api/brands/${brand.brand_id}/checklist`, { cookie: employee, method: "POST", body: { item: "test_sold", lead_id: "lead-1" }, env: makeEnv({ CORE_LIFECYCLE: { fetch: async () => { throw new Error("transport"); } } as unknown as Fetcher }) });
     expect(sold.status).toBe(502);
+  });
+
+  it("merges private core runtime state and preserves unmanaged core-only brands", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "runtime-state.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await env.FACTORY.prepare("UPDATE brands SET current_revision_id=?1 WHERE brand_id=?2").bind(`${brand.brand_id}_rev_1`, brand.brand_id).run();
+    const core = { fetch: async (request: Request) => {
+      expect(new URL(request.url).pathname).toBe("/lifecycle/runtime-list");
+      return Response.json({ brands: [
+        { brand_id: brand.brand_id, account: "test-account", hostnames: ["runtime-state.example", "www.runtime-state.example"], applied_revision_id: `${brand.brand_id}_rev_1`, paused: false, bundle_form_version: "form@abcdef1" },
+        { brand_id: "core-only", account: "test-account", hostnames: ["core-only.example", "www.core-only.example"], applied_revision_id: null, paused: true, bundle_form_version: null },
+      ] });
+    } } as unknown as Fetcher;
+    const list = await call("/api/lifecycle/brands", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ brands: expect.arrayContaining([
+      expect.objectContaining({ brand_id: brand.brand_id, runtime_sync_status: "ready" }),
+      expect.objectContaining({ brand_id: "core-only", status: "unmanaged", runtime_sync_status: "ready" }),
+    ]) });
+  });
+
+  it("resolves rollback target server-side and ignores a caller override", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "rollback-authority.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await env.FACTORY.prepare("UPDATE brands SET current_revision_id=?1 WHERE brand_id=?2").bind(`${brand.brand_id}_rev_1`, brand.brand_id).run();
+    let sent: unknown;
+    const worker = { fetch: async (request: Request) => { sent = await request.json(); return Response.json({ instance_id: "rollback" }); } } as unknown as Fetcher;
+    const response = await call(`/api/brands/${brand.brand_id}/rollback`, { cookie: employee, method: "POST", body: { to_revision_id: "attacker-revision" }, env: makeEnv({ FACTORY_WORKER: worker }) });
+    expect(response.status).toBe(201);
+    expect(sent).toMatchObject({ to_revision_id: null });
   });
 
   it("uses one owner upgrade-all command and rejects employee before factory access", async () => {

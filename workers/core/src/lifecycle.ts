@@ -2,6 +2,8 @@ import {
   ApplyRuntimeRequest,
   adminContextFromHeaders,
   RuntimeStateRequest,
+  RuntimeListRequest,
+  type RuntimeListResponse,
   VerifySoldLeadRequest,
   type AdminRequestContext,
   type ApplyRuntimeResponse,
@@ -144,6 +146,20 @@ async function runtimeState(request: Request, env: Env, account: string): Promis
   return json(response);
 }
 
+async function runtimeList(request: Request, env: Env, account: string): Promise<Response> {
+  const parsed = RuntimeListRequest.safeParse(await body(request));
+  if (!parsed.success) return bad("Invalid runtime-list request");
+  if (parsed.data.account !== account) return forbidden("Credential account does not match request account");
+  const { results } = await env.LEADS.prepare(`SELECT brand_id, account, hostnames, applied_revision_id,
+      paused, form_version FROM brand_runtime WHERE account = ?1 ORDER BY brand_id`).bind(account).all<RuntimeRow>();
+  const response: RuntimeListResponse = { brands: results.map((row) => ({
+    brand_id: row.brand_id, account: row.account, hostnames: JSON.parse(row.hostnames),
+    applied_revision_id: row.applied_revision_id, paused: Boolean(row.paused),
+    bundle_form_version: row.form_version,
+  })) };
+  return json(response);
+}
+
 export async function handleFactoryLifecycleRequest(request: Request, env: Env): Promise<Response> {
   const account = await authenticateAccount(request, env);
   if (!account) return unauthorized();
@@ -173,6 +189,12 @@ export async function handlePanelLifecycleRequest(request: Request, env: Env): P
   if (!context) return unauthorized();
   if (request.method !== "POST") return notFound();
   if (new URL(request.url).pathname.endsWith("/test-sold")) return verifySold(request, env, context);
+  if (new URL(request.url).pathname.endsWith("/runtime-list")) {
+    const parsed = RuntimeListRequest.safeParse(await body(request));
+    if (!parsed.success) return bad("Invalid runtime-list request");
+    // The panel binding is private and the tenant account is part of the authenticated request contract.
+    return runtimeList(request, env, parsed.data.account);
+  }
   return notFound();
 }
 

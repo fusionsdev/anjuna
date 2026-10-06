@@ -57,8 +57,11 @@
     "ACCESS_AUD": "644bf3613e70f100e38474630d140e3702243de4b9d730eac29262de429120b1",
     "BETTER_AUTH_URL": "https://app.aduplift.ai",
     "MOCK_CORE": "0",
-    "DEFAULT_ACCOUNT": "<SET_PER_TENANT>",
-    "DEFAULT_AID": "<SET_PER_TENANT>",
-    "DEFAULT_PREPOP_BASE": "https://<SET_PER_TENANT>"
+    "DEFAULT_ACCOUNT": "aduplift",
+    "DEFAULT_AID": "10001",
+    "DEFAULT_PREPOP_BASE": "https://go.personalloanpro.com/aff_c",
+    "DEFAULT_FORM_ROUTE": "/request",
+    "DEFAULT_AMOUNT_BUCKETS": "[100,200,300,500,1000]",
+    "DEFAULT_PAYLOAD_VERSION": "2026-01"
   }
 }

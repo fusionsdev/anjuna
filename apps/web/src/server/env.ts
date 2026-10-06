@@ -29,4 +29,7 @@ export interface Env {
   DEFAULT_ACCOUNT?: string;
   DEFAULT_AID?: string;
   DEFAULT_PREPOP_BASE?: string;
+  DEFAULT_FORM_ROUTE?: string;
+  DEFAULT_AMOUNT_BUCKETS?: string;
+  DEFAULT_PAYLOAD_VERSION?: string;
 }
