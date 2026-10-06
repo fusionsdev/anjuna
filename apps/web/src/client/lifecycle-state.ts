@@ -69,8 +69,9 @@ export function isCurrentRefresh(
 export function lifecycleMutationAvailability(
   brandStatus: string,
   installStatus?: InstallWithReceipts["status"],
+  pendingOperation = false,
 ): { install: boolean; rollback: boolean; retry: boolean } {
-  if (installStatus === "queued" || installStatus === "running") {
+  if (pendingOperation || installStatus === "queued" || installStatus === "running") {
     return { install: false, rollback: false, retry: false };
   }
   return {

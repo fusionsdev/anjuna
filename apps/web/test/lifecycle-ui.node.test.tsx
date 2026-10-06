@@ -85,6 +85,17 @@ describe("lifecycle state reducer", () => {
     expect(lifecycleMutationAvailability(brandStatus, "queued")).toEqual({ install: false, rollback: false, retry: false });
     expect(lifecycleMutationAvailability(brandStatus, "running")).toEqual({ install: false, rollback: false, retry: false });
   });
+
+  it("hides every mutation while an accepted dispatch is waiting for delayed install detail", async () => {
+    let releaseDetail!: () => void;
+    const delayedDetail = new Promise<void>((resolve) => { releaseDetail = resolve; });
+    const accepted = true;
+    expect(accepted).toBe(true);
+    expect(lifecycleMutationAvailability("draft", undefined, accepted)).toEqual({ install: false, rollback: false, retry: false });
+    releaseDetail();
+    await delayedDetail;
+    expect(lifecycleMutationAvailability("draft", "ready", false)).toEqual({ install: true, rollback: false, retry: false });
+  });
 });
 
 describe("BrandLifecycle SSR", () => {

@@ -112,6 +112,20 @@ describe("truthful lifecycle BFF", () => {
     expect(row?.status).toBe("running");
   });
 
+  it("rejects a second install or rollback while a lifecycle operation is active", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "active-conflict.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const now = new Date().toISOString();
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,to_revision_id,started_by,started_at) VALUES ('active-install',?1,'install','running',?2,'employee',?3)").bind(brand.brand_id, `${brand.brand_id}_rev_1`, now).run();
+    const install = await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const rollback = await post(employee, `/api/brands/${brand.brand_id}/rollback`, {});
+    expect(install.status).toBe(409);
+    expect(rollback.status).toBe(409);
+    expect(await install.json()).toMatchObject({ error: "lifecycle_operation_active", active_install_id: "active-install" });
+    const rows = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?1").bind(brand.brand_id).all();
+    expect(rows.results).toHaveLength(1);
+  });
+
   it("records manual checklist attestations once and exposes lifecycle receipts", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "checklist.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };

@@ -46,6 +46,11 @@ async function setFailed(db: Db, installId: string, message: string): Promise<vo
     .bind(message.slice(0, 500), new Date().toISOString(), installId).run();
 }
 
+async function activeLifecycleOperation(db: Db, brandId: string): Promise<{ install_id: string; kind: string; status: string } | null> {
+  return db.prepare("SELECT install_id,kind,status FROM installs WHERE brand_id = ?1 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running') ORDER BY started_at DESC LIMIT 1")
+    .bind(brandId).first<{ install_id: string; kind: string; status: string }>();
+}
+
 function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: string; form_route: string; amount_buckets: number[]; payload_version: string } | null {
   const account = env.DEFAULT_ACCOUNT?.trim();
   const aid = env.DEFAULT_AID?.trim();
@@ -125,6 +130,8 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
 async function startInstall(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT brand_id,status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ brand_id: string; status: string; current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
+  const active = await activeLifecycleOperation(env.FACTORY, brandId);
+  if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
   const body = await request.json().catch(() => ({})) as { revision_id?: string };
   const revision = await env.FACTORY.prepare("SELECT revision_id FROM brand_revisions WHERE revision_id = ?1 AND brand_id = ?2").bind(body.revision_id ?? `${brandId}_rev_1`, brandId).first<{ revision_id: string }>();
   if (!revision) return json(422, { error: "revision_missing" });
@@ -138,6 +145,8 @@ async function startInstall(request: Request, env: Env, ctx: AdminRequestContext
 async function rollback(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
+  const active = await activeLifecycleOperation(env.FACTORY, brandId);
+  if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
   let target: string | null = null;
   if (brand.current_revision_id) {
     const previous = await env.FACTORY.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY finished_at DESC LIMIT 1").bind(brandId, brand.current_revision_id).first<{ to_revision_id: string | null }>();

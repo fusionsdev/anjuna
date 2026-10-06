@@ -20,6 +20,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [state, setState] = useState<LifecycleState>();
   const [install, setInstall] = useState<InstallWithReceipts | undefined>();
+  const [pendingOperation, setPendingOperation] = useState<{ brandId: string; generation: number; installId: string } | null>(null);
   const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
     operationGeneration.current += 1;
     setState(undefined);
     setInstall(undefined);
+    setPendingOperation(null);
     setChecklist({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
     setLeadId("");
     if (!selected) return () => { active = false; };
@@ -80,6 +82,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   function commitInstallDetail(detail: InstallWithReceipts, token: { selectedId: string | null; generation: number }, retry?: { install_id: string; compensation_install_id?: string }) {
     if (!canCommit(token, detail.brand_id)) return false;
     setInstall(detail);
+    if (detail.status !== "queued" && detail.status !== "running") setPendingOperation(null);
     setState((previous) => {
       const next = reduceLifecycleState(previous, { type: "install", install: detail });
       return retry ? reduceLifecycleState(next, { type: "retry", ...retry }) : next;
@@ -102,24 +105,32 @@ export function BrandLifecycle({ me }: { me: Me }) {
   async function startInstall() {
     if (!selected) return;
     const token = operationToken();
+    let dispatchAccepted = false;
     try {
       setError(null);
       const result = await api.install(selected.brand_id, selected.current_revision_id ?? undefined);
+      dispatchAccepted = true;
+      if (canCommit(token, selected.brand_id)) setPendingOperation({ brandId: selected.brand_id, generation: token.generation, installId: result.install_id });
       const detail = await api.installDetail(result.install_id);
       if (commitInstallDetail(detail, token)) await load(token);
     } catch (e) {
+      if (!dispatchAccepted && canCommit(token, selected.brand_id)) setPendingOperation(null);
       if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
     }
   }
   async function rollback() {
     if (!selected) return;
     const token = operationToken();
+    let dispatchAccepted = false;
     try {
       setError(null);
       const result = await api.rollbackLifecycle(selected.brand_id);
+      dispatchAccepted = true;
+      if (canCommit(token, selected.brand_id)) setPendingOperation({ brandId: selected.brand_id, generation: token.generation, installId: result.install_id });
       const detail = await api.installDetail(result.install_id);
       if (commitInstallDetail(detail, token)) await load(token);
     } catch (e) {
+      if (!dispatchAccepted && canCommit(token, selected.brand_id)) setPendingOperation(null);
       if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
     }
   }
@@ -127,12 +138,16 @@ export function BrandLifecycle({ me }: { me: Me }) {
     if (!selected || !install) return;
     const token = operationToken();
     const originalInstallId = install.install_id;
+    let dispatchAccepted = false;
     try {
       setError(null);
       const next = await api.retryInstall(originalInstallId);
+      dispatchAccepted = true;
+      if (canCommit(token, selected.brand_id)) setPendingOperation({ brandId: selected.brand_id, generation: token.generation, installId: next.install_id });
       const detail = await api.installDetail(next.install_id);
       if (commitInstallDetail(detail, token, { install_id: originalInstallId, compensation_install_id: next.install_id })) await load(token);
     } catch (e) {
+      if (!dispatchAccepted && canCommit(token, selected.brand_id)) setPendingOperation(null);
       if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
     }
   }
@@ -151,14 +166,14 @@ export function BrandLifecycle({ me }: { me: Me }) {
       <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <button key={brand.brand_id} className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><b>{brand.hostnames[0] ?? brand.brand_id}</b><span>{statusLabel[brand.status] ?? brand.status}</span></button>)}</div>
       <p className="muted small">Actions: Install · Rollback · Retry · Test sold</p>
     </section>
-    {selected && <LifecycleDetail me={me} brand={selected} state={state} install={install} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRetry={() => void retry()} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />}
+    {selected && <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRetry={() => void retry()} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />}
     {me.role === "owner" && <section className="card upgrade-card"><h2>Upgrade-all (Owner only)</h2><p className="muted">Canary-first upgrade; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="danger" onClick={() => void act(() => api.upgradeAll(upgrade))}>เริ่ม Upgrade-all</button></div></section>}
   </div>;
 }
 
-export function LifecycleDetail({ me, brand, state, install, checklist, leadId, onLeadIdChange, onInstall, onRollback, onRetry, onChecklist }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; checklist: Partial<Record<ChecklistItemName, ChecklistEvidence | undefined>>; leadId: string; onLeadIdChange: (value: string) => void; onInstall: () => void; onRollback: () => void; onRetry: () => void; onChecklist: (item: ChecklistItemName, leadId?: string) => void }) {
+export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, checklist, leadId, onLeadIdChange, onInstall, onRollback, onRetry, onChecklist }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; checklist: Partial<Record<ChecklistItemName, ChecklistEvidence | undefined>>; leadId: string; onLeadIdChange: (value: string) => void; onInstall: () => void; onRollback: () => void; onRetry: () => void; onChecklist: (item: ChecklistItemName, leadId?: string) => void }) {
   const lifecycleStatus = state?.lifecycle_status ?? (brand.status === "installing" ? "running" : brand.status === "live" ? "ready" : brand.status);
-  const actions = lifecycleMutationAvailability(brand.status, install?.status);
+  const actions = lifecycleMutationAvailability(brand.status, install?.status, pendingOperation);
   const uiBrandStatus = brand.status as string;
   const isManaged = uiBrandStatus !== "unmanaged" && uiBrandStatus !== "detached";
   return <section className="card lifecycle-detail"><div className="row split"><div><h2>{brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={`pill ${brand.status}`}>{statusLabel[brand.status] ?? brand.status}</span></div>
