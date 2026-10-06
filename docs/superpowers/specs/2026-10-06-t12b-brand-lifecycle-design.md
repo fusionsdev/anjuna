@@ -1,6 +1,6 @@
 # T12b — Brand lifecycle in the control panel
 
-Status: proposed for owner review, 2026-10-06. Parent task: T12 / FUS-347. This is the first of two T12 follow-ups; T12c covers reporting and monitoring.
+Status: approved by owner, 2026-10-06. Parent task: T12 / FUS-347. This is the first of two T12 follow-ups; T12c covers reporting and monitoring.
 
 ## Intent and success
 
@@ -70,4 +70,4 @@ Implementation will use contract and Workflow tests with fake bindings/Cloudflar
 6. Factory-live/core-missing divergence and pre-existing core-only brands are visible; core never accepts a brand from the wrong account. The generated brand Worker can call core with its secret and correct binding. Brand Worker-served output contains no other brand identifiers, platform names, analytics key or DSN.
 7. A fake lead submit succeeds after install, upgrade and rollback with a compatible registered form artifact; requests during the new-Worker/old-core interval remain compatible. Lifecycle UI tests cover actions and state transitions; API/Workflow tests cover authorization, payloads, idempotence, failures and receipts. `bun run typecheck` and `bun run test` pass before a PR is proposed.
 
-This design does not authorize a deployment. Owner approval of the written spec is the next gate; the detailed implementation plan and its execution method are reviewed separately.
+This design does not authorize a deployment. The owner approved this written spec on 2026-10-06 and subsequently approved long-running autonomous execution of the detailed implementation plan, including opening and merging the resulting PR after all acceptance checks and final review pass. The agent pauses only for a material safety, production, architectural, or verification blocker.
