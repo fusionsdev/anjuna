@@ -182,7 +182,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           original_install_id,
           compensation_install_id: install_id,
           error: message,
-          mutation_started: true,
+          mutation_started: mutationStarted,
         });
         await db.prepare("UPDATE installs SET status = 'failed', error = ?, finished_at = ? WHERE install_id = ?")
           .bind(JSON.stringify(evidence), new Date().toISOString(), original_install_id).run();

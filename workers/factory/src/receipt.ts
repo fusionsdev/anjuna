@@ -145,6 +145,13 @@ export function shouldRetainBrandLockOnFailure(mutationStarted: boolean, origina
   return mutationStarted || Boolean(originalInstallId);
 }
 
+export async function isQueuedCompensationInstall(db: D1Database, installId: string): Promise<boolean> {
+  const row = await db.prepare(
+    "SELECT kind, status FROM installs WHERE install_id = ?",
+  ).bind(installId).first<{ kind: string; status: string }>();
+  return row?.kind === "rollback" && row.status === "queued" && installId.startsWith("compensate-");
+}
+
 export function compensationFailureEvidence(input: {
   original_install_id: string;
   compensation_install_id: string;
@@ -245,6 +252,9 @@ export async function setInstallStatus(
         const linkedCompensation = options.compensationForInstallId
           ? isLinkedCompensationInstall(installId, options.compensationForInstallId)
           : false;
+        if (await isQueuedCompensationInstall(db, installId) && !linkedCompensation) {
+          throw new Error("Queued compensation requires its exact original install");
+        }
         if (options.compensationForInstallId && !linkedCompensation) {
           throw new Error("Compensation install is not authorized for the original install");
         }
@@ -252,8 +262,10 @@ export async function setInstallStatus(
           const original = await db.prepare(
             "SELECT brand_id, status FROM installs WHERE install_id = ?",
           ).bind(options.compensationForInstallId).first<{ brand_id: string; status: string }>();
-          if (!original || original.brand_id !== brandId || original.status !== "running") {
-            throw new Error("Compensation install is not authorized for the active original install");
+          const brand = await db.prepare("SELECT status FROM brands WHERE brand_id = ?")
+            .bind(brandId).first<{ status: string }>();
+          if (!original || original.brand_id !== brandId || !["failed", "running"].includes(original.status) || brand?.status !== "installing") {
+            throw new Error("Compensation install is not authorized for the retained brand lock");
           }
           if (install?.status !== "queued") {
             throw new Error("Compensation install cannot be re-dispatched after it finished");

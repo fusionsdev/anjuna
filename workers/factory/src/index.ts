@@ -2,7 +2,7 @@ import type { Env } from "./env.js";
 import { InstallBrandWorkflow } from "./workflows/install.js";
 import { RollbackBrandWorkflow } from "./workflows/rollback.js";
 import { UpgradeAllWorkflow } from "./workflows/upgrade-all.js";
-import { rejectQueuedInstall, setInstallStatus } from "./receipt.js";
+import { isQueuedCompensationInstall, rejectQueuedInstall, setInstallStatus } from "./receipt.js";
 
 export { InstallBrandWorkflow, RollbackBrandWorkflow, UpgradeAllWorkflow };
 
@@ -42,6 +42,9 @@ export default {
       if (existing) return Response.json({ ok: true, install_id: params.install_id, status: existing });
       let claimed = false;
       try {
+        if (await isQueuedCompensationInstall(env.FACTORY, params.install_id)) {
+          throw new Error("Queued compensation requires its exact original install");
+        }
         claimed = (await setInstallStatus(env.FACTORY, params.install_id, "running", undefined, params.brand_id)) === "claimed";
         await env.ROLLBACK_WORKFLOW.create({ id: params.install_id, params });
       } catch (error) {

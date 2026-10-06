@@ -1,6 +1,7 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
+import worker from "../src/index";
 import { getReceipt, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../src/receipt";
 
 beforeAll(async () => {
@@ -153,5 +154,71 @@ describe("lifecycle lock claim", () => {
     const compensationRow = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
       .bind(compensation).first<{ status: string }>();
     expect(compensationRow?.status).toBe("failed");
+  });
+
+  it("admits the exact queued compensation after the original fails while retaining the brand lock", async () => {
+    const original = `i-${uniq()}`;
+    const compensation = `compensate-${original}`;
+    const brand = `brand-${original}`;
+    await seedInstall(original, brand);
+    await seedInstall(compensation, brand);
+    await env.FACTORY.prepare("UPDATE installs SET kind = 'rollback' WHERE install_id = ?").bind(compensation).run();
+
+    await setInstallStatus(env.FACTORY, original, "running", undefined, brand);
+    await setInstallStatus(env.FACTORY, original, "failed", "deploy failed", brand, {
+      retainBrandLock: true,
+    });
+
+    const originalRow = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(original).first<{ status: string }>();
+    const brandRow = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?")
+      .bind(brand).first<{ status: string }>();
+    const queuedCompensation = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(compensation).first<{ status: string }>();
+    expect(originalRow?.status).toBe("failed");
+    expect(brandRow?.status).toBe("installing");
+    expect(queuedCompensation?.status).toBe("queued");
+
+    await expect(setInstallStatus(env.FACTORY, compensation, "running", undefined, brand, {
+      compensationForInstallId: original,
+    })).resolves.toBe("claimed");
+
+    const runningCompensation = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(compensation).first<{ status: string }>();
+    expect(runningCompensation?.status).toBe("running");
+    const retainedBrand = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?")
+      .bind(brand).first<{ status: string }>();
+    expect(retainedBrand?.status).toBe("installing");
+  });
+
+  it("rejects ordinary rollback dispatch of a queued compensation without its exact original relationship", async () => {
+    const original = `i-${uniq()}`;
+    const compensation = `compensate-${original}`;
+    const brand = `brand-${original}`;
+    await seedInstall(original, brand);
+    await seedInstall(compensation, brand);
+    await env.FACTORY.prepare("UPDATE installs SET kind = 'rollback' WHERE install_id = ?").bind(compensation).run();
+    await setInstallStatus(env.FACTORY, original, "running", undefined, brand);
+    await setInstallStatus(env.FACTORY, original, "failed", "deploy failed", brand, {
+      retainBrandLock: true,
+    });
+
+    const response = await worker.fetch(
+      new Request("https://factory.test/rollback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ install_id: compensation, brand_id: brand, to_revision_id: null }),
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: "workflow_dispatch_failed" });
+    const rejectedCompensation = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(compensation).first<{ status: string }>();
+    expect(rejectedCompensation?.status).toBe("failed");
+    const retainedBrand = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?")
+      .bind(brand).first<{ status: string }>();
+    expect(retainedBrand?.status).toBe("installing");
   });
 });
