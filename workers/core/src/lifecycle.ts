@@ -76,7 +76,13 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
 
   const timestamp = now();
   const detached = input.target_revision_id === null;
-  const paused = detached || Boolean(current?.paused);
+  // A completed lifecycle detach has no applied revision but retains the last
+  // lifecycle operation. Re-provisioning that runtime explicitly reactivates it.
+  // Do not confuse a pre-existing, operator-paused unmanaged row (no lifecycle
+  // operation), or a paused deployed revision, with that detached state.
+  const reactivatingDetached = Boolean(input.initial_runtime && current
+    && current.applied_revision_id === null && current.last_lifecycle_install_id !== null);
+  const paused = detached || Boolean(current?.paused && !reactivatingDetached);
   const nextRevision = input.target_revision_id;
   const auditAfter = JSON.stringify({
     applied_revision_id: nextRevision,

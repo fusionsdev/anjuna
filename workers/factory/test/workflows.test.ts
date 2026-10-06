@@ -73,7 +73,8 @@ async function fixture(live = false) {
     runtime = {
       state: "applied", brand_id: brand, account: "test",
       applied_revision_id: parsed.target_revision_id, last_lifecycle_install_id: parsed.install_id,
-      paused: parsed.target_revision_id === null || (runtime.state === "applied" && runtime.paused),
+      paused: parsed.target_revision_id === null || (runtime.state === "applied" && runtime.paused
+        && !(parsed.initial_runtime && runtime.applied_revision_id === null && runtime.last_lifecycle_install_id !== null)),
       bundle_form_version: parsed.bundle_form_version ?? parsed.initial_runtime?.form_version ?? (runtime.state === "applied" ? runtime.bundle_form_version : null),
       credential_account_match: true,
     };
@@ -84,7 +85,7 @@ async function fixture(live = false) {
   const network = vi.fn(async (input: string | Request | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
     const ok = (result: unknown) => Response.json({ success: true, result });
-    if (url.hostname === `${id}.example`) return new Response("landing", { status: settings.smokeFails ? 500 : 200 });
+    if (url.hostname === `${id}.example`) return new Response("landing", { status: settings.smokeFails ? 500 : runtime.state === "applied" && runtime.paused ? 503 : 200 });
     if (url.hostname === `www.${id}.example`) return new Response(null, { status: 301 });
     if (url.hostname !== "api.cloudflare.com") throw new Error(`Unexpected external request: ${url}`);
     if (url.pathname.endsWith("/zones")) return ok([{ id: "zone-local", status: "active" }]);
@@ -166,6 +167,14 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(f.runtime()).toMatchObject({ paused: true, applied_revision_id: null });
     expect(await f.installRow()).toEqual({ status: "rolled_back" });
     expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
+    f.settings.smokeFails = false;
+    const retry = `retry-${f.install}`;
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,to_revision_id,status,started_by,started_at) VALUES (?,?,'install',?,'queued','owner',?)")
+      .bind(retry, f.brand, f.revision, now).run();
+    f.params.install_id = retry;
+    await runInstall(f);
+    expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(retry).first()).toEqual({ status: "ready" });
+    expect(f.runtime()).toMatchObject({ paused: false, applied_revision_id: f.revision });
   });
 
   it("still compensates on replay when every mutation step is cached", async () => {

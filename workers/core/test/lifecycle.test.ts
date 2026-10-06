@@ -139,6 +139,15 @@ describe("private factory lifecycle service", () => {
     expect(forbidden.status).toBe(403);
   });
 
+  it("does not treat an unmanaged operator pause as a lifecycle detach", async () => {
+    await h.seedBrand("unmanaged-paused", "unmanaged-token", "account-a");
+    await h.db.prepare("UPDATE brand_runtime SET paused=1,applied_revision_id=NULL,last_lifecycle_install_id=NULL WHERE brand_id='unmanaged-paused'").run();
+    const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({
+      brand_id: "unmanaged-paused", install_id: "adopt-paused", target_revision_id: "adopted-revision",
+    })));
+    expect(await response.json()).toMatchObject({ state: "applied", paused: true });
+  });
+
   it("accepts distinct form bundle identities through upgrade and rollback without external requests", async () => {
     const upgrade = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({
       install_id: "install-upgrade-bundle", expected_revision_id: null, target_revision_id: "revision-bundle-2",

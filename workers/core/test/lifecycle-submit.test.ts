@@ -44,17 +44,27 @@ beforeAll(async () => {
 afterAll(async () => { await h?.mf.dispose(); });
 
 describe("lifecycle fake-submit acceptance with local production core", () => {
-  it("persists accepted leads after provision, during new-form/old-core, after upgrade and after rollback", async () => {
+  it("persists accepted leads after provision, during new-form/old-core, after upgrade, rollback and detach/reinstall", async () => {
     const brand = await h.mf.getWorker("brand");
     const stages = [
       { name: "first provision", artifact: artifacts[0], revision: "revision-1", previous: null, apply: true },
       { name: "new-form/old-core interval", artifact: artifacts[1], revision: "revision-1", previous: "revision-1", apply: false },
       { name: "upgrade apply", artifact: artifacts[1], revision: "revision-2", previous: "revision-1", apply: true },
       { name: "rollback apply", artifact: artifacts[0], revision: "revision-1", previous: "revision-2", apply: true },
+      { name: "reinstall after lifecycle detach", artifact: artifacts[0], revision: "revision-1", previous: null, apply: true },
     ];
     expect(await h.db.prepare("SELECT brand_id FROM brand_runtime").first()).toBeNull();
 
     for (const [index, stage] of stages.entries()) {
+      if (index === 4) {
+        const detach = await h.factoryLifecycle("/runtime", token, jsonBody({
+          install_id: "install-submit-detach", brand_id: "brand-a", account: "account-a",
+          hostnames: ["brand-a.example", "www.brand-a.example"], expected_revision_id: "revision-1",
+          target_revision_id: null, actor_id: "usr_owner_01", actor_role: "owner",
+        }));
+        expect(await detach.json()).toMatchObject({ state: "detached", paused: true });
+        expect((await brand.fetch("https://brand-a.example/")).status).toBe(503);
+      }
       const artifact = await h.factory.prepare(`SELECT payload_version, bundle_form_version
         FROM form_artifacts WHERE form_artifact_id = ?1`).bind(stage.artifact.id)
         .first<{ payload_version: string; bundle_form_version: string }>();
@@ -66,7 +76,7 @@ describe("lifecycle fake-submit acceptance with local production core", () => {
           hostnames: ["brand-a.example", "www.brand-a.example"],
           expected_revision_id: stage.previous, target_revision_id: stage.revision,
           actor_id: "usr_owner_01", actor_role: "owner",
-          ...(index === 0 ? { initial_runtime: initialRuntime } : { bundle_form_version: artifact!.bundle_form_version }),
+          ...(stage.previous === null ? { initial_runtime: initialRuntime } : { bundle_form_version: artifact!.bundle_form_version }),
         });
         const response = await h.factoryLifecycle("/runtime", token, jsonBody(request));
         expect(response.status, stage.name).toBe(200);
