@@ -74,6 +74,10 @@ export function canaryGate(evidence: { install: string; core: string }): boolean
   return evidence.install === "ready" && evidence.core === "ready";
 }
 
+export function canarySleepStepName(iteration: number): string {
+  return `wait_canary_${iteration}`;
+}
+
 export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams> {
   async run(event: WorkflowEvent<UpgradeAllParams>, step: WorkflowStep): Promise<void> {
     const params = event.payload;
@@ -135,7 +139,9 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
         throw error;
       }
       for (let i = 0; i < 60; i++) {
-        await step.sleep("wait_canary", "10 seconds");
+        // Workflow step names are replay/cache keys; each poll must have its
+        // own deterministic name so a replay cannot reuse the first sleep.
+        await step.sleep(canarySleepStepName(i), "10 seconds");
         const status = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(canaryInstallId).first<{ status: string }>();
         const core = await db.prepare("SELECT status FROM install_receipts WHERE install_id = ? AND step = 'sync_runtime'").bind(canaryInstallId).first<{ status: string }>();
         if (canaryGate({ install: status?.status ?? "missing", core: core?.status === "ok" ? "ready" : core?.status ?? "pending" })) return;
