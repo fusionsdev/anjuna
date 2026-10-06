@@ -7,8 +7,10 @@ import { z } from "zod";
 const slug = /^[a-z][a-z0-9-]*$/;
 const hostname = /^[a-z0-9]([a-z0-9-]*\.)+[a-z]{2,}$/;
 const secretName = /^[A-Z][A-Z0-9_]*$/;
+const leadsGateAid = /^[A-Za-z0-9_-]{1,32}$/;
 const payloadVersion = /^\d{4}-\d{2}$/;
-const formRoute = /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*)$/;
+const formRoute = /^\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
+const reservedRoutes = ["/go", "/_f", "/api", "/privacy", "/terms", "/do-not-sell", "/disclosures"] as const;
 
 export const TenantSecrets = z.strictObject({
   /** GitHub Actions secret name holding the Cloudflare API token for this tenant's account. */
@@ -41,18 +43,25 @@ export const TenantConfig = z.strictObject({
   /** Hostname of the control panel Worker, e.g. `"app.aduplift.ai"`. */
   appDomain: z.string().regex(hostname, "must be a valid lowercase hostname"),
   /** LeadsGate affiliate ID for this tenant's brands. */
-  leadsGateAid: z.string().min(1),
+  leadsGateAid: z.string().regex(leadsGateAid, "must be a restricted LeadsGate identifier"),
   /** LeadsGate prepop base URL, e.g. `"https://go.personalloanpro.com/aff_c"`. */
   prepopBase: z
     .string()
     .url()
-    .refine((value) => new URL(value).protocol === "https:", "must use HTTPS"),
+    .max(512)
+    .refine((value) => {
+      const parsed = new URL(value);
+      return parsed.protocol === "https:" && parsed.search === "" && parsed.hash === "";
+    }, "must be an HTTPS URL without query or fragment"),
   /** Tenant-owned defaults used by factory when first provisioning a brand runtime. */
   brandDefaults: z
     .strictObject({
       account: z.string().regex(slug),
-      formRoute: z.string().regex(formRoute, "must be an absolute form route"),
-      amountBuckets: z.array(z.number().int().positive()).min(1),
+      formRoute: z
+        .string()
+        .regex(formRoute, "must be a lowercase absolute path without trailing slash")
+        .refine((route) => !reservedRoutes.some((reserved) => route === reserved || route.startsWith(`${reserved}/`)), "must not use a reserved route"),
+      amountBuckets: z.array(z.number().int().min(100).max(5000)).min(1).max(32),
       payloadVersion: z.string().regex(payloadVersion, "must be YYYY-MM"),
     })
     .superRefine((defaults, ctx) => {

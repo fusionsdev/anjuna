@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_install_receipts_install ON install_receipts(inst
 
 CREATE TABLE IF NOT EXISTS brand_checklist (
   brand_id       TEXT NOT NULL REFERENCES brands(brand_id),
-  item           TEXT NOT NULL CHECK (item IN ('drain_route', 'leadsgate_postbacks', 'test_sold', 'final_url_keyword')),
+  item           TEXT NOT NULL CHECK (item IN ('drain_route', 'leadsgate_postbacks', 'test_sold', 'final_url')),
   evidence_json  TEXT NOT NULL CHECK (json_valid(evidence_json)),
   confirmed_by   TEXT NOT NULL,
   confirmed_role TEXT NOT NULL CHECK (confirmed_role IN ('owner', 'employee')),

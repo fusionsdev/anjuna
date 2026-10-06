@@ -54,7 +54,7 @@ describe("TenantConfig schema", () => {
     expect(r.success).toBe(false);
   });
 
-  it("rejects insecure prepop bases, unsorted buckets, relative routes, and invalid payload versions", () => {
+  it("rejects insecure prepop bases, invalid aids, unsafe routes, and invalid amount buckets", () => {
     const base = {
       name: "valid",
       accountId: "a".repeat(32),
@@ -68,9 +68,18 @@ describe("TenantConfig schema", () => {
       ownerEmail: "owner@example.com",
     };
     expect(TenantConfig.safeParse({ ...base, prepopBase: "http://prepop.example.com" }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, prepopBase: "https://prepop.example.com/form?aid=1" }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, prepopBase: "https://prepop.example.com/form#fragment" }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, leadsGateAid: "aid with spaces" }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, leadsGateAid: "a".repeat(33) }).success).toBe(false);
     expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, amountBuckets: [200, 100] } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, amountBuckets: [99] } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, amountBuckets: [5001] } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, amountBuckets: Array.from({ length: 33 }, (_, i) => 100 + i) } }).success).toBe(false);
     expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, formRoute: "request" } }).success).toBe(false);
-    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, payloadVersion: "latest" } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, formRoute: "/Request" } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, formRoute: "/api" } }).success).toBe(false);
+    expect(TenantConfig.safeParse({ ...base, brandDefaults: { ...base.brandDefaults, formRoute: "/request/" } }).success).toBe(false);
   });
 
   it("accepts config without optional fields", () => {

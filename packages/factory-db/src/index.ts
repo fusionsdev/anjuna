@@ -51,3 +51,7 @@ export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 
 export const AUDIT_ACTOR_ROLES = ["owner", "employee", "system"] as const;
 export type AuditActorRole = (typeof AUDIT_ACTOR_ROLES)[number];
+
+/** Checklist item names shared with the lifecycle wire contract. */
+export const CHECKLIST_ITEMS = ["drain_route", "leadsgate_postbacks", "test_sold", "final_url"] as const;
+export type ChecklistItem = (typeof CHECKLIST_ITEMS)[number];

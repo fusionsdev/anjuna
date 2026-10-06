@@ -1,7 +1,7 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { FACTORY_DB_MIGRATIONS, INSTALL_STEPS } from "../src/index";
+import { CHECKLIST_ITEMS, FACTORY_DB_MIGRATIONS, INSTALL_STEPS } from "../src/index";
 
 const NOW = "2026-10-02T00:00:00.000Z";
 
@@ -140,11 +140,16 @@ describe("factory-db constraints", () => {
   });
 
   it("stores one checklist evidence row per brand and item", async () => {
-    await run(
-      `INSERT INTO brand_checklist (brand_id, item, evidence_json, confirmed_by, confirmed_role, confirmed_at)
-       VALUES ('b1', 'drain_route', '{"confirmed":true}', 'u1', 'owner', ?1)`,
-      NOW,
-    );
+    for (const [index, item] of CHECKLIST_ITEMS.entries()) {
+      await run(
+        `INSERT INTO brand_checklist (brand_id, item, evidence_json, confirmed_by, confirmed_role, confirmed_at)
+         VALUES ('b1', ?1, '{"confirmed":true}', 'u1', 'owner', ?2)`,
+        item,
+        `${NOW.slice(0, -5)}${String(index).padStart(2, "0")}.000Z`,
+      );
+    }
+    const rows = await env.DB.prepare("SELECT item FROM brand_checklist WHERE brand_id = 'b1' ORDER BY item").all<{ item: string }>();
+    expect(rows.results.map((row) => row.item).sort()).toEqual([...CHECKLIST_ITEMS].sort());
     await expect(
       run(
         `INSERT INTO brand_checklist (brand_id, item, evidence_json, confirmed_by, confirmed_role, confirmed_at)
