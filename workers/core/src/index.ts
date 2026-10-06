@@ -7,6 +7,7 @@ import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 import { handlePostback } from "./postback.js";
 import { rpcRoutes } from "./rpc/index.js";
+import { handleFactoryLifecycleRequest, handlePanelLifecycleRequest } from "./lifecycle.js";
 
 export type RpcHandler = (request: Request, env: Env, account: string) => Promise<Response>;
 
@@ -51,6 +52,20 @@ export class AdminService extends WorkerEntrypoint<Env> {
 
   protected async handleAdmin(request: Request): Promise<Response> {
     return handleAdminRequest(request, this.env);
+  }
+}
+
+/** Private factory-only lifecycle binding; it is not reachable through public fetch. */
+export class FactoryLifecycleService extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    return handleFactoryLifecycleRequest(request, this.env);
+  }
+}
+
+/** Private panel-only lifecycle binding; it is not reachable through public fetch. */
+export class PanelLifecycleService extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    return handlePanelLifecycleRequest(request, this.env);
   }
 }
 

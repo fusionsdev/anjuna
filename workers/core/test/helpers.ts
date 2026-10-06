@@ -60,8 +60,13 @@ export async function createHarness(options: { brand?: boolean } = {}) {
         serviceBindings: {
           CORE_ADMIN: { name: "test-core", entrypoint: "TestAdminService" },
           PRODUCTION_ADMIN: { name: "production", entrypoint: "AdminService" },
+          FACTORY_LIFECYCLE: { name: "production", entrypoint: "FactoryLifecycleService" },
+          PANEL_LIFECYCLE: { name: "production", entrypoint: "PanelLifecycleService" },
         },
         script: `export default {fetch(req, env) {
+          const path = new URL(req.url).pathname;
+          if (path.startsWith("/private/factory")) return env.FACTORY_LIFECYCLE.fetch(req);
+          if (path.startsWith("/private/panel")) return env.PANEL_LIFECYCLE.fetch(req);
           return (req.headers.has("x-production") ? env.PRODUCTION_ADMIN : env.CORE_ADMIN).fetch(req);
         }};`,
       },
@@ -71,6 +76,13 @@ export async function createHarness(options: { brand?: boolean } = {}) {
   const factory = await mf.getD1Database("FACTORY", "production");
   for (const migration of leadsMigrations) await db.batch(migration.queries.map((query) => db.prepare(query)));
   for (const migration of factoryMigrations) await factory.batch(migration.queries.map((query) => factory.prepare(query)));
+  // Keep the core harness usable with older Miniflare migration runners that skip the
+  // append-only audit table when replaying the rebuilt receipt migration.
+  await factory.prepare(`CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT NOT NULL,
+    actor_role TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL, before_json TEXT, after_json TEXT, created_at TEXT NOT NULL
+  )`).run();
   const core = await mf.getWorker("production");
   const panel = await mf.getWorker("panel");
   let hiddenOrphan = false;
@@ -84,6 +96,7 @@ export async function createHarness(options: { brand?: boolean } = {}) {
       }
       await db.batch(["continuations", "mailing_outbox", "consent_evidence", "click_sessions", "zip_lookup", "conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials"]
         .map((table) => db.prepare(`DELETE FROM ${table}`)));
+      await factory.prepare("DELETE FROM audit_log").run();
     },
     async seedBrand(id = "brand-a", token = "T", account = "account-a") {
       await db.prepare(`INSERT INTO brand_runtime
@@ -147,6 +160,28 @@ export async function createHarness(options: { brand?: boolean } = {}) {
       headers.set("x-production", "1");
       for (const [name, value] of Object.entries(adminContextToHeaders(context))) headers.set(name, value);
       const response = await panel.fetch(`https://core.internal${path}`, {
+        ...init,
+        headers: Object.fromEntries(headers),
+      } as Parameters<typeof panel.fetch>[1]);
+      return new Response(await response.arrayBuffer(), {
+        status: response.status, headers: Object.fromEntries(response.headers),
+      });
+    },
+    async factoryLifecycle(path: string, token: string, init: RequestInit = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+      const response = await panel.fetch(`https://core.internal/private/factory${path}`, {
+        ...init,
+        headers: Object.fromEntries(headers),
+      } as Parameters<typeof panel.fetch>[1]);
+      return new Response(await response.arrayBuffer(), {
+        status: response.status, headers: Object.fromEntries(response.headers),
+      });
+    },
+    async panelLifecycle(path: string, context: AdminRequestContext, init: RequestInit = {}) {
+      const headers = new Headers(init.headers);
+      for (const [name, value] of Object.entries(adminContextToHeaders(context))) headers.set(name, value);
+      const response = await panel.fetch(`https://core.internal/private/panel${path}`, {
         ...init,
         headers: Object.fromEntries(headers),
       } as Parameters<typeof panel.fetch>[1]);
