@@ -56,3 +56,26 @@ export function isCurrentOperationResult(
     && generation === currentGeneration
     && resultBrandId === currentSelectedId;
 }
+
+export function isCurrentRefresh(
+  selectedId: string | null,
+  generation: number,
+  currentSelectedId: string | null,
+  currentGeneration: number,
+): boolean {
+  return selectedId === currentSelectedId && generation === currentGeneration;
+}
+
+export function lifecycleMutationAvailability(
+  brandStatus: string,
+  installStatus?: InstallWithReceipts["status"],
+): { install: boolean; rollback: boolean; retry: boolean } {
+  if (installStatus === "queued" || installStatus === "running") {
+    return { install: false, rollback: false, retry: false };
+  }
+  return {
+    install: brandStatus === "draft" || brandStatus === "failed",
+    rollback: brandStatus === "live" || brandStatus === "failed",
+    retry: installStatus === "failed",
+  };
+}

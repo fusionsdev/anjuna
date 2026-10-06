@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BrandLifecycle, LifecycleDetail } from "../src/client/screens/BrandLifecycle";
-import { isCurrentOperationResult, reduceLifecycleState, shouldPollLifecycle, type LifecycleEvent } from "../src/client/lifecycle-state";
+import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldPollLifecycle, type LifecycleEvent } from "../src/client/lifecycle-state";
 
 describe("lifecycle state reducer", () => {
   it("keeps lifecycle status separate from runtime sync and preserves retry/compensation evidence", () => {
@@ -74,6 +74,16 @@ describe("lifecycle state reducer", () => {
     expect(isCurrentOperationResult("brand-a", 3, "brand-b", 4, "brand-a")).toBe(false);
     expect(isCurrentOperationResult("brand-a", 3, "brand-a", 3, "brand-b")).toBe(false);
     expect(isCurrentOperationResult("brand-a", 3, "brand-a", 3, "brand-a")).toBe(true);
+  });
+
+  it("rejects a refresh response from before a brand switch", () => {
+    expect(isCurrentRefresh("brand-a", 3, "brand-b", 4)).toBe(false);
+    expect(isCurrentRefresh("brand-a", 3, "brand-a", 3)).toBe(true);
+  });
+
+  it.each(["draft", "live", "failed"] as const)("hides every mutation for an active %s operation", (brandStatus) => {
+    expect(lifecycleMutationAvailability(brandStatus, "queued")).toEqual({ install: false, rollback: false, retry: false });
+    expect(lifecycleMutationAvailability(brandStatus, "running")).toEqual({ install: false, rollback: false, retry: false });
   });
 });
 
