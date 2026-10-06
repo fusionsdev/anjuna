@@ -12,6 +12,11 @@ import {
   shouldMarkReady,
   validateInstallInputs,
 } from "../src/receipt";
+import {
+  canaryGate,
+  selectUpgradeBrands,
+  validateUpgradeSelection,
+} from "../src/workflows/upgrade-all";
 
 const tenant = {
   account: "tenant-a",
@@ -195,5 +200,59 @@ describe("factory lifecycle compensation and rollback", () => {
       recovery_required: true,
       audit_action: "install.compensation_failed",
     });
+  });
+});
+
+describe("upgrade-all", () => {
+  const selection = {
+    from_template_version_id: "template-v1",
+    to_template_version_id: "template-v2",
+    from_template: { template_id: "loan-template", status: "sealed" },
+    to_template: { template_id: "loan-template", status: "sealed" },
+    artifact: { present: true, payload_version: "2026-01", bundle_form_version: "form@abc" },
+    canary_brand_id: "brand-a",
+  } as const;
+
+  it("rejects equal versions, unsealed or cross-family targets, and unverified payload metadata", () => {
+    expect(() => validateUpgradeSelection({
+      ...selection,
+      to_template_version_id: selection.from_template_version_id,
+    })).toThrow(/different/i);
+    expect(() => validateUpgradeSelection({
+      ...selection,
+      to_template: { ...selection.to_template, status: "draft" },
+    })).toThrow(/sealed/i);
+    expect(() => validateUpgradeSelection({
+      ...selection,
+      to_template: { ...selection.to_template, template_id: "other-template" },
+    })).toThrow(/family/i);
+    expect(() => validateUpgradeSelection({
+      ...selection,
+      artifact: { ...selection.artifact, payload_version: null },
+    })).toThrow(/payload/i);
+  });
+
+  it("selects only live source brands, requires the canary, and skips brands already on target", () => {
+    expect(selectUpgradeBrands([
+      { brand_id: "brand-a", status: "live", current_template_version_id: "template-v1" },
+      { brand_id: "brand-b", status: "live", current_template_version_id: "template-v1" },
+      { brand_id: "brand-c", status: "draft", current_template_version_id: "template-v1" },
+      { brand_id: "brand-d", status: "live", current_template_version_id: "template-v2" },
+    ], "template-v1", "template-v2", "brand-a")).toEqual({
+      canary: "brand-a",
+      remaining: ["brand-b"],
+    });
+    expect(() => selectUpgradeBrands([], "template-v1", "template-v2", "brand-a")).toThrow(/canary/i);
+  });
+
+  it("allows fan-out only after a canary is READY with core sync", () => {
+    expect(canaryGate({ install: "ready", core: "ready" })).toBe(true);
+    expect(canaryGate({ install: "ready", core: "failed" })).toBe(false);
+    expect(canaryGate({ install: "failed", core: "ready" })).toBe(false);
+  });
+
+  it("uses the existing per-brand CAS lock to reject an overlapping rollback", () => {
+    expect(lifecycleOperationDecision("installing", "upgrade-brand-a", "rollback-brand-a")).toBe("reject");
+    expect(lifecycleOperationDecision("installing", "upgrade-brand-a", "upgrade-brand-a")).toBe("resume");
   });
 });

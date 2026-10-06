@@ -54,15 +54,23 @@ export default {
       return Response.json({ ok: true, install_id: params.install_id });
     }
 
-    // POST /upgrade-all  { template_version_id, form_artifact_id, canary_brand_id, started_by }
+    // POST /upgrade-all  { from_template_version_id, to_template_version_id, form_artifact_id, canary_brand_id, started_by, started_role }
     if (url.pathname === "/upgrade-all") {
       const params = await request.json<{
-        template_version_id: string;
+        from_template_version_id: string;
+        to_template_version_id: string;
         form_artifact_id: string;
         canary_brand_id: string;
         started_by: string;
+        started_role: "owner";
       }>();
-      const instanceId = `upgrade-${params.template_version_id}-${Date.now()}`;
+      if (params.started_role !== "owner") {
+        return Response.json({ ok: false, error: "owner_required" }, { status: 403 });
+      }
+      if (params.from_template_version_id === params.to_template_version_id) {
+        return Response.json({ ok: false, error: "source_target_must_differ" }, { status: 400 });
+      }
+      const instanceId = `upgrade-${params.from_template_version_id}-${params.to_template_version_id}-${Date.now()}`;
       await env.UPGRADE_WORKFLOW.create({ id: instanceId, params });
       return Response.json({ ok: true, instance_id: instanceId });
     }
