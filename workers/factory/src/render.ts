@@ -16,6 +16,17 @@ async function deriveSalt(brandId: string, revisionId: string): Promise<string> 
   return Array.from(new Uint8Array(sig).slice(0, 4)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Derive a deterministic opaque basename for one rendered asset. */
+async function deriveAssetName(salt: string, path: string, bytes: Uint8Array, extension: string): Promise<string> {
+  const input = new Uint8Array(ENC.encode(`${salt}:` + path + ":").length + bytes.length);
+  const prefix = ENC.encode(`${salt}:` + path + ":");
+  input.set(prefix);
+  input.set(bytes, prefix.length);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+  const hash = Array.from(digest.slice(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${salt}_${hash}.${extension}`;
+}
+
 /** Unzip R2 object bytes into a FileMap. */
 export function unzip(bytes: Uint8Array): FileMap {
   const entries = unzipSync(bytes);
@@ -47,12 +58,16 @@ export async function renderBrand(
 ): Promise<{ files: FileMap; saltPrefix: string }> {
   const salt = await deriveSalt(brandId, revisionId);
 
+  // Validate source paths as well as bytes before opaque renaming hides their names.
+  assertCleanBrandBytes(templateFiles, brandId);
+  assertCleanBrandBytes(formFiles, brandId);
+
   // Identify form JS/CSS chunks in /_f/assets/ that need renaming.
   const renames = new Map<string, string>();
-  for (const path of formFiles.keys()) {
+  for (const [path, bytes] of formFiles) {
     if (/^\/_f\/assets\/[^/]+\.(js|css)$/.test(path)) {
-      const base = path.split("/").pop()!;
-      renames.set(path, `/_f/assets/${salt}_${base}`);
+      const extension = path.split(".").pop()!;
+      renames.set(path, `/_f/assets/${await deriveAssetName(salt, path, bytes, extension)}`);
     }
   }
 
@@ -88,10 +103,11 @@ export async function renderBrand(
 
 /** Reject readable platform, cross-brand, analytics-key, and DSN bytes. */
 export function assertCleanBrandBytes(files: FileMap, brandId: string): void {
-  const forbidden = new RegExp(`anjuna|aurum|${escapeRegExp(brandId)}|brand-[a-z0-9-]+|posthog|sentry|dsn|phc_[a-z0-9]+`, "i");
+  const forbidden = new RegExp(`anjuna|aurum|${escapeRegExp(brandId)}|brand-[a-z0-9-]+|posthog|sentry|dsn|phc_[a-z0-9]+|api[_-]?key`, "i");
   for (const [path, bytes] of files) {
-    if (!/\.(html?|js|css)$/i.test(path)) continue;
-    if (forbidden.test(DEC.decode(bytes))) throw new Error(`Brand bytes contain forbidden identity in ${path}`);
+    if (forbidden.test(path) || forbidden.test(DEC.decode(bytes))) {
+      throw new Error(`Brand bytes contain forbidden identity in ${path}`);
+    }
   }
 }
 

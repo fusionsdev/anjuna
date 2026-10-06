@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderBrand, unzip, zip } from "../src/render";
+import { assertCleanBrandBytes, renderBrand, unzip, zip } from "../src/render";
 import { uploadScript } from "../src/cf-api";
 import { CoreLifecycleClient } from "../src/core-lifecycle-client";
 
@@ -27,30 +27,34 @@ function makeForm(chunkName = "index-abc123.js"): Map<string, Uint8Array> {
 }
 
 describe("renderBrand", () => {
-  it("renames /_f/assets/*.js and *.css chunks with salt prefix", async () => {
+  it("renames /_f/assets/*.js and *.css chunks to opaque deterministic names", async () => {
     const { files, saltPrefix } = await renderBrand(makeSite(), makeForm(), "brand-1", "rev-1");
     expect(saltPrefix).toHaveLength(8);
 
     const paths = [...files.keys()];
     // Original chunk path should not exist
     expect(paths.find((p) => p === "/_f/assets/index-abc123.js")).toBeUndefined();
-    // Salted path should exist
-    const saltedJs = paths.find((p) => /^\/_f\/assets\/[0-9a-f]{8}_index-abc123\.js$/.test(p));
+    // Salted path should exist, without exposing the source basename.
+    const saltedJs = paths.find((p) => /^\/_f\/assets\/[0-9a-f]{8}_[0-9a-f]{16}\.js$/.test(p));
     expect(saltedJs).toBeDefined();
-    const saltedCss = paths.find((p) => /^\/_f\/assets\/[0-9a-f]{8}_style-xyz789\.css$/.test(p));
+    const saltedCss = paths.find((p) => /^\/_f\/assets\/[0-9a-f]{8}_[0-9a-f]{16}\.css$/.test(p));
     expect(saltedCss).toBeDefined();
+    expect([...files.entries()].flatMap(([path, bytes]) => [path, DEC.decode(bytes)])
+      .join("\n")).not.toContain("index-abc123");
+    expect([...files.entries()].flatMap(([path, bytes]) => [path, DEC.decode(bytes)])
+      .join("\n")).not.toContain("style-xyz789");
   });
 
   it("rewrites references inside /_f/index.html to use salted chunk names", async () => {
     const { files, saltPrefix } = await renderBrand(makeSite(), makeForm(), "brand-1", "rev-1");
     const html = DEC.decode(files.get("/_f/index.html")!);
-    expect(html).toContain(`${saltPrefix}_index-abc123.js`);
-    expect(html).not.toContain("index-abc123.js\" ");
+    expect(html).toMatch(new RegExp(`${saltPrefix}_[0-9a-f]{16}\\.js`));
+    expect(html).not.toContain("index-abc123.js");
   });
 
   it("does not add a readable platform marker to salted JS chunks", async () => {
     const { files, saltPrefix } = await renderBrand(makeSite(), makeForm(), "brand-1", "rev-1");
-    const saltedJs = [...files.keys()].find((p) => p.includes("_index-abc123.js"))!;
+    const saltedJs = [...files.keys()].find((p) => /^\/_f\/assets\/[0-9a-f]{8}_[0-9a-f]{16}\.js$/.test(p))!;
     const content = DEC.decode(files.get(saltedJs)!);
     expect(content).not.toContain("anjuna");
     expect(content).toContain("console.log");
@@ -94,9 +98,40 @@ describe("renderBrand", () => {
   });
 
   it("is deterministic for the same brand + revision", async () => {
-    const { saltPrefix: salt1 } = await renderBrand(makeSite(), makeForm(), "brand-x", "rev-x");
-    const { saltPrefix: salt2 } = await renderBrand(makeSite(), makeForm(), "brand-x", "rev-x");
+    const first = await renderBrand(makeSite(), makeForm(), "brand-x", "rev-x");
+    const second = await renderBrand(makeSite(), makeForm(), "brand-x", "rev-x");
+    const salt1 = first.saltPrefix;
+    const salt2 = second.saltPrefix;
     expect(salt1).toBe(salt2);
+    expect([...first.files.keys()]).toEqual([...second.files.keys()]);
+    expect([...first.files].map(([path, bytes]) => [path, DEC.decode(bytes)])).toEqual(
+      [...second.files].map(([path, bytes]) => [path, DEC.decode(bytes)]),
+    );
+  });
+
+  it.each([
+    ["platform marker in content", "/_f/index.html", "anjuna", "harbor-brand"],
+    ["legacy marker in content", "/_f/index.html", "aurum", "harbor-brand"],
+    ["cross-brand ID in content", "/_f/index.html", "brand-rival", "harbor-brand"],
+    ["PostHog key in content", "/_f/index.html", "phc_0123456789abcdef", "harbor-brand"],
+    ["Sentry DSN in content", "/_f/index.html", "https://public@sentry.example/1", "harbor-brand"],
+    ["DSN marker in content", "/_f/index.html", "dsn=secret", "harbor-brand"],
+    ["forbidden identity in filename", "/_f/assets/aurum.js", "console.log('clean')", "harbor-brand"],
+  ])("rejects real negative fixture: %s", async (_name, path, content, brandId) => {
+    const form = new Map<string, Uint8Array>([
+      ["/_f/index.html", makeFile("<html></html>")],
+      [path, makeFile(content)],
+    ]);
+    await expect(renderBrand(makeSite(), form, brandId, "rev-1")).rejects.toThrow(/forbidden identity/);
+  });
+
+  it("scans every rendered path and content for forbidden identities", () => {
+    expect(() => assertCleanBrandBytes(new Map([
+      ["/assets/clean.js", makeFile("console.log('aurum')")],
+    ]), "harbor-brand")).toThrow();
+    expect(() => assertCleanBrandBytes(new Map([
+      ["/assets/anjuna.css", makeFile(".clean { color: red }")],
+    ]), "harbor-brand")).toThrow();
   });
 });
 
@@ -118,6 +153,10 @@ describe("factory lifecycle client", () => {
     const client = new CoreLifecycleClient(binding, "secret-token");
     await expect(client.runtimeState({ brand_id: "brand-a", account: "account-a" })).rejects.toThrow("Core lifecycle request failed");
     await expect(client.runtimeState({ brand_id: "brand-a", account: "account-a" })).rejects.not.toThrow("private token");
+  });
+
+  it.each(["", "secret\n-token", "secret\r-token"])("rejects invalid CORE_TOKEN before authorization construction (%j)", (token) => {
+    expect(() => new CoreLifecycleClient({ fetch: async () => { throw new Error("must not fetch"); } }, token)).toThrow(/CORE_TOKEN/);
   });
 });
 

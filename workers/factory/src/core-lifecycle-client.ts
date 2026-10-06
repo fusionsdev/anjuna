@@ -10,7 +10,9 @@ function boundedError(status: number): Error {
 
 /** Authenticated client for the private FactoryLifecycleService entrypoint. */
 export class CoreLifecycleClient {
-  constructor(private readonly binding: CoreLifecycleBinding, private readonly token: string, private readonly timeoutMs = 3000) {}
+  constructor(private readonly binding: CoreLifecycleBinding, private readonly token: string, private readonly timeoutMs = 3000) {
+    if (token.length === 0 || /[\r\n]/.test(token)) throw new Error("CORE_TOKEN is empty or contains a newline");
+  }
 
   async applyRuntime(request: ApplyRuntimeRequest): Promise<ApplyRuntimeResponse> {
     return this.post("/lifecycle/runtime", ApplyRuntimeRequest.parse(request), ApplyRuntimeResponse.parse);
