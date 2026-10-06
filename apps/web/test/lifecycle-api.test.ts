@@ -126,6 +126,23 @@ describe("truthful lifecycle BFF", () => {
     expect(rows.results).toHaveLength(1);
   });
 
+  it("atomically admits only one concurrent install claim", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "atomic-claim.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    let dispatches = 0;
+    const worker = { fetch: async () => { dispatches += 1; await new Promise((resolve) => setTimeout(resolve, 1)); return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const testEnv = makeEnv({ FACTORY_WORKER: worker });
+    const responses = await Promise.all([
+      call(`/api/brands/${brand.brand_id}/install`, { cookie: employee, method: "POST", body: {}, env: testEnv }),
+      call(`/api/brands/${brand.brand_id}/install`, { cookie: employee, method: "POST", body: {}, env: testEnv }),
+    ]);
+    expect(responses.filter((response) => response.status === 201)).toHaveLength(1);
+    expect(responses.filter((response) => response.status === 409)).toHaveLength(1);
+    expect(dispatches).toBe(1);
+    const rows = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?1").bind(brand.brand_id).all();
+    expect(rows.results).toHaveLength(1);
+  });
+
   it("records manual checklist attestations once and exposes lifecycle receipts", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "checklist.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };

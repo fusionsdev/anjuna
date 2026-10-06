@@ -1,7 +1,7 @@
 import type { ChecklistEvidence, ChecklistItemName, LifecycleBrandSummary, InstallWithReceipts } from "@anjuna/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
-import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldPollLifecycle, type LifecycleState } from "../lifecycle-state";
+import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 
 const checklistItems: Array<{ item: ChecklistItemName; label: string }> = [
   { item: "drain_route", label: "Drain route" },
@@ -63,15 +63,30 @@ export function BrandLifecycle({ me }: { me: Me }) {
     return () => { active = false; };
   }, [selectedId]);
   useEffect(() => {
-    if (!install || !shouldPollLifecycle(state) || install.brand_id !== selectedId) return;
+    const pending = pendingOperation && pendingOperation.brandId === selectedId && pendingOperation.generation === operationGeneration.current
+      ? pendingOperation
+      : undefined;
+    if (!shouldRecoverAcceptedInstall(pending?.brandId, pending?.installId, selectedId, install, state)) return;
+    if (!selectedId) return;
+    const installId = install?.install_id ?? pending!.installId;
+    const token = { selectedId, generation: operationGeneration.current };
     let active = true;
-    const timer = window.setInterval(() => { void api.installDetail(install.install_id).then((next) => {
-      if (!active || next.brand_id !== selectedId) return;
-      setInstall(next);
-      setState((previous) => reduceLifecycleState(previous, { type: "install", install: next }));
-    }, () => undefined); }, 3000);
+    let attempts = 0;
+    const maxAttempts = 120;
+    const timer = window.setInterval(() => { void api.installDetail(installId).then((next) => {
+      attempts += 1;
+      if (!active || !canCommit(token, next.brand_id) || next.install_id !== installId) return;
+      commitInstallDetail(next, token);
+      if (next.status !== "queued" && next.status !== "running") void load(token);
+    }, () => {
+      attempts += 1;
+      if (active && attempts >= maxAttempts && canCommit(token, selectedId)) {
+        setPendingOperation(null);
+        setError("ติดตาม lifecycle ไม่สำเร็จภายในเวลาที่กำหนด");
+      }
+    }); }, 3000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [install, selectedId, state]);
+  }, [install, pendingOperation, selectedId, state, load]);
 
   function operationToken() {
     return { selectedId, generation: operationGeneration.current };

@@ -130,14 +130,23 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
 async function startInstall(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT brand_id,status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ brand_id: string; status: string; current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
-  const active = await activeLifecycleOperation(env.FACTORY, brandId);
-  if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
   const body = await request.json().catch(() => ({})) as { revision_id?: string };
   const revision = await env.FACTORY.prepare("SELECT revision_id FROM brand_revisions WHERE revision_id = ?1 AND brand_id = ?2").bind(body.revision_id ?? `${brandId}_rev_1`, brandId).first<{ revision_id: string }>();
   if (!revision) return json(422, { error: "revision_missing" });
   const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const now = new Date().toISOString();
-  await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at) VALUES (?1,?2,'install','queued',?3,?4,?5,?6,?7)").bind(installId, brandId, brand.current_revision_id, revision.revision_id, ctx.actor_id, ctx.actor_role, now).run();
+  const claim = await env.FACTORY.prepare(`INSERT INTO installs
+    (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at)
+    SELECT ?1,?2,'install','queued',?3,?4,?5,?6,?7
+    WHERE NOT EXISTS (
+      SELECT 1 FROM installs
+      WHERE brand_id = ?2 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running')
+    )`).bind(installId, brandId, brand.current_revision_id, revision.revision_id, ctx.actor_id, ctx.actor_role, now).run();
+  if (claim.meta.changes !== 1) {
+    const active = await activeLifecycleOperation(env.FACTORY, brandId);
+    if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
+    return json(409, { error: "lifecycle_operation_active", message: "Lifecycle operation claim was not admitted" });
+  }
   await audit(env.FACTORY, ctx, "install.start", "install", installId, { brand_id: brandId, revision_id: revision.revision_id });
   return dispatch(env, ctx, installId, brandId, "/install", { install_id: installId, brand_id: brandId, revision_id: revision.revision_id, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }
@@ -145,8 +154,6 @@ async function startInstall(request: Request, env: Env, ctx: AdminRequestContext
 async function rollback(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
-  const active = await activeLifecycleOperation(env.FACTORY, brandId);
-  if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
   let target: string | null = null;
   if (brand.current_revision_id) {
     const previous = await env.FACTORY.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY finished_at DESC LIMIT 1").bind(brandId, brand.current_revision_id).first<{ to_revision_id: string | null }>();
@@ -154,7 +161,18 @@ async function rollback(request: Request, env: Env, ctx: AdminRequestContext, br
   }
   const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const now = new Date().toISOString();
-  await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at) VALUES (?1,?2,'rollback','queued',?3,?4,?5,?6,?7)").bind(installId, brandId, brand.current_revision_id, target, ctx.actor_id, ctx.actor_role, now).run();
+  const claim = await env.FACTORY.prepare(`INSERT INTO installs
+    (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at)
+    SELECT ?1,?2,'rollback','queued',?3,?4,?5,?6,?7
+    WHERE NOT EXISTS (
+      SELECT 1 FROM installs
+      WHERE brand_id = ?2 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running')
+    )`).bind(installId, brandId, brand.current_revision_id, target, ctx.actor_id, ctx.actor_role, now).run();
+  if (claim.meta.changes !== 1) {
+    const active = await activeLifecycleOperation(env.FACTORY, brandId);
+    if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
+    return json(409, { error: "lifecycle_operation_active", message: "Lifecycle operation claim was not admitted" });
+  }
   await audit(env.FACTORY, ctx, "install.start", "install", installId, { brand_id: brandId, kind: "rollback", to_revision_id: target });
   return dispatch(env, ctx, installId, brandId, "/rollback", { install_id: installId, brand_id: brandId, to_revision_id: target, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }

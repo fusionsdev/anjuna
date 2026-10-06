@@ -39,6 +39,18 @@ export function shouldPollLifecycle(state: LifecycleState | undefined): boolean 
   return status === "queued" || status === "running";
 }
 
+export function shouldRecoverAcceptedInstall(
+  pendingBrandId: string | undefined,
+  pendingInstallId: string | undefined,
+  selectedBrandId: string | null,
+  install: InstallWithReceipts | undefined,
+  state: LifecycleState | undefined,
+): boolean {
+  if (!pendingBrandId || !pendingInstallId || !selectedBrandId || pendingBrandId !== selectedBrandId) return false;
+  if (install && install.brand_id !== selectedBrandId) return false;
+  return !install || install.install_id !== pendingInstallId || shouldPollLifecycle(state);
+}
+
 /**
  * Async lifecycle results may arrive after the operator selected another
  * brand.  Keep this predicate pure so the UI can enforce that boundary and

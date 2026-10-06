@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BrandLifecycle, LifecycleDetail } from "../src/client/screens/BrandLifecycle";
-import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldPollLifecycle, type LifecycleEvent } from "../src/client/lifecycle-state";
+import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldPollLifecycle, shouldRecoverAcceptedInstall, type LifecycleEvent } from "../src/client/lifecycle-state";
 
 describe("lifecycle state reducer", () => {
   it("keeps lifecycle status separate from runtime sync and preserves retry/compensation evidence", () => {
@@ -95,6 +95,29 @@ describe("lifecycle state reducer", () => {
     releaseDetail();
     await delayedDetail;
     expect(lifecycleMutationAvailability("draft", "ready", false)).toEqual({ install: true, rollback: false, retry: false });
+  });
+
+  it("keeps an accepted install recoverable after the first detail read fails", async () => {
+    const pending = "ins-accepted";
+    const running = reduceLifecycleState(undefined, { type: "install", install: {
+      install_id: pending, brand_id: "brand-a", revision_id: "rev-1", status: "running", runtime_sync_status: "running", receipts: [],
+    }});
+    const terminal = { ...running.install!, status: "ready" as const, runtime_sync_status: "ready" as const };
+    let reads = 0;
+    const readDetail = async () => {
+      reads += 1;
+      if (reads === 1) throw new Error("transient detail failure");
+      return terminal;
+    };
+    await expect(readDetail()).rejects.toThrow("transient detail failure");
+    expect(shouldRecoverAcceptedInstall("brand-a", pending, "brand-a", undefined, undefined)).toBe(true);
+    const recovered = await readDetail();
+    expect(recovered.status).toBe("ready");
+    expect(shouldRecoverAcceptedInstall("brand-a", pending, "brand-a", recovered, reduceLifecycleState(running, { type: "install", install: recovered }))).toBe(false);
+    expect(shouldRecoverAcceptedInstall("brand-a", pending, "brand-a", running.install, running)).toBe(true);
+    expect(shouldRecoverAcceptedInstall("brand-a", pending, "brand-a", terminal, reduceLifecycleState(running, { type: "install", install: terminal }))).toBe(false);
+    expect(shouldRecoverAcceptedInstall("brand-a", pending, "brand-a", { ...terminal, install_id: "old-terminal" }, running)).toBe(true);
+    expect(shouldRecoverAcceptedInstall("brand-a", pending, "brand-b", undefined, undefined)).toBe(false);
   });
 });
 
