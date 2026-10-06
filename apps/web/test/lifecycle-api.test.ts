@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { InstallWithReceipts } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
@@ -51,6 +52,18 @@ describe("truthful lifecycle BFF", () => {
     expect(response.status).toBe(503);
   });
 
+  it("rejects tenant defaults that violate the tenant schema", async () => {
+    const invalid = makeEnv({
+      DEFAULT_ACCOUNT: "Not a slug",
+      DEFAULT_AID: "aid with spaces",
+      DEFAULT_PREPOP_BASE: "https://prepop.test?query=1",
+      DEFAULT_FORM_ROUTE: "/api/form",
+      DEFAULT_AMOUNT_BUCKETS: JSON.stringify(Array.from({ length: 33 }, (_, i) => i + 100)),
+    });
+    const response = await call("/api/brands/drafts", { cookie: employee, method: "POST", body: { domain: "invalid-defaults.example", keyword_default: "Quick Loan", template_version_id: "tv-1" }, env: invalid });
+    expect(response.status).toBe(503);
+  });
+
   it("normalizes apex domains and rejects www domains", async () => {
     expect((await post(employee, "/api/brands/drafts", { domain: "www.example.test", keyword_default: "Quick Loan", template_version_id: "tv-1" })).status).toBe(422);
     const response = await post(employee, "/api/brands/drafts", { domain: "apex-normalized.example.test.", keyword_default: "Quick Loan", template_version_id: "tv-1" });
@@ -69,6 +82,8 @@ describe("truthful lifecycle BFF", () => {
     expect(failed?.status).toBe("failed");
     expect(failed?.to_revision_id).toBe(`${brand.brand_id}_rev_1`);
     expect((await call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST" })).status).toBe(502);
+    const retryAudit = await env.FACTORY.prepare("SELECT action FROM audit_log WHERE action='install.retry' AND entity_id=?1").bind(failed!.install_id).all();
+    expect(retryAudit.results).toHaveLength(1);
   });
 
   it("creates a new retry attempt after a terminal factory receipt", async () => {
@@ -114,7 +129,9 @@ describe("truthful lifecycle BFF", () => {
     await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES ('ins-receipt','smoke','skipped','{\"reason\":\"not-needed\"}',?1)").bind(new Date().toISOString()).run();
     const detail = await call("/api/installs/ins-receipt", { cookie: employee });
     expect(detail.status).toBe(200);
-    expect((await detail.json() as { receipts: unknown[] }).receipts[0]).toMatchObject({ status: "queued", output: { reason: "not-needed" } });
+    const parsed = InstallWithReceipts.parse(await detail.json());
+    expect(parsed).toMatchObject({ runtime_sync_status: "running", receipts: [{ status: "queued" }] });
+    expect(parsed.receipts[0]).not.toHaveProperty("output");
     const sold = await call(`/api/brands/${brand.brand_id}/checklist`, { cookie: employee, method: "POST", body: { item: "test_sold", lead_id: "lead-1" }, env: makeEnv({ CORE_LIFECYCLE: { fetch: async () => { throw new Error("transport"); } } as unknown as Fetcher }) });
     expect(sold.status).toBe(502);
   });

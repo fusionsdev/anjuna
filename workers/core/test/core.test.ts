@@ -17,7 +17,7 @@ describe("skeleton and authentication", () => {
       workers_dev: false, preview_urls: false, routes: [{ pattern: "core.aduplift.ai", custom_domain: true }] });
     expect(config.d1_databases.map((db: { binding: string; database_id: string }) => [db.binding, db.database_id]))
       .toEqual([["LEADS", "00000000-0000-0000-0000-000000000000"], ["FACTORY", "00000000-0000-0000-0000-000000000000"]]);
-    expect(config.vars).toBeUndefined();
+    expect(config.vars).toEqual({ LIFECYCLE_ACCOUNT: "aduplift" });
   });
 
   it("returns only the health body for every user agent", async () => {

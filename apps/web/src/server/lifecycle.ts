@@ -52,12 +52,15 @@ function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: 
   const prepop = env.DEFAULT_PREPOP_BASE?.trim();
   const formRoute = env.DEFAULT_FORM_ROUTE?.trim();
   const payloadVersion = env.DEFAULT_PAYLOAD_VERSION?.trim();
-  if (!account || !aid || !prepop || !formRoute || !payloadVersion || [account, aid, prepop, formRoute, payloadVersion].some((v) => v.includes("<SET_PER_TENANT>"))) return null;
+  const placeholder = /(?:<[^>]+>|REPLACE|PLACEHOLDER|TODO|CHANGE_ME|\.invalid|example\.com)/i;
+  const reservedRoutes = ["/go", "/_f", "/api", "/privacy", "/terms", "/do-not-sell", "/disclosures"];
+  if (!account || !aid || !prepop || !formRoute || !payloadVersion || [account, aid, prepop, formRoute, payloadVersion].some((v) => placeholder.test(v))) return null;
   let amountBuckets: number[];
   try { amountBuckets = JSON.parse(env.DEFAULT_AMOUNT_BUCKETS ?? "") as number[]; } catch { return null; }
-  if (!Array.isArray(amountBuckets) || amountBuckets.length === 0 || amountBuckets.some((v) => !Number.isInteger(v) || v < 100 || v > 5000) || amountBuckets.some((v, i) => i > 0 && v <= amountBuckets[i - 1]!)) return null;
-  try { if (new URL(prepop).protocol !== "https:") return null; } catch { return null; }
-  if (!/^\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(formRoute) || !/^\d{4}-\d{2}$/.test(payloadVersion)) return null;
+  if (!/^[a-z][a-z0-9-]*$/.test(account) || !/^[A-Za-z0-9_-]{1,32}$/.test(aid)) return null;
+  if (!Array.isArray(amountBuckets) || amountBuckets.length === 0 || amountBuckets.length > 32 || amountBuckets.some((v) => !Number.isInteger(v) || v < 100 || v > 5000) || amountBuckets.some((v, i) => i > 0 && v <= amountBuckets[i - 1]!)) return null;
+  try { const parsed = new URL(prepop); if (parsed.protocol !== "https:" || parsed.search || parsed.hash) return null; } catch { return null; }
+  if (!/^\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(formRoute) || reservedRoutes.some((route) => formRoute === route || formRoute.startsWith(`${route}/`)) || !/^\d{4}-\d{2}$/.test(payloadVersion)) return null;
   return { account, aid, prepop_base: prepop.replace(/\/$/, ""), form_route: formRoute, amount_buckets: amountBuckets, payload_version: payloadVersion };
 }
 
@@ -165,9 +168,15 @@ async function artifactRoute(request: Request, env: Env, ctx: AdminRequestContex
   const row = await env.FACTORY.prepare("SELECT payload_version FROM form_artifacts WHERE form_artifact_id = ?1").bind(parsed.data.form_artifact_id).first<{ payload_version: string | null }>();
   if (!row) return json(404, { error: "not_found", resource: "form_artifact" });
   if (row.payload_version !== null) return json(409, { error: "conflict", message: "payload_version is already set" });
-  const update = await env.FACTORY.prepare("UPDATE form_artifacts SET payload_version = ?1 WHERE form_artifact_id = ?2 AND payload_version IS NULL").bind(parsed.data.payload_version, parsed.data.form_artifact_id).run();
-  if (update.meta.changes !== 1) return json(409, { error: "conflict", message: "payload_version is already set" });
-  await audit(env.FACTORY, ctx, "form_artifact.backfill", "form_artifact", parsed.data.form_artifact_id, { payload_version: parsed.data.payload_version });
+  const timestamp = new Date().toISOString();
+  const update = await env.FACTORY.batch([
+    env.FACTORY.prepare("UPDATE form_artifacts SET payload_version = ?1 WHERE form_artifact_id = ?2 AND payload_version IS NULL").bind(parsed.data.payload_version, parsed.data.form_artifact_id),
+    env.FACTORY.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at)
+      SELECT ?1,?2,'form_artifact.backfill','form_artifact',?3,?4,?5
+      WHERE EXISTS (SELECT 1 FROM form_artifacts WHERE form_artifact_id=?3 AND payload_version=?6)
+        AND NOT EXISTS (SELECT 1 FROM audit_log WHERE action='form_artifact.backfill' AND entity_id=?3)`).bind(ctx.actor_id, ctx.actor_role, parsed.data.form_artifact_id, JSON.stringify({ payload_version: parsed.data.payload_version }), timestamp, parsed.data.payload_version),
+  ]);
+  if (update[0]?.meta.changes !== 1) return json(409, { error: "conflict", message: "payload_version is already set" });
   return json(200, { form_artifact_id: parsed.data.form_artifact_id, payload_version: parsed.data.payload_version });
 }
 
@@ -187,10 +196,16 @@ async function checklist(request: Request, env: Env, ctx: AdminRequestContext, b
     if (!response.ok || !parsed.success) return json(response.status || 502, { error: "test_sold_not_verified" });
     evidence = { ...evidence, event_id: parsed.data.event_id };
   }
-  await env.FACTORY.prepare("INSERT OR IGNORE INTO brand_checklist (brand_id,item,evidence_json,confirmed_by,confirmed_role,confirmed_at) VALUES (?1,?2,?3,?4,?5,?6)").bind(brandId, item, JSON.stringify(evidence), ctx.actor_id, ctx.actor_role, evidence.verified_at).run();
+  const evidenceJson = JSON.stringify(evidence);
+  await env.FACTORY.batch([
+    env.FACTORY.prepare("INSERT OR IGNORE INTO brand_checklist (brand_id,item,evidence_json,confirmed_by,confirmed_role,confirmed_at) VALUES (?1,?2,?3,?4,?5,?6)").bind(brandId, item, evidenceJson, ctx.actor_id, ctx.actor_role, evidence.verified_at),
+    env.FACTORY.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at)
+      SELECT ?1,?2,'checklist.attest','brand',?3,?4,?5
+      WHERE NOT EXISTS (SELECT 1 FROM audit_log WHERE action='checklist.attest' AND entity_id=?3
+        AND after_json = ?4)`).bind(ctx.actor_id, ctx.actor_role, brandId, JSON.stringify({ item }), evidence.verified_at),
+  ]);
   const winner = await env.FACTORY.prepare("SELECT evidence_json FROM brand_checklist WHERE brand_id = ?1 AND item = ?2").bind(brandId, item).first<{ evidence_json: string }>();
   if (winner && winner.evidence_json !== JSON.stringify(evidence)) return json(200, { brand_id: brandId, item, evidence: JSON.parse(winner.evidence_json), idempotent: true });
-  await audit(env.FACTORY, ctx, "checklist.attest", "brand", brandId, { item });
   return json(200, { brand_id: brandId, item, evidence });
 }
 
@@ -201,7 +216,7 @@ async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string
   let response: Response;
   try {
     response = await env.CORE_LIFECYCLE.fetch(new Request("https://core/lifecycle/runtime-list", {
-      method: "POST", headers: { ...adminContextToHeaders(ctx), "content-type": "application/json" },
+      method: "POST", headers: { ...adminContextToHeaders(ctx), "content-type": "application/json", "x-lifecycle-account": account },
       body: JSON.stringify({ account }),
     }));
   } catch { return new Map(); }
@@ -264,7 +279,10 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
       await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at) VALUES (?1,?2,?3,'queued',?4,?5,?6,?7,?8)").bind(installId, row.brand_id, row.kind, row.from_revision_id, row.to_revision_id, row.started_by, row.started_role, new Date().toISOString()).run();
       await audit(env.FACTORY, ctx, "install.start", "install", installId, { brand_id: row.brand_id, retry_of: row.install_id, kind: row.kind });
     } else {
-      await env.FACTORY.prepare("UPDATE installs SET status='queued',error=NULL,finished_at=NULL WHERE install_id=?1").bind(installId).run();
+      await env.FACTORY.batch([
+        env.FACTORY.prepare("UPDATE installs SET status='queued',error=NULL,finished_at=NULL WHERE install_id=?1").bind(installId),
+        env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES (?1,?2,'install.retry','install',?3,?4,?5)").bind(ctx.actor_id, ctx.actor_role, installId, JSON.stringify({ retry_of: row.install_id, kind: row.kind }), new Date().toISOString()),
+      ]);
     }
     const payload = row.kind === "rollback"
       ? { install_id: installId, brand_id: row.brand_id, to_revision_id: row.to_revision_id, started_by: row.started_by, started_role: row.started_role }
@@ -286,11 +304,14 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-    const row = await env.FACTORY.prepare("SELECT i.install_id,i.brand_id,i.to_revision_id,i.status FROM installs i JOIN brands b ON b.brand_id=i.brand_id WHERE i.install_id=?1").bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string; status: string }>();
+    const row = await env.FACTORY.prepare("SELECT i.install_id,i.brand_id,i.to_revision_id,i.status FROM installs i JOIN brands b ON b.brand_id=i.brand_id WHERE i.install_id=?1").bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string | null; status: string }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
     const status = (value: string): "queued" | "running" | "ready" | "failed" => value === "ok" ? "ready" : value === "skipped" ? "queued" : value === "failed" ? "failed" : value === "running" ? "running" : "queued";
-    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: row.status === "ok" ? "ready" : row.status, runtime_sync_status: "queued", receipts: results.map((r) => { const output = r.output_json ? JSON.parse(r.output_json) as Record<string, unknown> : undefined; return { step: r.step, status: status(r.status), ...(typeof output?.error === "string" ? { error: output.error } : {}), ...(output ? { output } : {}) }; }) });
+    const receipts = results.map((r) => { const output = r.output_json ? JSON.parse(r.output_json) as Record<string, unknown> : undefined; return { step: r.step, status: status(r.status), ...(typeof output?.error === "string" ? { error: output.error } : {}) }; });
+    const runtime_sync_status = receipts.some((r) => r.status === "failed") || row.status === "failed" ? "failed" : receipts.some((r) => r.status === "running") || row.status === "running" ? "running" : row.status === "ready" ? "ready" : "queued";
+    const installStatus = ["queued", "running", "ready", "failed", "rolled_back"].includes(row.status) ? row.status : "queued";
+    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: installStatus, runtime_sync_status, receipts });
   }
   if (path === "/api/upgrade-all" && method === "POST") {
     const g = authorizePanel("upgradeAll", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);

@@ -146,10 +146,7 @@ async function runtimeState(request: Request, env: Env, account: string): Promis
   return json(response);
 }
 
-async function runtimeList(request: Request, env: Env, account: string): Promise<Response> {
-  const parsed = RuntimeListRequest.safeParse(await body(request));
-  if (!parsed.success) return bad("Invalid runtime-list request");
-  if (parsed.data.account !== account) return forbidden("Credential account does not match request account");
+async function runtimeList(env: Env, account: string): Promise<Response> {
   const { results } = await env.LEADS.prepare(`SELECT brand_id, account, hostnames, applied_revision_id,
       paused, form_version FROM brand_runtime WHERE account = ?1 ORDER BY brand_id`).bind(account).all<RuntimeRow>();
   const response: RuntimeListResponse = { brands: results.map((row) => ({
@@ -192,8 +189,12 @@ export async function handlePanelLifecycleRequest(request: Request, env: Env): P
   if (new URL(request.url).pathname.endsWith("/runtime-list")) {
     const parsed = RuntimeListRequest.safeParse(await body(request));
     if (!parsed.success) return bad("Invalid runtime-list request");
-    // The panel binding is private and the tenant account is part of the authenticated request contract.
-    return runtimeList(request, env, parsed.data.account);
+    const requestAccount = request.headers.get("x-lifecycle-account");
+    if (!requestAccount || requestAccount !== parsed.data.account) return forbidden("Lifecycle account context does not match request account");
+    if (env.LIFECYCLE_ACCOUNT && env.LIFECYCLE_ACCOUNT !== requestAccount) return forbidden("Lifecycle account is not configured for this tenant");
+    // The panel binding is private; the BFF supplies the account in both the authenticated
+    // request context and body so this handler never selects a tenant from an unbound body.
+    return runtimeList(env, parsed.data.account);
   }
   return notFound();
 }

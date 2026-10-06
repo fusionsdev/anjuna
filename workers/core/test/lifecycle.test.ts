@@ -53,6 +53,14 @@ beforeAll(async () => {
 afterAll(async () => { await h?.mf.dispose(); });
 
 describe("private factory lifecycle service", () => {
+  it("serves runtime-list through the real PanelLifecycleService handler", async () => {
+    const response = await h.panelLifecycle("/runtime-list", owner, jsonBody({ account: "account-a" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      brands: [expect.objectContaining({ brand_id: "brand-a", account: "account-a" })],
+    });
+  });
+
   it("provisions the first runtime and records one core audit row", async () => {
     await h.db.prepare("DELETE FROM brand_runtime WHERE brand_id = 'new-brand'").run();
     const request = apply({ brand_id: "new-brand", account: "account-a", hostnames: ["new-brand.example"], initial_runtime: initialRuntime });

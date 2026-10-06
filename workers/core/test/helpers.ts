@@ -40,7 +40,7 @@ export async function createHarness(options: { brand?: boolean } = {}) {
     modules: true, compatibilityDate: "2026-08-01",
     compatibilityFlags: ["global_fetch_strictly_public"],
     d1Databases: { LEADS: "core-test-leads", FACTORY: "core-test-factory" },
-    bindings: { DRAIN_TOKEN, HANDOFF_KEY },
+    bindings: { DRAIN_TOKEN, HANDOFF_KEY, LIFECYCLE_ACCOUNT: "account-a" },
     outboundService: () => { throw new Error("External requests forbidden in core tests"); },
   };
   const mf = new Miniflare(convertV4MiniflareOptions({
@@ -173,6 +173,7 @@ export async function createHarness(options: { brand?: boolean } = {}) {
     },
     async panelLifecycle(path: string, context: AdminRequestContext, init: RequestInit = {}) {
       const headers = new Headers(init.headers);
+      if (path.endsWith("/runtime-list")) headers.set("x-lifecycle-account", "account-a");
       for (const [name, value] of Object.entries(adminContextToHeaders(context))) headers.set(name, value);
       const response = await panel.fetch(`https://core.internal/private/panel${path}`, {
         ...init,
