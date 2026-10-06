@@ -4,7 +4,8 @@ import {
   getZone, uploadAssetFile, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { setInstallStatus, withReceipt } from "../receipt.js";
+import { compensationInstallId, deriveTenantRuntime, setInstallStatus, validateInstallInputs, withReceipt } from "../receipt.js";
+import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import type { Env } from "../env.js";
 
 export interface InstallParams {
@@ -14,14 +15,18 @@ export interface InstallParams {
 }
 
 interface BrandRow {
+  brand_id: string;
+  account: string;
   domain: string;
   current_revision_id: string | null;
 }
 
 interface RevisionRow {
+  brand_id: string;
   template_version_id: string;
   form_artifact_id: string;
   config_json: string;
+  worker_version_id: string | null;
 }
 
 interface TemplateVersionRow {
@@ -31,6 +36,7 @@ interface TemplateVersionRow {
 
 interface FormArtifactRow {
   r2_key: string;
+  payload_version: string | null;
 }
 
 /**
@@ -46,24 +52,26 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
   async run(event: WorkflowEvent<InstallParams>, step: WorkflowStep): Promise<void> {
     const { install_id, brand_id, revision_id } = event.payload;
     const { FACTORY: db, ARTIFACTS, CF_ACCOUNT_ID, CF_API_TOKEN } = this.env;
+    let mutationStarted = false;
 
-    await setInstallStatus(db, install_id, "running");
+    await setInstallStatus(db, install_id, "running", undefined, brand_id);
 
     try {
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      const { zone_id, domain } = await step.do("validate", async () => {
+      const { zone_id, domain, account, previous_revision_id, initial_runtime } = await step.do("validate", async () => {
         return withReceipt(db, install_id, "validate", async () => {
           const brand = await db
-            .prepare("SELECT domain FROM brands WHERE brand_id = ?")
+            .prepare("SELECT brand_id, account, domain, current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
             .first<BrandRow>();
           if (!brand) throw new Error(`Brand ${brand_id} not found`);
 
           const revision = await db
-            .prepare("SELECT template_version_id FROM brand_revisions WHERE revision_id = ?")
+            .prepare("SELECT brand_id, template_version_id, form_artifact_id, config_json, worker_version_id FROM brand_revisions WHERE revision_id = ?")
             .bind(revision_id)
-            .first<{ template_version_id: string }>();
+            .first<RevisionRow>();
           if (!revision) throw new Error(`Revision ${revision_id} not found`);
+          if (revision.brand_id !== brand_id) throw new Error("Revision does not belong to brand");
 
           const tv = await db
             .prepare("SELECT status FROM template_versions WHERE template_version_id = ?")
@@ -72,6 +80,31 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           if (!tv) throw new Error("Template version not found");
           if (tv.status !== "sealed") throw new Error("Template version is not sealed");
 
+          const artifact = await db
+            .prepare("SELECT r2_key, payload_version FROM form_artifacts WHERE form_artifact_id = ?")
+            .bind(revision.form_artifact_id)
+            .first<FormArtifactRow>();
+          if (!artifact?.r2_key) throw new Error("Form artifact is missing");
+          const config = JSON.parse(revision.config_json) as Record<string, unknown>;
+          const tenant = {
+            account: brand.account,
+            aid: this.env.LEADSGATE_AID,
+            prepop_base: this.env.LEADSGATE_PREPOP_BASE,
+            amount_buckets: Array.isArray(config.amount_buckets) ? config.amount_buckets as number[] : [],
+            form_route: typeof config.form_route === "string" ? config.form_route : "/apply",
+            keyword_default: typeof config.keyword_default === "string" ? config.keyword_default : "",
+            form_version: typeof config.form_version === "string" ? config.form_version : "form@8ba11d3",
+          };
+          const runtimeState = await new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN)
+            .runtimeState({ brand_id, account: brand.account });
+          validateInstallInputs({
+            brand_id,
+            revision: { ...revision, template_status: tv.status },
+            artifact: { present: true, payload_version: artifact.payload_version },
+            tenant,
+            runtime_state: runtimeState,
+          });
+
           const zone = await getZone(CF_API_TOKEN, brand.domain);
           const conflicts = await apexDnsRecords(CF_API_TOKEN, zone.id, brand.domain);
           if (conflicts.length > 0) {
@@ -79,7 +112,13 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             throw new Error(`Existing DNS records block Custom Domain attach: ${names}`);
           }
 
-          return { zone_id: zone.id, domain: brand.domain };
+          return {
+            zone_id: zone.id,
+            domain: brand.domain,
+            account: brand.account,
+            previous_revision_id: brand.current_revision_id,
+            initial_runtime: deriveTenantRuntime(brand_id, tenant),
+          };
         });
       });
 
@@ -130,6 +169,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       // ── Step 4: Upload assets ──────────────────────────────────────────────
       const { assets_jwt } = await step.do("upload_assets", async () => {
         return withReceipt(db, install_id, "upload_assets", async () => {
+          mutationStarted = true;
           const renderObj = await ARTIFACTS.get(render_r2_key);
           if (!renderObj) throw new Error(`Render artifact not found: ${render_r2_key}`);
 
@@ -189,6 +229,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               ],
               compatibility_date: "2026-08-01",
               compatibility_flags: ["global_fetch_strictly_public"],
+              core_token: this.env.CORE_TOKEN,
             },
           );
 
@@ -196,6 +237,19 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
         });
       });
       void script_etag; // referenced for completeness; version id comes from deploy step
+
+      if (!previous_revision_id) {
+        await step.do("provision_runtime", async () => withReceipt(db, install_id, "provision_runtime", async () => {
+          const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+          const result = await client.applyRuntime({
+            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            expected_revision_id: null, target_revision_id: revision_id,
+            actor_id: "system", actor_role: "owner", initial_runtime,
+          });
+          await client.verifyRuntime(brand_id, account, revision_id, install_id);
+          return result;
+        }));
+      }
 
       // ── Step 6: Deploy ─────────────────────────────────────────────────────
       const { worker_version_id } = await step.do("deploy", async () => {
@@ -239,6 +293,19 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
         });
       });
 
+      if (previous_revision_id) {
+        await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
+          const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+          const result = await client.applyRuntime({
+            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            expected_revision_id: previous_revision_id, target_revision_id: revision_id,
+            actor_id: "system", actor_role: "owner",
+          });
+          await client.verifyRuntime(brand_id, account, revision_id, install_id);
+          return result;
+        }));
+      }
+
       // ── Step 9: Receipt ────────────────────────────────────────────────────
       await step.do("receipt", async () => {
         return withReceipt(db, install_id, "receipt", async () => {
@@ -254,9 +321,9 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
         });
       });
 
-      await setInstallStatus(db, install_id, "ready");
+      await setInstallStatus(db, install_id, "ready", undefined, brand_id);
     } catch (err) {
-      await setInstallStatus(db, install_id, "failed", String(err));
+      await setInstallStatus(db, install_id, "failed", String(err), brand_id);
 
       // ── Automatic rollback on failure ──────────────────────────────────────
       await step.do("rollback", async () => {
@@ -269,23 +336,19 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             ? (JSON.parse(install.rollback_record_json) as { previous_revision_id: string | null })
             : null;
 
-          if (!rollback?.previous_revision_id) {
-            await db
-              .prepare("UPDATE brands SET status = 'failed', updated_at = ? WHERE brand_id = ?")
-              .bind(new Date().toISOString(), brand_id)
-              .run();
-          } else {
-            const rollbackInstallId = `rollback-${install_id}`;
-            await this.env.ROLLBACK_WORKFLOW.create({
-              id: rollbackInstallId,
-              params: { install_id: rollbackInstallId, brand_id, to_revision_id: rollback.previous_revision_id },
-            });
-          }
-          return { triggered_rollback: !rollback?.previous_revision_id ? "brand_marked_failed" : "workflow_started" };
+          if (!mutationStarted) return { compensation: "not_required" };
+
+          const compensationId = compensationInstallId(install_id);
+          await db.prepare(
+            "INSERT OR IGNORE INTO installs (install_id, brand_id, kind, status, started_by, started_at, from_revision_id, to_revision_id) VALUES (?, ?, 'rollback', 'queued', 'system', ?, ?, ?)",
+          ).bind(compensationId, brand_id, new Date().toISOString(), rollback?.previous_revision_id ?? null, rollback?.previous_revision_id ?? null).run();
+          await this.env.ROLLBACK_WORKFLOW.create({
+            id: compensationId,
+            params: { install_id: compensationId, brand_id, to_revision_id: rollback?.previous_revision_id ?? null },
+          });
+          return { compensation_install_id: compensationId, triggered_rollback: "workflow_started" };
         });
       });
-
-      await setInstallStatus(db, install_id, "rolled_back");
     }
   }
 }

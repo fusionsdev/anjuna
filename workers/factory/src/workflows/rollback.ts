@@ -1,6 +1,8 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { attachCustomDomain, deployScript, detachCustomDomain } from "../cf-api.js";
 import { setInstallStatus, withReceipt } from "../receipt.js";
+import { rollbackTargetBelongsToBrand } from "../receipt.js";
+import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import type { Env } from "../env.js";
 
 export interface RollbackParams {
@@ -11,11 +13,13 @@ export interface RollbackParams {
 }
 
 interface BrandRow {
+  account: string;
   domain: string;
   current_revision_id: string | null;
 }
 
 interface RevisionRow {
+  brand_id: string;
   worker_version_id: string | null;
 }
 
@@ -31,21 +35,21 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
     const { install_id, brand_id, to_revision_id } = event.payload;
     const { FACTORY: db, CF_ACCOUNT_ID, CF_API_TOKEN } = this.env;
 
-    await setInstallStatus(db, install_id, "running");
+    await setInstallStatus(db, install_id, "running", undefined, brand_id);
 
     try {
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      const { zone_id, domain } = await step.do("validate", async () => {
+      const { zone_id, domain, account, current_revision_id } = await step.do("validate", async () => {
         return withReceipt(db, install_id, "validate", async () => {
           const brand = await db
-            .prepare("SELECT domain, current_revision_id FROM brands WHERE brand_id = ?")
+            .prepare("SELECT domain, account, current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
             .first<BrandRow>();
           if (!brand) throw new Error(`Brand ${brand_id} not found`);
 
           const { getZone } = await import("../cf-api.js");
           const zone = await getZone(CF_API_TOKEN, brand.domain);
-          return { zone_id: zone.id, domain: brand.domain };
+          return { zone_id: zone.id, domain: brand.domain, account: brand.account, current_revision_id: brand.current_revision_id };
         });
       });
 
@@ -66,13 +70,27 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           });
         });
 
+        await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
+          const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+          const current = await client.runtimeState({ brand_id, account });
+          if (current.state === "absent") return { state: "absent", paused: false };
+          const result = await client.applyRuntime({
+            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            expected_revision_id: current_revision_id, target_revision_id: null,
+            actor_id: "system", actor_role: "owner",
+          });
+          const state = await client.runtimeState({ brand_id, account });
+          if (state.state !== "applied" || !state.paused) throw new Error("Core runtime did not pause during detach");
+          return result;
+        }));
+
         await step.do("receipt", async () => {
           return withReceipt(db, install_id, "receipt", async () => {
             await db
-              .prepare("UPDATE brands SET status = 'failed', updated_at = ? WHERE brand_id = ?")
+              .prepare("UPDATE brands SET status = 'draft', current_revision_id = NULL, updated_at = ? WHERE brand_id = ?")
               .bind(new Date().toISOString(), brand_id)
               .run();
-            return { rolled_back_to: null };
+            return { rolled_back_to: null, detached: true };
           });
         });
       } else {
@@ -80,16 +98,27 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         const { worker_version_id } = await step.do("deploy", async () => {
           return withReceipt(db, install_id, "deploy", async () => {
             const revision = await db
-              .prepare("SELECT worker_version_id FROM brand_revisions WHERE revision_id = ?")
+              .prepare("SELECT brand_id, worker_version_id FROM brand_revisions WHERE revision_id = ?")
               .bind(to_revision_id)
               .first<RevisionRow>();
-            if (!revision?.worker_version_id) throw new Error(`Revision ${to_revision_id} has no deployed version id`);
+            if (!revision || !rollbackTargetBelongsToBrand(revision, brand_id)) throw new Error(`Revision ${to_revision_id} is not a deployed revision for this brand`);
 
             const scriptName = `brand-${brand_id}`;
-            await deployScript(CF_API_TOKEN, CF_ACCOUNT_ID, scriptName, revision.worker_version_id);
-            return { worker_version_id: revision.worker_version_id };
+            await deployScript(CF_API_TOKEN, CF_ACCOUNT_ID, scriptName, revision.worker_version_id!);
+            return { worker_version_id: revision.worker_version_id! };
           });
         });
+
+        await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
+          const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+          const result = await client.applyRuntime({
+            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            expected_revision_id: current_revision_id, target_revision_id: to_revision_id,
+            actor_id: "system", actor_role: "owner",
+          });
+          await client.verifyRuntime(brand_id, account, to_revision_id, install_id);
+          return result;
+        }));
 
         // Ensure Custom Domains still point to this script (they survive version deploys, but re-attach in case).
         await step.do("attach_domains", async () => {
@@ -116,7 +145,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
 
       await setInstallStatus(db, install_id, "rolled_back");
     } catch (err) {
-      await setInstallStatus(db, install_id, "failed", String(err));
+      await setInstallStatus(db, install_id, "failed", String(err), brand_id);
       throw err;
     }
   }
