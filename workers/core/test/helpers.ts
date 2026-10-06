@@ -76,13 +76,6 @@ export async function createHarness(options: { brand?: boolean } = {}) {
   const factory = await mf.getD1Database("FACTORY", "production");
   for (const migration of leadsMigrations) await db.batch(migration.queries.map((query) => db.prepare(query)));
   for (const migration of factoryMigrations) await factory.batch(migration.queries.map((query) => factory.prepare(query)));
-  // Keep the core harness usable with older Miniflare migration runners that skip the
-  // append-only audit table when replaying the rebuilt receipt migration.
-  await factory.prepare(`CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT NOT NULL,
-    actor_role TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL,
-    entity_id TEXT NOT NULL, before_json TEXT, after_json TEXT, created_at TEXT NOT NULL
-  )`).run();
   const core = await mf.getWorker("production");
   const panel = await mf.getWorker("panel");
   let hiddenOrphan = false;

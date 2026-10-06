@@ -8,7 +8,7 @@ import {
   type RuntimeStateResponse,
   type VerifySoldLeadResponse,
 } from "@anjuna/contracts";
-import { authenticateAccount, ownsBrand } from "./auth.js";
+import { authenticateAccount } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 
@@ -64,14 +64,15 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
   if (current && current.applied_revision_id !== input.expected_revision_id) {
     return conflict("Runtime revision is stale");
   }
-  if (!current && !input.initial_runtime) return bad("Initial runtime is required for first provision");
+  if (!current) {
+    const factoryBrand = await env.FACTORY.prepare(
+      "SELECT brand_id FROM brands WHERE brand_id = ?1 AND account = ?2",
+    ).bind(input.brand_id, account).first<{ brand_id: string }>();
+    if (!factoryBrand) return forbidden("Factory brand ownership is required for first provision");
+    if (!input.initial_runtime) return bad("Initial runtime is required for first provision");
+  }
 
   const timestamp = now();
-  await env.FACTORY.prepare(`CREATE TABLE IF NOT EXISTS audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT NOT NULL, actor_role TEXT NOT NULL,
-    action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
-    before_json TEXT, after_json TEXT, created_at TEXT NOT NULL
-  )`).run();
   const detached = input.target_revision_id === null;
   const nextRevision = input.target_revision_id;
   const auditAfter = JSON.stringify({
@@ -102,11 +103,16 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
         .bind(input.actor_id, input.actor_role, input.brand_id, auditBefore, auditAfter, timestamp).run();
   } else {
     const nextFormVersion = input.initial_runtime?.form_version ?? current.form_version;
-    await env.LEADS.prepare(`UPDATE brand_runtime SET hostnames = ?1, form_version = ?2,
+    const update = await env.LEADS.prepare(`UPDATE brand_runtime SET hostnames = ?1, form_version = ?2,
         applied_revision_id = ?3, last_lifecycle_install_id = ?4, paused = ?5, updated_at = ?6
         WHERE brand_id = ?7 AND applied_revision_id IS ?8 AND last_lifecycle_install_id IS NOT ?4`)
         .bind(JSON.stringify(input.hostnames), nextFormVersion, nextRevision, input.install_id,
           detached ? 1 : 0, timestamp, input.brand_id, input.expected_revision_id).run();
+    // LEADS and FACTORY are separate D1 databases. The CAS update must win before we
+    // append the Factory audit; a zero-row update is a competing/stale install, never applied.
+    if (update.meta.changes !== 1) return conflict("Runtime revision is stale");
+    // Cross-D1 writes cannot be atomic. If the migration-owned audit insert fails after
+    // this point, the runtime remains applied and the request fails rather than claiming audit success.
     await env.FACTORY.prepare(`INSERT INTO audit_log
         (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
         VALUES (?1, ?2, 'lifecycle.runtime.apply', 'brand_runtime', ?3, ?4, ?5, ?6)`)

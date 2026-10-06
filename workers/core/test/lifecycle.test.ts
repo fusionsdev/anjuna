@@ -40,6 +40,9 @@ beforeAll(async () => {
   h = await createHarness();
   await h.seedAccount("account-a", "account-a-token");
   await h.seedBrand("brand-a", "brand-token", "account-a");
+  await h.factory.prepare(`INSERT INTO brands
+    (brand_id, name, account, domain, status, created_by, created_at, updated_at)
+    VALUES ('new-brand', 'New Brand', 'account-a', 'new-brand.example', 'draft', 'usr_owner_01', '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z')`).run();
   await h.db.prepare(`UPDATE brand_runtime SET
     amount_buckets = '[500,1000,1500]', flow_gate_mode = 'signed_cookie',
     ab_config_json = '{"experiment_id":"exp-1","variants":[{"id":"A","weight":50},{"id":"B","weight":50}]}',
@@ -61,6 +64,14 @@ describe("private factory lifecycle service", () => {
     expect(Number((await h.factory.prepare("SELECT count(*) AS count FROM audit_log WHERE entity_id = 'new-brand'").first<{ count: number }>())!.count)).toBe(1);
   });
 
+  it("rejects first provisioning when Factory has no authoritative brand ownership", async () => {
+    const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({
+      brand_id: "unowned-brand", install_id: "install-unowned",
+    })));
+    expect(response.status).toBe(403);
+    expect(await h.db.prepare("SELECT brand_id FROM brand_runtime WHERE brand_id = 'unowned-brand'").first()).toBeNull();
+  });
+
   it("treats a same-install retry as a no-op without another audit row", async () => {
     const first = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply()));
     const before = Number((await h.factory.prepare("SELECT count(*) AS count FROM audit_log WHERE entity_id = 'brand-a'").first<{ count: number }>())!.count);
@@ -77,13 +88,27 @@ describe("private factory lifecycle service", () => {
     expect(row).toMatchObject({ aid: "existing-aid", prepop_base: "https://existing.example/apply", amount_buckets: "[500,1000,1500]", flow_gate_mode: "signed_cookie", keyword_default: "Existing Keyword", form_route: "/existing", applied_revision_id: "revision-1" });
   });
 
+  it("allows only one of two conflicting installs to win the compare-and-set", async () => {
+    const before = Number((await h.factory.prepare("SELECT count(*) AS count FROM audit_log WHERE entity_id = 'brand-a'").first<{ count: number }>())!.count);
+    const [first, second] = await Promise.all([
+      h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({ install_id: "install-race-a", expected_revision_id: "revision-1", target_revision_id: "revision-2" }))),
+      h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({ install_id: "install-race-b", expected_revision_id: "revision-1", target_revision_id: "revision-3" }))),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    expect(Number((await h.factory.prepare("SELECT count(*) AS count FROM audit_log WHERE entity_id = 'brand-a'").first<{ count: number }>())!.count)).toBe(before + 1);
+    const row = await h.db.prepare("SELECT applied_revision_id, last_lifecycle_install_id FROM brand_runtime WHERE brand_id = 'brand-a'").first();
+    expect(["revision-2", "revision-3"]).toContain(row!.applied_revision_id);
+    expect(["install-race-a", "install-race-b"]).toContain(row!.last_lifecycle_install_id);
+  });
+
   it("rejects a credential/account mismatch before touching runtime", async () => {
     const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({ account: "other-account", install_id: "install-other" })));
     expect(response.status).toBe(403);
   });
 
   it("detaches by pausing while retaining hostnames and supports a runtime preflight", async () => {
-    const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({ install_id: "install-detach", expected_revision_id: "revision-1", target_revision_id: null, initial_runtime: undefined })));
+    const current = await h.db.prepare("SELECT applied_revision_id FROM brand_runtime WHERE brand_id = 'brand-a'").first<{ applied_revision_id: string }>();
+    const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({ install_id: "install-detach", expected_revision_id: current!.applied_revision_id, target_revision_id: null, initial_runtime: undefined })));
     expect(ApplyRuntimeResponse.parse(await response.json())).toMatchObject({ state: "detached", paused: true, applied_revision_id: null });
     const state = await h.factoryLifecycle("/runtime-state", "account-a-token", jsonBody({ brand_id: "brand-a", account: "account-a" }));
     expect(RuntimeStateResponse.parse(await state.json())).toMatchObject({ state: "applied", applied_revision_id: null, paused: true, last_lifecycle_install_id: "install-detach", bundle_form_version: "form@8ba11d3", credential_account_match: true });
