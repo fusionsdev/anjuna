@@ -166,7 +166,6 @@ export async function handleFactoryLifecycleRequest(request: Request, env: Env):
   if (pathname.endsWith("/runtime-state")) return runtimeState(request, env, account);
   return notFound();
 }
-
 async function verifySold(request: Request, env: Env, context: AdminRequestContext): Promise<Response> {
   const parsed = VerifySoldLeadRequest.safeParse(await body(request));
   if (!parsed.success) return bad("Invalid Test-sold request");

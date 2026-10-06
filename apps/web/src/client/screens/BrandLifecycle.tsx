@@ -68,7 +68,9 @@ export function BrandLifecycle({ me }: { me: Me }) {
       : undefined;
     if (!shouldRecoverAcceptedInstall(pending?.brandId, pending?.installId, selectedId, install, state)) return;
     if (!selectedId) return;
-    const installId = install?.install_id ?? pending!.installId;
+    // Once a newer dispatch is accepted, always poll that accepted operation;
+    // the displayed install may still be an older terminal attempt.
+    const installId = pending!.installId;
     const token = { selectedId, generation: operationGeneration.current };
     let active = true;
     let attempts = 0;
