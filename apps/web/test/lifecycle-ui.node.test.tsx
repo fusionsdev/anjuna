@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BrandLifecycle, LifecycleDetail } from "../src/client/screens/BrandLifecycle";
-import { reduceLifecycleState, shouldPollLifecycle, type LifecycleEvent } from "../src/client/lifecycle-state";
+import { isCurrentOperationResult, reduceLifecycleState, shouldPollLifecycle, type LifecycleEvent } from "../src/client/lifecycle-state";
 
 describe("lifecycle state reducer", () => {
   it("keeps lifecycle status separate from runtime sync and preserves retry/compensation evidence", () => {
@@ -60,6 +60,20 @@ describe("lifecycle state reducer", () => {
       lifecycle_status: "ready", runtime_sync_status: "queued",
       install: { install_id: "i", brand_id: "b", revision_id: "r", status: "ready", runtime_sync_status: "ready", receipts: [] },
     })).toBe(false);
+  });
+
+  it("puts rollback details into the authoritative polling state", () => {
+    const rollback = { install_id: "rollback-1", brand_id: "brand-a", revision_id: "rev-1", status: "running" as const, runtime_sync_status: "running" as const, receipts: [] };
+    const state = reduceLifecycleState(undefined, { type: "install", install: rollback });
+    expect(state.install?.install_id).toBe("rollback-1");
+    expect(shouldPollLifecycle(state)).toBe(true);
+    expect(shouldPollLifecycle(reduceLifecycleState(state, { type: "install", install: { ...rollback, status: "rolled_back" as const, runtime_sync_status: "ready" as const } }))).toBe(false);
+  });
+
+  it("rejects late operation results after a brand switch or brand mismatch", () => {
+    expect(isCurrentOperationResult("brand-a", 3, "brand-b", 4, "brand-a")).toBe(false);
+    expect(isCurrentOperationResult("brand-a", 3, "brand-a", 3, "brand-b")).toBe(false);
+    expect(isCurrentOperationResult("brand-a", 3, "brand-a", 3, "brand-a")).toBe(true);
   });
 });
 

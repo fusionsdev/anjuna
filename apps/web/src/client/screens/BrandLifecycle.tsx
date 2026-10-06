@@ -1,7 +1,7 @@
 import type { ChecklistEvidence, ChecklistItemName, LifecycleBrandSummary, InstallWithReceipts } from "@anjuna/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
-import { reduceLifecycleState, shouldPollLifecycle, type LifecycleState } from "../lifecycle-state";
+import { isCurrentOperationResult, reduceLifecycleState, shouldPollLifecycle, type LifecycleState } from "../lifecycle-state";
 
 const checklistItems: Array<{ item: ChecklistItemName; label: string }> = [
   { item: "drain_route", label: "Drain route" },
@@ -23,6 +23,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const operationGeneration = useRef(0);
   const [draft, setDraft] = useState({ domain: "", keyword_default: "", template_version_id: "" });
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
@@ -35,6 +36,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   const selected = useMemo(() => brands.find((b) => b.brand_id === selectedId), [brands, selectedId]);
   useEffect(() => {
     let active = true;
+    operationGeneration.current += 1;
     setState(undefined);
     setInstall(undefined);
     setChecklist({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
@@ -60,10 +62,60 @@ export function BrandLifecycle({ me }: { me: Me }) {
     return () => { active = false; window.clearInterval(timer); };
   }, [install, selectedId, state]);
 
+  function operationToken() {
+    return { selectedId, generation: operationGeneration.current };
+  }
+  function canCommit(token: { selectedId: string | null; generation: number }, resultBrandId: string) {
+    return isCurrentOperationResult(token.selectedId, token.generation, selectedId, operationGeneration.current, resultBrandId);
+  }
+  function commitInstallDetail(detail: InstallWithReceipts, token: { selectedId: string | null; generation: number }, retry?: { install_id: string; compensation_install_id?: string }) {
+    if (!canCommit(token, detail.brand_id)) return false;
+    setInstall(detail);
+    setState((previous) => {
+      const next = reduceLifecycleState(previous, { type: "install", install: detail });
+      return retry ? reduceLifecycleState(next, { type: "retry", ...retry }) : next;
+    });
+    return true;
+  }
   async function act(action: () => Promise<unknown>) { try { setError(null); await action(); await load(); } catch (e) { setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }
   async function createDraft() { await act(async () => { const result = await api.createDraft(draft); setSelectedId(result.brand.brand_id); setDraft({ domain: "", keyword_default: "", template_version_id: "" }); }); }
-  async function startInstall() { if (!selected) return; await act(async () => { const result = await api.install(selected.brand_id, selected.current_revision_id ?? undefined); const detail = await api.installDetail(result.install_id); setInstall(detail); setState((previous) => reduceLifecycleState(previous, { type: "install", install: detail })); }); }
-  async function rollback() { if (!selected) return; await act(async () => { const result = await api.rollbackLifecycle(selected.brand_id); const detail = await api.installDetail(result.install_id); setInstall(detail); }); }
+  async function startInstall() {
+    if (!selected) return;
+    const token = operationToken();
+    try {
+      setError(null);
+      const result = await api.install(selected.brand_id, selected.current_revision_id ?? undefined);
+      const detail = await api.installDetail(result.install_id);
+      if (commitInstallDetail(detail, token)) await load();
+    } catch (e) {
+      if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
+    }
+  }
+  async function rollback() {
+    if (!selected) return;
+    const token = operationToken();
+    try {
+      setError(null);
+      const result = await api.rollbackLifecycle(selected.brand_id);
+      const detail = await api.installDetail(result.install_id);
+      if (commitInstallDetail(detail, token)) await load();
+    } catch (e) {
+      if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
+    }
+  }
+  async function retry() {
+    if (!selected || !install) return;
+    const token = operationToken();
+    const originalInstallId = install.install_id;
+    try {
+      setError(null);
+      const next = await api.retryInstall(originalInstallId);
+      const detail = await api.installDetail(next.install_id);
+      if (commitInstallDetail(detail, token, { install_id: originalInstallId, compensation_install_id: next.install_id })) await load();
+    } catch (e) {
+      if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
+    }
+  }
 
   return <div className="lifecycle-grid">
     <section className="card lifecycle-list">
@@ -79,7 +131,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
       <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <button key={brand.brand_id} className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><b>{brand.hostnames[0] ?? brand.brand_id}</b><span>{statusLabel[brand.status] ?? brand.status}</span></button>)}</div>
       <p className="muted small">Actions: Install · Rollback · Retry · Test sold</p>
     </section>
-    {selected && <LifecycleDetail me={me} brand={selected} state={state} install={install} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRetry={() => install && void act(async () => { const next = await api.retryInstall(install.install_id); const detail = await api.installDetail(next.install_id); setInstall(detail); setState((previous) => reduceLifecycleState(previous, { type: "retry", install_id: install.install_id, compensation_install_id: next.install_id })); })} onChecklist={async (item, suppliedLeadId) => { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(); }} />}
+    {selected && <LifecycleDetail me={me} brand={selected} state={state} install={install} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRetry={() => void retry()} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />}
     {me.role === "owner" && <section className="card upgrade-card"><h2>Upgrade-all (Owner only)</h2><p className="muted">Canary-first upgrade; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="danger" onClick={() => void act(() => api.upgradeAll(upgrade))}>เริ่ม Upgrade-all</button></div></section>}
   </div>;
 }

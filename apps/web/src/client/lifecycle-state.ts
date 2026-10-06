@@ -38,3 +38,21 @@ export function shouldPollLifecycle(state: LifecycleState | undefined): boolean 
   const status = state?.install?.status;
   return status === "queued" || status === "running";
 }
+
+/**
+ * Async lifecycle results may arrive after the operator selected another
+ * brand.  Keep this predicate pure so the UI can enforce that boundary and
+ * tests can prove stale results are rejected without a browser.
+ */
+export function isCurrentOperationResult(
+  selectedId: string | null,
+  generation: number,
+  currentSelectedId: string | null,
+  currentGeneration: number,
+  resultBrandId: string,
+): boolean {
+  return selectedId !== null
+    && selectedId === currentSelectedId
+    && generation === currentGeneration
+    && resultBrandId === currentSelectedId;
+}
