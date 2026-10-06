@@ -7,3 +7,4 @@ export * from "./runtime-config.js";
 export * from "./postback.js";
 export * from "./template.js";
 export * from "./admin-api.js";
+export * from "./lifecycle.js";
