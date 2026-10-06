@@ -75,17 +75,28 @@ export async function renderBrand(
         const newBase = newPath2.split("/").pop()!;
         text = text.replaceAll(oldBase, newBase);
       }
-      // Add salt comment to JS chunks so brand identity is traceable in audits.
-      if (/\.js$/.test(path) && renames.has(path)) {
-        text = `// @anjuna-salt:${salt}\n${text}`;
-      }
       content = ENC.encode(text);
     }
 
     merged.set(newPath, content);
   }
 
+  assertCleanBrandBytes(merged, brandId);
+
   return { files: merged, saltPrefix: salt };
+}
+
+/** Reject readable platform, cross-brand, analytics-key, and DSN bytes. */
+export function assertCleanBrandBytes(files: FileMap, brandId: string): void {
+  const forbidden = new RegExp(`anjuna|aurum|${escapeRegExp(brandId)}|brand-[a-z0-9-]+|posthog|sentry|dsn|phc_[a-z0-9]+`, "i");
+  for (const [path, bytes] of files) {
+    if (!/\.(html?|js|css)$/i.test(path)) continue;
+    if (forbidden.test(DEC.decode(bytes))) throw new Error(`Brand bytes contain forbidden identity in ${path}`);
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**

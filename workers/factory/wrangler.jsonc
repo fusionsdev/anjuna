@@ -21,6 +21,13 @@
       "bucket_name": "anjuna-artifacts"
     }
   ],
+  "services": [
+    {
+      "binding": "CORE_LIFECYCLE",
+      "service": "anjuna-core",
+      "entrypoint": "FactoryLifecycleService"
+    }
+  ],
   "workflows": [
     {
       "name": "install-brand",
@@ -39,8 +46,13 @@
     }
   ],
   "vars": {
-    "CF_ACCOUNT_ID": "6cb8500c35210800451bd9a535482850"
+    "CF_ACCOUNT_ID": "6cb8500c35210800451bd9a535482850",
+    "CORE_ACCOUNT": "owner-account",
+    "CORE_DOMAIN": "core.aduplift.ai",
+    "LEADSGATE_AID": "tenant-aid",
+    "LEADSGATE_PREPOP_BASE": "https://prepop.example"
   }
   // Secrets (set via `wrangler secret put`, never committed):
   //   CF_API_TOKEN — scoped: Workers Scripts:Edit, Workers Domains:Edit, DNS:Read, Zones:Read
+  //   CORE_TOKEN — per-account write-only credential, emitted as secret_text only
 }

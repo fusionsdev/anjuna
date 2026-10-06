@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderBrand, unzip, zip } from "../src/render";
+import { uploadScript } from "../src/cf-api";
+import { CoreLifecycleClient } from "../src/core-lifecycle-client";
 
 const ENC = new TextEncoder();
 const DEC = new TextDecoder();
@@ -46,11 +48,31 @@ describe("renderBrand", () => {
     expect(html).not.toContain("index-abc123.js\" ");
   });
 
-  it("adds @anjuna-salt comment to salted JS chunks", async () => {
+  it("does not add a readable platform marker to salted JS chunks", async () => {
     const { files, saltPrefix } = await renderBrand(makeSite(), makeForm(), "brand-1", "rev-1");
     const saltedJs = [...files.keys()].find((p) => p.includes("_index-abc123.js"))!;
     const content = DEC.decode(files.get(saltedJs)!);
-    expect(content).toMatch(new RegExp(`^// @anjuna-salt:${saltPrefix}`));
+    expect(content).not.toContain("anjuna");
+    expect(content).toContain("console.log");
+  });
+
+  it("keeps every rendered HTML, JS, and CSS byte free of platform and identity markers", async () => {
+    const template = new Map([
+      ["index.html", makeFile("<h1>Harbor</h1>")],
+      ["assets/site.css", makeFile(".harbor { color: red }")],
+    ]);
+    const form = new Map([
+      ["/_f/index.html", makeFile('<script src="/assets/index-abc123.js"></script>')],
+      ["/_f/assets/index-abc123.js", makeFile("console.log('form')")],
+      ["/_f/assets/style-xyz789.css", makeFile(".form { color: red }")],
+    ]);
+    const { files } = await renderBrand(template, form, "harbor-brand", "rev-1");
+    for (const [path, bytes] of files) {
+      if (/\.(html?|js|css)$/i.test(path)) {
+        const content = DEC.decode(bytes).toLowerCase();
+        expect(content, path).not.toMatch(/anjuna|aurum|harbor-brand|posthog|sentry|dsn|api[_-]?key/);
+      }
+    }
   });
 
   it("preserves template files unchanged", async () => {
@@ -75,6 +97,47 @@ describe("renderBrand", () => {
     const { saltPrefix: salt1 } = await renderBrand(makeSite(), makeForm(), "brand-x", "rev-x");
     const { saltPrefix: salt2 } = await renderBrand(makeSite(), makeForm(), "brand-x", "rev-x");
     expect(salt1).toBe(salt2);
+  });
+});
+
+describe("factory lifecycle client", () => {
+  it("forwards bearer auth and validates bounded lifecycle responses", async () => {
+    const calls: Request[] = [];
+    const binding = { fetch: async (request: Request) => {
+      calls.push(request);
+      return Response.json({ state: "applied", brand_id: "brand-a", account: "account-a", applied_revision_id: "rev-1", last_lifecycle_install_id: "install-1", paused: false, bundle_form_version: "form@abc1234", credential_account_match: true });
+    } };
+    const client = new CoreLifecycleClient(binding, "secret-token");
+    await expect(client.runtimeState({ brand_id: "brand-a", account: "account-a" })).resolves.toMatchObject({ state: "applied" });
+    expect(calls[0]!.headers.get("authorization")).toBe("Bearer secret-token");
+    expect(calls[0]!.url).toContain("/runtime-state");
+  });
+
+  it("does not expose upstream response bodies in bounded errors", async () => {
+    const binding = { fetch: async () => new Response("private token and applicant data", { status: 503 }) };
+    const client = new CoreLifecycleClient(binding, "secret-token");
+    await expect(client.runtimeState({ brand_id: "brand-a", account: "account-a" })).rejects.toThrow("Core lifecycle request failed");
+    await expect(client.runtimeState({ brand_id: "brand-a", account: "account-a" })).rejects.not.toThrow("private token");
+  });
+});
+
+describe("brand upload bindings", () => {
+  it("pins CORE to the default core handler and emits CORE_TOKEN as secret_text", async () => {
+    let metadata: Record<string, unknown> | undefined;
+    const fetcher = async (_input: string, init?: RequestInit) => {
+      const form = init?.body as FormData;
+      metadata = JSON.parse(await (form.get("metadata") as File).text());
+      return Response.json({ success: true, result: { id: "script", etag: "etag" } });
+    };
+    await uploadScript("token", "account", "brand-a", "export default {}", {
+      main_module: "worker.js", bindings: [], compatibility_date: "2026-08-01",
+      brand_id: "brand-a", core_token: "core-secret",
+    }, fetcher);
+    expect(metadata?.bindings).toEqual(expect.arrayContaining([
+      { type: "service", name: "CORE", service: "anjuna-core" },
+      { type: "secret_text", name: "CORE_TOKEN", text: "core-secret" },
+    ]));
+    expect(JSON.stringify(metadata?.bindings)).not.toContain("LeadsRpc");
   });
 });
 
