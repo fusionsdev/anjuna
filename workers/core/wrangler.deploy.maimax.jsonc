@@ -34,5 +34,8 @@
       "database_id": "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
       "migrations_dir": "../../packages/factory-db/migrations"
     }
-  ]
+  ],
+  "vars": {
+    "LIFECYCLE_ACCOUNT": "maimax"
+  }
 }
