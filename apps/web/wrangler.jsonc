@@ -18,8 +18,9 @@
     { "binding": "FACTORY", "database_name": "anjuna-factory", "database_id": "<FACTORY_D1_ID>", "migrations_dir": "../../packages/factory-db/migrations" }
   ],
   "services": [
-    { "binding": "CORE", "service": "anjuna-core", "entrypoint": "AdminService" }
-    // { "binding": "FACTORY_WORKER", "service": "anjuna-factory" }  // enable after T10 deploys
+    { "binding": "CORE", "service": "anjuna-core", "entrypoint": "AdminService" },
+    { "binding": "CORE_LIFECYCLE", "service": "anjuna-core", "entrypoint": "PanelLifecycleService" },
+    { "binding": "FACTORY_WORKER", "service": "anjuna-factory" }
   ],
   "vars": {
     "ACCESS_TEAM_DOMAIN": "aduplift.cloudflareaccess.com",

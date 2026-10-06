@@ -23,11 +23,12 @@ import {
 import { AUTH_ROLES } from "@anjuna/auth-db";
 import { z } from "zod";
 import { verifyAccess } from "./access.js";
-import { listPanelAudit, writePanelAudit, writeFactoryAudit } from "./audit.js";
+import { listLifecycleAudit, listPanelAudit, writePanelAudit, writeFactoryAudit } from "./audit.js";
 import { createAuth, type Auth } from "./auth.js";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
 import { authorizePanel } from "./panel-roles.js";
+import { handleLifecycleRoute } from "./lifecycle.js";
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -110,6 +111,9 @@ async function route(
   const { method } = request;
   const rid = ctx.request_id;
   let m: RegExpMatchArray | null;
+
+  const lifecycle = await handleLifecycleRoute(request, env, url, path, ctx);
+  if (lifecycle) return lifecycle;
 
   if (path === "/api/me" && method === "GET") {
     return json(200, { user: { id: ctx.actor_id, email, role: ctx.actor_role } });
@@ -285,7 +289,7 @@ async function route(
     const coreList = AuditListResponse.parse(core.body);
     const actorId = ownOnly ? ctx.actor_id : q.data.actor_id;
     const skipLocal = (q.data.target_type && q.data.target_type !== "user") || q.data.cursor !== undefined;
-    const local = skipLocal ? [] : await listPanelAudit(env.FACTORY, { actorId, limit });
+    const local = skipLocal ? [] : [...await listPanelAudit(env.FACTORY, { actorId, limit }), ...await listLifecycleAudit(env.FACTORY, { actorId, limit })];
     // Core and the panel share the audit_log table in production: show each row once.
     const isPanelRow = (e: AuditEntry) => e.action.startsWith("auth.") || e.action.startsWith("user.");
     const entries = [...coreList.entries.filter((e) => !isPanelRow(e)), ...local]

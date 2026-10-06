@@ -7,7 +7,9 @@ export interface Env {
   /** Service Binding to the `anjuna-core` Worker (admin API). */
   CORE?: Fetcher; // absent until T6 deploys anjuna-core; MOCK_CORE=1 is used meanwhile
   /** Service Binding to the `anjuna-factory` Worker (install / rollback / upgrade-all Workflows). */
-  FACTORY_WORKER?: Fetcher; // absent until T10 deploys; routes fall back to queued D1 rows
+  FACTORY_WORKER?: Fetcher;
+  /** Private PanelLifecycleService binding on core. */
+  CORE_LIFECYCLE?: Fetcher;
   /** Static assets (the SPA). */
   ASSETS: Fetcher;
 
@@ -24,4 +26,7 @@ export interface Env {
   MOCK_CORE?: string;
   /** Dev/test only. `"1"` skips Access JWT verification. Never set in wrangler.jsonc. */
   DEV_ACCESS_BYPASS?: string;
+  DEFAULT_ACCOUNT?: string;
+  DEFAULT_AID?: string;
+  DEFAULT_PREPOP_BASE?: string;
 }

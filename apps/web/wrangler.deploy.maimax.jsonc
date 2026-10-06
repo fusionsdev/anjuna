@@ -41,6 +41,15 @@
       "binding": "CORE",
       "service": "anjuna-core",
       "entrypoint": "AdminService"
+    },
+    {
+      "binding": "CORE_LIFECYCLE",
+      "service": "anjuna-core",
+      "entrypoint": "PanelLifecycleService"
+    },
+    {
+      "binding": "FACTORY_WORKER",
+      "service": "anjuna-factory"
     }
   ],
   "vars": {

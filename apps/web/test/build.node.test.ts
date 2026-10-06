@@ -23,7 +23,11 @@ describe("wrangler.jsonc", () => {
 
   it("binds AUTH and FACTORY, never the leads D1; CORE only once mock core is off", () => {
     expect(wrangler.d1_databases.map((d: { binding: string }) => d.binding).sort()).toEqual(["AUTH", "FACTORY"]);
-    expect(wrangler.services).toEqual([{ binding: "CORE", service: "anjuna-core", entrypoint: "AdminService" }]);
+    expect(wrangler.services).toEqual([
+      { binding: "CORE", service: "anjuna-core", entrypoint: "AdminService" },
+      { binding: "CORE_LIFECYCLE", service: "anjuna-core", entrypoint: "PanelLifecycleService" },
+      { binding: "FACTORY_WORKER", service: "anjuna-factory" },
+    ]);
     expect(wrangler.vars.MOCK_CORE).toBe("0");
     expect(JSON.stringify(wrangler).toLowerCase()).not.toContain("leads");
   });

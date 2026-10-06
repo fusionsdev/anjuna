@@ -316,16 +316,12 @@ describe("factory brands: create / install / upgrade", () => {
     return brand;
   }
 
-  it("employee creates a brand and install is queued", async () => {
+  it("employee cannot install a draft without a deployable revision", async () => {
     const brand = await createBrand(employee);
     expect(brand.brand_id).toMatch(/^brand_/);
 
     const ins = await post(employee, `/api/brands/${brand.brand_id}/install`);
-    expect(ins.status).toBe(201);
-    const insBody = (await ins.json()) as { install_id: string; status: string; kind: string };
-    expect(insBody.install_id).toMatch(/^ins_/);
-    expect(insBody.status).toBe("queued");
-    expect(insBody.kind).toBe("install");
+    expect(ins.status).toBe(422);
   });
 
   it("employee lists installs for the brand", async () => {
@@ -336,7 +332,7 @@ describe("factory brands: create / install / upgrade", () => {
     const res = await call(`/api/brands/${brand.brand_id}/installs`, { cookie: employee });
     expect(res.status).toBe(200);
     const { installs } = (await res.json()) as { installs: unknown[] };
-    expect(installs.length).toBe(2);
+    expect(installs.length).toBe(0);
   });
 
   it("returns 404 for install on unknown brand", async () => {
@@ -353,12 +349,10 @@ describe("factory brands: create / install / upgrade", () => {
     await expectForbidden(await post(employee, "/api/upgrade-all"));
   });
 
-  it("owner can upgrade-all; returns queued count", async () => {
+  it("owner upgrade-all requires the immutable source and target command", async () => {
     // Brands created are 'draft', upgrade-all targets live/paused — count = 0 here.
     const res = await post(owner, "/api/upgrade-all");
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { queued: number };
-    expect(typeof body.queued).toBe("number");
+    expect(res.status).toBe(422);
   });
 
   it("install and rollback write audit rows", async () => {
@@ -367,7 +361,7 @@ describe("factory brands: create / install / upgrade", () => {
     await post(employee, `/api/brands/${brand.brand_id}/install`);
     await post(employee, `/api/brands/${brand.brand_id}/rollback`);
     const rows = (await auditRows()).slice(before);
-    expect(rows.filter((r) => r.action === "install.start").length).toBe(2);
+    expect(rows.filter((r) => r.action === "install.start").length).toBe(1);
     expect(rows.every((r) => r.actor_role === "employee")).toBe(true);
   });
 
