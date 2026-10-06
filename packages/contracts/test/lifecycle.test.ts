@@ -160,7 +160,7 @@ describe("lifecycle wire contracts", () => {
     }).success).toBe(false);
   });
 
-  it("rejects overwriting an already set payload version", () => {
+  it("rejects a missing payload version in a backfill request", () => {
     expect(BackfillPayloadVersionRequest.safeParse({
       form_artifact_id: "legacy-form-1",
       payload_version: null,
@@ -204,6 +204,57 @@ describe("lifecycle wire contracts", () => {
       item: "arbitrary_checkbox",
       actor_id: ids.actor_id,
       verified_at: "2026-10-06T00:00:00.000Z",
+    }).success).toBe(false);
+  });
+
+  it("requires an event for test-sold evidence and rejects events for manual evidence", () => {
+    expect(ChecklistEvidence.safeParse({
+      brand_id: ids.brand_id,
+      item: "test_sold",
+      actor_id: ids.actor_id,
+      verified_at: "2026-10-06T00:00:00.000Z",
+    }).success).toBe(false);
+    expect(ChecklistEvidence.safeParse({
+      brand_id: ids.brand_id,
+      item: "drain_route",
+      actor_id: ids.actor_id,
+      verified_at: "2026-10-06T00:00:00.000Z",
+      event_id: "event-1",
+    }).success).toBe(false);
+  });
+
+  it("accepts only a normalized apex hostname or its ordered www pair", () => {
+    const base = {
+      ...apply_ids,
+      expected_revision_id: null,
+      target_revision_id: ids.revision_id,
+      actor_role: "employee",
+      initial_runtime,
+    };
+    expect(ApplyRuntimeRequest.safeParse({ ...base, hostnames: ["example.com"] }).success).toBe(true);
+    expect(ApplyRuntimeRequest.safeParse({ ...base, hostnames: ["example.com", "www.example.com"] }).success).toBe(true);
+    expect(ApplyRuntimeRequest.safeParse({ ...base, hostnames: ["example.com", "example.com"] }).success).toBe(false);
+    expect(ApplyRuntimeRequest.safeParse({ ...base, hostnames: ["www.example.com", "example.com"] }).success).toBe(false);
+    expect(ApplyRuntimeRequest.safeParse({ ...base, hostnames: ["example.com", "www.other.com"] }).success).toBe(false);
+    expect(ApplyRuntimeRequest.safeParse({ ...base, hostnames: ["www.example.com"] }).success).toBe(false);
+  });
+
+  it("uses the shared actor-id constraint for lifecycle actors", () => {
+    expect(InstallBrandCommand.safeParse({
+      install_id: ids.install_id,
+      brand_id: ids.brand_id,
+      revision_id: ids.revision_id,
+      started_by: "not valid actor",
+      started_role: "employee",
+    }).success).toBe(false);
+    expect(ApplyRuntimeRequest.safeParse({
+      ...apply_ids,
+      actor_id: "not valid actor",
+      hostnames: ["example.com"],
+      expected_revision_id: null,
+      target_revision_id: ids.revision_id,
+      actor_role: "employee",
+      initial_runtime,
     }).success).toBe(false);
   });
 

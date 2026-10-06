@@ -3,12 +3,31 @@ import {
   BrandId,
   Hostname,
 } from "./common.js";
-import { AdminRole, AmountBuckets, DrainKey, FormVersion, PrepopBase } from "./admin-api.js";
+import { AdminRequestContext, AdminRole, AmountBuckets, DrainKey, FormVersion, PrepopBase } from "./admin-api.js";
 import { FormRoute, Keyword } from "./runtime-config.js";
 
 const Id = z.string().min(1).max(128);
+const ActorId = AdminRequestContext.shape.actor_id;
 const Timestamp = z.iso.datetime();
 const PayloadVersion = z.string().regex(/^[A-Za-z0-9._-]{1,64}$/, "Invalid payload version");
+
+const Hostnames = z
+  .array(Hostname)
+  .min(1)
+  .max(2)
+  .superRefine((hostnames, ctx) => {
+    if (new Set(hostnames).size !== hostnames.length) {
+      ctx.addIssue({ code: "custom", message: "Hostnames must be unique" });
+      return;
+    }
+    if (hostnames.length === 1 && hostnames[0]!.startsWith("www.")) {
+      ctx.addIssue({ code: "custom", message: "A lone hostname must be the apex" });
+      return;
+    }
+    if (hostnames.length === 2 && hostnames[1] !== `www.${hostnames[0]}`) {
+      ctx.addIssue({ code: "custom", message: "Hostnames must be an apex followed by its www hostname" });
+    }
+  });
 
 export const LifecycleStatus = z.enum(["draft", "installing", "live", "failed", "rolled_back"]);
 export type LifecycleStatus = z.infer<typeof LifecycleStatus>;
@@ -43,7 +62,7 @@ export const CreateBrandDraftRequest = z.strictObject({
 export type CreateBrandDraftRequest = z.infer<typeof CreateBrandDraftRequest>;
 
 const StartedBy = z.strictObject({
-  started_by: Id,
+  started_by: ActorId,
   started_role: AdminRole,
 });
 
@@ -93,10 +112,10 @@ export const ApplyRuntimeRequest = z.strictObject({
   install_id: Id,
   brand_id: BrandId,
   account: Id,
-  hostnames: z.array(Hostname).min(1).max(2),
+  hostnames: Hostnames,
   expected_revision_id: Id.nullable(),
   target_revision_id: Id.nullable(),
-  actor_id: Id,
+  actor_id: ActorId,
   actor_role: AdminRole,
   initial_runtime: InitialRuntime.optional(),
 });
@@ -141,13 +160,22 @@ export type VerifySoldLeadResponse = z.infer<typeof VerifySoldLeadResponse>;
 export const ChecklistItemName = z.enum(["drain_route", "leadsgate_postbacks", "test_sold", "final_url"]);
 export type ChecklistItemName = z.infer<typeof ChecklistItemName>;
 
-export const ChecklistEvidence = z.strictObject({
+const ManualChecklistEvidence = z.strictObject({
   brand_id: BrandId,
-  item: ChecklistItemName,
-  actor_id: Id,
+  item: z.enum(["drain_route", "leadsgate_postbacks", "final_url"]),
+  actor_id: ActorId,
   verified_at: Timestamp,
-  event_id: Id.optional(),
 });
+
+const TestSoldChecklistEvidence = z.strictObject({
+  brand_id: BrandId,
+  item: z.literal("test_sold"),
+  actor_id: ActorId,
+  verified_at: Timestamp,
+  event_id: Id,
+});
+
+export const ChecklistEvidence = z.union([ManualChecklistEvidence, TestSoldChecklistEvidence]);
 export type ChecklistEvidence = z.infer<typeof ChecklistEvidence>;
 
 export const InstallReceipt = z.strictObject({
