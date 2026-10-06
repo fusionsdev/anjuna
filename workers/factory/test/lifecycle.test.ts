@@ -14,6 +14,9 @@ import {
 } from "../src/receipt";
 import {
   canaryGate,
+  upgradeInstallId,
+  upgradeRevisionId,
+  upgradeWorkflowId,
   selectUpgradeBrands,
   validateUpgradeSelection,
 } from "../src/workflows/upgrade-all";
@@ -230,6 +233,38 @@ describe("upgrade-all", () => {
       ...selection,
       artifact: { ...selection.artifact, payload_version: null },
     })).toThrow(/payload/i);
+    expect(() => validateUpgradeSelection({
+      ...selection,
+      artifact: { ...selection.artifact, payload_version: "2026-02" },
+    })).toThrow(/payload/i);
+    expect(() => validateUpgradeSelection({
+      ...selection,
+      artifact: { ...selection.artifact, bundle_form_version: "form@../unsafe" },
+    })).toThrow(/bundle/i);
+    expect(() => validateUpgradeSelection({
+      ...selection,
+      artifact: { ...selection.artifact, bundle_form_version: "registered-but-not-form-version" },
+    })).toThrow(/bundle/i);
+  });
+
+  it("derives every upgrade lifecycle ID deterministically from its command identity", () => {
+    const input = {
+      from_template_version_id: "template-v1",
+      to_template_version_id: "template-v2",
+      form_artifact_id: "artifact-1",
+      canary_brand_id: "brand-a",
+      started_by: "owner-1",
+      started_role: "owner" as const,
+    };
+    expect(upgradeWorkflowId(input)).toBe(upgradeWorkflowId({ ...input }));
+    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
+      .toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"));
+    expect(upgradeRevisionId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
+      .toBe(upgradeRevisionId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"));
+    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
+      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-b"));
+    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
+      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, "artifact-2", "brand-a"));
   });
 
   it("selects only live source brands, requires the canary, and skips brands already on target", () => {

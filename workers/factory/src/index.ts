@@ -1,7 +1,7 @@
 import type { Env } from "./env.js";
 import { InstallBrandWorkflow } from "./workflows/install.js";
 import { RollbackBrandWorkflow } from "./workflows/rollback.js";
-import { UpgradeAllWorkflow } from "./workflows/upgrade-all.js";
+import { UpgradeAllWorkflow, upgradeWorkflowId } from "./workflows/upgrade-all.js";
 import { isQueuedCompensationInstall, rejectQueuedInstall, setInstallStatus } from "./receipt.js";
 
 export { InstallBrandWorkflow, RollbackBrandWorkflow, UpgradeAllWorkflow };
@@ -70,7 +70,7 @@ export default {
       if (params.from_template_version_id === params.to_template_version_id) {
         return Response.json({ ok: false, error: "source_target_must_differ" }, { status: 400 });
       }
-      const instanceId = `upgrade-${params.from_template_version_id}-${params.to_template_version_id}-${Date.now()}`;
+      const instanceId = upgradeWorkflowId(params);
       await env.UPGRADE_WORKFLOW.create({ id: instanceId, params });
       return Response.json({ ok: true, instance_id: instanceId });
     }

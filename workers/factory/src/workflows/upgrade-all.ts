@@ -14,6 +14,30 @@ export interface UpgradeAllParams {
 interface UpgradeTemplate { template_id: string; status: string; }
 interface UpgradeArtifact { present: boolean; payload_version: string | null; bundle_form_version: string | null; }
 
+function stableUpgradeId(kind: string, ...parts: string[]): string {
+  return `upgrade-${kind}-${parts.map((part) => encodeURIComponent(part)).join("-")}`;
+}
+
+export function upgradeWorkflowId(params: UpgradeAllParams): string {
+  return stableUpgradeId(
+    "workflow",
+    params.from_template_version_id,
+    params.to_template_version_id,
+    params.form_artifact_id,
+    params.canary_brand_id,
+    params.started_by,
+    params.started_role,
+  );
+}
+
+export function upgradeRevisionId(fromTemplateVersionId: string, toTemplateVersionId: string, formArtifactId: string, brandId: string): string {
+  return stableUpgradeId("revision", fromTemplateVersionId, toTemplateVersionId, formArtifactId, brandId);
+}
+
+export function upgradeInstallId(fromTemplateVersionId: string, toTemplateVersionId: string, formArtifactId: string, brandId: string): string {
+  return stableUpgradeId("install", fromTemplateVersionId, toTemplateVersionId, formArtifactId, brandId);
+}
+
 export interface UpgradeBrandCandidate {
   brand_id: string;
   status: string;
@@ -31,7 +55,11 @@ export function validateUpgradeSelection(input: {
   if (input.from_template_version_id === input.to_template_version_id) throw new Error("Upgrade source and target versions must be different");
   if (input.to_template.status !== "sealed") throw new Error("Upgrade target template version is not sealed");
   if (input.from_template.template_id !== input.to_template.template_id) throw new Error("Upgrade target must belong to the same template family");
-  if (!input.artifact.present || !input.artifact.payload_version || !input.artifact.bundle_form_version) throw new Error("Form artifact payload metadata is not verified");
+  if (!input.artifact.present) throw new Error("Form artifact is missing");
+  if (input.artifact.payload_version !== "2026-01") throw new Error("Form artifact payload metadata is not verified");
+  if (!input.artifact.bundle_form_version || !/^form@[A-Za-z0-9._-]+$/.test(input.artifact.bundle_form_version)) {
+    throw new Error("Registered form bundle version is invalid");
+  }
 }
 
 export function selectUpgradeBrands(candidates: UpgradeBrandCandidate[], fromTemplateVersionId: string, toTemplateVersionId: string, canaryBrandId: string): { canary: string; remaining: string[] } {
@@ -45,8 +73,6 @@ export function selectUpgradeBrands(candidates: UpgradeBrandCandidate[], fromTem
 export function canaryGate(evidence: { install: string; core: string }): boolean {
   return evidence.install === "ready" && evidence.core === "ready";
 }
-
-function newInstallId(): string { return crypto.randomUUID(); }
 
 export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams> {
   async run(event: WorkflowEvent<UpgradeAllParams>, step: WorkflowStep): Promise<void> {
@@ -83,7 +109,7 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
       for (const brand_id of brand_ids) {
         const current = await db.prepare("SELECT revision, config_json FROM brand_revisions WHERE brand_id = ? ORDER BY revision DESC LIMIT 1").bind(brand_id).first<{ revision: number; config_json: string }>();
         if (!current) throw new Error(`Current revision not found for ${brand_id}`);
-        const revision_id = crypto.randomUUID();
+        const revision_id = upgradeRevisionId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id);
         await db.prepare(
           `INSERT INTO brand_revisions (revision_id, brand_id, revision, template_version_id, form_artifact_id, config_json, created_by, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -93,7 +119,7 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
       return { revision_map: Object.fromEntries(entries.map((entry) => [entry.brand_id, entry.revision_id])) };
     });
 
-    const canaryInstallId = newInstallId();
+    const canaryInstallId = upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, params.canary_brand_id);
     await step.do("canary_install", async () => {
       const revision_id = revision_map[params.canary_brand_id];
       if (!revision_id) throw new Error("Canary revision was not created");
@@ -123,7 +149,7 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
       for (const brand_id of remaining) {
         const revision_id = revision_map[brand_id];
         if (!revision_id) continue;
-        const install_id = newInstallId();
+        const install_id = upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id);
         await db.prepare(
           `INSERT INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
            SELECT ?, ?, 'upgrade', current_revision_id, ?, 0, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
