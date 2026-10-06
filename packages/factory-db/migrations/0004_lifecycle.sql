@@ -2,6 +2,8 @@
 -- All additions are local persistence only; no remote migrations or external calls are implied.
 
 ALTER TABLE form_artifacts ADD COLUMN payload_version TEXT;
+ALTER TABLE form_artifacts ADD COLUMN bundle_form_version TEXT
+  CHECK (bundle_form_version IS NULL OR bundle_form_version GLOB 'form@*');
 
 CREATE TRIGGER IF NOT EXISTS form_artifacts_payload_version_immutable
 BEFORE UPDATE OF payload_version ON form_artifacts
@@ -9,6 +11,14 @@ WHEN OLD.payload_version IS NOT NULL
  AND (NEW.payload_version IS NULL OR NEW.payload_version <> OLD.payload_version)
 BEGIN
   SELECT RAISE(ABORT, 'form_artifacts payload_version is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS form_artifacts_bundle_form_version_immutable
+BEFORE UPDATE OF bundle_form_version ON form_artifacts
+WHEN OLD.bundle_form_version IS NOT NULL
+ AND (NEW.bundle_form_version IS NULL OR NEW.bundle_form_version <> OLD.bundle_form_version)
+BEGIN
+  SELECT RAISE(ABORT, 'form_artifacts bundle_form_version is immutable');
 END;
 
 ALTER TABLE installs ADD COLUMN started_role TEXT NOT NULL DEFAULT 'employee'

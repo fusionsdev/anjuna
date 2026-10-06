@@ -18,7 +18,7 @@ export interface TenantRuntimeDefaults {
 export interface InstallPreflightInput {
   brand_id: string;
   revision: { brand_id: string; template_status: string; worker_version_id: string | null; config?: Record<string, unknown> };
-  artifact: { present: boolean; payload_version: string | null; bundle_form_version?: string | null };
+  artifact: { present: boolean; payload_version: string | null; bundle_form_version: string | null };
   tenant: TenantRuntimeDefaults;
   runtime_state: { state: string; credential_account_match: boolean; account?: string };
   employee_override?: Record<string, unknown>;
@@ -27,7 +27,7 @@ export interface InstallPreflightInput {
 export interface RegisteredFormArtifact {
   r2_key: string;
   payload_version: string | null;
-  bundle_form_version?: string | null;
+  bundle_form_version: string | null;
 }
 
 /** The revision may select an artifact, but never redefine tenant-owned runtime routing. */
@@ -36,12 +36,12 @@ export function deriveAuthoritativeRuntime(
   tenant: TenantRuntimeDefaults,
   artifact: RegisteredFormArtifact,
 ): Omit<TenantRuntimeDefaults, "amount_buckets" | "form_version"> & { amount_buckets: number[]; form_version: string; drain_key: string } {
-  const bundle = artifact.bundle_form_version ?? artifact.r2_key.match(/(?:^|\/)form@([^/]+?)(?:\.zip)?$/)?.[1];
-  if (!bundle) throw new Error("Registered form artifact has no bundle form version");
+  const bundle = artifact.bundle_form_version;
+  if (!bundle) throw new Error("Registered form artifact has no registered bundle form version");
   return {
     ...tenant,
     amount_buckets: [...tenant.amount_buckets],
-    form_version: bundle.startsWith("form@") ? bundle : `form@${bundle}`,
+    form_version: bundle,
     drain_key: opaqueHex(brandId),
   };
 }
@@ -62,12 +62,36 @@ export function deriveTenantRuntime(brandId: string, tenant: TenantRuntimeDefaul
   return { ...tenant, amount_buckets: [...tenant.amount_buckets], drain_key: opaqueHex(brandId) };
 }
 
+/**
+ * Build the static Worker fallback from the revision's presentation settings and
+ * the authoritative tenant runtime snapshot. Runtime routing always wins.
+ */
+export function assembleBrandConfig(
+  revisionConfig: Record<string, unknown>,
+  runtime: ReturnType<typeof deriveAuthoritativeRuntime>,
+  hostname: string,
+): Record<string, unknown> {
+  return {
+    ...revisionConfig,
+    hostname,
+    amount_buckets: runtime.amount_buckets,
+    formRoute: runtime.form_route,
+    form_route: runtime.form_route,
+    form_version: runtime.form_version,
+    aid: runtime.aid,
+    prepop_base: runtime.prepop_base,
+    drain_key: runtime.drain_key,
+    keyword_default: runtime.keyword_default,
+  };
+}
+
 export function validateInstallInputs(input: InstallPreflightInput): InstallPreflightInput {
   if (input.revision.brand_id !== input.brand_id) throw new Error("Revision does not belong to brand");
   if (input.revision.template_status !== "sealed") throw new Error("Template version is not sealed");
   if (!input.artifact.present) throw new Error("Form artifact is missing");
   if (input.artifact.payload_version !== "2026-01") throw new Error("Form artifact payload metadata is not verified");
-  if (input.artifact.bundle_form_version && !/^form@[A-Za-z0-9._-]+$/.test(input.artifact.bundle_form_version)) {
+  if (!input.artifact.bundle_form_version) throw new Error("Form artifact bundle form version is not registered");
+  if (!/^form@[A-Za-z0-9._-]+$/.test(input.artifact.bundle_form_version)) {
     throw new Error("Registered form bundle version is invalid");
   }
   const config = input.revision.config ?? {};
@@ -201,13 +225,14 @@ export async function setInstallStatus(
   status: "running" | "ready" | "failed" | "rolled_back",
   error?: string,
   brandId?: string,
-  options: { retainBrandLock?: boolean } = {},
-): Promise<void> {
+  options: { retainBrandLock?: boolean; preserveBrandStatus?: boolean } = {},
+): Promise<"claimed" | "resumed" | "updated"> {
   const now = new Date().toISOString();
   if (status === "running") {
     if (brandId) {
       const install = await db.prepare("SELECT status FROM installs WHERE install_id = ?")
         .bind(installId).first<{ status: string }>();
+      if (install?.status === "running") return "resumed";
       if (install?.status !== "running") {
         const active = await db.prepare(
           "SELECT install_id FROM installs WHERE brand_id = ? AND status IN ('queued', 'running') ORDER BY started_at LIMIT 1",
@@ -227,16 +252,18 @@ export async function setInstallStatus(
       .prepare("UPDATE installs SET status = 'running' WHERE install_id = ?")
       .bind(installId)
       .run();
+    return "claimed";
   } else {
     await db
       .prepare("UPDATE installs SET status = ?, error = ?, finished_at = ? WHERE install_id = ?")
       .bind(status, error ?? null, now, installId)
       .run();
-    if (brandId && !options.retainBrandLock) {
+    if (brandId && !options.retainBrandLock && !options.preserveBrandStatus) {
       const brandStatus = status === "ready" ? "live" : status === "rolled_back" ? "live" : "failed";
       await db.prepare("UPDATE brands SET status = ?, updated_at = ? WHERE brand_id = ?")
         .bind(brandStatus, now, brandId).run();
     }
+    return "updated";
   }
 }
 

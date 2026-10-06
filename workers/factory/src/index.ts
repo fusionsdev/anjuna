@@ -6,6 +6,13 @@ import { rejectQueuedInstall, setInstallStatus } from "./receipt.js";
 
 export { InstallBrandWorkflow, RollbackBrandWorkflow, UpgradeAllWorkflow };
 
+async function existingDispatch(db: D1Database, installId: string): Promise<"running" | "ready" | "rolled_back" | null> {
+  const row = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(installId).first<{ status: string }>();
+  return row?.status === "running" || row?.status === "ready" || row?.status === "rolled_back"
+    ? row.status
+    : null;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
@@ -15,10 +22,11 @@ export default {
     // POST /install  { install_id, brand_id, revision_id }
     if (url.pathname === "/install") {
       const params = await request.json<{ install_id: string; brand_id: string; revision_id: string }>();
+      const existing = await existingDispatch(env.FACTORY, params.install_id);
+      if (existing) return Response.json({ ok: true, install_id: params.install_id, status: existing });
       let claimed = false;
       try {
-        await setInstallStatus(env.FACTORY, params.install_id, "running", undefined, params.brand_id);
-        claimed = true;
+        claimed = (await setInstallStatus(env.FACTORY, params.install_id, "running", undefined, params.brand_id)) === "claimed";
         await env.INSTALL_WORKFLOW.create({ id: params.install_id, params });
       } catch (error) {
         await rejectQueuedInstall(env.FACTORY, params.install_id, params.brand_id, String(error), claimed);
@@ -30,10 +38,11 @@ export default {
     // POST /rollback  { install_id, brand_id, to_revision_id }
     if (url.pathname === "/rollback") {
       const params = await request.json<{ install_id: string; brand_id: string; to_revision_id: string | null }>();
+      const existing = await existingDispatch(env.FACTORY, params.install_id);
+      if (existing) return Response.json({ ok: true, install_id: params.install_id, status: existing });
       let claimed = false;
       try {
-        await setInstallStatus(env.FACTORY, params.install_id, "running", undefined, params.brand_id);
-        claimed = true;
+        claimed = (await setInstallStatus(env.FACTORY, params.install_id, "running", undefined, params.brand_id)) === "claimed";
         await env.ROLLBACK_WORKFLOW.create({ id: params.install_id, params });
       } catch (error) {
         await rejectQueuedInstall(env.FACTORY, params.install_id, params.brand_id, String(error), claimed);

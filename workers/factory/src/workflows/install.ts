@@ -4,7 +4,7 @@ import {
   getZone, uploadAssetFile, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt } from "../receipt.js";
+import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import type { Env } from "../env.js";
 
@@ -38,6 +38,7 @@ interface TemplateVersionRow {
 interface FormArtifactRow {
   r2_key: string;
   payload_version: string | null;
+  bundle_form_version: string | null;
 }
 
 /**
@@ -81,7 +82,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           if (tv.status !== "sealed") throw new Error("Template version is not sealed");
 
           const artifact = await db
-            .prepare("SELECT r2_key, payload_version FROM form_artifacts WHERE form_artifact_id = ?")
+            .prepare("SELECT r2_key, payload_version, bundle_form_version FROM form_artifacts WHERE form_artifact_id = ?")
             .bind(revision.form_artifact_id)
             .first<FormArtifactRow>();
           if (!artifact?.r2_key) throw new Error("Form artifact is missing");
@@ -100,7 +101,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           validateInstallInputs({
             brand_id,
             revision: { ...revision, template_status: tv.status, config },
-            artifact: { present: true, payload_version: artifact.payload_version, bundle_form_version: deriveAuthoritativeRuntime(brand_id, tenant, artifact).form_version },
+            artifact: { present: true, payload_version: artifact.payload_version, bundle_form_version: artifact.bundle_form_version },
             tenant,
             runtime_state: runtimeState,
           });
@@ -169,7 +170,6 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       // ── Step 4: Upload assets ──────────────────────────────────────────────
       const { assets_jwt } = await step.do("upload_assets", async () => {
         return withReceipt(db, install_id, "upload_assets", async () => {
-          mutationStarted = true;
           const renderObj = await ARTIFACTS.get(render_r2_key);
           if (!renderObj) throw new Error(`Render artifact not found: ${render_r2_key}`);
 
@@ -184,6 +184,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             }),
           );
 
+          mutationStarted = true;
           const session = await createAssetsSession(
             CF_API_TOKEN, CF_ACCOUNT_ID,
             fileList.map(({ hash, size }) => ({ hash, size })),
@@ -194,7 +195,10 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           await Promise.all(
             fileList
               .filter(({ hash }) => needed.has(hash))
-              .map(({ content, hash }) => uploadAssetFile(session.jwt, hash, content, "application/octet-stream")),
+              .map(({ content, hash }) => {
+                mutationStarted = true;
+                return uploadAssetFile(session.jwt, hash, content, "application/octet-stream");
+              }),
           );
 
           return { assets_jwt: session.jwt };
@@ -217,6 +221,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           if (!scriptObj) throw new Error("Brand runtime bundle not found in ARTIFACTS (key: runtime/brand-runtime.js)");
           const scriptBody = await scriptObj.text();
 
+          mutationStarted = true;
           const result = await uploadScript(
             CF_API_TOKEN, CF_ACCOUNT_ID, scriptName, scriptBody,
             {
@@ -225,16 +230,14 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               bindings: [
                 { type: "plain_text", name: "BRAND_ID", text: brand_id },
                 { type: "plain_text", name: "HOSTNAME", text: domain },
-                { type: "json", name: "BRAND_CONFIG", json: config },
-                { type: "service", name: "CORE", service: "anjuna-core", entrypoint: "LeadsRpc" },
+                { type: "json", name: "BRAND_CONFIG", json: assembleBrandConfig(config, initial_runtime, domain) },
+                { type: "service", name: "CORE", service: "anjuna-core" },
               ],
               compatibility_date: "2026-08-01",
               compatibility_flags: ["global_fetch_strictly_public"],
               core_token: this.env.CORE_TOKEN,
             },
           );
-          mutationStarted = true;
-
           return { script_etag: result.etag };
         });
       });
@@ -243,6 +246,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       if (!previous_revision_id) {
         await step.do("provision_runtime", async () => withReceipt(db, install_id, "provision_runtime", async () => {
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+          mutationStarted = true;
           const result = await client.applyRuntime({
             install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
             expected_revision_id: null, target_revision_id: revision_id,
@@ -258,6 +262,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       const { worker_version_id } = await step.do("deploy", async () => {
         return withReceipt(db, install_id, "deploy", async () => {
           const scriptName = `brand-${brand_id}`;
+          mutationStarted = true;
           const deployment = await deployScript(CF_API_TOKEN, CF_ACCOUNT_ID, scriptName);
           const versionId = deployment.versions[0]?.version_id;
           if (!versionId) throw new Error("Deploy returned no version id");
@@ -275,6 +280,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       await step.do("attach_domains", async () => {
         return withReceipt(db, install_id, "attach_domains", async () => {
           const scriptName = `brand-${brand_id}`;
+          mutationStarted = true;
           const [apex, www] = await Promise.all([
             attachCustomDomain(CF_API_TOKEN, zone_id, domain, scriptName),
             attachCustomDomain(CF_API_TOKEN, zone_id, `www.${domain}`, scriptName),
@@ -299,6 +305,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       if (previous_revision_id) {
         await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+          mutationStarted = true;
           const result = await client.applyRuntime({
             install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
             expected_revision_id: previous_revision_id, target_revision_id: revision_id,

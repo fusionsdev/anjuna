@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as receipt from "../src/receipt";
 import {
   compensationInstallId,
   compensationFailureEvidence,
@@ -27,7 +28,7 @@ describe("factory lifecycle preflight", () => {
     expect(validateInstallInputs({
       brand_id: "brand-a",
       revision: { brand_id: "brand-a", template_status: "sealed", worker_version_id: null },
-      artifact: { present: true, payload_version: "2026-01" },
+      artifact: { present: true, payload_version: "2026-01", bundle_form_version: "form@test" },
       tenant,
       runtime_state: { state: "absent", credential_account_match: true },
     })).toMatchObject({ brand_id: "brand-a" });
@@ -36,14 +37,14 @@ describe("factory lifecycle preflight", () => {
   it.each<any>([
     ["revision ownership", { revision: { brand_id: "brand-b" } }],
     ["unsealed template", { revision: { template_status: "draft" } }],
-    ["missing artifact", { artifact: { present: false, payload_version: "2026-01" } }],
-    ["null payload metadata", { artifact: { present: true, payload_version: null } }],
-    ["mismatched payload metadata", { artifact: { present: true, payload_version: "2025-01" } }],
+    ["missing artifact", { artifact: { present: false, payload_version: "2026-01", bundle_form_version: "form@test" } }],
+    ["null payload metadata", { artifact: { present: true, payload_version: null, bundle_form_version: "form@test" } }],
+    ["mismatched payload metadata", { artifact: { present: true, payload_version: "2025-01", bundle_form_version: "form@test" } }],
   ])("rejects %s before any Cloudflare mutation", (_name, override) => {
     expect(() => validateInstallInputs({
       brand_id: "brand-a",
       revision: { brand_id: "brand-a", template_status: "sealed", worker_version_id: null, ...(override.revision ?? {}) },
-      artifact: { present: true, payload_version: "2026-01", ...(override.artifact ?? {}) },
+      artifact: { present: true, payload_version: "2026-01", bundle_form_version: "form@test", ...(override.artifact ?? {}) },
       tenant,
       runtime_state: { state: "absent", credential_account_match: true },
     })).toThrow();
@@ -53,7 +54,7 @@ describe("factory lifecycle preflight", () => {
     expect(() => validateInstallInputs({
       brand_id: "brand-a",
       revision: { brand_id: "brand-a", template_status: "sealed", worker_version_id: null },
-      artifact: { present: true, payload_version: "2026-01" },
+      artifact: { present: true, payload_version: "2026-01", bundle_form_version: "form@test" },
       tenant,
       runtime_state: { state: "absent", credential_account_match: false },
     })).toThrow(/account/i);
@@ -72,7 +73,7 @@ describe("factory lifecycle preflight", () => {
     expect(() => validateInstallInputs({
       brand_id: "brand-a",
       revision: { brand_id: "brand-a", template_status: "sealed", worker_version_id: null },
-      artifact: { present: true, payload_version: "2026-01" },
+      artifact: { present: true, payload_version: "2026-01", bundle_form_version: "form@test" },
       tenant,
       runtime_state: { state: "absent", credential_account_match: true },
       employee_override: { aid: "evil", prepop_base: "https://evil.example", drain_key: "known" },
@@ -81,9 +82,16 @@ describe("factory lifecycle preflight", () => {
 
   it("uses registered artifact metadata for the form bundle and rejects revision-owned routing defaults", () => {
     expect(deriveAuthoritativeRuntime("brand-a", tenant, {
-      r2_key: "forms/form@deadbeef.zip",
+      r2_key: "forms/opaque.zip",
       payload_version: "2026-01",
+      bundle_form_version: "form@deadbeef",
     })).toMatchObject({ form_version: "form@deadbeef" });
+
+    expect(() => deriveAuthoritativeRuntime("brand-a", tenant, {
+      r2_key: "forms/form@attacker.zip",
+      payload_version: "2026-01",
+      bundle_form_version: null,
+    })).toThrow(/registered.*bundle form version/i);
 
     expect(() => validateInstallInputs({
       brand_id: "brand-a",
@@ -95,6 +103,34 @@ describe("factory lifecycle preflight", () => {
       tenant,
       runtime_state: { state: "absent", credential_account_match: true },
     })).toThrow(/tenant-owned|revision.*override/i);
+  });
+
+  it("assembles BRAND_CONFIG with tenant runtime values winning over revision JSON", () => {
+    const assembleBrandConfig = (receipt as typeof receipt & { assembleBrandConfig: typeof import("../src/receipt").deriveTenantRuntime }).assembleBrandConfig;
+    expect(assembleBrandConfig).toBeTypeOf("function");
+    const runtime = deriveAuthoritativeRuntime("brand-a", tenant, {
+      r2_key: "forms/opaque.zip",
+      payload_version: "2026-01",
+      bundle_form_version: "form@registered",
+    });
+    expect(assembleBrandConfig({
+      brand: "Harbor",
+      hostname: "attacker.example",
+      formRoute: "/attacker",
+      amount_buckets: [1],
+      form_version: "form@attacker",
+      aid: "attacker-aid",
+    }, runtime, "brand-a.example")).toMatchObject({
+      brand: "Harbor",
+      hostname: "brand-a.example",
+      formRoute: "/apply",
+      form_route: "/apply",
+      amount_buckets: [1000, 2500, 5000],
+      form_version: "form@registered",
+      aid: "aid-a",
+      prepop_base: "https://prepop.example",
+      drain_key: expect.stringMatching(/^[a-f0-9]{32}$/),
+    });
   });
 });
 

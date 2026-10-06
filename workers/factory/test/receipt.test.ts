@@ -1,7 +1,7 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { getReceipt, saveReceipt, withReceipt } from "../src/receipt";
+import { getReceipt, saveReceipt, setInstallStatus, withReceipt } from "../src/receipt";
 
 beforeAll(async () => {
   await applyD1Migrations(env.FACTORY, env.MIGRATIONS);
@@ -90,5 +90,17 @@ describe("withReceipt idempotency", () => {
       withReceipt(env.FACTORY, id, "validate", async () => { called = true; return {}; }),
     ).rejects.toThrow();
     expect(called).toBe(false);
+  });
+});
+
+describe("lifecycle lock claim", () => {
+  it("reports a same-ID dispatch as resume without releasing the brand lock", async () => {
+    const id = `i-${uniq()}`;
+    const brand = `brand-${id}`;
+    await seedInstall(id, brand);
+    await expect(setInstallStatus(env.FACTORY, id, "running", undefined, brand)).resolves.toBe("claimed");
+    await expect(setInstallStatus(env.FACTORY, id, "running", undefined, brand)).resolves.toBe("resumed");
+    const row = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?").bind(brand).first<{ status: string }>();
+    expect(row?.status).toBe("installing");
   });
 });

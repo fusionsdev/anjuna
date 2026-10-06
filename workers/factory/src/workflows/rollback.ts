@@ -36,6 +36,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
   async run(event: WorkflowEvent<RollbackParams>, step: WorkflowStep): Promise<void> {
     const { install_id, original_install_id, brand_id, to_revision_id } = event.payload;
     const { FACTORY: db, CF_ACCOUNT_ID, CF_API_TOKEN } = this.env;
+    let mutationStarted = false;
 
     await setInstallStatus(db, install_id, "running", undefined, brand_id);
 
@@ -66,7 +67,10 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
             );
             const body = await existing.json<{ result: Array<{ id: string }> }>();
             await Promise.all(
-              (body.result ?? []).map((d) => detachCustomDomain(CF_API_TOKEN, zone_id, d.id)),
+              (body.result ?? []).map((d) => {
+                mutationStarted = true;
+                return detachCustomDomain(CF_API_TOKEN, zone_id, d.id);
+              }),
             );
             return { detached: body.result?.length ?? 0 };
           });
@@ -76,6 +80,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
           const current = await client.runtimeState({ brand_id, account });
           if (current.state === "absent") return { state: "absent", paused: false };
+          mutationStarted = true;
           const result = await client.applyRuntime({
             install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
             expected_revision_id: current_revision_id, target_revision_id: null,
@@ -106,6 +111,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
             if (!revision || !rollbackTargetBelongsToBrand(revision, brand_id)) throw new Error(`Revision ${to_revision_id} is not a deployed revision for this brand`);
 
             const scriptName = `brand-${brand_id}`;
+            mutationStarted = true;
             await deployScript(CF_API_TOKEN, CF_ACCOUNT_ID, scriptName, revision.worker_version_id!);
             return { worker_version_id: revision.worker_version_id! };
           });
@@ -113,6 +119,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
 
         await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+          mutationStarted = true;
           const result = await client.applyRuntime({
             install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
             expected_revision_id: current_revision_id, target_revision_id: to_revision_id,
@@ -126,6 +133,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         await step.do("attach_domains", async () => {
           return withReceipt(db, install_id, "attach_domains", async () => {
             const scriptName = `brand-${brand_id}`;
+            mutationStarted = true;
             const [apex, www] = await Promise.all([
               attachCustomDomain(CF_API_TOKEN, zone_id, domain, scriptName),
               attachCustomDomain(CF_API_TOKEN, zone_id, `www.${domain}`, scriptName),
@@ -145,7 +153,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         });
       }
 
-      await setInstallStatus(db, install_id, "rolled_back", undefined, brand_id);
+      await setInstallStatus(db, install_id, "rolled_back", undefined, brand_id, { preserveBrandStatus: !to_revision_id });
       if (original_install_id) {
         const evidence = {
           original_install_id,
@@ -164,7 +172,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
       }
     } catch (err) {
       const message = String(err);
-      await setInstallStatus(db, install_id, "failed", message, brand_id);
+      await setInstallStatus(db, install_id, "failed", message, brand_id, { retainBrandLock: mutationStarted });
       if (original_install_id) {
         const evidence = compensationFailureEvidence({
           original_install_id,
