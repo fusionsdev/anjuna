@@ -2,6 +2,7 @@ import type { Env } from "./env.js";
 import { InstallBrandWorkflow } from "./workflows/install.js";
 import { RollbackBrandWorkflow } from "./workflows/rollback.js";
 import { UpgradeAllWorkflow } from "./workflows/upgrade-all.js";
+import { rejectQueuedInstall, setInstallStatus } from "./receipt.js";
 
 export { InstallBrandWorkflow, RollbackBrandWorkflow, UpgradeAllWorkflow };
 
@@ -14,9 +15,13 @@ export default {
     // POST /install  { install_id, brand_id, revision_id }
     if (url.pathname === "/install") {
       const params = await request.json<{ install_id: string; brand_id: string; revision_id: string }>();
+      let claimed = false;
       try {
+        await setInstallStatus(env.FACTORY, params.install_id, "running", undefined, params.brand_id);
+        claimed = true;
         await env.INSTALL_WORKFLOW.create({ id: params.install_id, params });
       } catch (error) {
+        await rejectQueuedInstall(env.FACTORY, params.install_id, params.brand_id, String(error), claimed);
         return Response.json({ ok: false, error: "workflow_dispatch_failed", message: String(error) }, { status: 502 });
       }
       return Response.json({ ok: true, install_id: params.install_id });
@@ -25,9 +30,13 @@ export default {
     // POST /rollback  { install_id, brand_id, to_revision_id }
     if (url.pathname === "/rollback") {
       const params = await request.json<{ install_id: string; brand_id: string; to_revision_id: string | null }>();
+      let claimed = false;
       try {
+        await setInstallStatus(env.FACTORY, params.install_id, "running", undefined, params.brand_id);
+        claimed = true;
         await env.ROLLBACK_WORKFLOW.create({ id: params.install_id, params });
       } catch (error) {
+        await rejectQueuedInstall(env.FACTORY, params.install_id, params.brand_id, String(error), claimed);
         return Response.json({ ok: false, error: "workflow_dispatch_failed", message: String(error) }, { status: 502 });
       }
       return Response.json({ ok: true, install_id: params.install_id });

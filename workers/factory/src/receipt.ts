@@ -17,11 +17,33 @@ export interface TenantRuntimeDefaults {
 
 export interface InstallPreflightInput {
   brand_id: string;
-  revision: { brand_id: string; template_status: string; worker_version_id: string | null };
-  artifact: { present: boolean; payload_version: string | null };
+  revision: { brand_id: string; template_status: string; worker_version_id: string | null; config?: Record<string, unknown> };
+  artifact: { present: boolean; payload_version: string | null; bundle_form_version?: string | null };
   tenant: TenantRuntimeDefaults;
   runtime_state: { state: string; credential_account_match: boolean; account?: string };
   employee_override?: Record<string, unknown>;
+}
+
+export interface RegisteredFormArtifact {
+  r2_key: string;
+  payload_version: string | null;
+  bundle_form_version?: string | null;
+}
+
+/** The revision may select an artifact, but never redefine tenant-owned runtime routing. */
+export function deriveAuthoritativeRuntime(
+  brandId: string,
+  tenant: TenantRuntimeDefaults,
+  artifact: RegisteredFormArtifact,
+): Omit<TenantRuntimeDefaults, "amount_buckets" | "form_version"> & { amount_buckets: number[]; form_version: string; drain_key: string } {
+  const bundle = artifact.bundle_form_version ?? artifact.r2_key.match(/(?:^|\/)form@([^/]+?)(?:\.zip)?$/)?.[1];
+  if (!bundle) throw new Error("Registered form artifact has no bundle form version");
+  return {
+    ...tenant,
+    amount_buckets: [...tenant.amount_buckets],
+    form_version: bundle.startsWith("form@") ? bundle : `form@${bundle}`,
+    drain_key: opaqueHex(brandId),
+  };
 }
 
 /** A stable routing identifier that cannot reveal the brand id to the drain. */
@@ -45,6 +67,13 @@ export function validateInstallInputs(input: InstallPreflightInput): InstallPref
   if (input.revision.template_status !== "sealed") throw new Error("Template version is not sealed");
   if (!input.artifact.present) throw new Error("Form artifact is missing");
   if (input.artifact.payload_version !== "2026-01") throw new Error("Form artifact payload metadata is not verified");
+  if (input.artifact.bundle_form_version && !/^form@[A-Za-z0-9._-]+$/.test(input.artifact.bundle_form_version)) {
+    throw new Error("Registered form bundle version is invalid");
+  }
+  const config = input.revision.config ?? {};
+  if (["amount_buckets", "form_route", "form_version", "aid", "prepop_base"].some((key) => key in config)) {
+    throw new Error("Revision cannot override tenant-owned runtime defaults");
+  }
   if (!input.runtime_state.credential_account_match) throw new Error("Core credential account mismatch");
   if (!["absent", "applied"].includes(input.runtime_state.state)) throw new Error("Core runtime is not ready");
   if (input.employee_override && Object.keys(input.employee_override).length > 0) {
@@ -67,8 +96,34 @@ export function isInstallMutationAllowed(status: string): boolean {
   return status === "draft" || status === "live" || status === "failed";
 }
 
+export type LifecycleOperationDecision = "claim" | "resume" | "reject";
+
+export function lifecycleOperationDecision(
+  brandStatus: string,
+  activeInstallId: string | null,
+  requestedInstallId: string,
+): LifecycleOperationDecision {
+  if (activeInstallId === requestedInstallId && brandStatus === "installing") return "resume";
+  if (activeInstallId === requestedInstallId && isInstallMutationAllowed(brandStatus)) return "claim";
+  if (activeInstallId !== null || brandStatus === "installing" || !isInstallMutationAllowed(brandStatus)) return "reject";
+  return "claim";
+}
+
 export function compensationInstallId(installId: string): string {
   return `compensate-${installId}`;
+}
+
+export function compensationFailureEvidence(input: {
+  original_install_id: string;
+  compensation_install_id: string;
+  error: string;
+  mutation_started: boolean;
+}): Record<string, unknown> {
+  return {
+    ...input,
+    recovery_required: true,
+    audit_action: "install.compensation_failed",
+  };
 }
 
 export function rollbackTargetBelongsToBrand(
@@ -146,6 +201,7 @@ export async function setInstallStatus(
   status: "running" | "ready" | "failed" | "rolled_back",
   error?: string,
   brandId?: string,
+  options: { retainBrandLock?: boolean } = {},
 ): Promise<void> {
   const now = new Date().toISOString();
   if (status === "running") {
@@ -153,11 +209,18 @@ export async function setInstallStatus(
       const install = await db.prepare("SELECT status FROM installs WHERE install_id = ?")
         .bind(installId).first<{ status: string }>();
       if (install?.status !== "running") {
+        const active = await db.prepare(
+          "SELECT install_id FROM installs WHERE brand_id = ? AND status IN ('queued', 'running') ORDER BY started_at LIMIT 1",
+        ).bind(brandId).first<{ install_id: string }>();
+        const brand = await db.prepare("SELECT status FROM brands WHERE brand_id = ?")
+          .bind(brandId).first<{ status: string }>();
+        const decision = lifecycleOperationDecision(brand?.status ?? "missing", active?.install_id ?? null, installId);
+        if (decision === "reject") throw new Error("Brand already has a lifecycle mutation in progress");
         const claimed = await db
           .prepare("UPDATE brands SET status = 'installing', updated_at = ? WHERE brand_id = ? AND status IN ('draft', 'live', 'failed')")
           .bind(now, brandId)
           .run();
-        if (!claimed.meta.changes) throw new Error("Brand already has a lifecycle mutation in progress");
+        if (!claimed.meta.changes && decision === "claim") throw new Error("Brand already has a lifecycle mutation in progress");
       }
     }
     await db
@@ -169,10 +232,34 @@ export async function setInstallStatus(
       .prepare("UPDATE installs SET status = ?, error = ?, finished_at = ? WHERE install_id = ?")
       .bind(status, error ?? null, now, installId)
       .run();
-    if (brandId) {
+    if (brandId && !options.retainBrandLock) {
       const brandStatus = status === "ready" ? "live" : status === "rolled_back" ? "live" : "failed";
       await db.prepare("UPDATE brands SET status = ?, updated_at = ? WHERE brand_id = ?")
         .bind(brandStatus, now, brandId).run();
     }
   }
+}
+
+/** Reject a queued dispatch without losing the reason that an operator needs to act. */
+export async function rejectQueuedInstall(
+  db: D1Database,
+  installId: string,
+  brandId: string,
+  reason: string,
+  releaseBrandLock = false,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const evidence = { error: reason, actionable: "Wait for the active lifecycle operation to finish, then retry with a new install_id." };
+  await db.prepare("UPDATE installs SET status = 'failed', error = ?, finished_at = ? WHERE install_id = ? AND status IN ('queued', 'running')")
+    .bind(JSON.stringify(evidence), now, installId).run();
+  if (releaseBrandLock) {
+    await db.prepare("UPDATE brands SET status = 'failed', updated_at = ? WHERE brand_id = ? AND status = 'installing'")
+      .bind(now, brandId).run();
+  }
+  await db.prepare("INSERT OR IGNORE INTO install_receipts (install_id, step, status, output_json, created_at) VALUES (?, 'validate', 'failed', ?, ?)")
+    .bind(installId, JSON.stringify(evidence), now).run();
+  await db.prepare(`INSERT INTO audit_log
+    (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+    VALUES ('system', 'system', 'install.rejected', 'install', ?, NULL, ?, ?)`)
+    .bind(installId, JSON.stringify({ brand_id: brandId, ...evidence }), now).run();
 }

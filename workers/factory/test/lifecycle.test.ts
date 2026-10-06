@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   compensationInstallId,
+  compensationFailureEvidence,
+  deriveAuthoritativeRuntime,
   deriveTenantRuntime,
+  lifecycleOperationDecision,
   installStepOrder,
   isInstallMutationAllowed,
   rollbackTargetBelongsToBrand,
@@ -75,6 +78,24 @@ describe("factory lifecycle preflight", () => {
       employee_override: { aid: "evil", prepop_base: "https://evil.example", drain_key: "known" },
     })).toThrow(/override/i);
   });
+
+  it("uses registered artifact metadata for the form bundle and rejects revision-owned routing defaults", () => {
+    expect(deriveAuthoritativeRuntime("brand-a", tenant, {
+      r2_key: "forms/form@deadbeef.zip",
+      payload_version: "2026-01",
+    })).toMatchObject({ form_version: "form@deadbeef" });
+
+    expect(() => validateInstallInputs({
+      brand_id: "brand-a",
+      revision: {
+        brand_id: "brand-a", template_status: "sealed", worker_version_id: null,
+        config: { amount_buckets: [1], form_route: "/attacker", form_version: "form@attacker" },
+      },
+      artifact: { present: true, payload_version: "2026-01", bundle_form_version: "form@deadbeef" },
+      tenant,
+      runtime_state: { state: "absent", credential_account_match: true },
+    })).toThrow(/tenant-owned|revision.*override/i);
+  });
 });
 
 describe("factory lifecycle order and readiness", () => {
@@ -103,6 +124,15 @@ describe("factory lifecycle order and readiness", () => {
     expect(isInstallMutationAllowed("installing")).toBe(false);
     expect(isInstallMutationAllowed("paused")).toBe(false);
   });
+
+  it.each([
+    ["draft", null, "install-a", "claim"],
+    ["installing", "install-a", "install-a", "resume"],
+    ["installing", "install-a", "install-b", "reject"],
+    ["live", "install-a", "install-b", "reject"],
+  ] as const)("makes the active-operation CAS decision for %s", (status, active, requested, decision) => {
+    expect(lifecycleOperationDecision(status, active, requested)).toBe(decision);
+  });
 });
 
 describe("factory lifecycle compensation and rollback", () => {
@@ -115,5 +145,19 @@ describe("factory lifecycle compensation and rollback", () => {
     expect(rollbackTargetBelongsToBrand({ brand_id: "brand-a", worker_version_id: "v1" }, "brand-a")).toBe(true);
     expect(rollbackTargetBelongsToBrand({ brand_id: "brand-a", worker_version_id: null }, "brand-a")).toBe(false);
     expect(rollbackTargetBelongsToBrand({ brand_id: "brand-b", worker_version_id: "v1" }, "brand-a")).toBe(false);
+  });
+
+  it("keeps original and compensation outcomes linked and records recovery evidence", () => {
+    expect(compensationFailureEvidence({
+      original_install_id: "install-a",
+      compensation_install_id: compensationInstallId("install-a"),
+      error: "core verification failed",
+      mutation_started: true,
+    })).toMatchObject({
+      original_install_id: "install-a",
+      compensation_install_id: "compensate-install-a",
+      recovery_required: true,
+      audit_action: "install.compensation_failed",
+    });
   });
 });

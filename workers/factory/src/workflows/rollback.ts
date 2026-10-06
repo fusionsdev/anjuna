@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { attachCustomDomain, deployScript, detachCustomDomain } from "../cf-api.js";
-import { setInstallStatus, withReceipt } from "../receipt.js";
+import { compensationFailureEvidence, setInstallStatus, withReceipt } from "../receipt.js";
 import { rollbackTargetBelongsToBrand } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import type { Env } from "../env.js";
@@ -10,6 +10,8 @@ export interface RollbackParams {
   brand_id: string;
   /** null means first-ever install failed before Custom Domains were attached: just mark brand failed. */
   to_revision_id: string | null;
+  /** Set only for automatic compensation; the original install is finalized here. */
+  original_install_id?: string;
 }
 
 interface BrandRow {
@@ -32,7 +34,7 @@ interface RevisionRow {
  */
 export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParams> {
   async run(event: WorkflowEvent<RollbackParams>, step: WorkflowStep): Promise<void> {
-    const { install_id, brand_id, to_revision_id } = event.payload;
+    const { install_id, original_install_id, brand_id, to_revision_id } = event.payload;
     const { FACTORY: db, CF_ACCOUNT_ID, CF_API_TOKEN } = this.env;
 
     await setInstallStatus(db, install_id, "running", undefined, brand_id);
@@ -143,9 +145,42 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         });
       }
 
-      await setInstallStatus(db, install_id, "rolled_back");
+      await setInstallStatus(db, install_id, "rolled_back", undefined, brand_id);
+      if (original_install_id) {
+        const evidence = {
+          original_install_id,
+          compensation_install_id: install_id,
+          restored_to_revision_id: to_revision_id,
+          final_verification: "passed",
+        };
+        await db.prepare("UPDATE installs SET status = 'rolled_back', error = NULL, finished_at = ? WHERE install_id = ?")
+          .bind(new Date().toISOString(), original_install_id).run();
+        await db.prepare("INSERT OR IGNORE INTO install_receipts (install_id, step, status, output_json, created_at) VALUES (?, 'rollback', 'ok', ?, ?)")
+          .bind(original_install_id, JSON.stringify(evidence), new Date().toISOString()).run();
+        await db.prepare(`INSERT INTO audit_log
+          (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+          VALUES ('system', 'system', 'install.compensation_succeeded', 'install', ?, NULL, ?, ?)`)
+          .bind(original_install_id, JSON.stringify(evidence), new Date().toISOString()).run();
+      }
     } catch (err) {
-      await setInstallStatus(db, install_id, "failed", String(err), brand_id);
+      const message = String(err);
+      await setInstallStatus(db, install_id, "failed", message, brand_id);
+      if (original_install_id) {
+        const evidence = compensationFailureEvidence({
+          original_install_id,
+          compensation_install_id: install_id,
+          error: message,
+          mutation_started: true,
+        });
+        await db.prepare("UPDATE installs SET status = 'failed', error = ?, finished_at = ? WHERE install_id = ?")
+          .bind(JSON.stringify(evidence), new Date().toISOString(), original_install_id).run();
+        await db.prepare("INSERT OR IGNORE INTO install_receipts (install_id, step, status, output_json, created_at) VALUES (?, 'rollback', 'failed', ?, ?)")
+          .bind(original_install_id, JSON.stringify(evidence), new Date().toISOString()).run();
+        await db.prepare(`INSERT INTO audit_log
+          (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+          VALUES ('system', 'system', 'install.compensation_failed', 'install', ?, NULL, ?, ?)`)
+          .bind(original_install_id, JSON.stringify(evidence), new Date().toISOString()).run();
+      }
       throw err;
     }
   }
