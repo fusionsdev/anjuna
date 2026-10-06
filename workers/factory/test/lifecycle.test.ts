@@ -266,6 +266,10 @@ describe("upgrade-all", () => {
       .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-b"));
     expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
       .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, "artifact-2", "brand-a"));
+    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-1", "owner", "brand-a"))
+      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-2", "owner", "brand-a"));
+    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-1", "owner", "brand-a"))
+      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-1", "owner", "brand-b"));
   });
 
   it("uses a distinct deterministic step name for every canary poll", () => {

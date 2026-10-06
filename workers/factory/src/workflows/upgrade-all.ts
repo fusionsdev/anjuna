@@ -30,12 +30,28 @@ export function upgradeWorkflowId(params: UpgradeAllParams): string {
   );
 }
 
-export function upgradeRevisionId(fromTemplateVersionId: string, toTemplateVersionId: string, formArtifactId: string, brandId: string): string {
-  return stableUpgradeId("revision", fromTemplateVersionId, toTemplateVersionId, formArtifactId, brandId);
+export function upgradeRevisionId(
+  fromTemplateVersionId: string,
+  toTemplateVersionId: string,
+  formArtifactId: string,
+  brandId: string,
+  startedBy = "",
+  startedRole = "owner",
+  canaryBrandId = "",
+): string {
+  return stableUpgradeId("revision", fromTemplateVersionId, toTemplateVersionId, formArtifactId, canaryBrandId, startedBy, startedRole, brandId);
 }
 
-export function upgradeInstallId(fromTemplateVersionId: string, toTemplateVersionId: string, formArtifactId: string, brandId: string): string {
-  return stableUpgradeId("install", fromTemplateVersionId, toTemplateVersionId, formArtifactId, brandId);
+export function upgradeInstallId(
+  fromTemplateVersionId: string,
+  toTemplateVersionId: string,
+  formArtifactId: string,
+  brandId: string,
+  startedBy = "",
+  startedRole = "owner",
+  canaryBrandId = "",
+): string {
+  return stableUpgradeId("install", fromTemplateVersionId, toTemplateVersionId, formArtifactId, canaryBrandId, startedBy, startedRole, brandId);
 }
 
 export interface UpgradeBrandCandidate {
@@ -113,9 +129,9 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
       for (const brand_id of brand_ids) {
         const current = await db.prepare("SELECT revision, config_json FROM brand_revisions WHERE brand_id = ? ORDER BY revision DESC LIMIT 1").bind(brand_id).first<{ revision: number; config_json: string }>();
         if (!current) throw new Error(`Current revision not found for ${brand_id}`);
-        const revision_id = upgradeRevisionId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id);
+        const revision_id = upgradeRevisionId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id, params.started_by, params.started_role, params.canary_brand_id);
         await db.prepare(
-          `INSERT INTO brand_revisions (revision_id, brand_id, revision, template_version_id, form_artifact_id, config_json, created_by, created_at)
+          `INSERT OR IGNORE INTO brand_revisions (revision_id, brand_id, revision, template_version_id, form_artifact_id, config_json, created_by, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(revision_id, brand_id, current.revision + 1, params.to_template_version_id, params.form_artifact_id, current.config_json, params.started_by, now).run();
         entries.push({ brand_id, revision_id });
@@ -123,12 +139,12 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
       return { revision_map: Object.fromEntries(entries.map((entry) => [entry.brand_id, entry.revision_id])) };
     });
 
-    const canaryInstallId = upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, params.canary_brand_id);
+    const canaryInstallId = upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, params.canary_brand_id, params.started_by, params.started_role, params.canary_brand_id);
     await step.do("canary_install", async () => {
       const revision_id = revision_map[params.canary_brand_id];
       if (!revision_id) throw new Error("Canary revision was not created");
       await db.prepare(
-        `INSERT INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
+         `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
          SELECT ?, ?, 'upgrade', current_revision_id, ?, 1, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
       ).bind(canaryInstallId, params.canary_brand_id, revision_id, params.started_by, params.started_role, now, params.canary_brand_id).run();
       await setInstallStatus(db, canaryInstallId, "running", undefined, params.canary_brand_id);
@@ -155,9 +171,9 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
       for (const brand_id of remaining) {
         const revision_id = revision_map[brand_id];
         if (!revision_id) continue;
-        const install_id = upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id);
+        const install_id = upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id, params.started_by, params.started_role, params.canary_brand_id);
         await db.prepare(
-          `INSERT INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
+          `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
            SELECT ?, ?, 'upgrade', current_revision_id, ?, 0, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
         ).bind(install_id, brand_id, revision_id, params.started_by, params.started_role, new Date().toISOString(), brand_id).run();
         try {
