@@ -23,6 +23,11 @@ beforeEach(async () => {
   owner = await sessions.owner();
   employee = await sessions.employee();
   employee2 = await sessions.employee2();
+  await env.FACTORY.batch([
+    env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-1','abcdef1','forms/fa-1','manifest','2026-01','form@abcdef1','2026-10-01T00:00:00Z')"),
+  ]);
 });
 
 const patch = (cookie: string, body: unknown) => call("/api/brands/brand-a", { cookie, method: "PATCH", body });
@@ -305,23 +310,18 @@ describe("audit", () => {
 describe("factory brands: create / install / upgrade", () => {
   let _seq = 0;
   async function createBrand(cookie: string, overrides: Record<string, unknown> = {}): Promise<{ brand_id: string }> {
-    const res = await post(cookie, "/api/brands", {
-      name: "Test Brand",
-      domain: `t${++_seq}.example.com`,
-      keyword_default: "quick loan",
-      ...overrides,
-    });
+    const res = await post(cookie, "/api/brands/drafts", { domain: `t${++_seq}.example.com`, keyword_default: "quick loan", template_version_id: "tv-1", ...overrides });
     if (res.status !== 201) throw new Error(`createBrand failed: ${res.status} ${await res.text()}`);
     const { brand } = (await res.json()) as { brand: { brand_id: string } };
     return brand;
   }
 
-  it("employee cannot install a draft without a deployable revision", async () => {
+  it("records a failed install when the factory binding is unavailable", async () => {
     const brand = await createBrand(employee);
     expect(brand.brand_id).toMatch(/^brand_/);
 
     const ins = await post(employee, `/api/brands/${brand.brand_id}/install`);
-    expect(ins.status).toBe(422);
+    expect(ins.status).toBe(502);
   });
 
   it("employee lists installs for the brand", async () => {
@@ -332,7 +332,7 @@ describe("factory brands: create / install / upgrade", () => {
     const res = await call(`/api/brands/${brand.brand_id}/installs`, { cookie: employee });
     expect(res.status).toBe(200);
     const { installs } = (await res.json()) as { installs: unknown[] };
-    expect(installs.length).toBe(0);
+    expect(installs.length).toBe(2);
   });
 
   it("returns 404 for install on unknown brand", async () => {
@@ -342,7 +342,12 @@ describe("factory brands: create / install / upgrade", () => {
 
   it("POST /api/brands rejects invalid domain", async () => {
     const bad = await post(employee, "/api/brands", { name: "Bad", domain: "NOT_A_DOMAIN", keyword_default: "x" });
-    expect(bad.status).toBe(422);
+    expect(bad.status).toBe(410);
+  });
+
+  it("retires the legacy brand creation mutation", async () => {
+    const response = await post(employee, "/api/brands", { name: "Legacy", domain: "legacy.example", keyword_default: "x" });
+    expect(response.status).toBe(410);
   });
 
   it("employee cannot upgrade-all (403)", async () => {
@@ -361,7 +366,7 @@ describe("factory brands: create / install / upgrade", () => {
     await post(employee, `/api/brands/${brand.brand_id}/install`);
     await post(employee, `/api/brands/${brand.brand_id}/rollback`);
     const rows = (await auditRows()).slice(before);
-    expect(rows.filter((r) => r.action === "install.start").length).toBe(1);
+    expect(rows.filter((r) => r.action === "install.start").length).toBe(2);
     expect(rows.every((r) => r.actor_role === "employee")).toBe(true);
   });
 

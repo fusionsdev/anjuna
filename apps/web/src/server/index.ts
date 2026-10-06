@@ -64,17 +64,6 @@ const UserCreate = z.strictObject({
 });
 const UserSetRole = z.strictObject({ role: z.enum(AUTH_ROLES) });
 
-const BrandCreate = z.strictObject({
-  name: z.string().min(1).max(128),
-  domain: z
-    .string()
-    .min(1)
-    .max(253)
-    .regex(/^[a-z0-9]([a-z0-9-]*\.)+[a-z]{2,}$/, "Must be a valid lowercase hostname"),
-  keyword_default: z.string().min(1).max(100),
-  account: z.string().min(1).max(64).optional(),
-});
-
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
   const access = await verifyAccess(request, env);
   if (!access.ok) return json(401, { error: "unauthorized" });
@@ -127,26 +116,7 @@ async function route(
   }
 
   if (path === "/api/brands" && method === "POST") {
-    const g = authorizePanel("createBrand", ctx.actor_role);
-    if (!g.ok) return forbidden(g.error, rid);
-    const body = BrandCreate.safeParse(await readJson(request));
-    if (!body.success) return invalid(body.error, rid);
-    const brandId = `brand_${crypto.randomUUID().slice(0, 8)}`;
-    const now = new Date().toISOString();
-    await env.FACTORY.prepare(
-      "INSERT INTO brands (brand_id, name, account, domain, keyword_default, created_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-    )
-      .bind(brandId, body.data.name, body.data.account ?? "default", body.data.domain, body.data.keyword_default, ctx.actor_id, now)
-      .run();
-    await writeFactoryAudit(env.FACTORY, {
-      actor_id: ctx.actor_id,
-      actor_role: ctx.actor_role,
-      action: "brand.create",
-      entity_type: "brand",
-      entity_id: brandId,
-      after: { name: body.data.name, domain: body.data.domain, keyword_default: body.data.keyword_default },
-    });
-    return json(201, { brand: { brand_id: brandId, name: body.data.name, domain: body.data.domain, keyword_default: body.data.keyword_default, status: "draft" } });
+    return json(410, { error: "legacy_route_retired", message: "Use POST /api/brands/drafts" });
   }
 
   if ((m = path.match(/^\/api\/brands\/([^/]+)(?:\/(pause|resume|rollback|install|installs))?$/))) {
@@ -292,7 +262,8 @@ async function route(
     const local = skipLocal ? [] : [...await listPanelAudit(env.FACTORY, { actorId, limit }), ...await listLifecycleAudit(env.FACTORY, { actorId, limit })];
     // Core and the panel share the audit_log table in production: show each row once.
     const isPanelRow = (e: AuditEntry) => e.action.startsWith("auth.") || e.action.startsWith("user.");
-    const entries = [...coreList.entries.filter((e) => !isPanelRow(e)), ...local]
+    const merged = [...coreList.entries.filter((e) => !isPanelRow(e)), ...local];
+    const entries = [...new Map(merged.map((entry) => [entry.id, entry])).values()]
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : b.id - a.id))
       .slice(0, limit);
     return json(200, { entries, next_cursor: coreList.next_cursor });

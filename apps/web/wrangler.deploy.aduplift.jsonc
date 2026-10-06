@@ -56,6 +56,9 @@
     "ACCESS_TEAM_DOMAIN": "aduplift.cloudflareaccess.com",
     "ACCESS_AUD": "644bf3613e70f100e38474630d140e3702243de4b9d730eac29262de429120b1",
     "BETTER_AUTH_URL": "https://app.aduplift.ai",
-    "MOCK_CORE": "0"
+    "MOCK_CORE": "0",
+    "DEFAULT_ACCOUNT": "<SET_PER_TENANT>",
+    "DEFAULT_AID": "<SET_PER_TENANT>",
+    "DEFAULT_PREPOP_BASE": "https://<SET_PER_TENANT>"
   }
 }

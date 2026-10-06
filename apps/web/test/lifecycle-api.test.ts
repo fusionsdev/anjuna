@@ -45,6 +45,19 @@ describe("truthful lifecycle BFF", () => {
     expect(await res.json()).toMatchObject({ brand: { domain: "example.test", status: "draft" }, revision: { revision: 1, template_version_id: "tv-1", form_artifact_id: expect.stringMatching(/^fa-/) } });
   });
 
+  it("rejects draft creation when tenant runtime defaults are not configured", async () => {
+    const envWithoutDefaults = makeEnv({ DEFAULT_ACCOUNT: undefined, DEFAULT_AID: undefined, DEFAULT_PREPOP_BASE: undefined });
+    const response = await call("/api/brands/drafts", { cookie: employee, method: "POST", body: { domain: "missing-config.example", keyword_default: "Quick Loan", template_version_id: "tv-1" }, env: envWithoutDefaults });
+    expect(response.status).toBe(503);
+  });
+
+  it("normalizes apex domains and rejects www domains", async () => {
+    expect((await post(employee, "/api/brands/drafts", { domain: "www.example.test", keyword_default: "Quick Loan", template_version_id: "tv-1" })).status).toBe(422);
+    const response = await post(employee, "/api/brands/drafts", { domain: "apex-normalized.example.test.", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(response.status).toBe(201);
+    expect((await response.json() as { brand: { domain: string } }).brand.domain).toBe("apex-normalized.example.test");
+  });
+
   it("persists dispatch failures, sends exact immutable payloads, and retries the same install", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "retry.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
@@ -54,6 +67,20 @@ describe("truthful lifecycle BFF", () => {
     expect(failed?.status).toBe("failed");
     expect(failed?.to_revision_id).toBe(`${brand.brand_id}_rev_1`);
     expect((await call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST" })).status).toBe(502);
+  });
+
+  it("creates a new retry attempt after a terminal factory receipt", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "terminal-retry.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const missing = await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?1").bind(brand.brand_id).first<{ install_id: string }>();
+    await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?1,'validate','failed','{}',?2)").bind(failed!.install_id, new Date().toISOString()).run();
+    const retry = await call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST" });
+    expect(missing.status).toBe(502);
+    expect(retry.status).toBe(502);
+    const attempts = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?1 ORDER BY started_at").bind(brand.brand_id).all<{ install_id: string }>();
+    expect(attempts.results.map((r) => r.install_id)).toHaveLength(2);
+    expect(attempts.results[1]!.install_id).not.toBe(attempts.results[0]!.install_id);
   });
 
   it("acknowledges a successful Workflow dispatch only after sending the exact command", async () => {
@@ -77,9 +104,23 @@ describe("truthful lifecycle BFF", () => {
     expect((await call(`/api/lifecycle/brands/${brand.brand_id}`, { cookie: employee })).status).toBe(200);
   });
 
+  it("returns controlled Test-sold failure and preserves receipt statuses", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "receipt.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const install = await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,to_revision_id,started_by,started_at) VALUES ('ins-receipt',?1,'install','running',?2,'employee',?3)").bind(brand.brand_id, `${brand.brand_id}_rev_1`, new Date().toISOString()).run();
+    expect(install.success).toBe(true);
+    await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES ('ins-receipt','smoke','skipped','{\"reason\":\"not-needed\"}',?1)").bind(new Date().toISOString()).run();
+    const detail = await call("/api/installs/ins-receipt", { cookie: employee });
+    expect(detail.status).toBe(200);
+    expect((await detail.json() as { receipts: unknown[] }).receipts[0]).toMatchObject({ status: "skipped", output: { reason: "not-needed" } });
+    const sold = await call(`/api/brands/${brand.brand_id}/checklist`, { cookie: employee, method: "POST", body: { item: "test_sold", lead_id: "lead-1" }, env: makeEnv({ CORE_LIFECYCLE: { fetch: async () => { throw new Error("transport"); } } as unknown as Fetcher }) });
+    expect(sold.status).toBe(502);
+  });
+
   it("uses one owner upgrade-all command and rejects employee before factory access", async () => {
     expect((await post(employee, "/api/upgrade-all", {})).status).toBe(403);
     const res = await post(owner, "/api/upgrade-all", { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "brand-x" });
     expect(res.status).toBe(502);
+    expect((await env.FACTORY.prepare("SELECT action FROM audit_log WHERE action='upgrade.failed'").all()).results.length).toBeGreaterThan(0);
   });
 });

@@ -21,7 +21,7 @@ const Artifact = z.strictObject({
   payload_version: z.literal("2026-01"),
 });
 const Draft = z.strictObject({
-  domain: z.string().regex(/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/),
+  domain: z.string().min(1).max(253).transform((value) => value.toLowerCase().replace(/\.$/, "")).refine((value) => !value.startsWith("www."), "Use the apex domain, not a www hostname").refine((value) => /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/.test(value), "Must be a valid apex domain"),
   keyword_default: z.string().min(1).max(60), template_version_id: Id,
 });
 const Upgrade = z.strictObject({
@@ -43,6 +43,15 @@ async function audit(db: Db, ctx: AdminRequestContext, action: string, type: str
 async function setFailed(db: Db, installId: string, message: string): Promise<void> {
   await db.prepare("UPDATE installs SET status = 'failed', error = ?1, finished_at = ?2 WHERE install_id = ?3 AND status IN ('queued','failed')")
     .bind(message.slice(0, 500), new Date().toISOString(), installId).run();
+}
+
+function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: string } | null {
+  const account = env.DEFAULT_ACCOUNT?.trim();
+  const aid = env.DEFAULT_AID?.trim();
+  const prepop = env.DEFAULT_PREPOP_BASE?.trim();
+  if (!account || !aid || !prepop) return null;
+  try { if (new URL(prepop).protocol !== "https:") return null; } catch { return null; }
+  return { account, aid, prepop_base: prepop.replace(/\/$/, "") };
 }
 
 async function dispatch(
@@ -80,21 +89,26 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   const parsed = Draft.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
   const { domain, keyword_default, template_version_id } = parsed.data;
+  const defaults = tenantDefaults(env);
+  if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
   const template = await env.FACTORY.prepare("SELECT template_version_id FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'").bind(template_version_id).first();
   if (!template) return json(422, { error: "template_not_sealed" });
-  const artifact = await env.FACTORY.prepare("SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE payload_version = '2026-01' AND bundle_form_version GLOB 'form@*' ORDER BY created_at DESC LIMIT 1").first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
+  const artifact = await env.FACTORY.prepare("SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE payload_version = '2026-01' AND bundle_form_version GLOB 'form@*' ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1").first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
   if (!artifact) return json(422, { error: "compatible_form_artifact_missing" });
   const existing = await env.FACTORY.prepare("SELECT brand_id FROM brands WHERE domain = ?1").bind(domain).first();
   if (existing) return json(409, { error: "conflict", message: "Domain is already registered" });
   const brandId = `brand_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const revisionId = `${brandId}_rev_1`;
   const now = new Date().toISOString();
-  const config = JSON.stringify({ amount_buckets: [500, 1000, 1500, 2500, 3000], aid: env.DEFAULT_AID ?? "30003", prepop_base: env.DEFAULT_PREPOP_BASE ?? "https://prepop.invalid", form_route: "/apply", keyword_default, form_version: artifact.bundle_form_version });
-  await env.FACTORY.batch([
-    env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, domain.split(".")[0]!.replaceAll("-", " "), env.DEFAULT_ACCOUNT ?? "default", domain, keyword_default, ctx.actor_id, now),
+  const config = JSON.stringify({ amount_buckets: [500, 1000, 1500, 2500, 3000], account: defaults.account, aid: defaults.aid, prepop_base: defaults.prepop_base, form_route: "/apply", keyword_default, form_version: artifact.bundle_form_version });
+  try { await env.FACTORY.batch([
+    env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, domain.split(".")[0]!.replaceAll("-", " "), defaults.account, domain, keyword_default, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,1,?3,?4,?5,?6,?7)").bind(revisionId, brandId, template_version_id, artifact.form_artifact_id, config, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES (?1,?2,'brand.create','brand',?3,?4,?5)").bind(ctx.actor_id, ctx.actor_role, brandId, JSON.stringify({ domain, template_version_id, form_artifact_id: artifact.form_artifact_id }), now),
-  ]);
+  ]); } catch (error) {
+    if (String(error).toLowerCase().includes("unique") || String(error).toLowerCase().includes("domain")) return json(409, { error: "conflict", message: "Domain is already registered" });
+    throw error;
+  }
   return json(201, { brand: { brand_id: brandId, name: domain.split(".")[0], domain, keyword_default, status: "draft" }, revision: { revision_id: revisionId, revision: 1, template_version_id, form_artifact_id: artifact.form_artifact_id } });
 }
 
@@ -159,7 +173,9 @@ async function checklist(request: Request, env: Env, ctx: AdminRequestContext, b
   let evidence: Record<string, unknown> = { brand_id: brandId, item, actor_id: ctx.actor_id, verified_at: new Date().toISOString() };
   if (item === "test_sold") {
     if (!env.CORE_LIFECYCLE || !body?.lead_id) return json(422, { error: "test_sold_verification_required" });
-    const response = await env.CORE_LIFECYCLE.fetch(new Request("https://core/lifecycle/test-sold", { method: "POST", headers: adminContextToHeaders(ctx), body: JSON.stringify({ brand_id: brandId, lead_id: body.lead_id }) }));
+    let response: Response;
+    try { response = await env.CORE_LIFECYCLE.fetch(new Request("https://core/lifecycle/test-sold", { method: "POST", headers: adminContextToHeaders(ctx), body: JSON.stringify({ brand_id: brandId, lead_id: body.lead_id }) })); }
+    catch { return json(502, { error: "test_sold_verification_failed", message: "Core lifecycle service is unavailable; no checklist evidence was recorded" }); }
     const parsed = VerifySoldLeadResponse.safeParse(await response.json().catch(() => null));
     if (!response.ok || !parsed.success) return json(response.status || 502, { error: "test_sold_not_verified" });
     evidence = { ...evidence, event_id: parsed.data.event_id };
@@ -201,11 +217,19 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const row = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,from_revision_id,to_revision_id,started_by,started_role,status FROM installs WHERE install_id = ?1").bind(m[1]).first<{ install_id: string; brand_id: string; kind: string; from_revision_id: string | null; to_revision_id: string | null; started_by: string; started_role: AdminRole; status: string }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     if (row.status !== "failed") return json(409, { error: "conflict", message: "Only failed installs can be retried" });
+    const terminal = await env.FACTORY.prepare("SELECT 1 AS found FROM install_receipts WHERE install_id=?1 AND status IN ('failed','ok') LIMIT 1").bind(row.install_id).first();
+    let installId = row.install_id;
+    if (terminal) {
+      installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
+      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at) VALUES (?1,?2,?3,'queued',?4,?5,?6,?7,?8)").bind(installId, row.brand_id, row.kind, row.from_revision_id, row.to_revision_id, row.started_by, row.started_role, new Date().toISOString()).run();
+      await audit(env.FACTORY, ctx, "install.start", "install", installId, { brand_id: row.brand_id, retry_of: row.install_id, kind: row.kind });
+    } else {
+      await env.FACTORY.prepare("UPDATE installs SET status='queued',error=NULL,finished_at=NULL WHERE install_id=?1").bind(installId).run();
+    }
     const payload = row.kind === "rollback"
-      ? { install_id: row.install_id, brand_id: row.brand_id, to_revision_id: row.to_revision_id, started_by: row.started_by, started_role: row.started_role }
-      : { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, started_by: row.started_by, started_role: row.started_role };
-    await env.FACTORY.prepare("UPDATE installs SET status='queued',error=NULL,finished_at=NULL WHERE install_id=?1").bind(row.install_id).run();
-    return dispatch(env, ctx, row.install_id, row.brand_id, row.kind === "rollback" ? "/rollback" : "/install", payload);
+      ? { install_id: installId, brand_id: row.brand_id, to_revision_id: row.to_revision_id, started_by: row.started_by, started_role: row.started_role }
+      : { install_id: installId, brand_id: row.brand_id, revision_id: row.to_revision_id, started_by: row.started_by, started_role: row.started_role };
+    return dispatch(env, ctx, installId, row.brand_id, row.kind === "rollback" ? "/rollback" : "/install", payload);
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/installs$/);
   if (m && method === "GET") {
@@ -221,22 +245,25 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   }
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {
-    const row = await env.FACTORY.prepare("SELECT install_id,brand_id,to_revision_id,status FROM installs WHERE install_id=?1").bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string; status: string }>();
+    const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    const row = await env.FACTORY.prepare("SELECT i.install_id,i.brand_id,i.to_revision_id,i.status FROM installs i JOIN brands b ON b.brand_id=i.brand_id WHERE i.install_id=?1").bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string; status: string }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
-    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: row.status, receipts: results.map((r) => ({ step: r.step, status: r.status === "ok" ? "ready" : r.status === "failed" ? "failed" : "queued", ...(r.output_json ? { output: JSON.parse(r.output_json) } : {}) })) });
+    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: row.status, receipts: results.map((r) => ({ step: r.step, status: r.status, ...(r.output_json ? { output: JSON.parse(r.output_json) } : {}) })) });
   }
   if (path === "/api/upgrade-all" && method === "POST") {
     const g = authorizePanel("upgradeAll", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const parsed = Upgrade.safeParse(await request.json().catch(() => null)); if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
-    if (!env.FACTORY_WORKER) return json(502, { error: "factory_dispatch_failed", message: "Factory Worker binding is missing" });
+    const auditId = `${ctx.actor_id}:${parsed.data.canary_brand_id}`;
+    if (!env.FACTORY_WORKER) { await audit(env.FACTORY, ctx, "upgrade.failed", "upgrade", auditId, { error: "factory_binding_missing", ...parsed.data }); return json(502, { error: "factory_dispatch_failed", message: "Factory Worker binding is missing" }); }
     const payload = { ...parsed.data, started_by: ctx.actor_id, started_role: "owner" as const };
-    await audit(env.FACTORY, ctx, "upgrade.start", "upgrade", `${ctx.actor_id}:${parsed.data.canary_brand_id}`, { ...parsed.data, started_role: "owner" });
     try {
       const response = await env.FACTORY_WORKER.fetch(new Request("https://factory/upgrade-all", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }));
       const body = await response.json().catch(() => ({}));
+      if (!response.ok) { await audit(env.FACTORY, ctx, "upgrade.failed", "upgrade", auditId, { status: response.status, ...parsed.data }); return json(response.status >= 500 ? 502 : response.status, body); }
+      await audit(env.FACTORY, ctx, "upgrade.start", "upgrade", auditId, { ...parsed.data, started_role: "owner" });
       return json(response.status, body);
-    } catch { return json(502, { error: "factory_dispatch_failed" }); }
+    } catch { await audit(env.FACTORY, ctx, "upgrade.failed", "upgrade", auditId, { error: "factory_transport_failed", ...parsed.data }); return json(502, { error: "factory_dispatch_failed" }); }
   }
   void url;
   return undefined;

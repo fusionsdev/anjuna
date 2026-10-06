@@ -40,6 +40,9 @@ export function makeEnv(over: Partial<Env> = {}): Env {
     BETTER_AUTH_URL: ORIGIN,
     MOCK_CORE: "1",
     DEV_ACCESS_BYPASS: "1",
+    DEFAULT_ACCOUNT: "test-account",
+    DEFAULT_AID: "30003",
+    DEFAULT_PREPOP_BASE: "https://prepop.test",
     ...over,
   };
 }
