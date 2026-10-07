@@ -31,7 +31,13 @@ Live on the Cloudflare account "AdUplift" (`6cb8500c35210800451bd9a535482850`; n
 - `core.aduplift.ai`: `anjuna-core`, live, with a WAF skip rule for /api/postback and /api/conversions/*.
 - Template MCP (`workers/template-mcp`) was planned for `mcp.aduplift.ai`; the 2026-10-02 handoff listed it as in flight. Its deployment was not re-verified on 2026-10-07.
 
-The maimax installation has its own account and bootstrap configs on main. Its CI deploy is gated by an enable flag in `.github/workflows/deploy.yml` (introduced as `FRIEND_ENABLED` in #32, before the tenant was renamed). Production state of both tenants was not checked on 2026-10-07; check it before you claim anything about it.
+The maimax installation has its own account and bootstrap configs on main. Its CI deploy is gated by an enable flag in `.github/workflows/deploy.yml` (introduced as `FRIEND_ENABLED` in #32, before the tenant was renamed).
+
+**maimax drain (owner-reported, Oracle handoff 2026-10-05, not re-verified from this repo):** the Google Ads side is connected and the drain on the maimax VPS is live. It runs from cron every 10 minutes, a test run printed `no pending conversions`, and a lead with a gclid/gbraid arriving at `core.maimax.fit` should upload to the maimax Google Ads account automatically. Remaining items:
+- OWNER: rotate the two Cloudflare API tokens that leaked into a chat transcript (Cloudflare dashboard).
+- Verify the first real conversion in the drain log on the VPS when a lead with a gclid/gbraid arrives.
+
+Production state of the aduplift tenant was not checked on 2026-10-07; check it before you claim anything about it.
 
 ## Open pull requests
 - **PR #40** `fus-347-t12b-brand-lifecycle`: DRAFT, 66 files, truthful brand lifecycle control panel. CI `build typecheck test` is green. It carries `.github/workflows/pr-check.yml`, which is why no other PR has an Actions run yet. Do not merge it before the two blockers below are resolved.
@@ -50,7 +56,7 @@ Do not stack one of these PRs on the other. The owner approves every merge.
 
 ## Known gaps
 - `packages/leads-db` test "V1 parity: every V1 table exists" is close to the 5 s Vitest timeout (about 4.8 s alone, over 10 s under parallel Turbo). Raise its timeout rather than retrying.
-- The React starter (`packages/keyword-slot-react/dist/example`) fails `check-template` (no `/privacy`, `/terms`, `/disclosures`, `/do-not-sell` pages). The Astro starter passes. T11 says the T5 starters pass; decide whether the React example needs the legal pages or is exempt.
+- `check-template` is not a gate for the starters or for the ready-made templates the owner supplies; do not spend time making the React example pass it (owner decision, 2026-10-07).
 - `apps/lead-form` bundle/manifest tests and `scripts/smoke-web.test.ts` fail on the local Windows and WSL machines (SyntaxError in the bundle). Linux CI on #40 passes the whole suite.
 - Template MCP: `seal_template_version` takes the owner secret as a tool argument and compares it with `!==`; `created_by` / `sealed_by` are caller-supplied; plain `Error`s from certify/seal are reported as `internal_error`, which hides the repair message.
 
