@@ -13,7 +13,7 @@
   "d1_databases": [
     {
       "binding": "FACTORY",
-      "database_name": "anjuna-factory",
+      "database_name": "maimax-factory",
       "database_id": "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
       "migrations_dir": "../../packages/factory-db/migrations"
     }
