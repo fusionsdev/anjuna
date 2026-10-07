@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-10-02T00:00:00.000Z",
+  "conversion_stalled": {
+    "state": "ok",
+    "detail": { "max_hours": 6, "stuck_count": 0, "oldest_created_at": null }
+  },
+  "brands_without_postbacks": {
+    "state": "ok",
+    "detail": { "window_hours": 24, "brands": [] }
+  },
+  "submit_error_rate": {
+    "state": "ok",
+    "detail": { "window_hours": 24, "warn_at": 0.05, "alert_at": 0.1, "samples": [] }
+  },
+  "reject_rate": {
+    "state": "ok",
+    "detail": { "window_hours": 24, "warn_at": 0.1, "alert_at": 0.2, "brands": [] }
+  }
+}

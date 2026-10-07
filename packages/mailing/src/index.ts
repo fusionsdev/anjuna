@@ -30,18 +30,27 @@ export async function syncOutbox(db: D1Database, listmonk: ListmonkClient, opts:
 
   if (!rows || rows.length === 0) return 0;
 
+  const emails = [...new Set(rows.map((row) => String(row.email).toLowerCase()))];
+  const suppressed = new Set<string>();
+  if (emails.length > 0) {
+    const { results } = await db
+      .prepare(`SELECT email FROM suppressions WHERE email IN (${emails.map(() => "?").join(",")})`)
+      .bind(...emails)
+      .all<{ email: string }>();
+    for (const row of results) suppressed.add(row.email);
+  }
+
+  const writes: D1PreparedStatement[] = [];
   let processed = 0;
   for (const row of rows) {
     const listId = opts.listMap[row.brand];
     if (!listId) {
-      await markDead(db, row.id, `No list mapped for brand: ${row.brand}`);
+      writes.push(deadWrite(db, row.id, `No list mapped for brand: ${row.brand}`));
       continue;
     }
 
-    // Check suppression
-    const isSuppressed = await db.prepare("SELECT 1 FROM suppressions WHERE email = ?").bind(row.email.toLowerCase()).first();
-    if (isSuppressed) {
-      await db.prepare("UPDATE mailing_outbox SET status = 'skipped', updated_at = datetime('now') WHERE id = ?").bind(row.id).run();
+    if (suppressed.has(String(row.email).toLowerCase())) {
+      writes.push(db.prepare("UPDATE mailing_outbox SET status = 'skipped', updated_at = datetime('now') WHERE id = ?").bind(row.id));
       processed++;
       continue;
     }
@@ -64,7 +73,7 @@ export async function syncOutbox(db: D1Database, listmonk: ListmonkClient, opts:
       if (subscriber) {
         if (subscriber.status === 'blocklisted') {
           // If they are blocklisted in listmonk, do not resurrect, mark skipped
-          await db.prepare("UPDATE mailing_outbox SET status = 'skipped', updated_at = datetime('now') WHERE id = ?").bind(row.id).run();
+          writes.push(db.prepare("UPDATE mailing_outbox SET status = 'skipped', updated_at = datetime('now') WHERE id = ?").bind(row.id));
           processed++;
           continue;
         }
@@ -77,36 +86,37 @@ export async function syncOutbox(db: D1Database, listmonk: ListmonkClient, opts:
         subscriber = await listmonk.createSubscriber(payload);
       }
 
-      await db.prepare(`
+      writes.push(db.prepare(`
         UPDATE mailing_outbox
         SET status = 'sent', listmonk_subscriber_id = ?, sent_at = datetime('now'), updated_at = datetime('now')
         WHERE id = ?
-      `).bind(subscriber.id, row.id).run();
+      `).bind(subscriber.id, row.id));
 
     } catch (e: any) {
       const attempts = row.attempts + 1;
       if (attempts >= maxAttempts) {
-        await markDead(db, row.id, e.message);
+        writes.push(deadWrite(db, row.id, e.message));
       } else {
         const backoffMinutes = Math.pow(2, attempts); // 2, 4, 8, 16...
-        await db.prepare(`
+        writes.push(db.prepare(`
           UPDATE mailing_outbox
           SET attempts = ?, last_error = ?, next_attempt_at = datetime('now', '+' || ? || ' minutes'), updated_at = datetime('now')
           WHERE id = ?
-        `).bind(attempts, e.message, backoffMinutes, row.id).run();
+        `).bind(attempts, e.message, backoffMinutes, row.id));
       }
     }
     processed++;
   }
+  for (let i = 0; i < writes.length; i += 100) await db.batch(writes.slice(i, i + 100));
   return processed;
 }
 
-async function markDead(db: D1Database, id: number, error: string) {
-  await db.prepare(`
+function deadWrite(db: D1Database, id: number, error: string): D1PreparedStatement {
+  return db.prepare(`
     UPDATE mailing_outbox
     SET status = 'dead', last_error = ?, updated_at = datetime('now')
     WHERE id = ?
-  `).bind(error, id).run();
+  `).bind(error, id);
 }
 
 export async function syncSuppressions(db: D1Database, listmonk: ListmonkClient, listIds: number[]) {

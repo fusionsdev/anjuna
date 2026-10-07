@@ -30,7 +30,10 @@ async function bundle(entry: string): Promise<string> {
   return result.outputFiles[0]!.text;
 }
 
-export async function createHarness(options: { brand?: boolean } = {}) {
+export async function createHarness(options: {
+  brand?: boolean;
+  listmonk?: Partial<Record<"LISTMONK_URL" | "LISTMONK_USER" | "LISTMONK_TOKEN" | "LISTMONK_LIST_MAP", string>>;
+} = {}) {
   const [production, testWorker, leadsMigrations, factoryMigrations] = await Promise.all([
     bundle("src/index.ts"), bundle("test/worker.ts"),
     readD1Migrations(join(ROOT, "packages/leads-db/migrations")),
@@ -40,7 +43,7 @@ export async function createHarness(options: { brand?: boolean } = {}) {
     modules: true, compatibilityDate: "2026-08-01",
     compatibilityFlags: ["global_fetch_strictly_public"],
     d1Databases: { LEADS: "core-test-leads", FACTORY: "core-test-factory" },
-    bindings: { DRAIN_TOKEN, HANDOFF_KEY, LIFECYCLE_ACCOUNT: "account-a" },
+    bindings: { DRAIN_TOKEN, HANDOFF_KEY, LIFECYCLE_ACCOUNT: "account-a", ...options.listmonk },
     outboundService: () => { throw new Error("External requests forbidden in core tests"); },
   };
   const mf = new Miniflare(convertV4MiniflareOptions({

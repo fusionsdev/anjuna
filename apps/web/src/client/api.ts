@@ -1,5 +1,6 @@
 import type {
   AdminRole,
+  AlertsReportResponse,
   AuditEntry,
   BrandConfig,
   BrandPatchRequest,
@@ -11,6 +12,8 @@ import type {
   InstallWithReceipts,
   LifecycleBrandSummary,
   UpgradeAllCommand,
+  FunnelReportResponse,
+  MailingStatusResponse,
 } from "@anjuna/contracts";
 
 export interface Me {
@@ -93,4 +96,11 @@ export const api = {
   checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }> }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
   attestChecklist: (brandId: string, item: ChecklistItemName, lead_id?: string) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/checklist`, { item, ...(lead_id ? { lead_id } : {}) }),
   upgradeAll: (body: Omit<UpgradeAllCommand, "started_by" | "started_role">) => request<unknown>("POST", "/api/upgrade-all", body),
+  funnel: (query: { from: string; to: string; brand?: string }) => {
+    const params = new URLSearchParams({ from: query.from, to: query.to });
+    if (query.brand) params.set("brand", query.brand);
+    return request<FunnelReportResponse>("GET", `/api/funnel?${params}`);
+  },
+  alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
+  mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
 };

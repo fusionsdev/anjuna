@@ -13,6 +13,7 @@ import {
 } from "@anjuna/insights";
 import { ListmonkClient, syncOutbox, syncSuppressions } from "@anjuna/mailing";
 import type { Env } from "./env.js";
+import { listMapFrom } from "./listmonk-config.js";
 
 export const MAILING_CRON = "*/5 * * * *";
 export const ALERTS_CRON = "*/15 * * * *";
@@ -29,18 +30,6 @@ export interface MailingRunResult {
   ran: boolean;
   reason?: "not_configured" | "invalid_list_map";
   batches?: number;
-}
-
-function listMapFrom(raw: string | undefined): Record<string, number> | null {
-  try {
-    const parsed: unknown = JSON.parse(raw ?? "");
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-    const entries = Object.entries(parsed);
-    if (entries.length === 0 || entries.some(([, id]) => !Number.isInteger(id) || (id as number) <= 0)) return null;
-    return parsed as Record<string, number>;
-  } catch {
-    return null;
-  }
 }
 
 /** Outbox -> listmonk, then listmonk -> suppressions. Throws on a listmonk outage so the run shows as failed. */

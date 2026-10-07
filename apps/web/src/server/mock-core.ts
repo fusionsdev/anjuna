@@ -11,7 +11,9 @@ import {
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
+  AlertsQuery,
   AuditQuery,
+  FunnelQuery,
   adminContextFromHeaders,
   authorize,
   matchAdminRoute,
@@ -24,7 +26,10 @@ import auditOwner from "@anjuna/contracts/fixtures/admin/audit.list.response.own
 import brandA from "@anjuna/contracts/fixtures/admin/brand.get.response.json";
 import lead from "@anjuna/contracts/fixtures/admin/lead.get.response.json";
 import aggregates from "@anjuna/contracts/fixtures/admin/leads.aggregates.response.json";
+import alertsReport from "@anjuna/contracts/fixtures/admin/alerts.response.json";
 import brandsList from "@anjuna/contracts/fixtures/admin/brands.list.response.json";
+import funnelReport from "@anjuna/contracts/fixtures/admin/funnel.response.json";
+import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.json";
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -138,6 +143,12 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
     const q = AuditQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
     auditQuery = q.data;
+  } else if (endpoint === "funnelReport") {
+    const q = FunnelQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "alertsReport") {
+    const q = AlertsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   }
 
   // 4. field groups
@@ -241,6 +252,16 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
         .filter((e) => !auditQuery?.target_id || e.target.id === auditQuery.target_id)
         .slice(0, limit);
       return json(200, { entries, next_cursor: null });
+    }
+    case "funnelReport":
+      return json(200, funnelReport);
+    case "alertsReport":
+      return json(200, alertsReport);
+    case "mailingStatus":
+      return json(200, mailingStatus);
+    default: {
+      const unexpected: never = endpoint;
+      return err({ error: "not_found", resource: "route", request_id: `${rid}:${String(unexpected)}` });
     }
   }
   // Unreachable while AdminApi and the switch agree.

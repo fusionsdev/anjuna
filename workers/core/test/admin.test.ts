@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  AlertsReportResponse,
   AuditListResponse,
   BrandPatchResponse,
   BrandStatusChangeResponse,
+  FunnelReportResponse,
   GetBrandResponse,
   GetLeadResponse,
   LeadAggregatesResponse,
   ListBrandsResponse,
+  MailingStatusResponse,
   type AdminRequestContext,
 } from "@anjuna/contracts";
 import { createHarness, fixtureText, type Harness } from "./helpers.js";
@@ -83,6 +86,87 @@ async function auditCount(): Promise<number> {
 }
 
 describe("AdminService contract", () => {
+  it("returns the seeded D1 funnel to employees with no synthetic telemetry", async () => {
+    const filter = fixture<Record<string, string>>("funnel.query.json");
+    const query = new URLSearchParams({ ...filter, keyword: "Fast Cash Loans", variant: "A" });
+    const response = await h.admin(`/admin/funnel?${query}`, employee);
+    expect(response.status).toBe(200);
+    expect(FunnelReportResponse.parse(await response.json())).toEqual({
+      from: filter.from,
+      to: filter.to,
+      rows: [{
+        brand: "brand-a", keyword: "Fast Cash Loans", variant: "A",
+        clicks: 0, go_count: 0, form_views: 0, submits: 1, sold: 1, revenue: 85,
+        submit_rate: null, sold_rate: 1,
+      }],
+    });
+
+    query.set("from", filter.to!);
+    query.set("to", filter.from!);
+    const invalid = await h.admin(`/admin/funnel?${query}`, employee);
+    expect(invalid.status).toBe(422);
+    expect(await invalid.json()).toMatchObject({ error: "invalid", request_id: employee.request_id });
+  });
+
+  it("returns D1 alerts to employees at a deterministic time", async () => {
+    const response = await h.admin("/admin/alerts?now=2026-10-02T00:00:00.000Z", employee);
+    expect(response.status).toBe(200);
+    const report = AlertsReportResponse.parse(await response.json());
+    expect(report).toMatchObject({
+      generated_at: "2026-10-02T00:00:00.000Z",
+      conversion_stalled: { state: "ok", detail: { stuck_count: 0, oldest_created_at: null } },
+      brands_without_postbacks: { state: "ok", detail: { brands: [] } },
+      submit_error_rate: { state: "ok", detail: { samples: [] } },
+      reject_rate: { state: "ok" },
+    });
+  });
+
+  it("returns local mailing counts without listmonk configuration or outbound fetch", async () => {
+    await h.db.prepare(
+      `INSERT INTO mailing_outbox (lead_id, brand, created_at)
+       VALUES (?1, 'brand-a', '2026-10-01T12:00:00.000Z')`,
+    ).bind(leadId).run();
+    const before = await h.db.prepare("SELECT * FROM mailing_outbox").all();
+    const auditBefore = await auditCount();
+    const response = await h.admin("/admin/mailing", employee);
+    expect(response.status).toBe(200);
+    expect(MailingStatusResponse.parse(await response.json())).toEqual({
+      external_sync: "not_configured",
+      counts: { pending: 1, sent: 0, skipped: 0, dead: 0 },
+    });
+    expect((await h.db.prepare("SELECT * FROM mailing_outbox").all()).results).toEqual(before.results);
+    expect(await auditCount()).toBe(auditBefore);
+  });
+
+  it.each(["LISTMONK_URL", "LISTMONK_USER", "LISTMONK_TOKEN"] as const)(
+    "keeps mailing local and not_configured when only %s is unset",
+    async (missing) => {
+      const listmonk: Partial<Record<typeof missing, string>> = {
+        LISTMONK_URL: "https://listmonk.invalid",
+        LISTMONK_USER: "test-user",
+        LISTMONK_TOKEN: "test-token",
+      };
+      delete listmonk[missing];
+      const local = await createHarness({ listmonk });
+      try {
+        await local.seedBrand();
+        await local.seedLead(leadId);
+        await local.db.prepare(
+          `INSERT INTO mailing_outbox (lead_id, brand, created_at)
+           VALUES (?1, 'brand-a', '2026-10-01T12:00:00.000Z')`,
+        ).bind(leadId).run();
+        const response = await local.admin("/admin/mailing", employee);
+        expect(response.status).toBe(200);
+        expect(MailingStatusResponse.parse(await response.json())).toEqual({
+          external_sync: "not_configured",
+          counts: { pending: 1, sent: 0, skipped: 0, dead: 0 },
+        });
+      } finally {
+        await local.mf.dispose();
+      }
+    },
+  );
+
   it("round-trips every read endpoint through its contract schema", async () => {
     const list = await h.admin("/admin/brands", employee);
     expect(list.status).toBe(200);
@@ -278,9 +362,47 @@ describe("AdminService contract", () => {
   });
 
   it("keeps public /admin routes unavailable", async () => {
-    for (const path of ["/admin/brands", `/admin/leads/${leadId}`, "/admin/audit"]) {
+    for (const path of ["/admin/brands", `/admin/leads/${leadId}`, "/admin/audit", "/admin/funnel", "/admin/alerts", "/admin/mailing"]) {
       const response = await h.request(path);
       expect([response.status, await response.text()]).toEqual([404, "Not Found"]);
+    }
+  });
+});
+
+describe("mailing status with LISTMONK_* set", () => {
+  let configured: Harness;
+  beforeAll(async () => {
+    configured = await createHarness({
+      listmonk: {
+        LISTMONK_URL: "https://listmonk.example",
+        LISTMONK_USER: "api",
+        LISTMONK_TOKEN: "fixture-token",
+        LISTMONK_LIST_MAP: '{"brand-a":7}',
+      },
+    });
+  });
+  afterAll(async () => { await configured?.mf.dispose(); });
+
+  it("reports configured and never calls listmonk", async () => {
+    const mailing = await configured.admin("/admin/mailing", employee);
+    expect(mailing.status).toBe(200);
+    expect(MailingStatusResponse.parse(await mailing.json()).external_sync).toBe("configured");
+  });
+
+  it("stays not_configured when the list map is missing, matching the cron skip", async () => {
+    const local = await createHarness({
+      listmonk: {
+        LISTMONK_URL: "https://listmonk.example",
+        LISTMONK_USER: "api",
+        LISTMONK_TOKEN: "fixture-token",
+      },
+    });
+    try {
+      const mailing = await local.admin("/admin/mailing", employee);
+      expect(mailing.status).toBe(200);
+      expect(MailingStatusResponse.parse(await mailing.json()).external_sync).toBe("not_configured");
+    } finally {
+      await local.mf.dispose();
     }
   });
 });

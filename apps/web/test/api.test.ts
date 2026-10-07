@@ -393,16 +393,29 @@ describe("factory brands: create / install / upgrade", () => {
     expect(rows.some((r) => r.action === "brand.create")).toBe(true);
   });
 
-  it("GET /api/alerts accessible by employee, returns empty list", async () => {
-    const res = await call("/api/alerts", { cookie: employee });
+  it("GET /api/funnel returns the fixture report for an employee", async () => {
+    const res = await call("/api/funnel?from=2026-10-01T00:00:00.000Z&to=2026-10-02T00:00:00.000Z", { cookie: employee });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ alerts: [] });
+    expect(await res.json()).toMatchObject({ rows: [{ brand: "brand-a", sold: 1 }] });
   });
 
-  it("GET /api/mailing accessible by employee, returns status", async () => {
+  it("GET /api/funnel without a window is invalid", async () => {
+    expect((await call("/api/funnel", { cookie: employee })).status).toBe(422);
+  });
+
+  it("GET /api/alerts returns the fixture report for an employee", async () => {
+    const res = await call("/api/alerts", { cookie: employee });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ conversion_stalled: { state: "ok" } });
+  });
+
+  it("GET /api/mailing returns local counts and does not require listmonk", async () => {
     const res = await call("/api/mailing", { cookie: employee });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ status: "not_configured" });
+    expect(await res.json()).toEqual({
+      external_sync: "not_configured",
+      counts: { pending: 1, sent: 2, skipped: 0, dead: 0 },
+    });
   });
 
   it("unauthenticated cannot create a brand", async () => {

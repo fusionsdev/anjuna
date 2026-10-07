@@ -72,10 +72,29 @@ describe("Cloudflare Access gate on /api/*", () => {
     expect((await call("/api/brands", { env, headers: withJwt(t) })).status).toBe(401);
   });
 
-  it("ignores the dev bypass on the production host", async () => {
+  it("ignores the dev bypass on the production host when Cloudflare set the client IP", async () => {
     const env = makeEnv({ DEV_ACCESS_BYPASS: "1" });
-    const res = await call("/api/brands", { env, origin: "https://app.aduplift.ai" });
+    const res = await call("/api/auth/sign-in/email", {
+      env,
+      origin: "https://app.aduplift.ai",
+      method: "POST",
+      body: { email: "emp1@example.test", password: "test-password-123" },
+      headers: { "CF-Connecting-IP": "203.0.113.8" },
+    });
     expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("allows the dev bypass when wrangler presents the production route without an edge IP", async () => {
+    const env = makeEnv({ DEV_ACCESS_BYPASS: "1", BETTER_AUTH_URL: "https://app.aduplift.ai" });
+    const res = await call("/api/auth/sign-in/email", {
+      env,
+      origin: "https://app.aduplift.ai",
+      method: "POST",
+      body: { email: "emp1@example.test", password: "test-password-123" },
+      headers: { origin: "http://app.aduplift.ai" },
+    });
+    expect(res.status).toBe(200);
   });
 
   it("does not gate the SPA itself, only /api/*", async () => {

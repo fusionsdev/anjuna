@@ -16,12 +16,19 @@ const roles = {
   employee: ac.newRole({ ...userAc.statements }),
 };
 
+function localDevOrigins(baseURL: string): string[] {
+  const host = new URL(baseURL).host;
+  return ["http://127.0.0.1:*", "http://localhost:*", `http://${host}`];
+}
+
 export function createAuth(env: Env) {
   return betterAuth({
     database: env.AUTH,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
+    trustedOrigins: env.DEV_ACCESS_BYPASS === "1" ? localDevOrigins(env.BETTER_AUTH_URL) : [],
+    advanced: env.DEV_ACCESS_BYPASS === "1" ? { useSecureCookies: false } : undefined,
     emailAndPassword: { enabled: true, disableSignUp: true, minPasswordLength: 8 },
     plugins: [admin({ ac, roles, defaultRole: DEFAULT_ROLE, adminRoles: [...ADMIN_ROLES] })],
     databaseHooks: {

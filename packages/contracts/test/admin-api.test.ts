@@ -9,6 +9,8 @@ import {
   AdminApi,
   AdminError,
   AdminRequestContext,
+  AlertsQuery,
+  AlertsReportResponse,
   adminContextFromHeaders,
   adminContextToHeaders,
   AuditListResponse,
@@ -20,12 +22,15 @@ import {
   BrandPatchResponse,
   BrandStatusChangeRequest,
   BrandStatusChangeResponse,
+  FunnelQuery,
+  FunnelReportResponse,
   GetBrandResponse,
   GetLeadResponse,
   LeadAggregatesQuery,
   LeadAggregatesResponse,
   leadOutcome,
   ListBrandsResponse,
+  MailingStatusResponse,
   matchAdminRoute,
   type AdminEndpoint,
   type AdminRole,
@@ -54,6 +59,10 @@ describe("golden fixtures validate", () => {
     ["lead.get.response.json", GetLeadResponse],
     ["audit.list.response.owner.json", AuditListResponse],
     ["audit.list.response.employee.json", AuditListResponse],
+    ["funnel.query.json", FunnelQuery],
+    ["funnel.response.json", FunnelReportResponse],
+    ["alerts.response.json", AlertsReportResponse],
+    ["mailing.response.json", MailingStatusResponse],
     ["error.unauthorized.json", AdminError],
     ["error.forbidden-role.endpoint.json", AdminError],
     ["error.forbidden-role.fields.json", AdminError],
@@ -81,6 +90,9 @@ describe("golden fixtures validate", () => {
     expect(AdminApi.leadAggregates.response.safeParse(fixture(A("leads.aggregates.response.json"))).success).toBe(true);
     expect(AdminApi.getLead.response.safeParse(fixture(A("lead.get.response.json"))).success).toBe(true);
     expect(AdminApi.listAudit.response.safeParse(fixture(A("audit.list.response.owner.json"))).success).toBe(true);
+    expect(AdminApi.funnelReport.response.safeParse(fixture(A("funnel.response.json"))).success).toBe(true);
+    expect(AdminApi.alertsReport.response.safeParse(fixture(A("alerts.response.json"))).success).toBe(true);
+    expect(AdminApi.mailingStatus.response.safeParse(fixture(A("mailing.response.json"))).success).toBe(true);
   });
 
   it("every error code maps to the agreed HTTP status", () => {
@@ -174,6 +186,9 @@ describe("secrets never appear in GET fixtures", () => {
     "lead.get.response.json",
     "audit.list.response.owner.json",
     "audit.list.response.employee.json",
+    "funnel.response.json",
+    "alerts.response.json",
+    "mailing.response.json",
   ];
   const SECRET_KEY = /(hash|secret|password|api_?key|credential|dsn)/i;
   const rotated = fixture<{ issued_postback_token: string }>(A("brand.patch.response.rotate.json")).issued_postback_token;
@@ -229,7 +244,7 @@ describe("secrets never appear in GET fixtures", () => {
  * deletion, manage users) are listed separately and must NOT appear in the table.
  */
 const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by: (AdminEndpoint | `patch:${string}`)[] }[] = [
-  { action: "View brands, funnel, alerts", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates"] },
+  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "alertsReport", "mailingStatus"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
   { action: "Pause / resume a brand", employee: "yes", covered_by: ["pauseBrand", "resumeBrand"] },
   { action: "Change A/B weights", employee: "no", covered_by: ["patch:ab_weights"] },
@@ -321,13 +336,26 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/leads/aggregates")).toEqual({ endpoint: "leadAggregates", params: {} });
     expect(matchAdminRoute("GET", "/admin/leads/6f1c2b9e-3a4d")).toEqual({ endpoint: "getLead", params: { lead_id: "6f1c2b9e-3a4d" } });
     expect(matchAdminRoute("GET", "/admin/audit")?.endpoint).toBe("listAudit");
+    expect(matchAdminRoute("GET", "/admin/funnel")).toEqual({ endpoint: "funnelReport", params: {} });
+    expect(matchAdminRoute("GET", "/admin/alerts")).toEqual({ endpoint: "alertsReport", params: {} });
+    expect(matchAdminRoute("GET", "/admin/mailing")).toEqual({ endpoint: "mailingStatus", params: {} });
     expect(matchAdminRoute("DELETE", "/admin/brands/brand-a")).toBeNull();
     expect(matchAdminRoute("POST", "/admin/brands/brand-a/rollback")).toBeNull();
-    expect(ADMIN_ENDPOINTS).toHaveLength(8);
+    expect(ADMIN_ENDPOINTS).toHaveLength(11);
   });
 });
 
 describe("schema rules", () => {
+  it("validates report queries and rejects inverted or empty funnel windows", () => {
+    const query = FunnelQuery.parse(fixture(A("funnel.query.json")));
+    expect(AdminApi.funnelReport.query.safeParse(query).success).toBe(true);
+    expect(FunnelQuery.safeParse({ ...query, from: query.to, to: query.from }).success).toBe(false);
+    expect(FunnelQuery.safeParse({ ...query, to: query.from }).success).toBe(false);
+    expect(AlertsQuery.safeParse({}).success).toBe(true);
+    expect(AlertsQuery.safeParse({ now: query.to }).success).toBe(true);
+    expect(AlertsQuery.safeParse({ now: "invalid" }).success).toBe(false);
+  });
+
   it("A/B weights must sum to 100 with unique ids", () => {
     const p = fixture<Record<string, any>>(A("brand.patch.request.owner.json"));
     expect(BrandPatchRequest.safeParse({ ab_config: { ...p.ab_config, variants: [{ id: "a", weight: 70 }, { id: "b", weight: 20 }] } }).success).toBe(false);
