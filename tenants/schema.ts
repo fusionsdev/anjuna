@@ -44,15 +44,12 @@ export const TenantConfig = z.strictObject({
   appDomain: z.string().regex(hostname, "must be a valid lowercase hostname"),
   /** LeadsGate affiliate ID for this tenant's brands. */
   leadsGateAid: z.string().regex(leadsGateAid, "must be a restricted LeadsGate identifier"),
-  /** LeadsGate prepop base URL, e.g. `"https://go.personalloanpro.com/aff_c"`. */
+  /** LeadsGate prepop HTTPS URL or brand-domain path, normally "/apply". */
   prepopBase: z
     .string()
-    .url()
     .max(512)
-    .refine((value) => {
-      const parsed = new URL(value);
-      return parsed.protocol === "https:" && parsed.search === "" && parsed.hash === "";
-    }, "must be an HTTPS URL without query or fragment"),
+    .pipe(z.union([z.url({ protocol: /^https$/ }), z.string().regex(/^\/(?!\/)[^\\\s?#]*$/)]))
+    .refine((value) => !value.includes("?") && !value.includes("#"), "must be an HTTPS URL or same-origin path without query or fragment"),
   /** Tenant-owned defaults used by factory when first provisioning a brand runtime. */
   brandDefaults: z
     .strictObject({

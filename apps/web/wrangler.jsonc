@@ -29,7 +29,7 @@
     "MOCK_CORE": "0",
     "DEFAULT_ACCOUNT": "aduplift",
     "DEFAULT_AID": "10001",
-    "DEFAULT_PREPOP_BASE": "https://go.personalloanpro.com/aff_c",
+    "DEFAULT_PREPOP_BASE": "/apply",
     "DEFAULT_FORM_ROUTE": "/request",
     "DEFAULT_AMOUNT_BUCKETS": "[350,500,750,1000,1500,1750,2000,3000,3250,4500,5000]",
     "DEFAULT_PAYLOAD_VERSION": "2026-01"

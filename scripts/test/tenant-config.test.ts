@@ -4,6 +4,14 @@ import aduplift from "@anjuna/tenants/aduplift.config";
 import maimax from "@anjuna/tenants/maimax.config";
 
 describe("TenantConfig schema", () => {
+  it.each(["/apply", "/apply/", "/buyer/apply"])("accepts same-origin prepop path %s", (prepopBase) => {
+    expect(TenantConfig.safeParse({ ...aduplift, prepopBase }).success).toBe(true);
+  });
+
+  it.each(["apply", "//external.example/apply", "/\\external.example/apply", "/apply?aid=999", "/apply#fragment", "javascript:alert(1)"])("rejects unsafe prepop base %s", (prepopBase) => {
+    expect(TenantConfig.safeParse({ ...aduplift, prepopBase }).success).toBe(false);
+  });
+
   it("accepts a valid full config", () => {
     const result = TenantConfig.safeParse({
       name: "test-tenant",

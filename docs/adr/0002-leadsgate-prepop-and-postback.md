@@ -21,6 +21,12 @@ The buyer is LeadsGate. V1 hands the visitor to LeadsGate with a prepop redirect
 5. **Voluum is retired.** No Voluum tracking links, postbacks or click IDs anywhere in Anjuna.
 6. Postback and drain routes exist **only** on core, never on brand domains. Core has a WAF skip rule for `/api/postback` and `/api/conversions/*` (spike: Cloudflare returned 403 to non-browser user agents).
 
+## 2026-10-08 — Brand-domain application page (V1 parity)
+
+The default prepop base is `/apply` on the brand domain. This page hosts the LeadsGate form via `https://apikeep.com/form/applicationInit.js`, as V1's `public/apply.html` does. LeadsGate attributes traffic and configures Sold/Reject postback entries per domain where its form runs. The provider's `Referrer-Policy: no-referrer` redirect to `/apply` stays same-origin; the application page also sets no-referrer and noindex and is never cached.
+
+The page forwards only shared `BUYER_FIELDS` and the attribution aliases, with fixed `template: "fresh"` applied last (audit C-02). Public brand settings do not carry `aid`, so the page accepts a digits-only URL `aid`, which core sets from trusted `brand_runtime.aid`. This validates its format; it does not authenticate a manually substituted numeric ID.
+
 ## Consequences
 
 - One money path, identical to V1 in behavior; drain and AdKit need no code change.

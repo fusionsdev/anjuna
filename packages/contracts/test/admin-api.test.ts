@@ -378,6 +378,14 @@ describe("schema rules", () => {
     expect(BrandPatchRequest.safeParse({ rotate_postback_token: false }).success).toBe(false);
   });
 
+  it.each(["/apply", "/apply/", "/buyer/apply"])("accepts same-origin prepop_base %s", (prepop_base) => {
+    expect(BrandPatchRequest.safeParse({ prepop_base }).success).toBe(true);
+  });
+
+  it.each(["//external.example/apply", "/\\external.example/apply", "/apply?aid=999", "/apply#fragment", "apply"])("rejects unsafe prepop_base %s", (prepop_base) => {
+    expect(BrandPatchRequest.safeParse({ prepop_base }).success).toBe(false);
+  });
+
   it("prepop_base is https without query", () => {
     expect(BrandPatchRequest.safeParse({ prepop_base: "http://prepop.example/apply" }).success).toBe(false);
     expect(BrandPatchRequest.safeParse({ prepop_base: "https://prepop.example/apply?aid=1" }).success).toBe(false);

@@ -42,6 +42,56 @@ describe("route allowlist", () => {
   });
 });
 
+describe("brand-domain application page", () => {
+  it.each(["/apply", "/apply/"])("serves %s with the V1 form and fallback", async (path) => {
+    const { get, assets } = setup();
+    const response = await get(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("x-robots-tag")).toBe("noindex");
+    const html = await response.text();
+    expect(html).toContain('src="https://apikeep.com/form/applicationInit.js"');
+    expect(html).toContain('id="_lg_form_"');
+    expect(html).toContain('id="_lg_fallback_"');
+    expect(html).toContain("Retry Application");
+    expect(html).toContain('onerror="if (window._lg_showFallback) window._lg_showFallback();"');
+    expect(html).toContain('name="robots" content="noindex,nofollow"');
+    expect(html).toContain('name="referrer" content="no-referrer"');
+    expect(isBrandClean(html)).toBe(true);
+    expect(assets.fetch).not.toHaveBeenCalled();
+    const head = await get(path, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect([...head.headers]).toEqual([...response.headers]);
+    expect(await head.text()).toBe("");
+  });
+  it("never interpolates URL params into HTML and serves identical bytes for every visitor", async () => {
+    const { get } = setup();
+    const baseline = await (await get("/apply")).text();
+    const path = `/apply?${new URLSearchParams({ aid: "999", template: "x", evil: "<script>evil()</script>", first_name: '</script><script>alert("x")</script>' })}`;
+    expect(await (await get(path)).text()).toBe(baseline);
+    expect(await (await get(path, { headers: { "user-agent": "AdsBot-Google", "cf-connecting-ip": "192.0.2.1", referer: "https://search.example/" } })).text()).toBe(baseline);
+    expect(baseline).not.toContain("evil()");
+    expect(baseline).not.toContain('alert("x")');
+  });
+  it.each(["/apply", "/apply/"])("pause handling wins for %s", async (path) => {
+    const { get } = setup({ paused: true });
+    const response = await get(path);
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe(await (await get("/")).text());
+  });
+  it.each([["POST", "/apply"], ["POST", "/apply/"], ["GET", "/apply/unknown"]])("returns uniform 404 for %s %s", async (method, path) => {
+    const response = await setup().get(path!, { method });
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Not Found");
+  });
+  it.each(["/apply", "/apply/track"])("reserves %s against proxy and form routes", (path) => {
+    expect(() => setup({ proxies: { posthog: path } })).toThrow();
+    expect(() => setup({ formRoute: path })).toThrow();
+  });
+});
+
 describe("param gate", () => {
   it("is the default; /go carries only validated action and ad params", async () => {
     const { get, core } = setup();

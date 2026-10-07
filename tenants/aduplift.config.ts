@@ -10,7 +10,7 @@ const config: TenantConfig = {
   coreDomain: "core.aduplift.ai",
   appDomain: "app.aduplift.ai",
   leadsGateAid: "10001",
-  prepopBase: "https://go.personalloanpro.com/aff_c",
+  prepopBase: "/apply",
   brandDefaults: {
     account: "aduplift",
     formRoute: "/request",

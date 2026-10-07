@@ -17,7 +17,7 @@ const config: TenantConfig = {
   appDomain: "app.maimax.fit",
   // REPLACE: LeadsGate affiliate ID for the maimax account.
   leadsGateAid: "17244",
-  prepopBase: "https://go.personalloanpro.com/aff_c",
+  prepopBase: "/apply",
   brandDefaults: {
     account: "maimax",
     formRoute: "/request",
