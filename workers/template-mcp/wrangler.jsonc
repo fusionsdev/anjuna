@@ -11,8 +11,8 @@
   "d1_databases": [
     {
       "binding": "FACTORY",
-      "database_name": "anjuna-factory",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "aduplift-factory",
+      "database_id": "2eb875cb-ae24-4d06-bf15-8df306046980",
       "migrations_dir": "../../packages/factory-db/migrations"
     }
   ],
