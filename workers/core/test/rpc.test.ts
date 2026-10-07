@@ -116,18 +116,58 @@ describe("V1 lead path", () => {
     expect((await rpc("submitLead", submit(), { "sec-gpc": "" })).status).toBe(201);
     expect(await h.db.prepare("SELECT gpc, consent_text_hash FROM consent_evidence").first()).toEqual({ gpc: null, consent_text_hash: hash(consentText("Brand A")) });
   });
-  it.each(["NY", "AR", "VT", "WV", "PR", "AE"])("ZIP-authoritative %s is recorded but never routed, including duplicate retries", async (state) => {
+  it("a duplicate lead_id hands off the CURRENT submission, never the stored applicant", async () => {
+    const first = await accepted(submit(payload(true)));
+    const attacker = submit(payload(true));
+    Object.assign(attacker.lead.lead, { first_name: "Mallory", last_name: "Stone", email: "mallory@example.net",
+      home_phone: "3125550199", address: "9 Other Rd", city: "Chicago", zip: "60601", state: "TX" });
+    const response = await rpc("submitLead", attacker);
+    const dup = await response.json() as SubmitLeadAccepted;
+    expect([response.status, dup.status]).toEqual([200, "duplicate"]);
+    const { url } = await (await resolve(dup.continuation)).json() as { url: string };
+    const p = new URL(url).searchParams;
+    expect(Object.fromEntries(["first_name", "last_name", "email", "home_phone", "address", "city", "zip", "state"].map((k) => [k, p.get(k)])))
+      .toEqual({ first_name: "Mallory", last_name: "Stone", email: "mallory@example.net", home_phone: "3125550199",
+        address: "9 Other Rd", city: "Chicago", zip: "60601", state: "IL" });
+    expect([p.get("aid"), p.get("lead_id"), p.get("click_id"), p.get("clickid")])
+      .toEqual(["10001", first.lead_id, first.lead_id.replace(/-/g, ""), first.lead_id.replace(/-/g, "")]);
+    const stored = await h.db.prepare("SELECT first_name, email, home_phone FROM leads").first<Record<string, string>>();
+    for (const value of Object.values(stored!)) expect(url).not.toContain(encodeURIComponent(value).replace(/%20/g, "+"));
+    expect(await h.db.prepare("SELECT first_name, email, state FROM leads").first())
+      .toEqual({ first_name: stored!.first_name, email: stored!.email, state: "TX" });
+    expect(await h.db.prepare("SELECT COUNT(*) AS n FROM continuations WHERE applicant_json IS NOT NULL").first()).toEqual({ n: 0 });
+  });
+  it("a duplicate is screened on the CURRENT ZIP-derived state", async () => {
+    const first = await accepted(submit(payload(true)));
+    await h.db.prepare("INSERT INTO zip_lookup (zip, city, state) VALUES ('10001', 'New York', 'NY')").run();
+    const retry = submit(payload(true));
+    retry.lead.lead.zip = "10001";
+    retry.lead.lead.state = "TX";
+    const dup = await (await rpc("submitLead", retry)).json() as SubmitLeadAccepted;
+    expect(await (await resolve(dup.continuation)).json()).toEqual({ url: `/thank-you.html?ref=${first.reference}` });
+    expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state: "TX", status: "accepted" });
+  });
+  it("a real applicant who edits a field and resubmits the same lead_id is handed off with the edit", async () => {
+    await accepted(submit(payload(true)));
+    const edited = submit(payload(true));
+    edited.lead.lead.home_phone = "2145550188";
+    const dup = await (await rpc("submitLead", edited)).json() as SubmitLeadAccepted;
+    const { url } = await (await resolve(dup.continuation)).json() as { url: string };
+    expect(new URL(url).searchParams.get("home_phone")).toBe("2145550188");
+  });
+  it.each(["NY", "AR", "VT", "WV", "PR", "AE"])("ZIP-authoritative %s is recorded but never routed; a duplicate is screened on its own ZIP", async (state) => {
     await h.db.prepare("UPDATE zip_lookup SET state = ?1 WHERE zip = '75201'").bind(state).run();
     const input = submit(payload(true)); input.lead.lead.state = "TX";
     const first = await accepted(input);
     expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state, status: "rejected" });
-    // A duplicate cannot change the stored state or PII to bypass screening.
+    expect(await (await resolve(first.continuation)).json()).toEqual({ url: `/thank-you.html?ref=${first.reference}` });
+    const blockedRetry = await (await rpc("submitLead", input)).json() as SubmitLeadAccepted;
+    expect(await (await resolve(blockedRetry.continuation)).json()).toEqual({ url: `/thank-you.html?ref=${first.reference}` });
     input.lead.lead.zip = "60601";
-    const duplicate = await rpc("submitLead", input);
-    expect(duplicate.status).toBe(200);
-    for (const token of [first.continuation, (await duplicate.json() as SubmitLeadAccepted).continuation]) {
-      expect(await (await resolve(token)).json()).toEqual({ url: `/thank-you.html?ref=${first.reference}` });
-    }
+    const routedRetry = await (await rpc("submitLead", input)).json() as SubmitLeadAccepted;
+    const { url } = await (await resolve(routedRetry.continuation)).json() as { url: string };
+    expect(new URL(url).searchParams.get("state")).toBe("IL");
+    expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state, status: "rejected" });
   });
   it("unknown lite ZIP fails closed; an unknown full ZIP falls back to submitted state", async () => {
     const lite = submit(); lite.lead.lead.zip = "99999";

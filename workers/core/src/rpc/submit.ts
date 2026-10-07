@@ -1,10 +1,10 @@
-import { SUBMIT_CONTEXT_HEADERS, type SubmitLeadRequest } from "@anjuna/contracts";
+import { BUYER_FIELDS, SUBMIT_CONTEXT_HEADERS, type SubmitLeadRequest } from "@anjuna/contracts";
 import { sha256 } from "../auth.js";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
 import { consentText } from "./consent.js";
-import { continuation, isStateRoutable } from "./continuations.js";
-import { validateLeadPayload, type ValidationEnv } from "./validation.js";
+import { continuation, isStateRoutable, type Applicant } from "./continuations.js";
+import { validateLeadPayload, type ValidationEnv, type ValidLead } from "./validation.js";
 
 export function validationEnv(env: Env): ValidationEnv {
   return { FORM_SITE_ID: env.FORM_SITE_ID ?? "form-default", FORM_VERSION: env.FORM_VERSION ?? "2026-01",
@@ -14,14 +14,16 @@ const invalid = (message: string, status = 400) => json({ status: "invalid", mes
 const CLICK_KEYS = ["gclid", "gbraid", "wbraid", "msclkid", "fbclid", "external_click_id", "aid"] as const;
 const unsetOr = (value: string) => value === "" ? -1 : Number(value);
 
-async function duplicate(env: Env, leadId: string, brandId: string): Promise<Response | null> {
-  const existing = await env.LEADS.prepare("SELECT brand FROM leads WHERE lead_id = ?1").bind(leadId).first<{ brand: string }>();
+async function duplicate(env: Env, lead: ValidLead, brandId: string): Promise<Response | null> {
+  const existing = await env.LEADS.prepare("SELECT brand FROM leads WHERE lead_id = ?1").bind(lead.lead_id).first<{ brand: string }>();
   if (!existing) return null;
   // A client cannot reuse another brand's identifier to mint a continuation for its PII.
   if (existing.brand !== brandId) return invalid("Invalid identifiers");
-  const next = await continuation(env, leadId, brandId);
+  // V1 duplicate branch: hand off the current validated, ZIP-screened applicant, never the stored one.
+  const applicant = Object.fromEntries(BUYER_FIELDS.map((key) => [key, lead.fields[key]])) as Applicant;
+  const next = await continuation(env, lead.lead_id, brandId, applicant);
   await next.statement.run();
-  return json({ status: "duplicate", lead_id: leadId, reference: leadId.slice(-8), continuation: next.token });
+  return json({ status: "duplicate", lead_id: lead.lead_id, reference: lead.lead_id.slice(-8), continuation: next.token });
 }
 
 export async function submitLead(input: SubmitLeadRequest, request: Request, env: Env): Promise<Response> {
@@ -32,12 +34,12 @@ export async function submitLead(input: SubmitLeadRequest, request: Request, env
   try { consentBrand = decodeURIComponent(request.headers.get(SUBMIT_CONTEXT_HEADERS.consent_brand) ?? ""); }
   catch { return invalid("Invalid consent context"); }
   if (!consentBrand.trim() || consentBrand.length > 80 || /[\r\n]/.test(consentBrand)) return invalid("Invalid consent context");
-  const repeat = await duplicate(env, lead.lead_id, input.brand_id);
-  if (repeat) return repeat;
   const f = lead.fields;
   const state = await env.LEADS.prepare("SELECT state FROM zip_lookup WHERE zip = ?1 LIMIT 1")
     .bind(f.zip).first<{ state: string }>();
   if (state?.state) f.state = state.state.toUpperCase();
+  const repeat = await duplicate(env, lead, input.brand_id);
+  if (repeat) return repeat;
   const clickId = lead.lead_id.replace(/-/g, "");
   lead.tracking.click_id = clickId;
   lead.tracking.clickid = clickId;
@@ -100,7 +102,7 @@ export async function submitLead(input: SubmitLeadRequest, request: Request, env
     ]);
   } catch (error) {
     // Concurrent submissions of the same client id retain the V1 duplicate response.
-    const raced = await duplicate(env, lead.lead_id, input.brand_id);
+    const raced = await duplicate(env, lead, input.brand_id);
     if (raced) return raced;
     throw error;
   }

@@ -17,6 +17,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0006_account_credentials.sql",
   "0007_core_rpc.sql",
   "0008_lifecycle.sql",
+  "0009_continuation_applicant.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */

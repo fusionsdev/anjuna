@@ -153,6 +153,18 @@ describe("alerts cron", () => {
 });
 
 describe("scheduled dispatch", () => {
+  it("the mailing cron clears expired duplicate applicant snapshots", async () => {
+    await h.seedBrand();
+    await h.seedLead("lead-1");
+    await h.db.prepare(`INSERT INTO continuations (token_hash, lead_id, brand_id, expires_at, applicant_json)
+      VALUES ('expired', 'lead-1', 'brand-a', '2026-10-02T11:00:00.000Z', '{"first_name":"X"}'),
+             ('live', 'lead-1', 'brand-a', '2026-10-02T13:00:00.000Z', '{"first_name":"Y"}')`).run();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await handleScheduled({ cron: MAILING_CRON, scheduledTime: Date.parse("2026-10-02T12:00:00.000Z") }, env({}), {});
+    vi.restoreAllMocks();
+    expect((await h.db.prepare("SELECT token_hash, applicant_json FROM continuations ORDER BY token_hash").all()).results)
+      .toEqual([{ token_hash: "expired", applicant_json: null }, { token_hash: "live", applicant_json: '{"first_name":"Y"}' }]);
+  });
   it("routes each cron string to its job and ignores unknown ones", async () => {
     await h.seedBrand();
     await h.seedLead("lead-1");

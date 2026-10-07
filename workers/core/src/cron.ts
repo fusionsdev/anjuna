@@ -86,6 +86,12 @@ export async function runAlertsCron(env: Env, scheduledTime: number, deps: CronD
   return report;
 }
 
+/** B-01 retention: expired duplicate snapshots are cleared even if their token is never claimed. */
+export async function purgeExpiredApplicants(env: Env, scheduledTime: number): Promise<void> {
+  await env.LEADS.prepare("UPDATE continuations SET applicant_json = NULL WHERE applicant_json IS NOT NULL AND expires_at <= ?1")
+    .bind(new Date(scheduledTime).toISOString()).run();
+}
+
 export async function handleScheduled(
   controller: { cron: string; scheduledTime: number },
   env: Env,
@@ -93,6 +99,7 @@ export async function handleScheduled(
 ): Promise<void> {
   switch (controller.cron) {
     case MAILING_CRON:
+      await purgeExpiredApplicants(env, controller.scheduledTime);
       await runMailing(env, deps);
       return;
     case ALERTS_CRON:
