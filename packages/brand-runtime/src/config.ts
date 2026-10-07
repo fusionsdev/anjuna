@@ -13,7 +13,8 @@ export const BrandSettings = z.object({
   brand_id: BrandId,
   hostname: Hostname.refine((host) => !host.startsWith("www."), "Use the apex hostname"),
   brand: RuntimeConfig.shape.brand,
-  formRoute: FormRoute.refine(isBrandClean),
+  formRoute: FormRoute.refine(isBrandClean)
+    .refine((route) => route !== "/apply" && !route.startsWith("/apply/"), "Form route collides with the application page"),
   amount_buckets: AmountBuckets,
   flow_gate_mode: FlowGateMode.default("param"),
   paused: z.boolean().default(false),
@@ -30,7 +31,7 @@ export const BrandSettings = z.object({
     ctx.addIssue({ code: "custom", path: ["ab_config"], message: "Experiment identifiers must be brand clean" });
   }
   const paths = Object.values(settings.proxies).filter((path): path is string => path !== undefined);
-  const reserved = ["/go", "/api", "/_f", "/assets", "/_astro", ...LEGAL_PATHS, ...STATIC_FILES, settings.formRoute];
+  const reserved = ["/go", "/apply", "/api", "/_f", "/assets", "/_astro", ...LEGAL_PATHS, ...STATIC_FILES, settings.formRoute];
   const overlaps = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
   for (const path of paths) {
     if (path.endsWith("/") || path.includes("//") || !isBrandClean(path) || reserved.some((item) => overlaps(path, item))) {

@@ -4,6 +4,7 @@ import {
   type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
 } from "@anjuna/contracts";
 import { assignVariant, type Assignment } from "./assignment.js";
+import { APPLY_HTML } from "./apply.js";
 import { BrandSettings, LEGAL_PATHS, STATIC_FILES, STATIC_PREFIXES, type BrandConfigSource, type BrandWorkerConfig } from "./config.js";
 import { CoreError, withCoreTimeout, type AnalyticsKind, type CoreResult, type SubmitContext } from "./core-client.js";
 import { createSettingsCache } from "./settings-cache.js";
@@ -144,9 +145,10 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   const form = path === settings.formRoute || path === `${settings.formRoute}/`;
   const provider = path === `${settings.formRoute}/provider`;
   const complete = path === `${settings.formRoute}/complete`;
+  const apply = path === "/apply" || path === "/apply/";
   const staticAsset = STATIC_FILES.some((file) => path === file) || STATIC_PREFIXES.some((prefix) => path.startsWith(prefix) && path.length > prefix.length);
   const proxy = proxyRoute(path, settings);
-  const allowed = (read && (path === "/" || path === "/go" || legal || form || provider || complete || staticAsset || path === "/api/zip" || path === "/api/health")) ||
+  const allowed = (read && (path === "/" || path === "/go" || legal || form || provider || complete || apply || staticAsset || path === "/api/zip" || path === "/api/health")) ||
     (request.method === "POST" && (path === "/api/leads" || proxy));
   if (!allowed) return notFound();
   if (settings.paused && !staticAsset) {
@@ -180,6 +182,12 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
       if (!isBrandClean(JSON.stringify(result.data))) return json({ found: false }, 503);
       return json(result.data, result.status);
     } catch { return json({ found: false }, 503); }
+  }
+  if (apply) {
+    return new Response(APPLY_HTML, { status: 200, headers: {
+      "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
+      "referrer-policy": "no-referrer", "x-robots-tag": "noindex",
+    } });
   }
   if (complete) {
     const ref = url.searchParams.get("ref") ?? "";
