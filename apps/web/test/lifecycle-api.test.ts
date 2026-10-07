@@ -259,4 +259,26 @@ describe("truthful lifecycle BFF", () => {
     expect(res.status).toBe(502);
     expect((await env.FACTORY.prepare("SELECT action FROM audit_log WHERE action='upgrade.failed'").all()).results.length).toBeGreaterThan(0);
   });
+
+  it("returns 400 for a malformed percent-encoded brand id instead of throwing", async () => {
+    for (const suffix of ["checklist", "installs"]) {
+      const res = await call(`/api/brands/%E0%A4%A/${suffix}`, { cookie: employee });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid_brand_id" });
+    }
+    const post400 = await post(employee, "/api/brands/%E0%A4%A/checklist", { item: "drain_route" });
+    expect(post400.status).toBe(400);
+  });
+
+  it("decodes a percent-encoded brand id on GET installs and GET checklist", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "encoded-id.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const encoded = brand.brand_id.replaceAll("_", "%5F");
+    expect(encoded).not.toBe(brand.brand_id);
+    for (const suffix of ["installs", "checklist"]) {
+      const res = await call(`/api/brands/${encoded}/${suffix}`, { cookie: employee });
+      expect(res.status).toBe(200);
+      expect((await res.json() as { brand_id: string }).brand_id).toBe(brand.brand_id);
+    }
+  });
 });
