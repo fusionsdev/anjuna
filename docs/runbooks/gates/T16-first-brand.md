@@ -5,7 +5,7 @@ Done when (`docs/TASKS.md` T16): full end-to-end is green and the owner approval
 ## Preconditions
 
 - [ ] T10 live, T13 (G1), T14 (G2), T15 (G3) evidence files exist and say PASS. G4 evidence is in the README.
-- [ ] A **unique** template for this brand from a builder (owner decision: never reuse one template across brands), imported to the template MCP and sealed. A similarity check against the other brands has been done. NOT_VERIFIED that the similarity check tool exists in the repo.
+- [ ] A **unique** template for this brand from a builder (owner decision: never reuse one template across brands), registered as a template version the factory accepts (README question 2: no `check-template` gate). A similarity check against the other brands has been done. NOT_VERIFIED that the similarity check tool exists in the repo.
 - [ ] The two leaked maimax Cloudflare API tokens were rotated by the owner.
 - [ ] Production aid for this brand is configured (not the test aid `13119`). See README question 1.
 

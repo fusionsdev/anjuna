@@ -9,12 +9,12 @@ The code and the workflow tests are not on `main` yet. They are in PR #40 (workf
 - [ ] PR #43 is merged into #40 (done 2026-10-07) and #40 is merged into `main` by the owner.
 - [ ] Release tag `v*` pushed by the owner so `deploy.yml` ships core, factory and panel. Check the run is green.
 - [ ] `levellendings.com` is an active zone in the AdUplift account (`6cb8500c35210800451bd9a535482850`) with **no A or CNAME record on the apex or `www`**. Check in the Cloudflare dashboard (DNS).
-- [ ] A sealed template version exists (see README open question 2).
+- [ ] A template version the factory accepts exists (README question 2 is a soft risk, not a gate). If the install is refused because the version is not sealed, record it and stop that step.
 - [ ] You can sign in to `https://app.aduplift.ai` as Owner (Cloudflare Access).
 
 ## Steps
 
-1. **Create the draft.** Panel, Brands, new brand: Domain `levellendings.com`, Keyword default `Quick Loan` (any Title Case text), pick the sealed template.
+1. **Create the draft.** Panel, Brands, new brand: Domain `levellendings.com`, Keyword default `Quick Loan` (any Title Case text), pick the template version.
 2. **Install.** Open the brand, click Install. Watch the receipts (validate, rollback record, render, upload, deploy, attach domains, smoke, receipt).
 3. **Expect READY.** Lifecycle status READY and runtime sync `ready`. Record the install id and the time.
 4. **Smoke by hand (read-only).**
