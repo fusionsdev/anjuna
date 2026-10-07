@@ -248,7 +248,7 @@ describe("upgrade-all", () => {
     })).toThrow(/bundle/i);
   });
 
-  it("derives every upgrade lifecycle ID deterministically from its command identity", () => {
+  it("derives every upgrade lifecycle ID deterministically from its command identity", async () => {
     const input = {
       from_template_version_id: "template-v1",
       to_template_version_id: "template-v2",
@@ -257,19 +257,40 @@ describe("upgrade-all", () => {
       started_by: "owner-1",
       started_role: "owner" as const,
     };
-    expect(upgradeWorkflowId(input)).toBe(upgradeWorkflowId({ ...input }));
-    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
-      .toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"));
-    expect(upgradeRevisionId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
-      .toBe(upgradeRevisionId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"));
-    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
-      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-b"));
-    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a"))
-      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, "artifact-2", "brand-a"));
-    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-1", "owner", "brand-a"))
-      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-2", "owner", "brand-a"));
-    expect(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-1", "owner", "brand-a"))
-      .not.toBe(upgradeInstallId(input.from_template_version_id, input.to_template_version_id, input.form_artifact_id, "brand-a", "owner-1", "owner", "brand-b"));
+    const { from_template_version_id: from, to_template_version_id: to, form_artifact_id: artifact } = input;
+    expect(await upgradeWorkflowId(input)).toBe(await upgradeWorkflowId({ ...input }));
+    expect(await upgradeInstallId(from, to, artifact, "brand-a")).toBe(await upgradeInstallId(from, to, artifact, "brand-a"));
+    expect(await upgradeRevisionId(from, to, artifact, "brand-a")).toBe(await upgradeRevisionId(from, to, artifact, "brand-a"));
+    expect(await upgradeInstallId(from, to, artifact, "brand-a")).not.toBe(await upgradeInstallId(from, to, artifact, "brand-b"));
+    expect(await upgradeInstallId(from, to, artifact, "brand-a")).not.toBe(await upgradeInstallId(from, to, "artifact-2", "brand-a"));
+    expect(await upgradeInstallId(from, to, artifact, "brand-a", "owner-1", "owner", "brand-a"))
+      .not.toBe(await upgradeInstallId(from, to, artifact, "brand-a", "owner-2", "owner", "brand-a"));
+    expect(await upgradeInstallId(from, to, artifact, "brand-a", "owner-1", "owner", "brand-a"))
+      .not.toBe(await upgradeInstallId(from, to, artifact, "brand-a", "owner-1", "owner", "brand-b"));
+    // identity parts that merely shift a boundary must not collide
+    expect(await upgradeInstallId("a", "b-c", artifact, "x")).not.toBe(await upgradeInstallId("a-b", "c", artifact, "x"));
+  });
+
+  it("keeps upgrade workflow instance IDs within the Cloudflare 100-char limit for realistic identifiers", async () => {
+    const long = {
+      from_template_version_id: "tv_harbor-v1_" + "a".repeat(40),
+      to_template_version_id: "tv_harbor-v2_" + "b".repeat(40),
+      form_artifact_id: "form_" + "c".repeat(40),
+      canary_brand_id: "brand_" + "d".repeat(64),
+      started_by: "u".repeat(128),
+      started_role: "owner" as const,
+    };
+    const ids = [
+      await upgradeWorkflowId(long),
+      await upgradeInstallId(long.from_template_version_id, long.to_template_version_id, long.form_artifact_id, long.canary_brand_id, long.started_by, "owner", long.canary_brand_id),
+      await upgradeRevisionId(long.from_template_version_id, long.to_template_version_id, long.form_artifact_id, long.canary_brand_id, long.started_by, "owner", long.canary_brand_id),
+    ];
+    for (const id of ids) {
+      expect(id.length).toBeLessThanOrEqual(100);
+      expect(id).toMatch(/^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/);
+    }
+    // ids containing characters outside the allowed pattern must still yield a valid instance id
+    expect(await upgradeWorkflowId({ ...long, started_by: "user.name~with%odd chars" })).toMatch(/^[a-zA-Z0-9_][a-zA-Z0-9-_]*$/);
   });
 
   it("uses a distinct deterministic step name for every canary poll", () => {

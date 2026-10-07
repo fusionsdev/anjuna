@@ -308,6 +308,11 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const row = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,from_revision_id,to_revision_id,started_by,started_role,status FROM installs WHERE install_id = ?1").bind(m[1]).first<{ install_id: string; brand_id: string; kind: string; from_revision_id: string | null; to_revision_id: string | null; started_by: string; started_role: AdminRole; status: string }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     if (row.status !== "failed") return json(409, { error: "conflict", message: "Only failed installs can be retried" });
+    // A retry re-runs the original command, so it needs the role that command required (e.g. upgrade-all is owner-only).
+    const kindAction = row.kind === "upgrade" ? "upgradeAll" : row.kind === "rollback" ? "rollbackBrand" : "installBrand";
+    if (!authorizePanel(kindAction, ctx.actor_role).ok) return forbidden(ctx.actor_role);
+    const active = await activeLifecycleOperation(env.FACTORY, row.brand_id);
+    if (active) return json(409, { error: "conflict", message: `Brand already has an active ${active.kind} (${active.install_id})` });
     const terminal = await env.FACTORY.prepare("SELECT 1 AS found FROM install_receipts WHERE install_id=?1 AND status IN ('failed','ok') LIMIT 1").bind(row.install_id).first();
     let installId = row.install_id;
     if (terminal) {

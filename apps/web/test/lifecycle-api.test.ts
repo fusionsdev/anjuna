@@ -140,6 +140,22 @@ describe("truthful lifecycle BFF", () => {
     expect(attempts.results[1]!.install_id).not.toBe(attempts.results[0]!.install_id);
   });
 
+  it("requires the original command's role to retry an upgrade install and refuses a retry while another operation is active", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "upgrade-retry.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const now = new Date().toISOString();
+    const rev = `${brand.brand_id}_rev_1`;
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,to_revision_id,started_by,started_role,started_at) VALUES ('upg-failed',?1,'upgrade','failed',?2,'owner-1','owner',?3)").bind(brand.brand_id, rev, now).run();
+    const denied = await call("/api/installs/upg-failed/retry", { cookie: employee, method: "POST" });
+    expect(denied.status).toBe(403);
+    expect((await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id='upg-failed'").first<{ status: string }>())?.status).toBe("failed");
+    expect((await env.FACTORY.prepare("SELECT action FROM audit_log WHERE action='install.retry' AND entity_id='upg-failed'").all()).results).toHaveLength(0);
+
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,to_revision_id,started_by,started_at) VALUES ('other-active',?1,'install','running',?2,'employee',?3)").bind(brand.brand_id, rev, now).run();
+    const blocked = await call("/api/installs/upg-failed/retry", { cookie: owner, method: "POST" });
+    expect(blocked.status).toBe(409);
+  });
+
   it("acknowledges a successful Workflow dispatch only after sending the exact command", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "dispatch.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
