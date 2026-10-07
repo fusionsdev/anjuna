@@ -1,153 +1,204 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Env } from "../env.js";
+import { rejectQueuedInstall, setInstallStatus } from "../receipt.js";
 
 export interface UpgradeAllParams {
-  /** New sealed template version to deploy to every brand using the same template. */
-  template_version_id: string;
-  /** Form artifact to pair with the new template. */
+  from_template_version_id: string;
+  to_template_version_id: string;
   form_artifact_id: string;
-  /** Brand that receives the update first; if its smoke test passes, the rest follow. */
   canary_brand_id: string;
-  /** Auth user triggering the upgrade. */
   started_by: string;
+  started_role: "owner";
 }
 
-interface BrandRow {
+interface UpgradeTemplate { template_id: string; status: string; }
+interface UpgradeArtifact { present: boolean; payload_version: string | null; bundle_form_version: string | null; }
+
+// Workflow instance IDs allow at most 100 chars of [A-Za-z0-9_-]; raw brand/user ids overflow that, so hash the command identity.
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function stableUpgradeId(kind: string, ...parts: string[]): Promise<string> {
+  return `upgrade-${kind}-${await sha256Hex(JSON.stringify([kind, ...parts]))}`;
+}
+
+export function upgradeWorkflowId(params: UpgradeAllParams): Promise<string> {
+  return stableUpgradeId(
+    "workflow",
+    params.from_template_version_id,
+    params.to_template_version_id,
+    params.form_artifact_id,
+    params.canary_brand_id,
+    params.started_by,
+    params.started_role,
+  );
+}
+
+export function upgradeRevisionId(
+  fromTemplateVersionId: string,
+  toTemplateVersionId: string,
+  formArtifactId: string,
+  brandId: string,
+  startedBy = "",
+  startedRole = "owner",
+  canaryBrandId = "",
+): Promise<string> {
+  return stableUpgradeId("revision", fromTemplateVersionId, toTemplateVersionId, formArtifactId, canaryBrandId, startedBy, startedRole, brandId);
+}
+
+export function upgradeInstallId(
+  fromTemplateVersionId: string,
+  toTemplateVersionId: string,
+  formArtifactId: string,
+  brandId: string,
+  startedBy = "",
+  startedRole = "owner",
+  canaryBrandId = "",
+): Promise<string> {
+  return stableUpgradeId("install", fromTemplateVersionId, toTemplateVersionId, formArtifactId, canaryBrandId, startedBy, startedRole, brandId);
+}
+
+export interface UpgradeBrandCandidate {
   brand_id: string;
-  current_revision_id: string | null;
   status: string;
+  current_template_version_id: string | null;
 }
 
-interface RevisionRow {
-  revision_id: string;
-  revision: number;
-  config_json: string;
+export function validateUpgradeSelection(input: {
+  from_template_version_id: string;
+  to_template_version_id: string;
+  from_template: UpgradeTemplate;
+  to_template: UpgradeTemplate;
+  artifact: UpgradeArtifact;
+  canary_brand_id: string;
+}): void {
+  if (input.from_template_version_id === input.to_template_version_id) throw new Error("Upgrade source and target versions must be different");
+  if (input.to_template.status !== "sealed") throw new Error("Upgrade target template version is not sealed");
+  if (input.from_template.template_id !== input.to_template.template_id) throw new Error("Upgrade target must belong to the same template family");
+  if (!input.artifact.present) throw new Error("Form artifact is missing");
+  if (input.artifact.payload_version !== "2026-01") throw new Error("Form artifact payload metadata is not verified");
+  if (!input.artifact.bundle_form_version || !/^form@[A-Za-z0-9._-]+$/.test(input.artifact.bundle_form_version)) {
+    throw new Error("Registered form bundle version is invalid");
+  }
 }
 
-function newInstallId(): string {
-  return crypto.randomUUID();
+export function selectUpgradeBrands(candidates: UpgradeBrandCandidate[], fromTemplateVersionId: string, toTemplateVersionId: string, canaryBrandId: string): { canary: string; remaining: string[] } {
+  const eligible = candidates.filter((brand) => brand.status === "live" && brand.current_template_version_id === fromTemplateVersionId).map((brand) => brand.brand_id);
+  if (!eligible.includes(canaryBrandId)) throw new Error(`Canary brand ${canaryBrandId} is not an eligible live source brand`);
+  // Target-version brands are excluded by the source-version predicate above.
+  void toTemplateVersionId;
+  return { canary: canaryBrandId, remaining: eligible.filter((brandId) => brandId !== canaryBrandId) };
 }
 
-/**
- * Upgrade every live brand that uses template_version_id to a new revision.
- *
- * Flow:
- *   1. Collect all live brands on the current template version.
- *   2. Run canary install. Fail fast if canary smoke fails.
- *   3. Install the remaining brands (in parallel, bounded).
- */
+export function canaryGate(evidence: { install: string; core: string }): boolean {
+  return evidence.install === "ready" && evidence.core === "ready";
+}
+
+export function canarySleepStepName(iteration: number): string {
+  return `wait_canary_${iteration}`;
+}
+
 export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams> {
   async run(event: WorkflowEvent<UpgradeAllParams>, step: WorkflowStep): Promise<void> {
-    const { template_version_id, form_artifact_id, canary_brand_id, started_by } = event.payload;
+    const params = event.payload;
     const { FACTORY: db } = this.env;
     const now = new Date().toISOString();
 
-    // ── Collect target brands ──────────────────────────────────────────────
-    const { brand_ids } = await step.do("collect_brands", async () => {
-      const rows = await db
-        .prepare(
-          `SELECT b.brand_id FROM brands b
-           JOIN brand_revisions r ON b.current_revision_id = r.revision_id
-           WHERE r.template_version_id = ? AND b.status = 'live'`,
-        )
-        .bind(template_version_id)
-        .all<{ brand_id: string }>();
-      const ids = rows.results.map((r) => r.brand_id);
-      if (!ids.includes(canary_brand_id)) throw new Error(`Canary brand ${canary_brand_id} is not live on template ${template_version_id}`);
-      return { brand_ids: ids };
+    const { brand_ids } = await step.do("collect_upgrade", async () => {
+      const [fromTemplate, toTemplate, artifact] = await Promise.all([
+        db.prepare("SELECT template_id, status FROM template_versions WHERE template_version_id = ?").bind(params.from_template_version_id).first<UpgradeTemplate>(),
+        db.prepare("SELECT template_id, status FROM template_versions WHERE template_version_id = ?").bind(params.to_template_version_id).first<UpgradeTemplate>(),
+        db.prepare("SELECT r2_key, payload_version, bundle_form_version FROM form_artifacts WHERE form_artifact_id = ?").bind(params.form_artifact_id).first<{ r2_key: string | null; payload_version: string | null; bundle_form_version: string | null }>(),
+      ]);
+      if (!fromTemplate || !toTemplate) throw new Error("Upgrade template version not found");
+      validateUpgradeSelection({
+        from_template_version_id: params.from_template_version_id,
+        to_template_version_id: params.to_template_version_id,
+        from_template: fromTemplate,
+        to_template: toTemplate,
+        artifact: { present: Boolean(artifact?.r2_key), payload_version: artifact?.payload_version ?? null, bundle_form_version: artifact?.bundle_form_version ?? null },
+        canary_brand_id: params.canary_brand_id,
+      });
+      const rows = await db.prepare(
+        `SELECT b.brand_id, b.status, r.template_version_id AS current_template_version_id
+         FROM brands b JOIN brand_revisions r ON b.current_revision_id = r.revision_id
+         WHERE b.status = 'live' AND r.template_version_id IN (?, ?)`,
+      ).bind(params.from_template_version_id, params.to_template_version_id).all<UpgradeBrandCandidate>();
+      const selection = selectUpgradeBrands(rows.results, params.from_template_version_id, params.to_template_version_id, params.canary_brand_id);
+      return { brand_ids: [selection.canary, ...selection.remaining] };
     });
 
-    // ── Create new revisions for every target brand ────────────────────────
     const { revision_map } = await step.do("create_revisions", async () => {
       const entries: Array<{ brand_id: string; revision_id: string }> = [];
-      await Promise.all(
-        brand_ids.map(async (brand_id) => {
-          const current = await db
-            .prepare("SELECT revision FROM brand_revisions WHERE brand_id = ? ORDER BY revision DESC LIMIT 1")
-            .bind(brand_id)
-            .first<{ revision: number }>();
-          const nextRev = (current?.revision ?? 0) + 1;
-          const currentRevRow = await db
-            .prepare("SELECT config_json FROM brand_revisions WHERE brand_id = ? ORDER BY revision DESC LIMIT 1")
-            .bind(brand_id)
-            .first<RevisionRow>();
-
-          const revisionId = crypto.randomUUID();
-          await db
-            .prepare(
-              `INSERT INTO brand_revisions (revision_id, brand_id, revision, template_version_id, form_artifact_id, config_json, created_by, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .bind(revisionId, brand_id, nextRev, template_version_id, form_artifact_id, currentRevRow?.config_json ?? "{}", started_by, now)
-            .run();
-          entries.push({ brand_id, revision_id: revisionId });
-        }),
-      );
-      return { revision_map: Object.fromEntries(entries.map(({ brand_id, revision_id }) => [brand_id, revision_id])) };
-    });
-
-    // ── Canary install ─────────────────────────────────────────────────────
-    await step.do("canary_install", async () => {
-      const install_id = newInstallId();
-      const revision_id = revision_map[canary_brand_id];
-      if (!revision_id) throw new Error(`No revision for canary brand ${canary_brand_id}`);
-
-      await db
-        .prepare(
-          `INSERT INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_at)
-           SELECT ?, ?, 'upgrade', current_revision_id, ?, 1, 'queued', ?, ?
-           FROM brands WHERE brand_id = ?`,
-        )
-        .bind(install_id, canary_brand_id, revision_id, started_by, now, canary_brand_id)
-        .run();
-
-      const instance = await this.env.INSTALL_WORKFLOW.create({
-        id: install_id,
-        params: { install_id, brand_id: canary_brand_id, revision_id },
-      });
-
-      // Wait for canary to finish (poll up to 10 minutes).
-      for (let i = 0; i < 60; i++) {
-        await step.sleep("wait_canary", "10 seconds");
-        const status = await instance.status();
-        if (status.status === "complete") break;
-        if (status.status === "errored") throw new Error(`Canary install failed: ${status.error ?? "unknown"}`);
+      for (const brand_id of brand_ids) {
+        const current = await db.prepare("SELECT revision, config_json FROM brand_revisions WHERE brand_id = ? ORDER BY revision DESC LIMIT 1").bind(brand_id).first<{ revision: number; config_json: string }>();
+        if (!current) throw new Error(`Current revision not found for ${brand_id}`);
+        const revision_id = await upgradeRevisionId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id, params.started_by, params.started_role, params.canary_brand_id);
+        await db.prepare(
+          `INSERT OR IGNORE INTO brand_revisions (revision_id, brand_id, revision, template_version_id, form_artifact_id, config_json, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(revision_id, brand_id, current.revision + 1, params.to_template_version_id, params.form_artifact_id, current.config_json, params.started_by, now).run();
+        entries.push({ brand_id, revision_id });
       }
-
-      const row = await db
-        .prepare("SELECT status FROM installs WHERE install_id = ?")
-        .bind(install_id)
-        .first<{ status: string }>();
-      if (row?.status !== "ready") throw new Error(`Canary install did not reach READY (status=${row?.status})`);
-
-      return { canary_install_id: install_id };
+      return { revision_map: Object.fromEntries(entries.map((entry) => [entry.brand_id, entry.revision_id])) };
     });
 
-    // ── Bulk upgrade remaining brands ──────────────────────────────────────
-    const remaining = brand_ids.filter((id) => id !== canary_brand_id);
+    const canaryInstallId = await upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, params.canary_brand_id, params.started_by, params.started_role, params.canary_brand_id);
+    await step.do("canary_install", async () => {
+      const revision_id = revision_map[params.canary_brand_id];
+      if (!revision_id) throw new Error("Canary revision was not created");
+      await db.prepare(
+         `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
+         SELECT ?, ?, 'upgrade', current_revision_id, ?, 1, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
+      ).bind(canaryInstallId, params.canary_brand_id, revision_id, params.started_by, params.started_role, now, params.canary_brand_id).run();
+      const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(canaryInstallId).first<{ status: string }>();
+      if (existing?.status !== "queued") return;
+      let claimed = false;
+      try {
+        await setInstallStatus(db, canaryInstallId, "running", undefined, params.canary_brand_id);
+        claimed = true;
+        await this.env.INSTALL_WORKFLOW.create({ id: canaryInstallId, params: { install_id: canaryInstallId, brand_id: params.canary_brand_id, revision_id } });
+      } catch (error) {
+        await rejectQueuedInstall(db, canaryInstallId, params.canary_brand_id, String(error), claimed);
+        throw error;
+      }
+    });
+    let ready = false;
+    for (let i = 0; i < 60; i++) {
+      await step.sleep(canarySleepStepName(i), "10 seconds");
+      const evidence = await step.do(`canary_status_${i}`, async () => {
+        const status = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(canaryInstallId).first<{ status: string }>();
+        const core = await db.prepare("SELECT status FROM install_receipts WHERE install_id = ? AND step = 'sync_runtime'").bind(canaryInstallId).first<{ status: string }>();
+        return { install: status?.status ?? "missing", core: core?.status === "ok" ? "ready" : core?.status ?? "pending" };
+      });
+      if (canaryGate(evidence)) { ready = true; break; }
+      if (evidence.install === "failed" || evidence.install === "rolled_back") throw new Error(`Canary install failed (status=${evidence.install})`);
+    }
+    if (!ready) throw new Error("Canary install did not reach READY");
 
     await step.do("bulk_installs", async () => {
-      await Promise.all(
-        remaining.map(async (brand_id) => {
-          const revision_id = revision_map[brand_id];
-          if (!revision_id) return;
-          const install_id = newInstallId();
-
-          await db
-            .prepare(
-              `INSERT INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_at)
-               SELECT ?, ?, 'upgrade', current_revision_id, ?, 0, 'queued', ?, ?
-               FROM brands WHERE brand_id = ?`,
-            )
-            .bind(install_id, brand_id, revision_id, started_by, now, brand_id)
-            .run();
-
-          await this.env.INSTALL_WORKFLOW.create({
-            id: install_id,
-            params: { install_id, brand_id, revision_id },
-          });
-        }),
-      );
+      const remaining = brand_ids.filter((brand_id) => brand_id !== params.canary_brand_id);
+      for (const brand_id of remaining) {
+        const revision_id = revision_map[brand_id];
+        if (!revision_id) continue;
+        const install_id = await upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id, params.started_by, params.started_role, params.canary_brand_id);
+        await db.prepare(
+          `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
+           SELECT ?, ?, 'upgrade', current_revision_id, ?, 0, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
+        ).bind(install_id, brand_id, revision_id, params.started_by, params.started_role, new Date().toISOString(), brand_id).run();
+        const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
+        if (existing?.status !== "queued") continue;
+        let claimed = false;
+        try {
+          await setInstallStatus(db, install_id, "running", undefined, brand_id);
+          claimed = true;
+          await this.env.INSTALL_WORKFLOW.create({ id: install_id, params: { install_id, brand_id, revision_id } });
+        } catch (error) {
+          await rejectQueuedInstall(db, install_id, brand_id, String(error), claimed);
+        }
+      }
       return { started: remaining.length };
     });
   }

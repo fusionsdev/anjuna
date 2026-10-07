@@ -264,6 +264,10 @@ describe("Anjuna additions", () => {
         amount_buckets: "[100,200,300,500,1000]",
         ab_config_json: '{"experiment_id":"exp-1","variants":[{"id":"A","weight":50},{"id":"B","weight":50}]}',
         keyword_default: "Cash Loans",
+        form_route: "/request",
+        form_version: "form@8ba11d3",
+        applied_revision_id: null,
+        last_lifecycle_install_id: null,
         created_at: NOW,
         updated_at: NOW,
         ...overrides,
@@ -285,6 +289,14 @@ describe("Anjuna additions", () => {
 
     it("accepts signed_cookie gate mode", async () => {
       await insert({ brand_id: "brand-b", flow_gate_mode: "signed_cookie", paused: 1 });
+    });
+
+    it("round-trips lifecycle revision and bundle metadata", async () => {
+      await insert({ brand_id: "brand-lifecycle", applied_revision_id: "rev-1", last_lifecycle_install_id: "install-1" });
+      const row = await env.DB
+        .prepare("SELECT form_version, applied_revision_id, last_lifecycle_install_id FROM brand_runtime WHERE brand_id = 'brand-lifecycle'")
+        .first();
+      expect(row).toEqual({ form_version: "form@8ba11d3", applied_revision_id: "rev-1", last_lifecycle_install_id: "install-1" });
     });
 
     it.each([

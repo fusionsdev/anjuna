@@ -23,11 +23,12 @@ import {
 import { AUTH_ROLES } from "@anjuna/auth-db";
 import { z } from "zod";
 import { verifyAccess } from "./access.js";
-import { listPanelAudit, writePanelAudit, writeFactoryAudit } from "./audit.js";
+import { listLifecycleAudit, listPanelAudit, writePanelAudit, writeFactoryAudit } from "./audit.js";
 import { createAuth, type Auth } from "./auth.js";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
 import { authorizePanel } from "./panel-roles.js";
+import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -62,17 +63,6 @@ const UserCreate = z.strictObject({
   role: z.enum(AUTH_ROLES),
 });
 const UserSetRole = z.strictObject({ role: z.enum(AUTH_ROLES) });
-
-const BrandCreate = z.strictObject({
-  name: z.string().min(1).max(128),
-  domain: z
-    .string()
-    .min(1)
-    .max(253)
-    .regex(/^[a-z0-9]([a-z0-9-]*\.)+[a-z]{2,}$/, "Must be a valid lowercase hostname"),
-  keyword_default: z.string().min(1).max(100),
-  account: z.string().min(1).max(64).optional(),
-});
 
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
   const access = await verifyAccess(request, env);
@@ -111,6 +101,9 @@ async function route(
   const rid = ctx.request_id;
   let m: RegExpMatchArray | null;
 
+  const lifecycle = await handleLifecycleRoute(request, env, url, path, ctx);
+  if (lifecycle) return lifecycle;
+
   if (path === "/api/me" && method === "GET") {
     return json(200, { user: { id: ctx.actor_id, email, role: ctx.actor_role } });
   }
@@ -123,30 +116,13 @@ async function route(
   }
 
   if (path === "/api/brands" && method === "POST") {
-    const g = authorizePanel("createBrand", ctx.actor_role);
-    if (!g.ok) return forbidden(g.error, rid);
-    const body = BrandCreate.safeParse(await readJson(request));
-    if (!body.success) return invalid(body.error, rid);
-    const brandId = `brand_${crypto.randomUUID().slice(0, 8)}`;
-    const now = new Date().toISOString();
-    await env.FACTORY.prepare(
-      "INSERT INTO brands (brand_id, name, account, domain, keyword_default, created_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-    )
-      .bind(brandId, body.data.name, body.data.account ?? "default", body.data.domain, body.data.keyword_default, ctx.actor_id, now)
-      .run();
-    await writeFactoryAudit(env.FACTORY, {
-      actor_id: ctx.actor_id,
-      actor_role: ctx.actor_role,
-      action: "brand.create",
-      entity_type: "brand",
-      entity_id: brandId,
-      after: { name: body.data.name, domain: body.data.domain, keyword_default: body.data.keyword_default },
-    });
-    return json(201, { brand: { brand_id: brandId, name: body.data.name, domain: body.data.domain, keyword_default: body.data.keyword_default, status: "draft" } });
+    return json(410, { error: "legacy_route_retired", message: "Use POST /api/brands/drafts" });
   }
 
   if ((m = path.match(/^\/api\/brands\/([^/]+)(?:\/(pause|resume|rollback|install|installs))?$/))) {
-    const id = BrandId.safeParse(decodeURIComponent(m[1]!));
+    const rawBrand = decodePathSegment(m[1]!);
+    if (rawBrand === null) return notFound("brand", rid);
+    const id = BrandId.safeParse(rawBrand);
     const action = m[2];
     if (!id.success) return notFound("brand", rid);
 
@@ -262,7 +238,9 @@ async function route(
     // PII: owner only (plan: "View individual leads with PII").
     const g = authorize("getLead", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    const id = LeadId.safeParse(decodeURIComponent(m[1]!));
+    const rawLead = decodePathSegment(m[1]!);
+    if (rawLead === null) return notFound("lead", rid);
+    const id = LeadId.safeParse(rawLead);
     if (!id.success) return notFound("lead", rid);
     return fromCore(await callCore(env, ctx, { endpoint: "getLead", params: { lead_id: id.data } }));
   }
@@ -285,10 +263,11 @@ async function route(
     const coreList = AuditListResponse.parse(core.body);
     const actorId = ownOnly ? ctx.actor_id : q.data.actor_id;
     const skipLocal = (q.data.target_type && q.data.target_type !== "user") || q.data.cursor !== undefined;
-    const local = skipLocal ? [] : await listPanelAudit(env.FACTORY, { actorId, limit });
+    const local = skipLocal ? [] : [...await listPanelAudit(env.FACTORY, { actorId, limit }), ...await listLifecycleAudit(env.FACTORY, { actorId, limit })];
     // Core and the panel share the audit_log table in production: show each row once.
     const isPanelRow = (e: AuditEntry) => e.action.startsWith("auth.") || e.action.startsWith("user.");
-    const entries = [...coreList.entries.filter((e) => !isPanelRow(e)), ...local]
+    const merged = [...coreList.entries.filter((e) => !isPanelRow(e)), ...local];
+    const entries = [...new Map(merged.map((entry) => [entry.id, entry])).values()]
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : b.id - a.id))
       .slice(0, limit);
     return json(200, { entries, next_cursor: coreList.next_cursor });
@@ -329,7 +308,8 @@ async function route(
   if ((m = path.match(/^\/api\/users\/([^/]+)$/)) && method === "PATCH") {
     const g = authorizePanel("setUserRole", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    const userId = decodeURIComponent(m[1]!);
+    const userId = decodePathSegment(m[1]!);
+    if (userId === null) return json(404, { error: "not_found", resource: "user", request_id: rid });
     const body = UserSetRole.safeParse(await readJson(request));
     if (!body.success) return invalid(body.error, rid);
     if (userId === ctx.actor_id) {

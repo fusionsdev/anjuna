@@ -1,7 +1,8 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { getReceipt, saveReceipt, withReceipt } from "../src/receipt";
+import worker from "../src/index";
+import { getReceipt, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../src/receipt";
 
 beforeAll(async () => {
   await applyD1Migrations(env.FACTORY, env.MIGRATIONS);
@@ -90,5 +91,134 @@ describe("withReceipt idempotency", () => {
       withReceipt(env.FACTORY, id, "validate", async () => { called = true; return {}; }),
     ).rejects.toThrow();
     expect(called).toBe(false);
+  });
+});
+
+describe("lifecycle lock claim", () => {
+  it("reports a same-ID dispatch as resume without releasing the brand lock", async () => {
+    const id = `i-${uniq()}`;
+    const brand = `brand-${id}`;
+    await seedInstall(id, brand);
+    await expect(setInstallStatus(env.FACTORY, id, "running", undefined, brand)).resolves.toBe("claimed");
+    await expect(setInstallStatus(env.FACTORY, id, "running", undefined, brand)).resolves.toBe("resumed");
+    const row = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?").bind(brand).first<{ status: string }>();
+    expect(row?.status).toBe("installing");
+  });
+
+  it("lets only the linked compensation restore under the original lock and finalizes both installs", async () => {
+    const original = `i-${uniq()}`;
+    const compensation = `compensate-${original}`;
+    const brand = `brand-${original}`;
+    await seedInstall(original, brand);
+    await seedInstall(compensation, brand);
+
+    await expect(setInstallStatus(env.FACTORY, original, "running", undefined, brand)).resolves.toBe("claimed");
+    await expect(setInstallStatus(env.FACTORY, `rollback-${original}`, "running", undefined, brand, {
+      compensationForInstallId: original,
+    })).rejects.toThrow(/lifecycle mutation in progress|not authorized/i);
+
+    await expect(setInstallStatus(env.FACTORY, compensation, "running", undefined, brand, {
+      compensationForInstallId: original,
+    })).resolves.toBe("claimed");
+    await expect(setInstallStatus(env.FACTORY, compensation, "rolled_back", undefined, brand)).resolves.toBe("updated");
+    await expect(setInstallStatus(env.FACTORY, original, "rolled_back", undefined, brand)).resolves.toBe("updated");
+
+    const rows = await env.FACTORY.prepare(
+      "SELECT install_id, status FROM installs WHERE install_id IN (?, ?) ORDER BY install_id",
+    ).bind(original, compensation).all<{ install_id: string; status: string }>();
+    expect(rows.results).toEqual([
+      { install_id: compensation, status: "rolled_back" },
+      { install_id: original, status: "rolled_back" },
+    ]);
+    const brandRow = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?").bind(brand).first<{ status: string }>();
+    expect(brandRow?.status).toBe("live");
+  });
+
+  it("preserves the original brand lock when linked compensation fails", async () => {
+    const original = `i-${uniq()}`;
+    const compensation = `compensate-${original}`;
+    const brand = `brand-${original}`;
+    await seedInstall(original, brand);
+    await seedInstall(compensation, brand);
+
+    await setInstallStatus(env.FACTORY, original, "running", undefined, brand);
+    await setInstallStatus(env.FACTORY, compensation, "running", undefined, brand, {
+      compensationForInstallId: original,
+    });
+    await setInstallStatus(env.FACTORY, compensation, "failed", "restore failed", brand, {
+      retainBrandLock: shouldRetainBrandLockOnFailure(false, original),
+    });
+
+    const brandRow = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?").bind(brand).first<{ status: string }>();
+    expect(brandRow?.status).toBe("installing");
+    const compensationRow = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(compensation).first<{ status: string }>();
+    expect(compensationRow?.status).toBe("failed");
+  });
+
+  it("admits the exact queued compensation after the original fails while retaining the brand lock", async () => {
+    const original = `i-${uniq()}`;
+    const compensation = `compensate-${original}`;
+    const brand = `brand-${original}`;
+    await seedInstall(original, brand);
+    await seedInstall(compensation, brand);
+    await env.FACTORY.prepare("UPDATE installs SET kind = 'rollback' WHERE install_id = ?").bind(compensation).run();
+
+    await setInstallStatus(env.FACTORY, original, "running", undefined, brand);
+    await setInstallStatus(env.FACTORY, original, "failed", "deploy failed", brand, {
+      retainBrandLock: true,
+    });
+
+    const originalRow = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(original).first<{ status: string }>();
+    const brandRow = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?")
+      .bind(brand).first<{ status: string }>();
+    const queuedCompensation = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(compensation).first<{ status: string }>();
+    expect(originalRow?.status).toBe("failed");
+    expect(brandRow?.status).toBe("installing");
+    expect(queuedCompensation?.status).toBe("queued");
+
+    await expect(setInstallStatus(env.FACTORY, compensation, "running", undefined, brand, {
+      compensationForInstallId: original,
+    })).resolves.toBe("claimed");
+
+    const runningCompensation = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(compensation).first<{ status: string }>();
+    expect(runningCompensation?.status).toBe("running");
+    const retainedBrand = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?")
+      .bind(brand).first<{ status: string }>();
+    expect(retainedBrand?.status).toBe("installing");
+  });
+
+  it("rejects ordinary rollback dispatch of a queued compensation without its exact original relationship", async () => {
+    const original = `i-${uniq()}`;
+    const compensation = `compensate-${original}`;
+    const brand = `brand-${original}`;
+    await seedInstall(original, brand);
+    await seedInstall(compensation, brand);
+    await env.FACTORY.prepare("UPDATE installs SET kind = 'rollback' WHERE install_id = ?").bind(compensation).run();
+    await setInstallStatus(env.FACTORY, original, "running", undefined, brand);
+    await setInstallStatus(env.FACTORY, original, "failed", "deploy failed", brand, {
+      retainBrandLock: true,
+    });
+
+    const response = await worker.fetch(
+      new Request("https://factory.test/rollback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ install_id: compensation, brand_id: brand, to_revision_id: null }),
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: "workflow_dispatch_failed" });
+    const rejectedCompensation = await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id = ?")
+      .bind(compensation).first<{ status: string }>();
+    expect(rejectedCompensation?.status).toBe("failed");
+    const retainedBrand = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?")
+      .bind(brand).first<{ status: string }>();
+    expect(retainedBrand?.status).toBe("installing");
   });
 });

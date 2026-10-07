@@ -23,6 +23,11 @@ beforeEach(async () => {
   owner = await sessions.owner();
   employee = await sessions.employee();
   employee2 = await sessions.employee2();
+  await env.FACTORY.batch([
+    env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-1','abcdef1','forms/fa-1','manifest','2026-01','form@abcdef1','2026-10-01T00:00:00Z')"),
+  ]);
 });
 
 const patch = (cookie: string, body: unknown) => call("/api/brands/brand-a", { cookie, method: "PATCH", body });
@@ -138,6 +143,22 @@ describe("employee is denied what the role table withholds (403 forbidden_role)"
 });
 
 describe("owner can do all of it", () => {
+  it("returns a controlled 404, never 500, for malformed percent-encoding on core-backed id routes", async () => {
+    const bad = "%E0%A4%A";
+    const cases: Array<[string, Parameters<typeof call>[1]]> = [
+      [`/api/brands/${bad}`, { cookie: owner }],
+      [`/api/brands/${bad}`, { cookie: owner, method: "PATCH", body: { keyword_default: "x" } }],
+      [`/api/brands/${bad}/pause`, { cookie: owner, method: "POST", body: {} }],
+      [`/api/leads/${bad}`, { cookie: owner }],
+      [`/api/users/${bad}`, { cookie: owner, method: "PATCH", body: { role: "owner" } }],
+    ];
+    for (const [path, init] of cases) {
+      const res = await call(path, init);
+      expect(res.status, path).toBe(404);
+      expect(await res.json()).toMatchObject({ error: "not_found" });
+    }
+  });
+
   it("changes A/B weights, buckets, flow gate and money-path settings", async () => {
     const res = await patch(owner, {
       ab_config: { experiment_id: "exp-2026-10", variants: [{ id: "a", weight: 70 }, { id: "b", weight: 30 }] },
@@ -305,27 +326,18 @@ describe("audit", () => {
 describe("factory brands: create / install / upgrade", () => {
   let _seq = 0;
   async function createBrand(cookie: string, overrides: Record<string, unknown> = {}): Promise<{ brand_id: string }> {
-    const res = await post(cookie, "/api/brands", {
-      name: "Test Brand",
-      domain: `t${++_seq}.example.com`,
-      keyword_default: "quick loan",
-      ...overrides,
-    });
+    const res = await post(cookie, "/api/brands/drafts", { domain: `t${++_seq}.example.com`, keyword_default: "quick loan", template_version_id: "tv-1", ...overrides });
     if (res.status !== 201) throw new Error(`createBrand failed: ${res.status} ${await res.text()}`);
     const { brand } = (await res.json()) as { brand: { brand_id: string } };
     return brand;
   }
 
-  it("employee creates a brand and install is queued", async () => {
+  it("records a failed install when the factory binding is unavailable", async () => {
     const brand = await createBrand(employee);
     expect(brand.brand_id).toMatch(/^brand_/);
 
     const ins = await post(employee, `/api/brands/${brand.brand_id}/install`);
-    expect(ins.status).toBe(201);
-    const insBody = (await ins.json()) as { install_id: string; status: string; kind: string };
-    expect(insBody.install_id).toMatch(/^ins_/);
-    expect(insBody.status).toBe("queued");
-    expect(insBody.kind).toBe("install");
+    expect(ins.status).toBe(502);
   });
 
   it("employee lists installs for the brand", async () => {
@@ -346,19 +358,22 @@ describe("factory brands: create / install / upgrade", () => {
 
   it("POST /api/brands rejects invalid domain", async () => {
     const bad = await post(employee, "/api/brands", { name: "Bad", domain: "NOT_A_DOMAIN", keyword_default: "x" });
-    expect(bad.status).toBe(422);
+    expect(bad.status).toBe(410);
+  });
+
+  it("retires the legacy brand creation mutation", async () => {
+    const response = await post(employee, "/api/brands", { name: "Legacy", domain: "legacy.example", keyword_default: "x" });
+    expect(response.status).toBe(410);
   });
 
   it("employee cannot upgrade-all (403)", async () => {
     await expectForbidden(await post(employee, "/api/upgrade-all"));
   });
 
-  it("owner can upgrade-all; returns queued count", async () => {
+  it("owner upgrade-all requires the immutable source and target command", async () => {
     // Brands created are 'draft', upgrade-all targets live/paused — count = 0 here.
     const res = await post(owner, "/api/upgrade-all");
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { queued: number };
-    expect(typeof body.queued).toBe("number");
+    expect(res.status).toBe(422);
   });
 
   it("install and rollback write audit rows", async () => {

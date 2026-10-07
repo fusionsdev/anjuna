@@ -11,10 +11,19 @@ declare global {
       ROLLBACK_WORKFLOW: Workflow;
       /** Workflow binding — upgrade-all (same-script). */
       UPGRADE_WORKFLOW: Workflow;
+      CORE_LIFECYCLE: Fetcher;
       /** Target Cloudflare account for Workers Upload API calls. */
       CF_ACCOUNT_ID: string;
       /** Scoped secret: Workers Scripts:Edit, Workers Domains:Edit, DNS:Read, Zones:Read. */
       CF_API_TOKEN: string;
+      CORE_TOKEN: string;
+      CORE_ACCOUNT: string;
+      CORE_DOMAIN: string;
+      CORE_SERVICE_NAME: string;
+      DEFAULT_FORM_ROUTE: string;
+      DEFAULT_AMOUNT_BUCKETS: string;
+      LEADSGATE_AID: string;
+      LEADSGATE_PREPOP_BASE: string;
     }
   }
 }

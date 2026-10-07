@@ -6,7 +6,7 @@ import { AuditEntry, type AdminRole, type AuditEntry as AuditEntryT } from "@anj
 
 export const PANEL_AUDIT_PREFIXES = ["auth.", "user."] as const;
 /** Factory actions that originate in the panel (brand lifecycle, install start). */
-const FACTORY_AUDIT_PREFIXES = ["brand.create", "install.start"] as const;
+const FACTORY_AUDIT_PREFIXES = ["brand.create", "install.start", "install.failed", "upgrade", "form_artifact", "checklist"] as const;
 const isFactoryAudit = (action: string): boolean => FACTORY_AUDIT_PREFIXES.some((p) => action === p || action.startsWith(p + "."));
 
 export const isPanelAudit = (action: string): boolean => PANEL_AUDIT_PREFIXES.some((p) => action.startsWith(p));
@@ -98,4 +98,15 @@ export async function listPanelAudit(db: D1Database, opts: { actorId?: string; l
       at: r.created_at,
     }),
   );
+}
+
+/** Lifecycle rows are stored beside panel audit rows, but are separately scoped so an employee
+ * sees only their own lifecycle actions while an owner sees the full factory history. */
+export async function listLifecycleAudit(db: D1Database, opts: { actorId?: string; limit: number }): Promise<AuditEntryT[]> {
+  const where = ["action NOT LIKE 'auth.%'", "action NOT LIKE 'user.%'"];
+  const binds: unknown[] = [];
+  if (opts.actorId) { binds.push(opts.actorId); where.push(`actor_id = ?${binds.length}`); }
+  binds.push(opts.limit);
+  const { results } = await db.prepare(`SELECT * FROM audit_log WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?${binds.length}`).bind(...binds).all<Row>();
+  return results.map((r) => AuditEntry.parse({ id: r.id, actor_id: r.actor_id, actor_role: r.actor_role, action: r.action, target: { type: r.entity_type, id: r.entity_id }, old: r.before_json ? JSON.parse(r.before_json) : null, new: r.after_json ? JSON.parse(r.after_json) : null, at: r.created_at }));
 }

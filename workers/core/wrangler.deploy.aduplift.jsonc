@@ -34,5 +34,8 @@
       "database_id": "2eb875cb-ae24-4d06-bf15-8df306046980",
       "migrations_dir": "../../packages/factory-db/migrations"
     }
-  ]
+  ],
+  "vars": {
+    "LIFECYCLE_ACCOUNT": "aduplift"
+  }
 }

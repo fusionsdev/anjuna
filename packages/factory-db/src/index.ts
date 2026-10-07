@@ -4,7 +4,12 @@
  * exports the migration list and the enumerations the CHECK constraints enforce.
  */
 
-export const FACTORY_DB_MIGRATIONS = ["0001_factory.sql", "0002_builder_keys.sql", "0003_template_fingerprints.sql"] as const;
+export const FACTORY_DB_MIGRATIONS = [
+  "0001_factory.sql",
+  "0002_builder_keys.sql",
+  "0003_template_fingerprints.sql",
+  "0004_lifecycle.sql",
+] as const;
 
 export const TEMPLATE_FRAMEWORKS = ["astro", "next_export", "react_spa"] as const;
 export type TemplateFramework = (typeof TEMPLATE_FRAMEWORKS)[number];
@@ -36,6 +41,8 @@ export const INSTALL_STEPS = [
   "smoke",
   "receipt",
   "rollback",
+  "provision_runtime",
+  "sync_runtime",
 ] as const;
 export type InstallStep = (typeof INSTALL_STEPS)[number];
 
@@ -44,3 +51,7 @@ export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 
 export const AUDIT_ACTOR_ROLES = ["owner", "employee", "system"] as const;
 export type AuditActorRole = (typeof AUDIT_ACTOR_ROLES)[number];
+
+/** Checklist item names shared with the lifecycle wire contract. */
+export const CHECKLIST_ITEMS = ["drain_route", "leadsgate_postbacks", "test_sold", "final_url"] as const;
+export type ChecklistItem = (typeof CHECKLIST_ITEMS)[number];

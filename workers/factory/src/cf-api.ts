@@ -104,15 +104,27 @@ export async function uploadScript(
   metadata: {
     main_module: string;
     bindings: Array<{ type: string; name: string; [key: string]: unknown }>;
-    assets?: { jwt: string; config?: Record<string, unknown> };
+    assets?: {
+      jwt: string;
+      config: { html_handling: "none"; run_worker_first: true | string[]; not_found_handling?: "none" | "404-page" };
+    };
     compatibility_date: string;
     compatibility_flags?: string[];
     keep_bindings?: string[];
+    brand_id?: string;
+    core_token?: string;
   },
   fetcher?: CfFetch,
 ): Promise<ScriptUploadResult> {
+  const bindings = [
+    ...metadata.bindings.filter((binding) => binding.name !== "CORE_TOKEN"),
+    ...(metadata.core_token ? [{ type: "secret_text", name: "CORE_TOKEN", text: metadata.core_token }] : []),
+  ];
+  const uploadMetadata = { ...metadata, bindings };
+  delete uploadMetadata.brand_id;
+  delete uploadMetadata.core_token;
   const form = new FormData();
-  form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
+  form.append("metadata", new Blob([JSON.stringify(uploadMetadata)], { type: "application/json" }), "metadata.json");
   form.append("worker.js", new Blob([scriptBody], { type: "application/javascript+module" }), "worker.js");
   return cfFetch<ScriptUploadResult>(token, "PUT", `/accounts/${accountId}/workers/scripts/${scriptName}`, form as unknown as BodyInit, undefined, fetcher);
 }

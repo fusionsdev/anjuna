@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "./api";
 import { AuditScreen } from "./screens/Audit";
-import { BrandsScreen } from "./screens/Brands";
+import { BrandLifecycle } from "./screens/BrandLifecycle";
 import { SignIn } from "./screens/SignIn";
 import { UsersScreen } from "./screens/Users";
 
@@ -61,7 +61,7 @@ export function App() {
         </div>
       </aside>
       <main className="content">
-        {view === "brands" && <BrandsScreen me={me} />}
+        {view === "brands" && <BrandLifecycle me={me} />}
         {view === "audit" && <AuditScreen me={me} />}
         {view === "users" && me.role === "owner" && <UsersScreen me={me} />}
       </main>

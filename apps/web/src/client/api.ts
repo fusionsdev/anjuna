@@ -6,6 +6,11 @@ import type {
   BrandPatchResponse,
   BrandStatusChangeResponse,
   BrandSummary,
+  ChecklistItemName,
+  CreateBrandDraftRequest,
+  InstallWithReceipts,
+  LifecycleBrandSummary,
+  UpgradeAllCommand,
 } from "@anjuna/contracts";
 
 export interface Me {
@@ -77,4 +82,15 @@ export const api = {
   users: () => request<{ users: PanelUser[] }>("GET", "/api/users").then((r) => r.users),
   createUser: (u: { email: string; name: string; password: string; role: AdminRole }) => request<unknown>("POST", "/api/users", u),
   setRole: (id: string, role: AdminRole) => request<unknown>("PATCH", `/api/users/${encodeURIComponent(id)}`, { role }),
+  lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[] }>("GET", "/api/lifecycle/brands"),
+  lifecycleBrand: (id: string) => request<{ brand: LifecycleBrandSummary }>("GET", `/api/lifecycle/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
+  createDraft: (body: Omit<CreateBrandDraftRequest, "brand_id" | "account" | "hostname"> & { domain: string; keyword_default: string; template_version_id: string }) =>
+    request<{ brand: { brand_id: string }; revision: { revision_id: string } }>("POST", "/api/brands/drafts", body),
+  install: (brandId: string, revisionId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/install`, revisionId ? { revision_id: revisionId } : {}),
+  rollbackLifecycle: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/rollback`, {}),
+  retryInstall: (installId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/installs/${encodeURIComponent(installId)}/retry`, {}),
+  installDetail: (installId: string) => request<InstallWithReceipts>("GET", `/api/installs/${encodeURIComponent(installId)}`),
+  checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }> }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
+  attestChecklist: (brandId: string, item: ChecklistItemName, lead_id?: string) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/checklist`, { item, ...(lead_id ? { lead_id } : {}) }),
+  upgradeAll: (body: Omit<UpgradeAllCommand, "started_by" | "started_role">) => request<unknown>("POST", "/api/upgrade-all", body),
 };

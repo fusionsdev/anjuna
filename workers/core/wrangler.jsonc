@@ -10,6 +10,7 @@
   "routes": [{ "pattern": "core.aduplift.ai", "custom_domain": true }],
   // Cron Triggers: mailing sync every 5 minutes (CO-7), alerts every 15 minutes (FA-5). Strings must match src/cron.ts.
   "triggers": { "crons": ["*/5 * * * *", "*/15 * * * *"] },
+  "vars": { "LIFECYCLE_ACCOUNT": "aduplift" },
   "d1_databases": [
     {
       "binding": "LEADS",

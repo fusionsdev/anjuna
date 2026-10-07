@@ -40,7 +40,7 @@ export async function createHarness(options: { brand?: boolean } = {}) {
     modules: true, compatibilityDate: "2026-08-01",
     compatibilityFlags: ["global_fetch_strictly_public"],
     d1Databases: { LEADS: "core-test-leads", FACTORY: "core-test-factory" },
-    bindings: { DRAIN_TOKEN, HANDOFF_KEY },
+    bindings: { DRAIN_TOKEN, HANDOFF_KEY, LIFECYCLE_ACCOUNT: "account-a" },
     outboundService: () => { throw new Error("External requests forbidden in core tests"); },
   };
   const mf = new Miniflare(convertV4MiniflareOptions({
@@ -60,8 +60,13 @@ export async function createHarness(options: { brand?: boolean } = {}) {
         serviceBindings: {
           CORE_ADMIN: { name: "test-core", entrypoint: "TestAdminService" },
           PRODUCTION_ADMIN: { name: "production", entrypoint: "AdminService" },
+          FACTORY_LIFECYCLE: { name: "production", entrypoint: "FactoryLifecycleService" },
+          PANEL_LIFECYCLE: { name: "production", entrypoint: "PanelLifecycleService" },
         },
         script: `export default {fetch(req, env) {
+          const path = new URL(req.url).pathname;
+          if (path.startsWith("/private/factory")) return env.FACTORY_LIFECYCLE.fetch(req);
+          if (path.startsWith("/private/panel")) return env.PANEL_LIFECYCLE.fetch(req);
           return (req.headers.has("x-production") ? env.PRODUCTION_ADMIN : env.CORE_ADMIN).fetch(req);
         }};`,
       },
@@ -84,6 +89,7 @@ export async function createHarness(options: { brand?: boolean } = {}) {
       }
       await db.batch(["continuations", "mailing_outbox", "consent_evidence", "click_sessions", "zip_lookup", "conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials"]
         .map((table) => db.prepare(`DELETE FROM ${table}`)));
+      await factory.prepare("DELETE FROM audit_log").run();
     },
     async seedBrand(id = "brand-a", token = "T", account = "account-a") {
       await db.prepare(`INSERT INTO brand_runtime
@@ -147,6 +153,29 @@ export async function createHarness(options: { brand?: boolean } = {}) {
       headers.set("x-production", "1");
       for (const [name, value] of Object.entries(adminContextToHeaders(context))) headers.set(name, value);
       const response = await panel.fetch(`https://core.internal${path}`, {
+        ...init,
+        headers: Object.fromEntries(headers),
+      } as Parameters<typeof panel.fetch>[1]);
+      return new Response(await response.arrayBuffer(), {
+        status: response.status, headers: Object.fromEntries(response.headers),
+      });
+    },
+    async factoryLifecycle(path: string, token: string, init: RequestInit = {}) {
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+      const response = await panel.fetch(`https://core.internal/private/factory${path}`, {
+        ...init,
+        headers: Object.fromEntries(headers),
+      } as Parameters<typeof panel.fetch>[1]);
+      return new Response(await response.arrayBuffer(), {
+        status: response.status, headers: Object.fromEntries(response.headers),
+      });
+    },
+    async panelLifecycle(path: string, context: AdminRequestContext, init: RequestInit = {}) {
+      const headers = new Headers(init.headers);
+      if (path.endsWith("/runtime-list")) headers.set("x-lifecycle-account", "account-a");
+      for (const [name, value] of Object.entries(adminContextToHeaders(context))) headers.set(name, value);
+      const response = await panel.fetch(`https://core.internal/private/panel${path}`, {
         ...init,
         headers: Object.fromEntries(headers),
       } as Parameters<typeof panel.fetch>[1]);

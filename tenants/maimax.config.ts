@@ -18,6 +18,12 @@ const config: TenantConfig = {
   // REPLACE: LeadsGate affiliate ID for the maimax account.
   leadsGateAid: "17244",
   prepopBase: "https://go.personalloanpro.com/aff_c",
+  brandDefaults: {
+    account: "maimax",
+    formRoute: "/request",
+    amountBuckets: [100, 200, 300, 500, 1000],
+    payloadVersion: "2026-01",
+  },
   // maimax drain VPS (143.14.147.127) — /opt/drain/drain.mjs polls core.maimax.fit.
   drainUrl: "http://143.14.147.127",
   // REPLACE: maimax listmonk base URL once the listmonk instance is deployed.
@@ -28,6 +34,7 @@ const config: TenantConfig = {
     betterAuthSecret: "MAIMAX_BETTER_AUTH_SECRET",
     drainToken: "MAIMAX_DRAIN_TOKEN",
     postbackTokenSalt: "MAIMAX_POSTBACK_TOKEN_SALT",
+    coreToken: "MAIMAX_CORE_TOKEN",
   },
   // REPLACE: maimax owner login email.
   ownerEmail: "owner@maimax.fit",
