@@ -143,6 +143,22 @@ describe("employee is denied what the role table withholds (403 forbidden_role)"
 });
 
 describe("owner can do all of it", () => {
+  it("returns a controlled 404, never 500, for malformed percent-encoding on core-backed id routes", async () => {
+    const bad = "%E0%A4%A";
+    const cases: Array<[string, Parameters<typeof call>[1]]> = [
+      [`/api/brands/${bad}`, { cookie: owner }],
+      [`/api/brands/${bad}`, { cookie: owner, method: "PATCH", body: { keyword_default: "x" } }],
+      [`/api/brands/${bad}/pause`, { cookie: owner, method: "POST", body: {} }],
+      [`/api/leads/${bad}`, { cookie: owner }],
+      [`/api/users/${bad}`, { cookie: owner, method: "PATCH", body: { role: "owner" } }],
+    ];
+    for (const [path, init] of cases) {
+      const res = await call(path, init);
+      expect(res.status, path).toBe(404);
+      expect(await res.json()).toMatchObject({ error: "not_found" });
+    }
+  });
+
   it("changes A/B weights, buckets, flow gate and money-path settings", async () => {
     const res = await patch(owner, {
       ab_config: { experiment_id: "exp-2026-10", variants: [{ id: "a", weight: 70 }, { id: "b", weight: 30 }] },

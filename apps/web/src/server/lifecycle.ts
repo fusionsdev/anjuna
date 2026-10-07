@@ -276,6 +276,10 @@ async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<L
   return merged;
 }
 
+export function decodePathSegment(raw: string): string | null {
+  try { return decodeURIComponent(raw); } catch (error) { if (error instanceof URIError) return null; throw error; }
+}
+
 export async function handleLifecycleRoute(request: Request, env: Env, url: URL, path: string, ctx: AdminRequestContext): Promise<Response | undefined> {
   const method = request.method;
   let m: RegExpMatchArray | null;
@@ -297,8 +301,12 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|checklist)$/);
   if (m && method === "POST") {
-    const brandId = decodeURIComponent(m[1]!);
-    if (m[2] === "checklist") return checklist(request, env, ctx, brandId);
+    const brandId = decodePathSegment(m[1]!);
+    if (brandId === null) return json(400, { error: "invalid_brand_id" });
+    if (m[2] === "checklist") {
+      const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+      return checklist(request, env, ctx, brandId);
+    }
     const g = authorizePanel(m[2] === "install" ? "installBrand" : "rollbackBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     return m[2] === "install" ? startInstall(request, env, ctx, brandId) : rollback(request, env, ctx, brandId);
   }
@@ -333,14 +341,16 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   m = path.match(/^\/api\/brands\/([^/]+)\/installs$/);
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-    const { results } = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at,finished_at,error FROM installs WHERE brand_id=?1 ORDER BY started_at DESC LIMIT 50").bind(m[1]).all();
-    return json(200, { brand_id: m[1], installs: results });
+    const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
+    const { results } = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at,finished_at,error FROM installs WHERE brand_id=?1 ORDER BY started_at DESC LIMIT 50").bind(brandId).all();
+    return json(200, { brand_id: brandId, installs: results });
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/checklist$/);
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-    const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(m[1]).all();
-    return json(200, { brand_id: m[1], checklist: results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined })) });
+    const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
+    const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all();
+    return json(200, { brand_id: brandId, checklist: results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined })) });
   }
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {

@@ -3,6 +3,9 @@ name: PR check
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     name: build typecheck test
