@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // FO-4: SHA-256 manifest for a built form bundle, stored next to it in R2 as form@<sha>/manifest.json.
 //
 // Usage: node scripts/manifest.mjs <dist-dir> [--version <git-sha>] [--out <file>]
