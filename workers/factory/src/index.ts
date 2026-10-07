@@ -70,7 +70,7 @@ export default {
       if (params.from_template_version_id === params.to_template_version_id) {
         return Response.json({ ok: false, error: "source_target_must_differ" }, { status: 400 });
       }
-      const instanceId = upgradeWorkflowId(params);
+      const instanceId = await upgradeWorkflowId(params);
       await env.UPGRADE_WORKFLOW.create({ id: instanceId, params });
       return Response.json({ ok: true, instance_id: instanceId });
     }
