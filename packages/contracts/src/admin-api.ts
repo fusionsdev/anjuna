@@ -129,10 +129,11 @@ export type PostbackTokenState = z.infer<typeof PostbackTokenState>;
 /** LeadsGate affiliate id. */
 export const LeadsGateAid = z.string().regex(/^[A-Za-z0-9_-]{1,32}$/, "Invalid aid");
 
-/** LeadsGate prepop form URL. https only, no query or fragment (core appends the params). */
+/** LeadsGate prepop form: HTTPS URL or same-origin path, without query/fragment (core appends params). */
 export const PrepopBase = z
-  .url({ protocol: /^https$/ })
+  .string()
   .max(512)
+  .pipe(z.union([z.url({ protocol: /^https$/ }), z.string().regex(/^\/(?!\/)[^\\\s?#]*$/)]))
   .refine((u) => !u.includes("?") && !u.includes("#"), "prepop_base must not carry a query or fragment");
 
 /** Key in the drain's BRAND_ROUTING_JSON. An identifier, not a credential. */

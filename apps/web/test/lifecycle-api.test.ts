@@ -77,6 +77,25 @@ describe("truthful lifecycle BFF", () => {
     expect(await res.json()).toMatchObject({ brand: { domain: "example.test", status: "draft" }, revision: { revision: 1, template_version_id: "tv-1", form_artifact_id: expect.stringMatching(/^fa-/) } });
   });
 
+  it("creates a draft using the brand-domain /apply default", async () => {
+    const response = await call("/api/brands/drafts", {
+      cookie: employee, method: "POST",
+      body: { domain: "brand-apply.test", keyword_default: "Quick Loan", template_version_id: "tv-1" },
+      env: makeEnv({ DEFAULT_PREPOP_BASE: "/apply" }),
+    });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ brand: { domain: "brand-apply.test", status: "draft" } });
+  });
+
+  it.each(["//external.test/apply", "/\\external.test/apply", "/apply?aid=999", "/apply#fragment", "apply"])("rejects unsafe relative prepop default %s", async (prepop) => {
+    const response = await call("/api/brands/drafts", {
+      cookie: employee, method: "POST",
+      body: { domain: "invalid-prepop.test", keyword_default: "Quick Loan", template_version_id: "tv-1" },
+      env: makeEnv({ DEFAULT_PREPOP_BASE: prepop }),
+    });
+    expect(response.status).toBe(503);
+  });
+
   it("rejects draft creation when tenant runtime defaults are not configured", async () => {
     const envWithoutDefaults = makeEnv({ DEFAULT_ACCOUNT: undefined, DEFAULT_AID: undefined, DEFAULT_PREPOP_BASE: undefined, DEFAULT_FORM_ROUTE: undefined, DEFAULT_AMOUNT_BUCKETS: undefined, DEFAULT_PAYLOAD_VERSION: undefined });
     const response = await call("/api/brands/drafts", { cookie: employee, method: "POST", body: { domain: "missing-config.example", keyword_default: "Quick Loan", template_version_id: "tv-1" }, env: envWithoutDefaults });

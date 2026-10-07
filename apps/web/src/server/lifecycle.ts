@@ -3,6 +3,7 @@ import {
   BackfillPayloadVersionRequest,
   VerifySoldLeadResponse,
   RuntimeListResponse,
+  PrepopBase,
   cleanKeyword,
   LifecycleBrandSummary,
   adminContextToHeaders,
@@ -66,7 +67,7 @@ function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: 
   try { amountBuckets = JSON.parse(env.DEFAULT_AMOUNT_BUCKETS ?? "") as number[]; } catch { return null; }
   if (!/^[a-z][a-z0-9-]*$/.test(account) || !/^[A-Za-z0-9_-]{1,32}$/.test(aid)) return null;
   if (!Array.isArray(amountBuckets) || amountBuckets.length === 0 || amountBuckets.length > 32 || amountBuckets.some((v) => !Number.isInteger(v) || v < 100 || v > 5000) || amountBuckets.some((v, i) => i > 0 && v <= amountBuckets[i - 1]!)) return null;
-  try { const parsed = new URL(prepop); if (parsed.protocol !== "https:" || parsed.search || parsed.hash) return null; } catch { return null; }
+  if (!PrepopBase.safeParse(prepop).success) return null;
   if (!/^\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(formRoute) || reservedRoutes.some((route) => formRoute === route || formRoute.startsWith(`${route}/`)) || !/^\d{4}-\d{2}$/.test(payloadVersion)) return null;
   return { account, aid, prepop_base: prepop.replace(/\/$/, ""), form_route: formRoute, amount_buckets: amountBuckets, payload_version: payloadVersion };
 }

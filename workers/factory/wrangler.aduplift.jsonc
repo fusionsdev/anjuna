@@ -56,6 +56,6 @@
     "DEFAULT_FORM_ROUTE": "/request",
     "DEFAULT_AMOUNT_BUCKETS": "[350,500,750,1000,1500,1750,2000,3000,3250,4500,5000]",
     "LEADSGATE_AID": "10001",
-    "LEADSGATE_PREPOP_BASE": "https://go.personalloanpro.com/aff_c"
+    "LEADSGATE_PREPOP_BASE": "/apply"
   }
 }
