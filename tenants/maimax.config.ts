@@ -21,7 +21,7 @@ const config: TenantConfig = {
   brandDefaults: {
     account: "maimax",
     formRoute: "/request",
-    amountBuckets: [100, 200, 300, 500, 1000],
+    amountBuckets: [350, 500, 750, 1000, 1500, 1750, 2000, 3000, 3250, 4500, 5000],
     payloadVersion: "2026-01",
   },
   // maimax drain VPS (143.14.147.127) — /opt/drain/drain.mjs polls core.maimax.fit.

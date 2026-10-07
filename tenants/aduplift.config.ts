@@ -14,7 +14,7 @@ const config: TenantConfig = {
   brandDefaults: {
     account: "aduplift",
     formRoute: "/request",
-    amountBuckets: [100, 200, 300, 500, 1000],
+    amountBuckets: [350, 500, 750, 1000, 1500, 1750, 2000, 3000, 3250, 4500, 5000],
     payloadVersion: "2026-01",
   },
   drainUrl: "https://drain.aduplift.ai",
