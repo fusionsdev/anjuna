@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { BrandLeadResponse, CLICK_TRIGGER_KEYS, RuntimeConfig } from "@anjuna/contracts";
+import { BrandLeadResponse, CLICK_TRIGGER_KEYS, RuntimeConfig, isBrandClean } from "@anjuna/contracts";
 import leadFixture from "../../contracts/fixtures/form/lead.lite_v1.json";
 import { CoreError, createBrandWorker } from "../src/index.js";
 import { cfg, cookieHeader, cookies, HANDOFF, setup } from "./helpers.js";
 
 describe("route allowlist", () => {
-  it.each(["/admin", "/admin/brands", "/api/postback", "/api/conversions/pending", "/rpc/submitLead", "/index.html", "/_f/index.html", "/_f/", "/request/unknown", "/unknown", "/api/gate-interest", "/privacy/index.html", "/_f/assets/missing.js", "/assets/missing.js"])("uniform 404 for %s", async (path) => {
+  it.each(["/admin", "/admin/brands", "/api/postback", "/api/conversions/pending", "/rpc/submitLead", "/index.html", "/_f/index.html", "/_f/", "/request/unknown", "/unknown", "/api/gate-interest", "/privacy/index.html", "/_f/assets/missing.js", "/assets/missing.js", "/thank-you.html"])("uniform 404 for %s", async (path) => {
     const response = await setup().get(path);
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("Not Found");
@@ -184,6 +184,23 @@ describe("click capture", () => {
 });
 
 describe("lead submit and continuation", () => {
+  it("serves a neutral completion page for non-routed leads under the form route", async () => {
+    const { get, core } = setup();
+    core.continuations.set("blocked_0000000000000001", "/request/complete?ref=0c1d2e3f");
+    const hop = await get("/request/provider?c=blocked_0000000000000001");
+    expect(hop.headers.get("location")).toBe("https://brand-a.example/request/complete?ref=0c1d2e3f");
+    const page = await get("/request/complete?ref=0c1d2e3f");
+    expect([page.status, page.headers.get("content-type")]).toEqual([200, "text/html; charset=utf-8"]);
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    expect(page.headers.get("referrer-policy")).toBe("no-referrer");
+    const html = await page.text();
+    expect(html).toContain("Reference: 0c1d2e3f");
+    expect(isBrandClean(html)).toBe(true);
+    expect(html).not.toMatch(/<script/i);
+    expect(await (await get("/request/complete?ref=%3Cscript%3E")).text()).not.toContain("<script");
+    expect(await (await get("/request/complete", { headers: { "user-agent": "AdsBot-Google" } })).text())
+      .toBe(await (await get("/request/complete")).text());
+  });
   const submit = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", "cf-connecting-ip": "192.0.2.5", "user-agent": "browser", "x-forwarded-for": "attacker-ip" } });
   it("ignores client brand/hostname and forwards unchanged V1 payload plus consent evidence", async () => {
     const { get, core } = setup();

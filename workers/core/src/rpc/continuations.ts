@@ -34,7 +34,7 @@ function handoffSource(row: Record<string, string | number | null>): Record<stri
 /** V1 buildUserRedirect in prepop_redirect mode, using the selected applicant and trusted brand aid. */
 export function buildUserRedirect(lead: Record<string, string | number | null>, brand: RuntimeRow): string {
   const leadId = String(lead.lead_id);
-  if (!isStateRoutable(String(lead.state))) return `/thank-you.html?ref=${encodeURIComponent(leadId.slice(-8))}`;
+  if (!isStateRoutable(String(lead.state))) return `${brand.form_route}/complete?ref=${encodeURIComponent(leadId.slice(-8))}`;
   const url = new URL(brand.prepop_base, `https://${lead.hostname}`);
   if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw new Error("Invalid prepop URL");
   for (const key of BUYER_FIELDS) {
