@@ -60,7 +60,7 @@ Suggested merge order (an agent proposal; the owner decides): #45 into the #40 b
 ## Known gaps
 - `packages/leads-db` test "V1 parity: every V1 table exists" was close to the 5 s Vitest timeout. PR #46 raises it to 30 s (not merged yet).
 - `workers/core` `test/cron.test.ts`, "bounds one run to MAX_OUTBOX_BATCHES batches of 50...", times out at 30000 ms on a Windows dev host even when run alone. It passes on Linux CI (#40, #45). Not fixed.
-- Out-of-scope follow-ups found during #45 review, not fixed: `index.ts` lines 122, 239 and 307 call `decodeURIComponent` without a catch (a malformed escape gives 500); `lifecycle.ts` `GET /api/lifecycle/brands/:id` and the install-id routes use the raw `m[1]`; the old `GET installs` handler in `index.ts` is dead code because the lifecycle handler runs first.
+- Out-of-scope follow-ups found during #45 review, not fixed: `apps/web/src/server/index.ts` on the #40/#45 branch, lines 123, 239 and 307, call `decodeURIComponent` without a catch (a malformed escape gives 500); `lifecycle.ts` `GET /api/lifecycle/brands/:id` and the install-id routes use the raw `m[1]`; the old `GET installs` handler in `index.ts` is dead code because the lifecycle handler runs first.
 - Deploy workflow: the last 6 runs failed and the last success was v1.0.5 (from `gh run list`). Cause NOT_CHECKED.
 - `check-template` is not a gate for the starters or for the ready-made templates the owner supplies; do not spend time making the React example pass it (owner decision, 2026-10-07).
 - `apps/lead-form` bundle/manifest tests and `scripts/smoke-web.test.ts` fail on the local Windows and WSL machines (SyntaxError in the bundle). Linux CI on #40 passes the whole suite.
