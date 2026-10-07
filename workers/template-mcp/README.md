@@ -43,5 +43,5 @@ and the signals to change. Pass `brand_id` to exclude that brand's own earlier t
 
 ## Deploy (owner-gated, not done here)
 
-`wrangler.jsonc` pins the account, `workers_dev: false` and Custom Domain `mcp.aduplift.ai`. The D1 id is a placeholder.
+`wrangler.jsonc` pins the account, `workers_dev: false` and Custom Domain `mcp.aduplift.ai`. The D1 binding points at the AdUplift factory D1 (`aduplift-factory`).
 Apply factory migrations 0002 and 0003 before the first request.
