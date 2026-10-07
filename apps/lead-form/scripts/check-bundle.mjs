@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // FO-4 / AGENTS.md hard rule 4: "Brand bytes stay clean."
 //
 // Scans every file of a built form bundle and fails if it contains:
