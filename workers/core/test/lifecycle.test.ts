@@ -61,6 +61,73 @@ describe("private factory lifecycle service", () => {
     });
   });
 
+  const auditCount = async (brandId: string) => Number((await h.factory.prepare(
+    "SELECT count(*) AS count FROM audit_log WHERE entity_id = ?1 AND action = 'lifecycle.runtime.apply'")
+    .bind(brandId).first<{ count: number }>())!.count);
+
+  async function failAuditFor(brandId: string, run: () => Promise<unknown>) {
+    await h.factory.prepare(`CREATE TRIGGER fail_lifecycle_audit BEFORE INSERT ON audit_log
+      WHEN NEW.entity_id = '${brandId}' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END`).run();
+    try { await run(); } finally { await h.factory.prepare("DROP TRIGGER fail_lifecycle_audit").run(); }
+  }
+
+  it("writes the missing first-provision audit row exactly once on a same-install retry", async () => {
+    await h.factory.prepare(`INSERT INTO brands (brand_id, name, account, domain, status, created_by, created_at, updated_at)
+      VALUES ('audit-gap', 'Audit Gap', 'account-a', 'audit-gap.example', 'draft', 'usr_owner_01',
+        '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z')`).run();
+    const request = apply({ brand_id: "audit-gap", install_id: "install-audit-gap", hostnames: ["audit-gap.example"] });
+    await failAuditFor("audit-gap", async () => {
+      const status = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(request)).then((r) => r.status, () => "threw");
+      expect(status).not.toBe(200);
+    });
+    expect(await h.db.prepare("SELECT last_lifecycle_install_id FROM brand_runtime WHERE brand_id = 'audit-gap'").first())
+      .toEqual({ last_lifecycle_install_id: "install-audit-gap" });
+    expect(await auditCount("audit-gap")).toBe(0);
+
+    const retry = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(request));
+    expect(ApplyRuntimeResponse.parse(await retry.json())).toMatchObject({ state: "noop", install_id: "install-audit-gap" });
+    expect(await auditCount("audit-gap")).toBe(1);
+    const audit = await h.factory.prepare("SELECT before_json, after_json FROM audit_log WHERE entity_id = 'audit-gap'")
+      .first<{ before_json: string | null; after_json: string }>();
+    expect(audit!.before_json).toBeNull();
+    expect(JSON.parse(audit!.after_json)).toEqual({
+      applied_revision_id: "revision-1", last_lifecycle_install_id: "install-audit-gap", paused: false, recovered: true,
+    });
+
+    await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(request));
+    expect(await auditCount("audit-gap")).toBe(1);
+  });
+
+  it("writes the missing update audit row exactly once on a same-install retry", async () => {
+    await h.factory.prepare(`INSERT INTO brands (brand_id, name, account, domain, status, created_by, created_at, updated_at)
+      VALUES ('audit-gap-2', 'Audit Gap 2', 'account-a', 'audit-gap-2.example', 'draft', 'usr_owner_01',
+        '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z')`).run();
+    const first = apply({ brand_id: "audit-gap-2", install_id: "install-gap2-a", hostnames: ["audit-gap-2.example"],
+      target_revision_id: "r1" });
+    expect((await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(first))).status).toBe(200);
+    const update = apply({ brand_id: "audit-gap-2", install_id: "install-gap2-b", hostnames: ["audit-gap-2.example"],
+      expected_revision_id: "r1", target_revision_id: "r2", initial_runtime: undefined });
+    const before = await auditCount("audit-gap-2");
+    await failAuditFor("audit-gap-2", async () => {
+      const status = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(update)).then((r) => r.status, () => "threw");
+      expect(status).not.toBe(200);
+    });
+    expect(await auditCount("audit-gap-2")).toBe(before);
+    const retries = await Promise.all(Array.from({ length: 3 }, () =>
+      h.factoryLifecycle("/runtime", "account-a-token", jsonBody(update))));
+    for (const retry of retries) {
+      expect(ApplyRuntimeResponse.parse(await retry.json())).toMatchObject({ state: "noop", install_id: "install-gap2-b" });
+    }
+    expect(await auditCount("audit-gap-2")).toBe(before + 1);
+    const audit = await h.factory.prepare(`SELECT before_json, after_json FROM audit_log WHERE entity_id = 'audit-gap-2'
+      AND json_extract(after_json, '$.last_lifecycle_install_id') = 'install-gap2-b'`)
+      .first<{ before_json: string | null; after_json: string }>();
+    expect(audit!.before_json).toBeNull();
+    expect(JSON.parse(audit!.after_json)).toEqual({
+      applied_revision_id: "r2", last_lifecycle_install_id: "install-gap2-b", paused: false, recovered: true,
+    });
+  });
+
   it("provisions the first runtime and records one core audit row", async () => {
     await h.db.prepare("DELETE FROM brand_runtime WHERE brand_id = 'new-brand'").run();
     const request = apply({ brand_id: "new-brand", account: "account-a", hostnames: ["new-brand.example"], initial_runtime: initialRuntime });

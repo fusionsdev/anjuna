@@ -168,6 +168,19 @@ describe("factory lifecycle client", () => {
 });
 
 describe("brand upload bindings", () => {
+  it("passes the assets routing config through to the upload metadata", async () => {
+    let metadata: Record<string, unknown> | undefined;
+    const fetcher = async (_input: string, init?: RequestInit) => {
+      metadata = JSON.parse(await ((init?.body as FormData).get("metadata") as File).text());
+      return Response.json({ success: true, result: { id: "script", etag: "etag" } });
+    };
+    await uploadScript("token", "account", "brand-a", "export default {}", {
+      main_module: "worker.js", bindings: [], compatibility_date: "2026-08-01",
+      assets: { jwt: "jwt", config: { html_handling: "none", run_worker_first: true } },
+    }, fetcher);
+    expect(metadata?.assets).toEqual({ jwt: "jwt", config: { html_handling: "none", run_worker_first: true } });
+  });
+
   it("preserves the configured tenant CORE handler and emits CORE_TOKEN as secret_text", async () => {
     let metadata: Record<string, unknown> | undefined;
     const fetcher = async (_input: string, init?: RequestInit) => {
