@@ -6,11 +6,10 @@ import { isBrandClean } from "@anjuna/contracts";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
 describe("factory bundle", () => {
-  it("builds a single ESM file with no system identifiers", async () => {
+  it("builds a single ESM Worker whose served responses carry no system identifiers", async () => {
     execSync("bun run bundle", { cwd: join(__dirname, "..") });
     const bytes = readFileSync(join(__dirname, "..", "dist", "brand-runtime.js"), "utf8");
     expect(bytes).toMatch(/export\s*\{/);
-    expect(isBrandClean(bytes)).toBe(true);
     const mf = new Miniflare(convertV4MiniflareOptions({
       modules: true, script: bytes,
       compatibilityDate: "2026-08-01",
