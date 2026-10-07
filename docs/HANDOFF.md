@@ -42,13 +42,13 @@ Production state of the aduplift tenant was not checked on 2026-10-07; check it 
 ## Open pull requests
 State checked 2026-10-07. `main` is `e07a552` (merge of #39); nothing has merged since.
 - **PR #40** `fus-347-t12b-brand-lifecycle`: DRAFT, head `1170342`, truthful brand lifecycle control panel. The check `build typecheck test` is SUCCESS and the PR is MERGEABLE. PR #43 (the h1/h2 fix) is already merged into this branch. It carries `.github/workflows/pr-check.yml`, which is why no PR against `main` has an Actions run yet.
+  - Open review items from the independent audit, still not fixed (not covered by #45): first provision in `workers/core/src/lifecycle.ts` is not atomic across LEADS and FACTORY; `verifySold` does not check the brand is in `LIFECYCLE_ACCOUNT`.
 - **PR #45** `fus-347-t12b-lifecycle-guards`, targets the #40 branch (not `main`), head `4692d0b`: `POST /api/brands/:id/checklist` now authorizes before writing; one `decodeBrandId` helper serves POST install / rollback / checklist and GET installs / checklist, so a malformed escape returns 400, not 500; `pr-check.yml` gets `permissions: contents: read`. Linux CI check is SUCCESS and a read-only review passed. There is no 403 test by design: only the owner and employee roles exist, so the guard is defense in depth.
 - **PR #46** `fus-337-leads-db-test-timeout`, targets `main`, head `629b1f9`: sets the `packages/leads-db` Vitest `testTimeout` to 30_000. A local Windows run passed (leads-db 19/19). There is no Actions run because `main` has no `pr-check.yml` until #40 merges. Review passed.
 - **PR #41** `fus-347-panel-reports`: funnel, alerts and mailing reports (core read-only `/admin/funnel|alerts|mailing` plus panel screens). Head `53a1b8b`, MERGEABLE, only the CodeSnif check ran (no `pr-check` on `main`). After #40 merges, #41 needs a rebase with 3 additive conflicts: `apps/web/src/client/App.tsx`, `apps/web/src/client/api.ts`, `workers/core/test/helpers.ts`. The `DEV_ACCESS_BYPASS` change in `apps/web/src/server/access.ts` (it now relies on the absence of `cf-connecting-ip`) and the `packages/mailing` changes (outside the reports scope) await an owner decision.
 - **PR #42** (this docs PR) and **PR #44** (`docs/gate-runbooks`, head `58131ca`, gate runbooks in `docs/runbooks/gates/`): both OPEN and MERGEABLE.
 
 Suggested merge order (an agent proposal; the owner decides): #45 into the #40 branch, then #40, then #41 (after an agent rebases it), then #42, #44, #46. Do not stack other PRs on one another. The owner approves every merge.
-
 
 ## How to review and merge a PR here
 1. Read the PR against its task in `docs/TASKS.md` and the rules in `AGENTS.md`. For the money path, compare it line by line with V1. V1 is `fusionsdev/fusion_formv_v1` on branch `anjuna-port-base`, in `functions/api/[[path]].ts`.
