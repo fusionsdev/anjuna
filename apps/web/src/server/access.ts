@@ -20,26 +20,10 @@ function jwksFor(teamDomain: string): JWTVerifyGetKey {
 
 const isPlaceholder = (v: string | undefined): boolean => !v || v.includes("<") || v.includes("REPLACE");
 
-/** Hosts where the bypass is refused even if the var is set by mistake. */
-const PRODUCTION_HOST = /(^|\.)aduplift\.ai$/;
-
 export type AccessResult = { ok: true; email: string | null; bypass: boolean } | { ok: false };
 
-/**
- * `wrangler dev` rewrites a local request onto the custom-domain route, so the URL host
- * is `app.aduplift.ai` even though the browser used 127.0.0.1. Cloudflare's edge always
- * sets `CF-Connecting-IP` and overwrites a client-supplied value. Local workerd does not.
- */
-function throughCloudflareEdge(request: Request): boolean {
-  const ip = request.headers.get("cf-connecting-ip");
-  return ip !== null && ip !== "";
-}
-
-export async function verifyAccess(request: Request, env: Env): Promise<AccessResult> {
-  const productionHost = PRODUCTION_HOST.test(new URL(request.url).hostname);
-  if (env.DEV_ACCESS_BYPASS === "1" && !(productionHost && throughCloudflareEdge(request))) {
-    return { ok: true, email: null, bypass: true };
-  }
+export async function verifyAccess(request: Request, env: Env, localDev: boolean): Promise<AccessResult> {
+  if (localDev) return { ok: true, email: null, bypass: true };
   // Fail closed: an unconfigured team domain or AUD accepts nothing.
   if (isPlaceholder(env.ACCESS_TEAM_DOMAIN) || isPlaceholder(env.ACCESS_AUD)) return { ok: false };
   const token = request.headers.get(ACCESS_JWT_HEADER);

@@ -27,6 +27,7 @@ import { listLifecycleAudit, listPanelAudit, writePanelAudit } from "./audit.js"
 import { createAuth, type Auth } from "./auth.js";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
+import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 
@@ -65,10 +66,11 @@ const UserCreate = z.strictObject({
 const UserSetRole = z.strictObject({ role: z.enum(AUTH_ROLES) });
 
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
-  const access = await verifyAccess(request, env);
+  const localDev = isLocalDev(request, env);
+  const access = await verifyAccess(request, env, localDev);
   if (!access.ok) return json(401, { error: "unauthorized" });
 
-  const auth = createAuth(env);
+  const auth = createAuth(env, localDev);
   const path = url.pathname.replace(/\/+$/, "");
 
   if (path.startsWith("/api/auth/")) {

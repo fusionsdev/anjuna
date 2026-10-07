@@ -21,14 +21,14 @@ function localDevOrigins(baseURL: string): string[] {
   return ["http://127.0.0.1:*", "http://localhost:*", `http://${host}`];
 }
 
-export function createAuth(env: Env) {
+export function createAuth(env: Env, localDev = false) {
   return betterAuth({
     database: env.AUTH,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
-    trustedOrigins: env.DEV_ACCESS_BYPASS === "1" ? localDevOrigins(env.BETTER_AUTH_URL) : [],
-    advanced: env.DEV_ACCESS_BYPASS === "1" ? { useSecureCookies: false } : undefined,
+    trustedOrigins: localDev ? localDevOrigins(env.BETTER_AUTH_URL) : [],
+    advanced: localDev ? { useSecureCookies: false } : undefined,
     emailAndPassword: { enabled: true, disableSignUp: true, minPasswordLength: 8 },
     plugins: [admin({ ac, roles, defaultRole: DEFAULT_ROLE, adminRoles: [...ADMIN_ROLES] })],
     databaseHooks: {

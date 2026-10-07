@@ -43,6 +43,10 @@ describe("wrangler.jsonc", () => {
   });
 });
 
+it.each(["wrangler.deploy.aduplift.jsonc", "wrangler.deploy.maimax.jsonc"])("%s never sets DEV_ACCESS_BYPASS", (file) => {
+  expect(readFileSync(path.join(root, file), "utf8")).not.toContain("DEV_ACCESS_BYPASS");
+});
+
 describe("SPA build", () => {
   it("vite build emits index.html and bundled assets into dist/client", async () => {
     await build({ configFile: path.join(root, "vite.config.ts"), logLevel: "silent" });
