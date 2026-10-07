@@ -47,6 +47,16 @@ async function body(request: Request): Promise<unknown> {
   try { return await request.json(); } catch { return null; }
 }
 
+/** FA-3: exactly one apply audit row per install, including after a failed cross-D1 audit write. */
+async function ensureApplyAudit(env: Env, input: ApplyRuntimeRequest, before: string | null, after: string, at: string) {
+  await env.FACTORY.prepare(`INSERT INTO audit_log
+      (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+    SELECT ?1, ?2, 'lifecycle.runtime.apply', 'brand_runtime', ?3, ?4, ?5, ?6
+    WHERE NOT EXISTS (SELECT 1 FROM audit_log WHERE entity_type = 'brand_runtime' AND entity_id = ?3
+      AND action = 'lifecycle.runtime.apply' AND json_extract(after_json, '$.last_lifecycle_install_id') = ?7)`)
+    .bind(input.actor_id, input.actor_role, input.brand_id, before, after, at, input.install_id).run();
+}
+
 async function applyRuntime(request: Request, env: Env, account: string): Promise<Response> {
   const parsed = ApplyRuntimeRequest.safeParse(await body(request));
   if (!parsed.success) return bad("Invalid runtime request");
@@ -57,6 +67,10 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
     .bind(input.brand_id).first<RuntimeRow>();
   if (current && current.account !== account) return forbidden("Brand belongs to another account");
   if (current?.last_lifecycle_install_id === input.install_id) {
+    await ensureApplyAudit(env, input, null, JSON.stringify({
+      applied_revision_id: current.applied_revision_id, last_lifecycle_install_id: input.install_id,
+      paused: Boolean(current.paused), recovered: true,
+    }), now());
     const response: ApplyRuntimeResponse = {
       state: "noop", install_id: input.install_id,
       applied_revision_id: current.applied_revision_id, paused: Boolean(current.paused),
@@ -106,10 +120,7 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
           initial.aid, initial.prepop_base, JSON.stringify(initial.amount_buckets), detached ? 1 : 0,
           initial.keyword_default, initial.form_route, initial.form_version, nextRevision,
           input.install_id, timestamp).run();
-    await env.FACTORY.prepare(`INSERT INTO audit_log
-        (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
-        VALUES (?1, ?2, 'lifecycle.runtime.apply', 'brand_runtime', ?3, ?4, ?5, ?6)`)
-        .bind(input.actor_id, input.actor_role, input.brand_id, auditBefore, auditAfter, timestamp).run();
+    await ensureApplyAudit(env, input, auditBefore, auditAfter, timestamp);
   } else {
     const nextFormVersion = input.bundle_form_version ?? input.initial_runtime?.form_version ?? current.form_version;
     const update = await env.LEADS.prepare(`UPDATE brand_runtime SET hostnames = ?1, form_version = ?2,
@@ -122,10 +133,7 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
     if (update.meta.changes !== 1) return conflict("Runtime revision is stale");
     // Cross-D1 writes cannot be atomic. If the migration-owned audit insert fails after
     // this point, the runtime remains applied and the request fails rather than claiming audit success.
-    await env.FACTORY.prepare(`INSERT INTO audit_log
-        (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
-        VALUES (?1, ?2, 'lifecycle.runtime.apply', 'brand_runtime', ?3, ?4, ?5, ?6)`)
-        .bind(input.actor_id, input.actor_role, input.brand_id, auditBefore, auditAfter, timestamp).run();
+    await ensureApplyAudit(env, input, auditBefore, auditAfter, timestamp);
   }
   const response: ApplyRuntimeResponse = {
     state: detached ? "detached" : "applied", install_id: input.install_id,
