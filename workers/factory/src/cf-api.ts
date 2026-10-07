@@ -104,7 +104,10 @@ export async function uploadScript(
   metadata: {
     main_module: string;
     bindings: Array<{ type: string; name: string; [key: string]: unknown }>;
-    assets?: { jwt: string; config?: Record<string, unknown> };
+    assets?: {
+      jwt: string;
+      config: { html_handling: "none"; run_worker_first: true | string[]; not_found_handling?: "none" | "404-page" };
+    };
     compatibility_date: string;
     compatibility_flags?: string[];
     keep_bindings?: string[];

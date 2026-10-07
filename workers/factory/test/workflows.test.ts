@@ -81,7 +81,7 @@ async function fixture(live = false) {
     return Response.json({ state: parsed.target_revision_id ? "applied" : "detached", install_id: parsed.install_id, applied_revision_id: parsed.target_revision_id, paused: runtime.paused });
   } };
   const compensation: RollbackParams[] = [];
-  const uploads: Array<{ bindings: Array<Record<string, unknown>> }> = [];
+  const uploads: Array<{ bindings: Array<Record<string, unknown>>; assets?: { jwt: string; config?: Record<string, unknown> } }> = [];
   const network = vi.fn(async (input: string | Request | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
     const ok = (result: unknown) => Response.json({ success: true, result });
@@ -123,6 +123,13 @@ function runInstall(f: Awaited<ReturnType<typeof fixture>>, s = steps()) {
 }
 
 describe("production lifecycle Workflow.run integration (local-only)", () => {
+  it("uploads the brand Worker with run_worker_first and an ASSETS binding (BR-1)", async () => {
+    const f = await fixture();
+    await runInstall(f);
+    expect(f.uploads[0]!.assets).toEqual({ jwt: "local-session", config: { html_handling: "none", run_worker_first: true } });
+    expect(f.uploads[0]!.bindings).toContainEqual({ type: "assets", name: "ASSETS" });
+  });
+
   it("provisions before deploy, uses tenant defaults and marks READY only after core verification", async () => {
     const f = await fixture();
     const s = steps();

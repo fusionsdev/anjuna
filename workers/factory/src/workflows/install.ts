@@ -234,8 +234,9 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             CF_API_TOKEN, CF_ACCOUNT_ID, scriptName, scriptBody,
             {
               main_module: "worker.js",
-              assets: { jwt: assets_jwt, config: { html_handling: "none" } },
+              assets: { jwt: assets_jwt, config: { html_handling: "none", run_worker_first: true } },
               bindings: [
+                { type: "assets", name: "ASSETS" },
                 { type: "plain_text", name: "BRAND_ID", text: brand_id },
                 { type: "plain_text", name: "HOSTNAME", text: domain },
                 { type: "json", name: "BRAND_CONFIG", json: { ...assembleBrandConfig(config, initial_runtime, domain), brand_id, brand: name } },
