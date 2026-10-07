@@ -10,6 +10,9 @@ import { createSettingsCache } from "./settings-cache.js";
 import { cookie, json, notFound, PayloadTooLarge, readCappedBody, readCookie, redirect } from "./http.js";
 
 const PAUSE_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Temporarily unavailable</title><h1>Temporarily unavailable</h1><p>Please try again later.</p></html>';
+const COMPLETE_HTML = (ref: string) => `<!doctype html><html lang="en"><meta charset="utf-8">` +
+  `<meta name="viewport" content="width=device-width,initial-scale=1"><title>Request received</title>` +
+  `<h1>Thank you</h1><p>Your request has been received.</p>${ref ? `<p>Reference: ${ref}</p>` : ""}</html>`;
 export const ANALYTICS_LIMITS = { posthog: 256 * 1024, sentry: 1024 * 1024, telemetry: 64 * 1024, errors: 64 * 1024 } as const;
 
 function adParams(url: URL): ClickParams {
@@ -140,9 +143,10 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   const legal = LEGAL_PATHS.find((page) => path === page || path === `${page}/`);
   const form = path === settings.formRoute || path === `${settings.formRoute}/`;
   const provider = path === `${settings.formRoute}/provider`;
+  const complete = path === `${settings.formRoute}/complete`;
   const staticAsset = STATIC_FILES.some((file) => path === file) || STATIC_PREFIXES.some((prefix) => path.startsWith(prefix) && path.length > prefix.length);
   const proxy = proxyRoute(path, settings);
-  const allowed = (read && (path === "/" || path === "/go" || legal || form || provider || staticAsset || path === "/api/zip" || path === "/api/health")) ||
+  const allowed = (read && (path === "/" || path === "/go" || legal || form || provider || complete || staticAsset || path === "/api/zip" || path === "/api/health")) ||
     (request.method === "POST" && (path === "/api/leads" || proxy));
   if (!allowed) return notFound();
   if (settings.paused && !staticAsset) {
@@ -176,6 +180,11 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
       if (!isBrandClean(JSON.stringify(result.data))) return json({ found: false }, 503);
       return json(result.data, result.status);
     } catch { return json({ found: false }, 503); }
+  }
+  if (complete) {
+    const ref = url.searchParams.get("ref") ?? "";
+    return new Response(COMPLETE_HTML(/^[a-f0-9-]{1,8}$/i.test(ref) ? ref : ""), { status: 200,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
   }
   if (provider) {
     try {

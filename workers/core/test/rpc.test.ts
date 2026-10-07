@@ -144,7 +144,7 @@ describe("V1 lead path", () => {
     retry.lead.lead.zip = "10001";
     retry.lead.lead.state = "TX";
     const dup = await (await rpc("submitLead", retry)).json() as SubmitLeadAccepted;
-    expect(await (await resolve(dup.continuation)).json()).toEqual({ url: `/thank-you.html?ref=${first.reference}` });
+    expect(await (await resolve(dup.continuation)).json()).toEqual({ url: `/request/complete?ref=${first.reference}` });
     expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state: "TX", status: "accepted" });
   });
   it("a real applicant who edits a field and resubmits the same lead_id is handed off with the edit", async () => {
@@ -160,9 +160,9 @@ describe("V1 lead path", () => {
     const input = submit(payload(true)); input.lead.lead.state = "TX";
     const first = await accepted(input);
     expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state, status: "rejected" });
-    expect(await (await resolve(first.continuation)).json()).toEqual({ url: `/thank-you.html?ref=${first.reference}` });
+    expect(await (await resolve(first.continuation)).json()).toEqual({ url: `/request/complete?ref=${first.reference}` });
     const blockedRetry = await (await rpc("submitLead", input)).json() as SubmitLeadAccepted;
-    expect(await (await resolve(blockedRetry.continuation)).json()).toEqual({ url: `/thank-you.html?ref=${first.reference}` });
+    expect(await (await resolve(blockedRetry.continuation)).json()).toEqual({ url: `/request/complete?ref=${first.reference}` });
     input.lead.lead.zip = "60601";
     const routedRetry = await (await rpc("submitLead", input)).json() as SubmitLeadAccepted;
     const { url } = await (await resolve(routedRetry.continuation)).json() as { url: string };
@@ -171,7 +171,7 @@ describe("V1 lead path", () => {
   });
   it("unknown lite ZIP fails closed; an unknown full ZIP falls back to submitted state", async () => {
     const lite = submit(); lite.lead.lead.zip = "99999";
-    expect(await (await resolve((await accepted(lite)).continuation)).json()).toHaveProperty("url", `/thank-you.html?ref=${lite.lead.lead_id.slice(-8)}`);
+    expect(await (await resolve((await accepted(lite)).continuation)).json()).toHaveProperty("url", `/request/complete?ref=${lite.lead.lead_id.slice(-8)}`);
     const full = submit(payload(true)); full.lead.lead.zip = "99999";
     expect((await (await resolve((await accepted(full)).continuation)).json() as { url: string }).url).toContain("state=TX");
   });
@@ -291,6 +291,27 @@ describe("signed handoffs", () => {
     expect(await (await rpc("verifyHandoff", { brand_id: "brand-a", token: "garbage" })).json()).toEqual({ valid: false, reason: "malformed" });
     expect(JSON.stringify(data)).not.toContain(HANDOFF_KEY);
   });
+});
+
+it("a blocked-state lead lands on a served neutral page on the brand apex", async () => {
+  await h.db.prepare("UPDATE zip_lookup SET state = 'NY' WHERE zip = '60601'").run();
+  const brand = await h.mf.getWorker("brand");
+  const res = await brand.fetch("https://brand-a.example/api/leads", { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify(payload()) });
+  const { redirect_url } = await res.json() as { redirect_url: string };
+  expect(res.status).toBe(201);
+  expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state: "NY", status: "rejected" });
+  const hop = await brand.fetch(`https://brand-a.example${redirect_url}`, { redirect: "manual" });
+  await hop.text();
+  expect(hop.status).toBe(302);
+  const location = hop.headers.get("location")!;
+  expect(new URL(location).origin).toBe("https://brand-a.example");
+  expect(new URL(location).pathname).toBe("/request/complete");
+  const page = await brand.fetch(location);
+  expect(page.status).toBe(200);
+  const html = await page.text();
+  expect(html).toContain("Your request has been received.");
+  expect(html).not.toMatch(/prepop|lead_id=/);
 });
 
 it("Miniflare brand → recordClick → submitLead → continuation → postback(cid) → pending closes the money path", async () => {

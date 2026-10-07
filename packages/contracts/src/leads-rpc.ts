@@ -112,7 +112,7 @@ export type ResolveContinuationRequest = z.infer<typeof ResolveContinuationReque
 /**
  * Where the provider hop sends the browser (302, `Referrer-Policy: no-referrer`). For a routed
  * lead it is the LeadsGate prepop URL built by V1 buildUserRedirect; for a lead V1 would not
- * route (state gate) it is the neutral thank-you path.
+ * route (state gate) it is the neutral path `<formRoute>/complete?ref=<last 8>`.
  */
 export const ResolveContinuationResponse = z.strictObject({
   url: z.string().min(1),
