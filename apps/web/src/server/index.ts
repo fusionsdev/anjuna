@@ -28,7 +28,7 @@ import { createAuth, type Auth } from "./auth.js";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
 import { authorizePanel } from "./panel-roles.js";
-import { handleLifecycleRoute } from "./lifecycle.js";
+import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -120,7 +120,9 @@ async function route(
   }
 
   if ((m = path.match(/^\/api\/brands\/([^/]+)(?:\/(pause|resume|rollback|install|installs))?$/))) {
-    const id = BrandId.safeParse(decodeURIComponent(m[1]!));
+    const rawBrand = decodePathSegment(m[1]!);
+    if (rawBrand === null) return notFound("brand", rid);
+    const id = BrandId.safeParse(rawBrand);
     const action = m[2];
     if (!id.success) return notFound("brand", rid);
 
@@ -236,7 +238,9 @@ async function route(
     // PII: owner only (plan: "View individual leads with PII").
     const g = authorize("getLead", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    const id = LeadId.safeParse(decodeURIComponent(m[1]!));
+    const rawLead = decodePathSegment(m[1]!);
+    if (rawLead === null) return notFound("lead", rid);
+    const id = LeadId.safeParse(rawLead);
     if (!id.success) return notFound("lead", rid);
     return fromCore(await callCore(env, ctx, { endpoint: "getLead", params: { lead_id: id.data } }));
   }
@@ -304,7 +308,8 @@ async function route(
   if ((m = path.match(/^\/api\/users\/([^/]+)$/)) && method === "PATCH") {
     const g = authorizePanel("setUserRole", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    const userId = decodeURIComponent(m[1]!);
+    const userId = decodePathSegment(m[1]!);
+    if (userId === null) return json(404, { error: "not_found", resource: "user", request_id: rid });
     const body = UserSetRole.safeParse(await readJson(request));
     if (!body.success) return invalid(body.error, rid);
     if (userId === ctx.actor_id) {
