@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "./api";
+import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
+import { FunnelScreen } from "./screens/Funnel";
+import { MailingScreen } from "./screens/Mailing";
 import { SignIn } from "./screens/SignIn";
 import { UsersScreen } from "./screens/Users";
 
-type View = "brands" | "audit" | "users";
+type View = "brands" | "funnel" | "alerts" | "mailing" | "audit" | "users";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -29,6 +32,9 @@ export function App() {
 
   const nav: { id: View; label: string; show: boolean }[] = [
     { id: "brands", label: "แบรนด์ (Brands)", show: true },
+    { id: "funnel", label: "รายงานฟันเนล (Funnel)", show: true },
+    { id: "alerts", label: "การแจ้งเตือน (Alerts)", show: true },
+    { id: "mailing", label: "สถานะเมล (Mailing)", show: true },
     { id: "audit", label: "ประวัติการเปลี่ยนแปลง (Audit log)", show: true },
     { id: "users", label: "ผู้ใช้ (Users)", show: me.role === "owner" },
   ];
@@ -62,6 +68,9 @@ export function App() {
       </aside>
       <main className="content">
         {view === "brands" && <BrandLifecycle me={me} />}
+        {view === "funnel" && <FunnelScreen />}
+        {view === "alerts" && <AlertsScreen />}
+        {view === "mailing" && <MailingScreen />}
         {view === "audit" && <AuditScreen me={me} />}
         {view === "users" && me.role === "owner" && <UsersScreen me={me} />}
       </main>

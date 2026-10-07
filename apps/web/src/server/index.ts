@@ -23,10 +23,11 @@ import {
 import { AUTH_ROLES } from "@anjuna/auth-db";
 import { z } from "zod";
 import { verifyAccess } from "./access.js";
-import { listLifecycleAudit, listPanelAudit, writePanelAudit, writeFactoryAudit } from "./audit.js";
+import { listLifecycleAudit, listPanelAudit, writePanelAudit } from "./audit.js";
 import { createAuth, type Auth } from "./auth.js";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
+import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 
@@ -65,10 +66,11 @@ const UserCreate = z.strictObject({
 const UserSetRole = z.strictObject({ role: z.enum(AUTH_ROLES) });
 
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
-  const access = await verifyAccess(request, env);
+  const localDev = isLocalDev(request, env);
+  const access = await verifyAccess(request, env, localDev);
   if (!access.ok) return json(401, { error: "unauthorized" });
 
-  const auth = createAuth(env);
+  const auth = createAuth(env, localDev);
   const path = url.pathname.replace(/\/+$/, "");
 
   if (path.startsWith("/api/auth/")) {
@@ -119,7 +121,7 @@ async function route(
     return json(410, { error: "legacy_route_retired", message: "Use POST /api/brands/drafts" });
   }
 
-  if ((m = path.match(/^\/api\/brands\/([^/]+)(?:\/(pause|resume|rollback|install|installs))?$/))) {
+  if ((m = path.match(/^\/api\/brands\/([^/]+)(?:\/(pause|resume))?$/))) {
     const rawBrand = decodePathSegment(m[1]!);
     if (rawBrand === null) return notFound("brand", rid);
     const id = BrandId.safeParse(rawBrand);
@@ -151,78 +153,6 @@ async function route(
       return fromCore(await callCore(env, ctx, { endpoint, params: { id: id.data }, body: parsed.data }));
     }
 
-    if (action === "rollback" && method === "POST") {
-      const g = authorizePanel("rollbackBrand", ctx.actor_role);
-      if (!g.ok) return forbidden(g.error, rid);
-      const brand = await env.FACTORY.prepare("SELECT brand_id, status FROM brands WHERE brand_id = ?1").bind(id.data).first<{ brand_id: string; status: string }>();
-      if (!brand) return notFound("brand", rid);
-      const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-      const now = new Date().toISOString();
-      await env.FACTORY.prepare(
-        "INSERT INTO installs (install_id, brand_id, kind, status, started_by, started_at) VALUES (?1, ?2, 'rollback', 'queued', ?3, ?4)",
-      )
-        .bind(installId, id.data, ctx.actor_id, now)
-        .run();
-      await writeFactoryAudit(env.FACTORY, {
-        actor_id: ctx.actor_id,
-        actor_role: ctx.actor_role,
-        action: "install.start",
-        entity_type: "install",
-        entity_id: installId,
-        after: { brand_id: id.data, kind: "rollback" },
-      });
-      if (env.FACTORY_WORKER) {
-        await env.FACTORY_WORKER.fetch(new Request("https://factory/rollback", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ install_id: installId, brand_id: id.data }),
-        })).catch(() => null);
-      }
-      return json(201, { install_id: installId, brand_id: id.data, kind: "rollback", status: "queued" });
-    }
-
-    if (action === "install" && method === "POST") {
-      const g = authorizePanel("installBrand", ctx.actor_role);
-      if (!g.ok) return forbidden(g.error, rid);
-      const brand = await env.FACTORY.prepare("SELECT brand_id, status FROM brands WHERE brand_id = ?1").bind(id.data).first<{ brand_id: string; status: string }>();
-      if (!brand) return notFound("brand", rid);
-      const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-      const now = new Date().toISOString();
-      await env.FACTORY.prepare(
-        "INSERT INTO installs (install_id, brand_id, kind, status, started_by, started_at) VALUES (?1, ?2, 'install', 'queued', ?3, ?4)",
-      )
-        .bind(installId, id.data, ctx.actor_id, now)
-        .run();
-      await writeFactoryAudit(env.FACTORY, {
-        actor_id: ctx.actor_id,
-        actor_role: ctx.actor_role,
-        action: "install.start",
-        entity_type: "install",
-        entity_id: installId,
-        after: { brand_id: id.data, kind: "install" },
-      });
-      if (env.FACTORY_WORKER) {
-        await env.FACTORY_WORKER.fetch(new Request("https://factory/install", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ install_id: installId, brand_id: id.data }),
-        })).catch(() => null);
-      }
-      return json(201, { install_id: installId, brand_id: id.data, kind: "install", status: "queued" });
-    }
-
-    if (action === "installs" && method === "GET") {
-      const g = authorizePanel("installBrand", ctx.actor_role);
-      if (!g.ok) return forbidden(g.error, rid);
-      const brand = await env.FACTORY.prepare("SELECT brand_id FROM brands WHERE brand_id = ?1").bind(id.data).first<{ brand_id: string }>();
-      if (!brand) return notFound("brand", rid);
-      const { results } = await env.FACTORY.prepare(
-        "SELECT install_id, kind, status, started_by, started_at, finished_at, error FROM installs WHERE brand_id = ?1 ORDER BY started_at DESC LIMIT 50",
-      )
-        .bind(id.data)
-        .all<{ install_id: string; kind: string; status: string; started_by: string; started_at: string; finished_at: string | null; error: string | null }>();
-      return json(200, { brand_id: id.data, installs: results });
-    }
   }
 
   // --- leads ---
@@ -330,51 +260,23 @@ async function route(
     return json(200, { user: { id: userId, role: body.data.role } });
   }
 
-  // --- upgrade-all ---
-  if (path === "/api/upgrade-all" && method === "POST") {
-    const g = authorizePanel("upgradeAll", ctx.actor_role);
+  // --- reports: core read-only admin routes. The panel does not bind the leads D1. ---
+  if (path === "/api/funnel" && method === "GET") {
+    const g = authorize("funnelReport", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    const { results: brands } = await env.FACTORY.prepare(
-      "SELECT brand_id FROM brands WHERE status IN ('live', 'paused')",
-    ).all<{ brand_id: string }>();
-    const now = new Date().toISOString();
-    const installs = brands.map((b) => ({
-      install_id: `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
-      brand_id: b.brand_id,
-    }));
-    if (installs.length > 0) {
-      await env.FACTORY.batch(
-        installs.map((i) =>
-          env.FACTORY.prepare(
-            "INSERT INTO installs (install_id, brand_id, kind, status, started_by, started_at) VALUES (?1, ?2, 'upgrade', 'queued', ?3, ?4)",
-          ).bind(i.install_id, i.brand_id, ctx.actor_id, now),
-        ),
-      );
-      if (env.FACTORY_WORKER) {
-        for (const i of installs) {
-          await env.FACTORY_WORKER.fetch(new Request("https://factory/upgrade", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ install_id: i.install_id, brand_id: i.brand_id }),
-          })).catch(() => null);
-        }
-      }
-    }
-    return json(201, { queued: installs.length, install_ids: installs.map((i) => i.install_id) });
+    return fromCore(await callCore(env, ctx, { endpoint: "funnelReport", query: url.searchParams }));
   }
 
-  // --- alerts (T9 table; stub until T9 merges) ---
   if (path === "/api/alerts" && method === "GET") {
-    const g = authorizePanel("installBrand", ctx.actor_role); // employee+
+    const g = authorize("alertsReport", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    return json(200, { alerts: [] });
+    return fromCore(await callCore(env, ctx, { endpoint: "alertsReport", query: url.searchParams }));
   }
 
-  // --- mailing status (listmonk; stub until T8/T9 configure the instance) ---
   if (path === "/api/mailing" && method === "GET") {
-    const g = authorizePanel("installBrand", ctx.actor_role); // employee+
+    const g = authorize("mailingStatus", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    return json(200, { status: "not_configured" });
+    return fromCore(await callCore(env, ctx, { endpoint: "mailingStatus" }));
   }
 
   return notFound("route", rid);

@@ -35,7 +35,10 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .table.clickable tbody tr { cursor: pointer; } .table.clickable tbody tr:hover, tr.selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .75rem; background: var(--line); }
-.pill.live { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.pill.live, .pill.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.pill.alert { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .pill.paused { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
 .pill.owner { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .badge { font-size: .7rem; background: var(--line); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }

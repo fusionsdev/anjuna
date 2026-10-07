@@ -72,7 +72,7 @@ export interface CallOpts {
 export async function call(path: string, opts: CallOpts = {}): Promise<Response> {
   const headers = new Headers(opts.headers);
   if (opts.cookie) headers.set("cookie", opts.cookie);
-  headers.set("origin", ORIGIN);
+  if (!headers.has("origin")) headers.set("origin", ORIGIN);
   if (opts.body !== undefined) headers.set("content-type", "application/json");
   return worker.fetch(
     new Request(`${opts.origin ?? ORIGIN}${path}`, {

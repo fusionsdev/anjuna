@@ -459,6 +459,116 @@ export const AdminError = z.discriminatedUnion("error", [
 ]);
 export type AdminError = z.infer<typeof AdminError>;
 
+// --- GET /admin/funnel, /admin/alerts, /admin/mailing (read-only reports) -----------------------
+
+const AlertState = z.enum(["ok", "warn", "alert"]);
+
+/** Query for the funnel report. `to` is exclusive. Matches the insights filter. */
+export const FunnelQuery = z
+  .strictObject({
+    from: Timestamp,
+    to: Timestamp,
+    brand: z.string().min(1).max(64).optional(),
+    keyword: z.string().min(1).max(100).optional(),
+    variant: z.string().min(1).max(32).optional(),
+  })
+  .refine((f) => f.from < f.to, "from must be before to");
+export type FunnelQuery = z.infer<typeof FunnelQuery>;
+
+export const FunnelReportResponse = z.strictObject({
+  from: Timestamp,
+  to: Timestamp,
+  rows: z.array(
+    z.strictObject({
+      brand: z.string().min(1),
+      keyword: z.string().min(1).nullable(),
+      variant: z.string().min(1).nullable(),
+      clicks: Count,
+      go_count: Count,
+      form_views: Count,
+      submits: Count,
+      sold: Count,
+      revenue: z.number().finite().min(0),
+      submit_rate: z.number().finite().min(0).nullable(),
+      sold_rate: z.number().finite().min(0).nullable(),
+    }),
+  ),
+});
+export type FunnelReportResponse = z.infer<typeof FunnelReportResponse>;
+
+/** Optional clock override so tests are deterministic. Omitted means "now". */
+export const AlertsQuery = z.strictObject({
+  now: Timestamp.optional(),
+});
+export type AlertsQuery = z.infer<typeof AlertsQuery>;
+
+export const AlertsReportResponse = z.strictObject({
+  generated_at: Timestamp,
+  conversion_stalled: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      max_hours: z.number().positive(),
+      stuck_count: Count,
+      oldest_created_at: Timestamp.nullable(),
+    }),
+  }),
+  brands_without_postbacks: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      window_hours: z.number().positive(),
+      brands: z.array(z.strictObject({ brand: z.string().min(1), leads: Count })),
+    }),
+  }),
+  submit_error_rate: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      window_hours: z.number().positive(),
+      warn_at: z.number().min(0),
+      alert_at: z.number().min(0),
+      samples: z.array(
+        z.strictObject({
+          brand: z.string().min(1),
+          submits: Count,
+          errors: Count,
+          rate: z.number().finite().min(0).max(1),
+        }),
+      ),
+    }),
+  }),
+  reject_rate: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      window_hours: z.number().positive(),
+      warn_at: z.number().min(0),
+      alert_at: z.number().min(0),
+      brands: z.array(
+        z.strictObject({
+          brand: z.string().min(1),
+          rejected: Count,
+          decided: Count,
+          rate: z.number().finite().min(0).max(1),
+        }),
+      ),
+    }),
+  }),
+});
+export type AlertsReportResponse = z.infer<typeof AlertsReportResponse>;
+
+/**
+ * Local `mailing_outbox` counts. `external_sync` says whether LISTMONK_* is set.
+ * This response never includes a subscriber, an email, or a listmonk call.
+ */
+export const MailingStatusResponse = z.strictObject({
+  external_sync: z.enum(["not_configured", "configured"]),
+  counts: z.strictObject({
+    pending: Count,
+    sent: Count,
+    skipped: Count,
+    dead: Count,
+  }),
+});
+export type MailingStatusResponse = z.infer<typeof MailingStatusResponse>;
+
 // --- endpoint table and role table ---------------------------------------------------------------
 
 /**
@@ -521,6 +631,26 @@ export const AdminApi = {
     audit_scope: "own_for_employee",
     query: AuditQuery,
     response: AuditListResponse,
+  },
+  funnelReport: {
+    method: "GET",
+    path: "/admin/funnel",
+    min_role: "employee",
+    query: FunnelQuery,
+    response: FunnelReportResponse,
+  },
+  alertsReport: {
+    method: "GET",
+    path: "/admin/alerts",
+    min_role: "employee",
+    query: AlertsQuery,
+    response: AlertsReportResponse,
+  },
+  mailingStatus: {
+    method: "GET",
+    path: "/admin/mailing",
+    min_role: "employee",
+    response: MailingStatusResponse,
   },
 } as const;
 export type AdminEndpoint = keyof typeof AdminApi;

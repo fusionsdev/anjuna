@@ -1,7 +1,12 @@
 import {
   ADMIN_ERROR_STATUS,
+  AlertsQuery,
+  AlertsReportResponse,
   AuditQuery,
   BrandId,
+  FunnelQuery,
+  FunnelReportResponse,
+  MailingStatusResponse,
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
@@ -24,6 +29,7 @@ import {
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
+import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 
 const JSON_BODY_LIMIT = 32 * 1024;
 
@@ -690,6 +696,19 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   }
   if (route.endpoint === "listAudit") {
     return listAudit(new URL(request.url), env, context, endpointPermission.scope);
+  }
+  if (route.endpoint === "funnelReport") {
+    const filter = parseWith(FunnelQuery, parseQuery(new URL(request.url)), context);
+    if (filter instanceof Response) return filter;
+    return json(FunnelReportResponse.parse(await loadFunnel(env, filter)));
+  }
+  if (route.endpoint === "alertsReport") {
+    const query = parseWith(AlertsQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(AlertsReportResponse.parse(await loadAlerts(env, query)));
+  }
+  if (route.endpoint === "mailingStatus") {
+    return json(MailingStatusResponse.parse(await loadMailingStatus(env)));
   }
 
   return adminError(context, { error: "not_found", resource: "route" });

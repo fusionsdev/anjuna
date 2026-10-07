@@ -13,7 +13,7 @@ One Worker (`anjuna-web`, `app.aduplift.ai`) serving a React + Vite SPA (static 
 ```sh
 # .dev.vars (gitignored)
 BETTER_AUTH_SECRET=<random>
-DEV_ACCESS_BYPASS=1        # local only; ignored on *.aduplift.ai
+DEV_ACCESS_BYPASS=1  # local only (.dev.vars). Ignored whenever Cloudflare's edge sets a non-loopback CF-Connecting-IP, on every tenant.
 MOCK_CORE=1
 
 cp seed.users.json.example seed.users.json   # gitignored; put real emails here

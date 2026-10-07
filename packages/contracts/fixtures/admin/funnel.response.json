@@ -1,0 +1,19 @@
+{
+  "from": "2026-10-01T00:00:00.000Z",
+  "to": "2026-10-02T00:00:00.000Z",
+  "rows": [
+    {
+      "brand": "brand-a",
+      "keyword": "Fast Cash Loans",
+      "variant": "a",
+      "clicks": 4,
+      "go_count": 3,
+      "form_views": 2,
+      "submits": 2,
+      "sold": 1,
+      "revenue": 85,
+      "submit_rate": 0.5,
+      "sold_rate": 0.5
+    }
+  ]
+}
