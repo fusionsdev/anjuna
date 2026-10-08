@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertCleanBrandBytes, renderBrand, unzip, zip } from "../src/render";
-import { apexDnsRecords, uploadScript } from "../src/cf-api";
+import { apexDnsRecords, publicApexDnsRecords, uploadScript } from "../src/cf-api";
 import { CoreLifecycleClient } from "../src/core-lifecycle-client";
 
 const ENC = new TextEncoder();
@@ -236,5 +236,37 @@ describe("apex DNS preflight", () => {
   it("returns nothing for a zone whose apex and www carry only non-blocking records", async () => {
     const fetcher = async () => Response.json({ success: true, result: [{ id: "1", type: "TXT", name: "brand.example" }] });
     expect(await apexDnsRecords("token", "zone-1", "brand.example", fetcher)).toEqual([]);
+  });
+});
+
+describe("apex DNS preflight fallback", () => {
+  const doh = (answers: Record<string, Array<{ name: string; type: number }>>) => async (input: string) => {
+    const url = new URL(input);
+    if (url.hostname === "api.cloudflare.com") {
+      return Response.json({ success: false, errors: [{ code: 10000, message: "Authentication error" }], result: null });
+    }
+    const key = `${url.searchParams.get("type")} ${url.searchParams.get("name")}`;
+    return Response.json({ Status: 0, Answer: answers[key] ?? [] });
+  };
+
+  it("uses the public DNS view when the zone DNS API refuses the token (10000)", async () => {
+    const fetcher = doh({ "CNAME www.brand.example": [{ name: "www.brand.example.", type: 5 }] });
+    expect(await apexDnsRecords("token", "zone-1", "brand.example", fetcher)).toEqual([
+      { id: "public-dns", type: "CNAME", name: "www.brand.example" },
+    ]);
+  });
+
+  it("reports no conflicts for empty apex and www in the public view", async () => {
+    expect(await apexDnsRecords("token", "zone-1", "brand.example", doh({}))).toEqual([]);
+  });
+
+  it("does not fall back on other API errors", async () => {
+    const fetcher = async () => Response.json({ success: false, errors: [{ code: 7003, message: "Could not route" }], result: null });
+    await expect(apexDnsRecords("token", "zone-1", "brand.example", fetcher)).rejects.toThrow("7003");
+  });
+
+  it("fails closed when the public lookup itself fails", async () => {
+    const fetcher = async () => new Response("down", { status: 502 });
+    await expect(publicApexDnsRecords("brand.example", fetcher)).rejects.toThrow("HTTP 502");
   });
 });

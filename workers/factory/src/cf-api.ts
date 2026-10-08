@@ -51,20 +51,58 @@ export interface DnsRecord {
 /** Record types that block a Workers Custom Domain on a hostname. */
 const BLOCKING_TYPES = new Set(["A", "AAAA", "CNAME"]);
 
+const DOH_TYPES: Record<number, string> = { 1: "A", 5: "CNAME", 28: "AAAA" };
+
+/**
+ * Public DNS view of the apex and www hostnames (DNS-over-HTTPS, no credentials).
+ * Used only when the zone DNS API refuses the token (Cloudflare error 10000): account API
+ * tokens can be rejected by the zone DNS records endpoint even with DNS permissions. Proxied
+ * and DNS-only records are both visible publicly, and Custom Domain attach still refuses a
+ * hostname that already has records, so this keeps the preflight without widening the token.
+ */
+export async function publicApexDnsRecords(domain: string, fetcher: CfFetch = globalThis.fetch): Promise<DnsRecord[]> {
+  const found: DnsRecord[] = [];
+  for (const name of [domain, `www.${domain}`]) {
+    for (const type of ["A", "AAAA", "CNAME"]) {
+      const res = await fetcher(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`, {
+        headers: { accept: "application/dns-json" },
+      });
+      if (!res.ok) throw new Error(`Public DNS lookup ${type} ${name} failed: HTTP ${res.status}`);
+      const body = await res.json<{ Status: number; Answer?: Array<{ name: string; type: number }> }>();
+      if (body.Status !== 0 && body.Status !== 3) throw new Error(`Public DNS lookup ${type} ${name} failed: rcode ${body.Status}`);
+      for (const answer of body.Answer ?? []) {
+        const answerName = answer.name.replace(/\.$/, "").toLowerCase();
+        const answerType = DOH_TYPES[answer.type];
+        if (answerName === name && answerType && !found.some((r) => r.name === name && r.type === answerType)) {
+          found.push({ id: "public-dns", type: answerType, name });
+        }
+      }
+    }
+  }
+  return found;
+}
+
 /**
  * Returns A, AAAA and CNAME records on the apex and www hostnames.
  * The list API filters `name` and `type` by a single exact value each, so query each hostname
- * on its own and filter the type here.
+ * on its own and filter the type here. Falls back to the public DNS view when the zone DNS
+ * API answers 10000 (authentication) for this token.
  */
 export async function apexDnsRecords(token: string, zoneId: string, domain: string, fetcher?: CfFetch): Promise<DnsRecord[]> {
   const found: DnsRecord[] = [];
-  for (const name of [domain, `www.${domain}`]) {
-    const records = await cfFetch<DnsRecord[]>(
-      token, "GET",
-      `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}&per_page=100`,
-      undefined, undefined, fetcher,
-    );
-    found.push(...records.filter((record) => record.name === name && BLOCKING_TYPES.has(record.type)));
+  try {
+    for (const name of [domain, `www.${domain}`]) {
+      const records = await cfFetch<DnsRecord[]>(
+        token, "GET",
+        `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}&per_page=100`,
+        undefined, undefined, fetcher,
+      );
+      found.push(...records.filter((record) => record.name === name && BLOCKING_TYPES.has(record.type)));
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || !/failed: 10000:/.test(error.message)) throw error;
+    console.warn(`zone DNS API refused the token for ${domain}; using the public DNS view for the preflight`);
+    return publicApexDnsRecords(domain, fetcher);
   }
   return found;
 }
