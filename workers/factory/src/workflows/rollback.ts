@@ -1,5 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { attachCustomDomain, deployScript, detachCustomDomain } from "../cf-api.js";
+import { attachCustomDomain, deployScript, detachCustomDomain, listCustomDomains } from "../cf-api.js";
 import { compensationFailureEvidence, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../receipt.js";
 import { rollbackTargetBelongsToBrand } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
@@ -70,18 +70,14 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         await step.do("attach_domains", async () => {
           return withReceipt(db, install_id, "attach_domains", async () => {
             // Find any domain records we may have attached and remove them.
-            const existing = await fetch(
-              `https://api.cloudflare.com/client/v4/zones/${zone_id}/workers/domains?service=brand-${brand_id}`,
-              { headers: { Authorization: `Bearer ${CF_API_TOKEN}` } },
-            );
-            const body = await existing.json<{ result: Array<{ id: string }> }>();
+            const existing = await listCustomDomains(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, `brand-${brand_id}`);
             await Promise.all(
-              (body.result ?? []).map((d) => {
+              existing.map((d) => {
                 mutationStarted = true;
-                return detachCustomDomain(CF_API_TOKEN, zone_id, d.id);
+                return detachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, d.id);
               }),
             );
-            return { detached: body.result?.length ?? 0 };
+            return { detached: existing.length };
           });
         });
 
@@ -151,8 +147,8 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
             const scriptName = `brand-${brand_id}`;
             mutationStarted = true;
             const [apex, www] = await Promise.all([
-              attachCustomDomain(CF_API_TOKEN, zone_id, domain, scriptName),
-              attachCustomDomain(CF_API_TOKEN, zone_id, `www.${domain}`, scriptName),
+              attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, domain, scriptName),
+              attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, `www.${domain}`, scriptName),
             ]);
             return { apex_domain_id: apex.id, www_domain_id: www.id };
           });

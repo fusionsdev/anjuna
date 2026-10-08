@@ -215,13 +215,22 @@ export interface DeploymentResult {
   versions: Array<{ version_id: string; percentage: number }>;
 }
 
-/** Deploy a specific version (or the latest upload) to 100% traffic. */
+/**
+ * Deploy a specific version to 100% traffic, or, without a version, return the deployment that
+ * the script upload (`PUT /workers/scripts/{name}`) already created for the newest version.
+ */
 export async function deployScript(
   token: string, accountId: string, scriptName: string, versionId?: string, fetcher?: CfFetch,
 ): Promise<DeploymentResult> {
-  const body = versionId
-    ? { strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }] }
-    : { strategy: "percentage" };
+  if (!versionId) {
+    const list = await cfFetch<{ deployments: DeploymentResult[] }>(
+      token, "GET", `/accounts/${accountId}/workers/scripts/${scriptName}/deployments`, undefined, undefined, fetcher,
+    );
+    const latest = list.deployments?.[0];
+    if (!latest) throw new Error(`No deployment found for ${scriptName}`);
+    return latest;
+  }
+  const body = { strategy: "percentage", versions: [{ version_id: versionId, percentage: 100 }] };
   return cfFetch<DeploymentResult>(token, "POST", `/accounts/${accountId}/workers/scripts/${scriptName}/deployments`, JSON.stringify(body), "application/json", fetcher);
 }
 
@@ -231,18 +240,28 @@ export interface CustomDomainResult {
   service: string;
 }
 
-/** Attach a Custom Domain to a Worker script. Idempotent if already attached. */
+/** Attach a Custom Domain to a Worker script (account-level Workers Domains API). Idempotent. */
 export async function attachCustomDomain(
-  token: string, zoneId: string, hostname: string, scriptName: string, fetcher?: CfFetch,
+  token: string, accountId: string, zoneId: string, hostname: string, scriptName: string, fetcher?: CfFetch,
 ): Promise<CustomDomainResult> {
   return cfFetch<CustomDomainResult>(
-    token, "PUT", `/zones/${zoneId}/workers/domains`,
-    JSON.stringify({ hostname, service: scriptName, environment: "production" }),
+    token, "PUT", `/accounts/${accountId}/workers/domains`,
+    JSON.stringify({ hostname, service: scriptName, zone_id: zoneId, environment: "production" }),
     "application/json", fetcher,
   );
 }
 
+/** Custom Domains attached to a Worker script in one zone. */
+export async function listCustomDomains(
+  token: string, accountId: string, zoneId: string, scriptName: string, fetcher?: CfFetch,
+): Promise<CustomDomainResult[]> {
+  return cfFetch<CustomDomainResult[]>(
+    token, "GET", `/accounts/${accountId}/workers/domains?zone_id=${zoneId}&service=${encodeURIComponent(scriptName)}`,
+    undefined, undefined, fetcher,
+  );
+}
+
 /** Remove a Custom Domain attachment. */
-export async function detachCustomDomain(token: string, zoneId: string, domainId: string, fetcher?: CfFetch): Promise<void> {
-  await cfFetch<unknown>(token, "DELETE", `/zones/${zoneId}/workers/domains/${domainId}`, undefined, undefined, fetcher);
+export async function detachCustomDomain(token: string, accountId: string, domainId: string, fetcher?: CfFetch): Promise<void> {
+  await cfFetch<unknown>(token, "DELETE", `/accounts/${accountId}/workers/domains/${domainId}`, undefined, undefined, fetcher);
 }

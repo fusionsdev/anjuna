@@ -290,8 +290,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           const scriptName = `brand-${brand_id}`;
           mutationStarted = true;
           const [apex, www] = await Promise.all([
-            attachCustomDomain(CF_API_TOKEN, zone_id, domain, scriptName),
-            attachCustomDomain(CF_API_TOKEN, zone_id, `www.${domain}`, scriptName),
+            attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, domain, scriptName),
+            attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, `www.${domain}`, scriptName),
           ]);
           return { apex_domain_id: apex.id, www_domain_id: www.id };
         });
