@@ -108,32 +108,63 @@ export async function apexDnsRecords(token: string, zoneId: string, domain: stri
 }
 
 export interface AssetsSession {
-  /** JWT used to upload individual files. */
+  /** Upload JWT for the buckets, or the completion JWT when nothing needs uploading. */
   jwt: string;
-  /** Hashes already present in the store — skip uploading these. */
+  /** Hashes still to upload, grouped as Cloudflare wants them uploaded together. */
   buckets: string[][];
 }
 
-/** Start a Workers Assets upload session. */
+export type AssetManifest = Record<string, { hash: string; size: number }>;
+
+/**
+ * Register the asset manifest for a Worker script (Workers static assets direct upload).
+ * Manifest keys are absolute paths ("/index.html"); hashes are 32 hex characters.
+ */
 export async function createAssetsSession(
-  token: string, accountId: string, files: { hash: string; size: number }[], fetcher?: CfFetch,
+  token: string, accountId: string, scriptName: string, manifest: AssetManifest, fetcher?: CfFetch,
 ): Promise<AssetsSession> {
   return cfFetch<AssetsSession>(
-    token, "POST", `/accounts/${accountId}/workers/assets/upload`,
-    JSON.stringify(files), "application/json", fetcher,
+    token, "POST", `/accounts/${accountId}/workers/scripts/${scriptName}/assets-upload-session`,
+    JSON.stringify({ manifest }), "application/json", fetcher,
   );
 }
 
-/** Upload one hashed file to an open assets session. */
-export async function uploadAssetFile(
-  sessionJwt: string, hash: string, content: Uint8Array, contentType: string, fetcher: CfFetch = globalThis.fetch,
-): Promise<void> {
-  const res = await fetcher(`${CF_API}/accounts/assets/upload`, {
+/**
+ * Upload one bucket of files with the session's upload JWT (multipart, base64 contents).
+ * Returns the completion JWT when this upload finished the manifest, otherwise undefined.
+ */
+export async function uploadAssetBucket(
+  uploadJwt: string, accountId: string, files: Array<{ hash: string; base64: string; contentType: string }>,
+  fetcher: CfFetch = globalThis.fetch,
+): Promise<string | undefined> {
+  const form = new FormData();
+  for (const file of files) form.append(file.hash, new File([file.base64], file.hash, { type: file.contentType }));
+  const res = await fetcher(`${CF_API}/accounts/${accountId}/workers/assets/upload?base64=true`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${sessionJwt}`, "Content-Type": contentType, "CF-Asset-Hash": hash },
-    body: content,
+    headers: { Authorization: `Bearer ${uploadJwt}` },
+    body: form,
   });
-  if (!res.ok) throw new Error(`Asset upload failed: ${res.status} ${await res.text()}`);
+  const text = await res.text();
+  let json: { success?: boolean; errors?: { code: number; message: string }[]; result?: { jwt?: string } };
+  try { json = JSON.parse(text); } catch { throw new Error(`Asset upload failed: ${res.status} ${text.slice(0, 200)}`); }
+  if (!res.ok || json.success === false) {
+    const msg = json.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") ?? text.slice(0, 200);
+    throw new Error(`Asset upload failed: ${res.status} ${msg}`);
+  }
+  return json.result?.jwt;
+}
+
+const CONTENT_TYPES: Record<string, string> = {
+  html: "text/html", css: "text/css", js: "application/javascript", mjs: "application/javascript",
+  json: "application/json", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+  gif: "image/gif", webp: "image/webp", avif: "image/avif", ico: "image/x-icon", txt: "text/plain",
+  woff: "font/woff", woff2: "font/woff2", xml: "application/xml", webmanifest: "application/manifest+json",
+};
+
+/** Content type served for an asset path; unknown extensions are sent without one. */
+export function assetContentType(path: string): string {
+  const extension = path.split("/").pop()!.split(".").pop()!.toLowerCase();
+  return CONTENT_TYPES[extension] ?? "application/null";
 }
 
 export interface ScriptUploadResult {

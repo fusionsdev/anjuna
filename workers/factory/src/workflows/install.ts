@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import {
-  apexDnsRecords, attachCustomDomain, createAssetsSession, deployScript,
-  getZone, uploadAssetFile, uploadScript,
+  apexDnsRecords, attachCustomDomain, assetContentType, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
+  getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
 import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt } from "../receipt.js";
@@ -182,34 +182,33 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           if (!renderObj) throw new Error(`Render artifact not found: ${render_r2_key}`);
 
           const files = unzip(new Uint8Array(await renderObj.arrayBuffer()));
-          const fileList = await Promise.all(
-            [...files.entries()].map(async ([path, content]) => {
-              const hashBuf = await crypto.subtle.digest("SHA-256", content);
-              const hash = Array.from(new Uint8Array(hashBuf))
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join("");
-              return { path, content, hash, size: content.byteLength };
-            }),
-          );
+          const scriptName = `brand-${brand_id}`;
+          const manifest: AssetManifest = {};
+          const byHash = new Map<string, { base64: string; contentType: string }>();
+          for (const [rawPath, content] of files) {
+            const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+            const base64 = bytesToBase64(content);
+            const extension = path.includes(".") ? path.split(".").pop()! : "";
+            const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(base64 + extension));
+            const hash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+            manifest[path] = { hash, size: content.byteLength };
+            byHash.set(hash, { base64, contentType: assetContentType(path) });
+          }
 
           mutationStarted = true;
-          const session = await createAssetsSession(
-            CF_API_TOKEN, CF_ACCOUNT_ID,
-            fileList.map(({ hash, size }) => ({ hash, size })),
-          );
-          mutationStarted = true;
+          const session = await createAssetsSession(CF_API_TOKEN, CF_ACCOUNT_ID, scriptName, manifest);
+          let completion = session.buckets.length === 0 ? session.jwt : undefined;
+          for (const bucket of session.buckets) {
+            const jwt = await uploadAssetBucket(session.jwt, CF_ACCOUNT_ID, bucket.map((hash) => {
+              const file = byHash.get(hash);
+              if (!file) throw new Error(`Asset session asked for an unknown hash ${hash}`);
+              return { hash, ...file };
+            }));
+            if (jwt) completion = jwt;
+          }
+          if (!completion) throw new Error("Asset upload did not return a completion token");
 
-          const needed = new Set(session.buckets.flat());
-          await Promise.all(
-            fileList
-              .filter(({ hash }) => needed.has(hash))
-              .map(({ content, hash }) => {
-                mutationStarted = true;
-                return uploadAssetFile(session.jwt, hash, content, "application/octet-stream");
-              }),
-          );
-
-          return { assets_jwt: session.jwt };
+          return { assets_jwt: completion };
         });
       });
 
@@ -392,4 +391,11 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
     }
   }
+}
+
+/** Base64 for asset uploads, chunked so large files do not overflow the argument limit. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
 }

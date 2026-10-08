@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertCleanBrandBytes, renderBrand, unzip, zip } from "../src/render";
-import { apexDnsRecords, publicApexDnsRecords, uploadScript } from "../src/cf-api";
+import { apexDnsRecords, assetContentType, createAssetsSession, publicApexDnsRecords, uploadAssetBucket, uploadScript } from "../src/cf-api";
 import { CoreLifecycleClient } from "../src/core-lifecycle-client";
 
 const ENC = new TextEncoder();
@@ -268,5 +268,44 @@ describe("apex DNS preflight fallback", () => {
   it("fails closed when the public lookup itself fails", async () => {
     const fetcher = async () => new Response("down", { status: 502 });
     await expect(publicApexDnsRecords("brand.example", fetcher)).rejects.toThrow("HTTP 502");
+  });
+});
+
+describe("static assets direct upload", () => {
+  it("registers the manifest on the script's assets-upload-session endpoint with the API token", async () => {
+    let call: { url: string; init?: RequestInit } | undefined;
+    const fetcher = async (url: string, init?: RequestInit) => {
+      call = { url, init };
+      return Response.json({ success: true, result: { jwt: "upload-jwt", buckets: [["a".repeat(32)]] } });
+    };
+    const session = await createAssetsSession("api-token", "acct", "brand-x", { "/index.html": { hash: "a".repeat(32), size: 5 } }, fetcher);
+    expect(call!.url).toBe("https://api.cloudflare.com/client/v4/accounts/acct/workers/scripts/brand-x/assets-upload-session");
+    expect((call!.init!.headers as Record<string, string>).Authorization).toBe("Bearer api-token");
+    expect(JSON.parse(call!.init!.body as string)).toEqual({ manifest: { "/index.html": { hash: "a".repeat(32), size: 5 } } });
+    expect(session).toEqual({ jwt: "upload-jwt", buckets: [["a".repeat(32)]] });
+  });
+
+  it("uploads a bucket as base64 multipart with the upload JWT and returns the completion JWT", async () => {
+    let call: { url: string; init?: RequestInit } | undefined;
+    const fetcher = async (url: string, init?: RequestInit) => {
+      call = { url, init };
+      return Response.json({ success: true, result: { jwt: "completion-jwt" } }, { status: 201 });
+    };
+    const jwt = await uploadAssetBucket("upload-jwt", "acct", [{ hash: "b".repeat(32), base64: btoa("hello"), contentType: "text/html" }], fetcher);
+    expect(call!.url).toBe("https://api.cloudflare.com/client/v4/accounts/acct/workers/assets/upload?base64=true");
+    expect((call!.init!.headers as Record<string, string>).Authorization).toBe("Bearer upload-jwt");
+    const part = (call!.init!.body as FormData).get("b".repeat(32)) as File;
+    expect([await part.text(), part.type]).toEqual([btoa("hello"), "text/html"]);
+    expect(jwt).toBe("completion-jwt");
+  });
+
+  it("reports a non-JSON upload failure clearly instead of a JSON parse error", async () => {
+    const fetcher = async () => new Response("Unauthorized", { status: 401 });
+    await expect(uploadAssetBucket("bad", "acct", [], fetcher)).rejects.toThrow("Asset upload failed: 401 Unauthorized");
+  });
+
+  it("maps content types by extension", () => {
+    expect(["/index.html", "/_f/assets/a.js", "/assets/x.woff2", "/data.bin"].map(assetContentType))
+      .toEqual(["text/html", "application/javascript", "font/woff2", "application/null"]);
   });
 });
