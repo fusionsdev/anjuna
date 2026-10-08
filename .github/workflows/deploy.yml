@@ -56,6 +56,12 @@ jobs:
           bun x wrangler d1 migrations apply aduplift-factory --remote --config workers/core/wrangler.deploy.aduplift.jsonc
           bun x wrangler d1 migrations apply aduplift-auth    --remote --config apps/web/wrangler.deploy.aduplift.jsonc
 
+      - name: Build and upload brand runtime bundle (aduplift)
+        run: |
+          bun run --filter @anjuna/brand-runtime bundle
+          sha256sum packages/brand-runtime/dist/brand-runtime.js
+          bunx wrangler r2 object put anjuna-artifacts/runtime/brand-runtime.js --file packages/brand-runtime/dist/brand-runtime.js --content-type application/javascript --remote --config workers/core/wrangler.deploy.aduplift.jsonc
+
       - name: Deploy core (aduplift)
         run: bun x wrangler deploy --config workers/core/wrangler.deploy.aduplift.jsonc
 
