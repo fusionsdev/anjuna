@@ -9,6 +9,20 @@ export type CfFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const CF_API = "https://api.cloudflare.com/client/v4";
 
+async function responseJson<T>(res: Response, context: string, allowEmpty = false): Promise<T> {
+  const text = await res.text();
+  // Workers Custom Domain DELETE succeeds with no JSON envelope (200 or 204).
+  if (res.ok && allowEmpty && !text.trim()) return undefined as T;
+  try {
+    const json: unknown = JSON.parse(text);
+    if (json === null || typeof json !== "object" || Array.isArray(json)) throw new Error();
+    return json as T;
+  } catch {
+    const detail = text.trim() ? `invalid JSON envelope: ${text.slice(0, 200)}` : "empty response";
+    throw new Error(`${context} failed: HTTP ${res.status}: ${detail}`);
+  }
+}
+
 async function cfFetch<T>(
   token: string,
   method: string,
@@ -20,10 +34,12 @@ async function cfFetch<T>(
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (contentType) headers["Content-Type"] = contentType;
   const res = await fetcher(`${CF_API}${path}`, { method, headers, body });
-  const json = await res.json<{ success: boolean; errors?: { code: number; message: string }[]; result: T }>();
-  if (!json.success) {
+  const context = `CF API ${method} ${path}`;
+  const json = await responseJson<{ success: boolean; errors?: { code: number; message: string }[]; result: T } | undefined>(res, context, method === "DELETE");
+  if (json === undefined) return undefined as T;
+  if (!res.ok || !json.success) {
     const msg = json.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") ?? "unknown error";
-    throw new Error(`CF API ${method} ${path} failed: ${msg}`);
+    throw new Error(`${context} failed: ${msg} (HTTP ${res.status})`);
   }
   return json.result;
 }
@@ -68,7 +84,7 @@ export async function publicApexDnsRecords(domain: string, fetcher: CfFetch = gl
         headers: { accept: "application/dns-json" },
       });
       if (!res.ok) throw new Error(`Public DNS lookup ${type} ${name} failed: HTTP ${res.status}`);
-      const body = await res.json<{ Status: number; Answer?: Array<{ name: string; type: number }> }>();
+      const body = await responseJson<{ Status: number; Answer?: Array<{ name: string; type: number }> }>(res, `Public DNS lookup ${type} ${name}`);
       if (body.Status !== 0 && body.Status !== 3) throw new Error(`Public DNS lookup ${type} ${name} failed: rcode ${body.Status}`);
       for (const answer of body.Answer ?? []) {
         const answerName = answer.name.replace(/\.$/, "").toLowerCase();
@@ -263,5 +279,5 @@ export async function listCustomDomains(
 
 /** Remove a Custom Domain attachment. */
 export async function detachCustomDomain(token: string, accountId: string, domainId: string, fetcher?: CfFetch): Promise<void> {
-  await cfFetch<unknown>(token, "DELETE", `/accounts/${accountId}/workers/domains/${domainId}`, undefined, undefined, fetcher);
+  await cfFetch<void>(token, "DELETE", `/accounts/${accountId}/workers/domains/${domainId}`, undefined, undefined, fetcher);
 }
