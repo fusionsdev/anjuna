@@ -1,5 +1,6 @@
 import { applyD1Migrations } from "cloudflare:test";
-import { env, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { env, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ApplyRuntimeRequest, type RuntimeStateResponse } from "@anjuna/contracts";
 import { InstallBrandWorkflow, type InstallParams } from "../src/workflows/install";
@@ -17,14 +18,26 @@ const now = "2026-10-06T00:00:00.000Z";
 function steps() {
   const cache = new Map<string, unknown>();
   let inside = false;
-  const hooks = { before: async (_name: string) => {}, sleep: async () => {} };
+  const hooks = { before: async (_name: string) => {}, sleep: async () => {}, retry: async (_name: string) => {} };
+  const configs = new Map<string, WorkflowStepConfig>();
   const step = {
-    async do(name: string, work: () => Promise<unknown>) {
+    async do(name: string, configOrWork: WorkflowStepConfig | (() => Promise<unknown>), callback?: () => Promise<unknown>) {
+      const config = typeof configOrWork === "function" ? {} : configOrWork;
+      const work = typeof configOrWork === "function" ? configOrWork : callback!;
+      configs.set(name, config);
       if (inside) throw new Error("nested Workflow step");
       if (cache.has(name)) return cache.get(name);
       await hooks.before(name);
       inside = true;
-      try { const value = await work(); cache.set(name, value); return value; }
+      try {
+        for (let attempt = 0; ; attempt++) {
+          try { const value = await work(); cache.set(name, value); return value; }
+          catch (err) {
+            if (err instanceof NonRetryableError || attempt >= (config.retries?.limit ?? 0)) throw err;
+            await hooks.retry(name);
+          }
+        }
+      }
       finally { inside = false; }
     },
     async sleep() {
@@ -32,7 +45,7 @@ function steps() {
       await hooks.sleep();
     },
   } as unknown as WorkflowStep;
-  return { step, cache, hooks };
+  return { step, cache, hooks, configs };
 }
 function event<T>(payload: T) { return { payload } as WorkflowEvent<T>; }
 
@@ -61,7 +74,8 @@ async function fixture(live = false) {
     bundle_form_version: "form@old", credential_account_match: true,
   } : { state: "absent", brand_id: brand, account: "test", credential_account_match: true };
   const applied: Array<ReturnType<typeof ApplyRuntimeRequest.parse>> = [];
-  const settings = { smokeFails: false, uploadFails: false, dispatchFails: false, coreFails: false };
+  const settings = { smokeFails: false, uploadFails: false, dispatchFails: false, coreFails: false,
+    apex: [] as Array<Response | Error>, www: [] as Array<Response | Error> };
   const core = { async fetch(request: Request) {
     const input = await request.json() as Record<string, unknown>;
     if (new URL(request.url).pathname.endsWith("runtime-state")) return Response.json(runtime);
@@ -85,8 +99,14 @@ async function fixture(live = false) {
   const network = vi.fn(async (input: string | Request | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
     const ok = (result: unknown) => Response.json({ success: true, result });
-    if (url.hostname === `${id}.example`) return new Response("landing", { status: settings.smokeFails ? 500 : runtime.state === "applied" && runtime.paused ? 503 : 200 });
-    if (url.hostname === `www.${id}.example`) return new Response(null, { status: 301 });
+    if (url.hostname === `${id}.example` || url.hostname === `www.${id}.example`) {
+      const apex = url.hostname === `${id}.example`;
+      const response = (apex ? settings.apex : settings.www).shift();
+      if (response instanceof Error) throw response;
+      return response ?? (apex
+        ? new Response('<h1><span data-kw>Quick Loan</span></h1><form data-cta action="/go"></form>', { status: settings.smokeFails ? 500 : runtime.state === "applied" && runtime.paused ? 503 : 200 })
+        : new Response(null, { status: 301, headers: { Location: `https://${id}.example/` } }));
+    }
     if (url.hostname !== "api.cloudflare.com") throw new Error(`Unexpected external request: ${url}`);
     if (url.pathname.endsWith("/zones")) return ok([{ id: "zone-local", status: "active" }]);
     if (url.pathname.endsWith("/dns_records")) return ok([]);
@@ -126,6 +146,70 @@ function runInstall(f: Awaited<ReturnType<typeof fixture>>, s = steps()) {
 }
 
 describe("production lifecycle Workflow.run integration (local-only)", () => {
+  const smokeCalls = (f: Awaited<ReturnType<typeof fixture>>) => f.network.mock.calls.filter(([url]) => String(url).endsWith(".example/"));
+  const smokeReceipt = (f: Awaited<ReturnType<typeof fixture>>) => env.FACTORY.prepare(
+    "SELECT status,output_json FROM install_receipts WHERE install_id=? AND step='smoke'",
+  ).bind(f.install).first<{ status: string; output_json: string }>();
+
+  it("re-fetches after apex 530, www 525 and DNS propagation without caching a failed receipt", async () => {
+    const f = await fixture();
+    f.settings.apex.push(new Response("error code: 1016", { status: 530 }));
+    f.settings.www.push(new Response(null, { status: 525 }), new TypeError("DNS lookup failed: EAI_AGAIN"));
+    const s = steps();
+    let retries = 0;
+    s.hooks.retry = async (name) => {
+      expect(name).toBe("smoke");
+      expect(await smokeReceipt(f)).toBeNull();
+      expect(f.compensation).toEqual([]);
+      retries++;
+    };
+    await runInstall(f, s);
+    expect(retries).toBe(2);
+    expect(smokeCalls(f)).toHaveLength(6);
+    for (const [, init] of smokeCalls(f)) expect(init).toMatchObject({ redirect: "manual", signal: expect.any(AbortSignal) });
+    expect(await f.installRow()).toEqual({ status: "ready" });
+    expect(await smokeReceipt(f)).toMatchObject({ status: "ok" });
+    expect(s.configs.get("smoke")).toEqual({ retries: { limit: 8, delay: "25 seconds", backoff: "constant" }, timeout: "10 seconds" });
+    await runInstall(f, s);
+    expect(smokeCalls(f)).toHaveLength(6);
+  });
+
+  it("exhausts the bounded propagation retries before recording failure and dispatching rollback once", async () => {
+    const f = await fixture();
+    f.settings.apex.push(...Array.from({ length: 9 }, () => new Response("error code: 1016", { status: 530 })));
+    const s = steps();
+    await runInstall(f, s);
+    expect(smokeCalls(f)).toHaveLength(18);
+    expect(await smokeReceipt(f)).toMatchObject({ status: "failed", output_json: expect.stringContaining("apex returned 530") });
+    expect(await f.installRow()).toEqual({ status: "failed" });
+    expect(f.compensation).toHaveLength(1);
+    await runInstall(f, s);
+    expect(smokeCalls(f)).toHaveLength(18);
+    expect(f.compensation).toHaveLength(1);
+  });
+
+  it.each([400, 404, 500, 503])("fails immediately for Worker HTTP %s even when the other hostname is propagating", async (status) => {
+    const f = await fixture();
+    f.settings.apex.push(new Response("error code: 1016", { status: 530 }));
+    f.settings.www.push(new Response("Not Found", { status, headers: { server: "cloudflare" } }));
+    await runInstall(f);
+    expect(smokeCalls(f)).toHaveLength(2);
+    expect(await smokeReceipt(f)).toMatchObject({ status: "failed", output_json: expect.stringContaining(`www returned ${status}`) });
+    expect(f.compensation).toHaveLength(1);
+  });
+
+  it.each(["content", "temporary redirect", "wrong redirect", "non-DNS exception"])("fails immediately for invalid smoke %s", async (failure) => {
+    const f = await fixture();
+    if (failure === "content") f.settings.apex.push(new Response("Not Found", { status: 200 }));
+    if (failure === "temporary redirect") f.settings.www.push(new Response(null, { status: 302, headers: { Location: `https://${f.id}.example/` } }));
+    if (failure === "wrong redirect") f.settings.www.push(new Response(null, { status: 301, headers: { Location: "https://wrong.example/" } }));
+    if (failure === "non-DNS exception") f.settings.apex.push(new TypeError("unexpected application failure"));
+    await runInstall(f);
+    expect(smokeCalls(f)).toHaveLength(2);
+    expect(await f.installRow()).toEqual({ status: "failed" });
+    expect(f.compensation).toHaveLength(1);
+  });
+
   it("uploads the brand Worker with run_worker_first and an ASSETS binding (BR-1)", async () => {
     const f = await fixture();
     await runInstall(f);

@@ -6,6 +6,7 @@ import {
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
 import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
+import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
 import type { Env } from "../env.js";
 
 export interface InstallParams {
@@ -298,17 +299,11 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
 
       // ── Step 8: Smoke test ─────────────────────────────────────────────────
-      await step.do("smoke", async () => {
-        return withReceipt(db, install_id, "smoke", async () => {
-          const [apexRes, wwwRes] = await Promise.all([
-            fetch(`https://${domain}/`, { redirect: "manual" }),
-            fetch(`https://www.${domain}/`, { redirect: "manual" }),
-          ]);
-          if (apexRes.status !== 200) throw new Error(`Smoke: apex returned ${apexRes.status}`);
-          if (![301, 302, 307, 308].includes(wwwRes.status)) throw new Error(`Smoke: www returned ${wwwRes.status} (expected redirect)`);
-          return { apex_status: apexRes.status, www_status: wwwRes.status };
-        });
-      });
+      // Persist only the final outcome. A failed receipt inside the callback would
+      // short-circuit every Workflow retry instead of re-fetching the hostnames.
+      await withReceipt(db, install_id, "smoke", () =>
+        step.do("smoke", SMOKE_RETRY_CONFIG, () => smokeBrand(domain)),
+      );
 
       if (previous_revision_id) {
         await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
