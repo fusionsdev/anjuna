@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertCleanBrandBytes, renderBrand, unzip, zip } from "../src/render";
-import { uploadScript } from "../src/cf-api";
+import { apexDnsRecords, uploadScript } from "../src/cf-api";
 import { CoreLifecycleClient } from "../src/core-lifecycle-client";
 
 const ENC = new TextEncoder();
@@ -208,5 +208,33 @@ describe("zip round-trip", () => {
       expect(roundtripped.get(path)).toBeDefined();
       expect(DEC.decode(roundtripped.get(path)!)).toBe(DEC.decode(bytes));
     }
+  });
+});
+
+describe("apex DNS preflight", () => {
+  it("queries each hostname with a single exact name and keeps only blocking record types", async () => {
+    const urls: string[] = [];
+    const records: Record<string, Array<{ id: string; type: string; name: string }>> = {
+      "brand.example": [{ id: "1", type: "A", name: "brand.example" }, { id: "2", type: "TXT", name: "brand.example" }, { id: "3", type: "MX", name: "brand.example" }],
+      "www.brand.example": [{ id: "4", type: "CNAME", name: "www.brand.example" }, { id: "5", type: "AAAA", name: "www.brand.example" }],
+    };
+    const fetcher = async (input: string) => {
+      urls.push(input);
+      const name = new URL(input).searchParams.get("name")!;
+      return Response.json({ success: true, result: records[name] ?? [] });
+    };
+    const found = await apexDnsRecords("token", "zone-1", "brand.example", fetcher);
+    for (const url of urls) {
+      const params = new URL(url).searchParams;
+      expect(params.get("name")).not.toContain(",");
+      expect(params.has("type")).toBe(false);
+    }
+    expect(urls.map((url) => new URL(url).searchParams.get("name"))).toEqual(["brand.example", "www.brand.example"]);
+    expect(found.map((r) => `${r.type} ${r.name}`)).toEqual(["A brand.example", "CNAME www.brand.example", "AAAA www.brand.example"]);
+  });
+
+  it("returns nothing for a zone whose apex and www carry only non-blocking records", async () => {
+    const fetcher = async () => Response.json({ success: true, result: [{ id: "1", type: "TXT", name: "brand.example" }] });
+    expect(await apexDnsRecords("token", "zone-1", "brand.example", fetcher)).toEqual([]);
   });
 });

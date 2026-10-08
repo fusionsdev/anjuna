@@ -48,14 +48,25 @@ export interface DnsRecord {
   name: string;
 }
 
-/** Returns A and CNAME records on the apex and www subdomain. */
+/** Record types that block a Workers Custom Domain on a hostname. */
+const BLOCKING_TYPES = new Set(["A", "AAAA", "CNAME"]);
+
+/**
+ * Returns A, AAAA and CNAME records on the apex and www hostnames.
+ * The list API filters `name` and `type` by a single exact value each, so query each hostname
+ * on its own and filter the type here.
+ */
 export async function apexDnsRecords(token: string, zoneId: string, domain: string, fetcher?: CfFetch): Promise<DnsRecord[]> {
-  const records = await cfFetch<DnsRecord[]>(
-    token, "GET",
-    `/zones/${zoneId}/dns_records?type=A,CNAME&name=${domain},www.${domain}&per_page=20`,
-    undefined, undefined, fetcher,
-  );
-  return records;
+  const found: DnsRecord[] = [];
+  for (const name of [domain, `www.${domain}`]) {
+    const records = await cfFetch<DnsRecord[]>(
+      token, "GET",
+      `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}&per_page=100`,
+      undefined, undefined, fetcher,
+    );
+    found.push(...records.filter((record) => record.name === name && BLOCKING_TYPES.has(record.type)));
+  }
+  return found;
 }
 
 export interface AssetsSession {
