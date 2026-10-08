@@ -97,7 +97,10 @@ async function fixture(live = false) {
       uploads.push(JSON.parse(await metadata.text()));
       return ok({ id: "local-script", etag: "local-etag" });
     }
-    if (url.pathname.endsWith("/deployments")) return ok({ id: "local-deploy", versions: [{ version_id: "worker-local", percentage: 100 }] });
+    if (url.pathname.endsWith("/deployments")) {
+      const deployment = { id: "local-deploy", versions: [{ version_id: "worker-local", percentage: 100 }] };
+      return ok(init?.method === "POST" ? deployment : { deployments: [deployment] });
+    }
     if (url.pathname.endsWith("/workers/domains")) return ok(init?.method === "PUT" ? { id: "local-domain" } : [{ id: "local-domain" }]);
     if (url.pathname.endsWith("/workers/domains/local-domain") && init?.method === "DELETE") return ok({});
     throw new Error(`Unexpected CF request: ${url}`);

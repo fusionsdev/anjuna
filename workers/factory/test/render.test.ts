@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertCleanBrandBytes, renderBrand, unzip, zip } from "../src/render";
-import { apexDnsRecords, assetContentType, createAssetsSession, publicApexDnsRecords, uploadAssetBucket, uploadScript } from "../src/cf-api";
+import { apexDnsRecords, assetContentType, attachCustomDomain, createAssetsSession, deployScript, detachCustomDomain, listCustomDomains, publicApexDnsRecords, uploadAssetBucket, uploadScript } from "../src/cf-api";
 import { CoreLifecycleClient } from "../src/core-lifecycle-client";
 
 const ENC = new TextEncoder();
@@ -307,5 +307,45 @@ describe("static assets direct upload", () => {
   it("maps content types by extension", () => {
     expect(["/index.html", "/_f/assets/a.js", "/assets/x.woff2", "/data.bin"].map(assetContentType))
       .toEqual(["text/html", "application/javascript", "font/woff2", "application/null"]);
+  });
+});
+
+describe("deploy and custom domains API", () => {
+  const capture = () => {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body as string) : undefined });
+      if (url.endsWith("/deployments") && init?.method === "GET") {
+        return Response.json({ success: true, result: { deployments: [{ id: "d2", versions: [{ version_id: "v2", percentage: 100 }] }] } });
+      }
+      return Response.json({ success: true, result: { id: "x", hostname: "brand.example", service: "brand-x", versions: [] } });
+    };
+    return { calls, fetcher };
+  };
+
+  it("reads the deployment created by the script upload when no version is given", async () => {
+    const { calls, fetcher } = capture();
+    const deployment = await deployScript("t", "acct", "brand-x", undefined, fetcher);
+    expect(calls).toEqual([{ url: "https://api.cloudflare.com/client/v4/accounts/acct/workers/scripts/brand-x/deployments", method: "GET", body: undefined }]);
+    expect(deployment.versions[0]!.version_id).toBe("v2");
+  });
+
+  it("deploys an explicit version at 100% (rollback)", async () => {
+    const { calls, fetcher } = capture();
+    await deployScript("t", "acct", "brand-x", "v1", fetcher);
+    expect(calls[0]).toMatchObject({ method: "POST", body: { strategy: "percentage", versions: [{ version_id: "v1", percentage: 100 }] } });
+  });
+
+  it("attaches, lists and detaches Custom Domains on the account-level Workers Domains API", async () => {
+    const { calls, fetcher } = capture();
+    await attachCustomDomain("t", "acct", "zone-1", "brand.example", "brand-x", fetcher);
+    await listCustomDomains("t", "acct", "zone-1", "brand-x", fetcher);
+    await detachCustomDomain("t", "acct", "dom-1", fetcher);
+    expect(calls.map((c) => `${c.method} ${c.url.replace("https://api.cloudflare.com/client/v4", "")}`)).toEqual([
+      "PUT /accounts/acct/workers/domains",
+      "GET /accounts/acct/workers/domains?zone_id=zone-1&service=brand-x",
+      "DELETE /accounts/acct/workers/domains/dom-1",
+    ]);
+    expect(calls[0]!.body).toEqual({ hostname: "brand.example", service: "brand-x", zone_id: "zone-1", environment: "production" });
   });
 });
