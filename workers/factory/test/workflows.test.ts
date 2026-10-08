@@ -90,7 +90,7 @@ async function fixture(live = false) {
     if (url.hostname !== "api.cloudflare.com") throw new Error(`Unexpected external request: ${url}`);
     if (url.pathname.endsWith("/zones")) return ok([{ id: "zone-local", status: "active" }]);
     if (url.pathname.endsWith("/dns_records")) return ok([]);
-    if (url.pathname.endsWith("/assets/upload")) return ok({ jwt: "local-session", buckets: [] });
+    if (url.pathname.endsWith(`/scripts/brand-${brand}/assets-upload-session`)) return ok({ jwt: "local-session", buckets: [] });
     if (url.pathname.endsWith(`/scripts/brand-${brand}`)) {
       if (settings.uploadFails) throw new Error("upload failed locally");
       const metadata = (init!.body as FormData).get("metadata") as File;
