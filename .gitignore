@@ -9,3 +9,6 @@ coverage
 *.local
 spike/**/public
 .astro
+
+# long-run supervisor outputs (may hold production query results)
+/longrun/
