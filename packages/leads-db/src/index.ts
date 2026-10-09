@@ -18,6 +18,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0007_core_rpc.sql",
   "0008_lifecycle.sql",
   "0009_continuation_applicant.sql",
+  "0010_zip_lookup_seed.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
