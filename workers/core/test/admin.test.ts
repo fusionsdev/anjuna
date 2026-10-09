@@ -174,7 +174,14 @@ describe("AdminService contract", () => {
     expect(listed.brands).toHaveLength(2);
     expect(listed.brands[0]!.ab_config!.variants.map((variant) => variant.id)).toEqual(["a", "b"]);
     expect(listed.brands[0]!.form_version).toBeNull();
-    expect(listed.brands[0]!.stats_7d).toEqual({ leads: 1, sold: 1, pending: 0 });
+    expect(listed.brands[0]!.stats_7d).toEqual({ leads: 0, sold: 0, pending: 0 });
+
+    // stats_7d counts from the real clock; move the fixture lead into the window, then restore it.
+    const recent = new Date(Date.now() - 3_600_000).toISOString();
+    await h.db.prepare("UPDATE leads SET created_at = ?1 WHERE lead_id = ?2").bind(recent, leadId).run();
+    const recentList = ListBrandsResponse.parse(await (await h.admin("/admin/brands", employee)).json());
+    expect(recentList.brands[0]!.stats_7d).toEqual({ leads: 1, sold: 1, pending: 0 });
+    await h.db.prepare("UPDATE leads SET created_at = '2026-10-01T12:00:00.000Z' WHERE lead_id = ?1").bind(leadId).run();
 
     const brand = await h.admin("/admin/brands/brand-a", employee);
     expect(GetBrandResponse.parse(await brand.json()).brand).toMatchObject({
