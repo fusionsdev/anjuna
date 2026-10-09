@@ -390,9 +390,10 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    // SQLite may evaluate both sides of AND. CASE keeps plain-text errors out of json_extract.
     const row = await env.FACTORY.prepare(`SELECT i.install_id,i.brand_id,i.to_revision_id,i.status,
-      ((json_valid(i.error) AND json_extract(i.error,'$.recovery_required')=1)
-       OR (json_valid(i.rollback_record_json) AND json_extract(i.rollback_record_json,'$.recovery_of') IS NOT NULL)) AS recovery_required
+      (CASE WHEN json_valid(i.error) THEN COALESCE(json_extract(i.error,'$.recovery_required')=1,0) ELSE 0 END
+       OR CASE WHEN json_valid(i.rollback_record_json) THEN json_extract(i.rollback_record_json,'$.recovery_of') IS NOT NULL ELSE 0 END) AS recovery_required
       FROM installs i WHERE i.install_id=?1`).bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string | null; status: string; recovery_required: number }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
