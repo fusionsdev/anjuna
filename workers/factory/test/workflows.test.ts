@@ -232,6 +232,37 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(f.network).toHaveBeenCalledTimes(calls);
   });
 
+  it("replays a READY install with a fresh step cache without new installs, versions, domains or receipts", async () => {
+    const f = await fixture();
+    await runInstall(f);
+    expect(await f.installRow()).toEqual({ status: "ready" });
+    expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+    const snapshot = async () => ({
+      installs: (await env.FACTORY.prepare("SELECT * FROM installs WHERE brand_id=? ORDER BY install_id").bind(f.brand).all()).results,
+      revisions: (await env.FACTORY.prepare("SELECT * FROM brand_revisions WHERE brand_id=? ORDER BY revision_id").bind(f.brand).all()).results,
+      receipts: (await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY step").bind(f.install).all()).results,
+    });
+    const before = await snapshot();
+    expect(before.installs).toHaveLength(1);
+    expect(before.revisions).toHaveLength(1);
+    expect(before.revisions[0]).toMatchObject({ worker_version_id: "worker-local" });
+    expect(f.uploads).toHaveLength(1);
+    expect(f.network.mock.calls.filter(([url, init]) => String(url).endsWith("/workers/domains") && init?.method === "PUT")).toHaveLength(2);
+    const calls = f.network.mock.calls.length;
+    const applied = f.applied.length;
+
+    // Same install ID, but no in-memory Workflow step cache from the first run.
+    const replay = steps();
+    await runInstall(f, replay);
+    expect(replay.configs.size).toBe(0);
+    expect(await snapshot()).toEqual(before);
+    expect(f.network).toHaveBeenCalledTimes(calls);
+    expect(f.uploads).toHaveLength(1);
+    expect(f.applied).toHaveLength(applied);
+    expect(f.compensation).toEqual([]);
+    expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+  });
+
   it("preserves an existing live deployment when preflight rejects a foreign account", async () => {
     const f = await fixture(true);
     f.bindings.CORE_ACCOUNT = "other";

@@ -187,6 +187,40 @@ describe("truthful lifecycle BFF", () => {
     expect(row?.status).toBe("running");
   });
 
+  // T10 evidence: this characterizes an open defect, not an acceptance pass.
+  // Replace with rejection/no-mutation assertions when startInstall gains a
+  // live-brand guard. U04 is restricted to tests and gate evidence.
+  it("documents the missing live-brand guard: a second install creates another attempt", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "live-rerun.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(draft.status).toBe(201);
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const revision = `${brand.brand_id}_rev_1`;
+    let dispatches = 0;
+    const worker = { fetch: async () => { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const testEnv = makeEnv({ FACTORY_WORKER: worker });
+    const install = () => call(`/api/brands/${brand.brand_id}/install`, { cookie: employee, method: "POST", body: {}, env: testEnv });
+    expect((await install()).status).toBe(201);
+    const first = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
+    expect(first).not.toBeNull();
+
+    // Simulate the factory's completed first install; no provider is contacted.
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("UPDATE installs SET status='ready',finished_at=? WHERE install_id=?").bind(new Date().toISOString(), first!.install_id),
+      env.FACTORY.prepare("UPDATE brands SET status='live',current_revision_id=? WHERE brand_id=?").bind(revision, brand.brand_id),
+      env.FACTORY.prepare("UPDATE brand_revisions SET worker_version_id='worker-existing' WHERE revision_id=?").bind(revision),
+    ]);
+    expect(await env.FACTORY.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ status: "live", current_revision_id: revision });
+
+    const response = await install();
+    expect(response.status).toBe(201);
+    expect(dispatches).toBe(2);
+    const attempts = await env.FACTORY.prepare("SELECT install_id,status FROM installs WHERE brand_id=?").bind(brand.brand_id).all<{ install_id: string; status: string }>();
+    expect(attempts.results).toHaveLength(2);
+    expect(attempts.results).toContainEqual({ install_id: first!.install_id, status: "ready" });
+    expect(attempts.results.find((row) => row.install_id !== first!.install_id)?.status).toBe("running");
+    expect(await env.FACTORY.prepare("SELECT revision_id,worker_version_id FROM brand_revisions WHERE brand_id=?").bind(brand.brand_id).all()).toMatchObject({ results: [{ revision_id: revision, worker_version_id: "worker-existing" }] });
+  });
+
   it("rejects a second install or rollback while a lifecycle operation is active", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "active-conflict.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
