@@ -163,6 +163,8 @@ build() { # unit wt round feedback_file
     echo "You are the builder for unit $u in the Anjuna repo. Work only inside this directory: $wt"
     echo "Read AGENTS.md first and follow its hard rules. Stay inside the allowed paths: $(card_get "$u" paths)"
     echo "Do not push, tag, deploy, merge or call Cloudflare, LeadsGate or any VPS. Credentials are disabled on purpose."
+    echo "Stay on the current branch in this directory. Never run git worktree, git clean, git switch, git checkout of another branch, or create branches. Other units share this git repository."
+    echo "Do not leave log files or scratch files in the repo."
     echo "Commit your work on the current branch with a conventional commit message. Run bun run typecheck and bun run test before you finish."
     [ -s "$LR/input/$u.txt" ] && echo "Production query results for this unit (read-only, already fetched): $LR/input/$u.txt"
     echo
@@ -175,7 +177,8 @@ build() { # unit wt round feedback_file
       agent_env timeout "$BUILD_TIMEOUT" codex exec -m "$CODEX_MODEL" -s danger-full-access --skip-git-repo-check -C "$wt" - \
         <"$prompt" >"$LR/out/$u.r$round.build.log" 2>&1 ;;
     relay)
-      ( cd "$wt" && agent_env timeout "$BUILD_TIMEOUT" claude -p "Use the relay skill (relay-coder-opus seat) for this task. $(cat "$prompt")" \
+      # Plain Opus in this worktree. The relay skill creates its own worktrees and branches, which broke the shared repo.
+      ( cd "$wt" && agent_env timeout "$BUILD_TIMEOUT" claude -p "$(cat "$prompt")" --model opus \
         --permission-mode bypassPermissions >"$LR/out/$u.r$round.build.log" 2>&1 ) ;;
     *) echo "unknown builder $builder" >"$LR/out/$u.r$round.build.log"; return 1 ;;
   esac
@@ -245,8 +248,15 @@ run_unit() {
   fi
 
   git -C "$ROOT" fetch -q origin main
+  # A directory without a .git file is a broken worktree; rebuild it from the branch.
+  if [ -d "$wt" ] && [ ! -e "$wt/.git" ]; then rm -rf "$wt"; git -C "$ROOT" worktree prune; fi
   if [ ! -d "$wt" ]; then
-    git -C "$ROOT" worktree add -q "$wt" origin/main -B "$branch" || { park "$u" "worktree add failed"; return; }
+    # Reuse an existing branch so earlier rounds' commits survive a restart. -B would reset it to origin/main.
+    if git -C "$ROOT" show-ref -q --verify "refs/heads/$branch"; then
+      git -C "$ROOT" worktree add -q "$wt" "$branch" || { park "$u" "worktree add failed"; return; }
+    else
+      git -C "$ROOT" worktree add -q "$wt" -b "$branch" origin/main || { park "$u" "worktree add failed"; return; }
+    fi
   fi
   ( cd "$wt" && bun install --frozen-lockfile >"$LR/out/$u.install.log" 2>&1 )
 

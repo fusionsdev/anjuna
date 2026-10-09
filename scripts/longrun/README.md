@@ -18,7 +18,7 @@ New session afterwards: run `/oracle-resume`, then read `longrun/OWNER_NEEDED.md
 
 1. Supervisor runs the unit's `Uxx.sql` reads through `d1-read.sh` and saves them in `longrun/input/` (outside every worktree).
 2. A worktree is created from `origin/main` under `../anjuna-lr/<unit>`.
-3. Builder: Codex `gpt-6-astra`. Round 2 may escalate to Claude relay (Opus) when Jev says the fix needs design judgment. Round 3 always uses relay.
+3. Builder: Codex `gpt-6-astra`. Round 2 may escalate to Claude Opus (plain, no relay skill) when Jev says the fix needs design judgment. Round 3 always uses relay.
 4. Gate A (script): allowed paths, no secret files, no token-shaped strings or `LEADSGATE_ENDPOINT`, `bun run typecheck`, `bun run test`.
 5. Review: opencode DeepSeek V4 Pro (read-only plan agent). Money-path cards add Grok in plan mode. Approval needs the reviewer's `VERDICT: APPROVE` line and Jev's `approve` with severity ≤ 1.
 6. Push, PR, wait for CI. `merge: auto` cards are squash-merged. `merge: owner` cards wait for the owner.
