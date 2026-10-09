@@ -93,10 +93,10 @@ describe("employee can run the day", () => {
     expect(body.brand.keyword_default).toBe("Quick Cash Today");
   });
 
-  it("rollback: allowed for the role, returns 404 for unknown brands (not in factory)", async () => {
-    // Rollback checks FACTORY D1 for brand existence. Core-mock brands (brand-a) are not seeded there.
-    expect((await post(employee, "/api/brands/brand-a/rollback")).status).toBe(404);
-    expect((await post(employee, "/api/brands/nope/rollback")).status).toBe(404);
+  it("refuses Employee rollback before looking up the brand", async () => {
+    await expectForbidden(await post(employee, "/api/brands/brand-a/rollback"));
+    await expectForbidden(await post(employee, "/api/brands/nope/rollback"));
+    expect((await post(owner, "/api/brands/nope/rollback")).status).toBe(404);
   });
 
   it("sees aggregates only", async () => {
@@ -377,14 +377,15 @@ describe("factory brands: create / install / upgrade", () => {
     expect(res.status).toBe(422);
   });
 
-  it("install and rollback write audit rows", async () => {
+  it("Employee install and Owner rollback record the correct audit roles", async () => {
     const brand = await createBrand(employee);
     const before = (await auditRows()).length;
-    await post(employee, `/api/brands/${brand.brand_id}/install`);
-    await post(employee, `/api/brands/${brand.brand_id}/rollback`);
+    expect((await post(employee, `/api/brands/${brand.brand_id}/install`)).status).toBe(502);
+    expect((await post(owner, `/api/brands/${brand.brand_id}/rollback`)).status).toBe(502);
     const rows = (await auditRows()).slice(before);
-    expect(rows.filter((r) => r.action === "install.start").length).toBe(2);
-    expect(rows.every((r) => r.actor_role === "employee")).toBe(true);
+    const starts = rows.filter((r) => r.action === "install.start");
+    expect(starts).toHaveLength(2);
+    expect(starts.map((r) => r.actor_role).sort()).toEqual(["employee", "owner"]);
   });
 
   it("createBrand writes a brand.create audit row", async () => {

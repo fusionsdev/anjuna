@@ -26,8 +26,8 @@ const post = (cookie: string, path: string, body: unknown) => call(path, { cooki
 describe("truthful lifecycle BFF", () => {
   it("offers only sealed versions from D1 and refuses unsealed draft input", async () => {
     for (const status of ["draft", "certifying", "certified", "rejected"]) {
-      await env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES (?1,'tpl-1',?2,'sha','templates/unsealed',?3,'owner','2026-10-01T00:00:00Z')")
-        .bind(`tv-${status}`, 2 + ["draft", "certifying", "certified", "rejected"].indexOf(status), status).run();
+      await env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES (?1,'tpl-1',?2,?4,'templates/unsealed',?3,'owner','2026-10-01T00:00:00Z')")
+        .bind(`tv-${status}`, 2 + ["draft", "certifying", "certified", "rejected"].indexOf(status), status, `sha-${status}`).run();
       expect((await post(employee, "/api/brands/drafts", { domain: "unsealed.test", keyword_default: "Quick Loan", template_version_id: `tv-${status}` })).status).toBe(422);
     }
     expect((await call("/api/templates/sealed")).status).toBe(401);
@@ -215,8 +215,13 @@ describe("truthful lifecycle BFF", () => {
     expect(blocked.status).toBe(409);
   });
 
-  it("acknowledges a successful Workflow dispatch only after sending the exact command", async () => {
-    const draft = await post(employee, "/api/brands/drafts", { domain: "dispatch.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+  it("lets an Employee select a listed sealed template, create a draft and dispatch Install", async () => {
+    const listed = await call("/api/templates/sealed", { cookie: employee });
+    expect(listed.status).toBe(200);
+    const { templates } = SealedTemplatesResponse.parse(await listed.json());
+    const template = templates[0]!;
+    const draft = await post(employee, "/api/brands/drafts", { domain: "dispatch.example", keyword_default: "Quick Loan", template_version_id: template.template_version_id });
+    expect(draft.status).toBe(201);
     const { brand } = await draft.json() as { brand: { brand_id: string } };
     let sent: unknown;
     const worker = { fetch: async (request: Request) => { sent = await request.json(); return Response.json({ ok: true, instance_id: "ins-workflow" }); } } as unknown as Fetcher;

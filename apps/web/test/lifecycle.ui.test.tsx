@@ -123,6 +123,45 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("button", { name: "Rollback" })).toBeNull();
   });
 
+  it("does not offer unsealed versions even if the API returns them", async () => {
+    routes.set("GET /api/templates/sealed", () => json({ templates: [
+      { template_version_id: "tv-1", name: "Starter", version: 1, status: "sealed" },
+      { template_version_id: "tv-draft", name: "Unapproved", version: 2, status: "draft" },
+    ] }));
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByText(/โหลด sealed templates ไม่สำเร็จ/);
+    const select = screen.getByRole("combobox", { name: "Sealed template version" });
+    expect(within(select).getAllByRole("option")).toHaveLength(1);
+    expect(screen.queryByRole("option", { name: /Unapproved/ })).toBeNull();
+    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(requests.some((request) => request.path === "/api/brands/drafts")).toBe(false);
+  });
+
+  it("clears a removed template selection on Refresh before allowing another draft", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
+    const select = screen.getByRole("combobox", { name: "Sealed template version" });
+    const create = screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement;
+    fireEvent.change(screen.getByRole("textbox", { name: "Domain" }), { target: { value: "refresh.test" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Keyword" }), { target: { value: "Quick Loan" } });
+    fireEvent.change(select, { target: { value: "tv-1" } });
+    expect(create.disabled).toBe(false);
+
+    routes.set("GET /api/templates/sealed", () => json({ templates: [
+      { template_version_id: "tv-2", name: "Fresh", version: 2, status: "sealed" },
+    ] }));
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    expect(create.disabled).toBe(true);
+    await screen.findByRole("option", { name: "Fresh · v2 (tv-2)" });
+    expect(select).toHaveProperty("value", "");
+    expect(screen.queryByRole("option", { name: "Starter · v1 (tv-1)" })).toBeNull();
+    expect(create.disabled).toBe(true);
+    fireEvent.click(create);
+    expect(requests.some((request) => request.path === "/api/brands/drafts")).toBe(false);
+    fireEvent.change(select, { target: { value: "tv-2" } });
+    expect(create.disabled).toBe(false);
+  });
+
   it("loads API rows and opens working runtime pause, keyword, buckets, A/B and gate controls", async () => {
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeDefined();
