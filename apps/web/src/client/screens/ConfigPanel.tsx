@@ -42,12 +42,12 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
       </p>
 
       <Section title="สถานะ (Pause / Resume)">
-        <button
+        {(brand.status !== "live" || me.role === "owner") && <button
           className={brand.status === "live" ? "danger" : "primary"}
           onClick={() => act(() => api.setStatus(brandId, brand.status === "live" ? "pause" : "resume"), brand.status === "live" ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว")}
         >
           {brand.status === "live" ? "Pause แบรนด์" : "Resume แบรนด์"}
-        </button>
+        </button>}
       </Section>
 
       <KeywordSection key={brand.updated_at} brand={brand} onSave={(k) => save({ keyword_default: k })} />

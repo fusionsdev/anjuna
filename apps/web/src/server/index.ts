@@ -148,6 +148,10 @@ async function route(
       const endpoint = action === "pause" ? "pauseBrand" : "resumeBrand";
       const g = authorize(endpoint, ctx.actor_role);
       if (!g.ok) return forbidden(g.error, rid);
+      if (action === "pause") {
+        const owner = authorizePanel("pauseBrand", ctx.actor_role);
+        if (!owner.ok) return forbidden(owner.error, rid);
+      }
       const parsed = BrandStatusChangeRequest.safeParse(await readJson(request));
       if (!parsed.success) return invalid(parsed.error, rid);
       return fromCore(await callCore(env, ctx, { endpoint, params: { id: id.data }, body: parsed.data }));

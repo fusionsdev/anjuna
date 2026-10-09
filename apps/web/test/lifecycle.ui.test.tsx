@@ -236,7 +236,8 @@ describe("mounted lifecycle UI with API responses", () => {
     render(<BrandLifecycle me={employee} />);
     fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
     const panel = await screen.findByRole("complementary", { name: "Brand config" });
-    await within(panel).findByRole("button", { name: "Pause แบรนด์" });
+    await within(panel).findByRole("textbox");
+    expect(within(panel).queryByRole("button", { name: "Pause แบรนด์" })).toBeNull();
     expect(section(panel, "Keyword default").getByRole("textbox")).toBeDefined();
     expect(within(panel).queryByRole("textbox", { name: "Amount buckets" })).toBeNull();
     expect(within(panel).queryByRole("combobox")).toBeNull();
