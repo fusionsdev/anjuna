@@ -64,6 +64,13 @@ are preserved. Secret references are `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`; variable references are `R2_ARTIFACTS_BUCKET` and
 `FORBIDDEN_DOMAINS`. Upload is not part of this local browser test.
 
+The release build job also installs Python 3.12 and Playwright 1.62.0 Chromium,
+starts the local Worker, and requires 8 normal runs plus 8 runs at 4x CPU throttling.
+Startup is bounded and checks that the server is still alive. The shell exits on
+the first failing browser command and stops the server on exit. The manifest and
+artifact are published only after both batches pass; the R2 job depends on that
+build job. Browser acceptance receives no Cloudflare secrets.
+
 ## U09 verification (2026-10-09)
 
 - Edge: 8/8 fresh-context runs passed at normal speed and 8/8 at 4x CPU throttling.
@@ -73,3 +80,18 @@ are preserved. Secret references are `CLOUDFLARE_API_TOKEN` and
 - Parsed workflow YAML: exact `push.tags: ["v*"]` plus `workflow_dispatch`,
   release-only upload guard, and bundle scan command verified.
 - R2 upload and hosted GitHub Actions execution: not run; credentials disabled.
+
+## U09 fix round 2 verification (2026-10-09)
+
+The supplied DeepSeek feedback contains a reviewer name but no findings. Inspection
+found that the prior browser fix was only exercised locally. This round makes it
+a required release-build check without changing the release triggers or R2 upload.
+
+- Edge: fresh 8/8 normal and 8/8 at 4x CPU throttling passed again.
+- `bun run build` in `apps/lead-form`: passed; 13 bundle files clean.
+- Root `bun run typecheck`: 24/24 tasks passed, all cached.
+- Root `bun run test`: 25/25 tasks passed, all cached.
+- Parsed workflow YAML: release-only triggers, upload dependency on the build job,
+  bundle scan, and both browser batches verified. Every shell step passed `bash -n`.
+- Hosted Ubuntu/Chromium execution and R2 upload: not run. Local browser evidence
+  uses Edge; GitHub Actions installs its own Chromium through Playwright.
