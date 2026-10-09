@@ -190,15 +190,16 @@ describe("truthful lifecycle BFF", () => {
   // T10 evidence: this characterizes an open defect, not an acceptance pass.
   // Replace with rejection/no-mutation assertions when startInstall gains a
   // live-brand guard. U04 is restricted to tests and gate evidence.
-  it("documents the missing live-brand guard: a second install creates another attempt", async () => {
-    const draft = await post(employee, "/api/brands/drafts", { domain: "live-rerun.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+  it.each(["owner", "employee"] as const)("documents the missing live-brand guard: a second install creates another attempt (%s)", async (role) => {
+    const cookie = role === "owner" ? owner : employee;
+    const draft = await post(cookie, "/api/brands/drafts", { domain: `live-rerun-${role}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(draft.status).toBe(201);
     const { brand } = await draft.json() as { brand: { brand_id: string } };
     const revision = `${brand.brand_id}_rev_1`;
     let dispatches = 0;
     const worker = { fetch: async () => { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher;
     const testEnv = makeEnv({ FACTORY_WORKER: worker });
-    const install = () => call(`/api/brands/${brand.brand_id}/install`, { cookie: employee, method: "POST", body: {}, env: testEnv });
+    const install = () => call(`/api/brands/${brand.brand_id}/install`, { cookie, method: "POST", body: {}, env: testEnv });
     expect((await install()).status).toBe(201);
     const first = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
     expect(first).not.toBeNull();

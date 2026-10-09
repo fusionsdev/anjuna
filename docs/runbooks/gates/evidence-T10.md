@@ -1,10 +1,10 @@
 # Gate evidence: T10 / FUS-345
 
 - Gate: T10 live — install, re-run, rollback, automatic rollback.
-- Date and time (with offset): 2026-10-09T08:07:52+07:00 (evidence review; production events are dated separately below).
+- Date and time (with offset): 2026-10-09T08:28:47+07:00 (round 2 evidence review; production events are dated separately below).
 - Run by: Codex, unit U04. Production actions were performed before this session; the export does not identify their operators.
 - Environment: AdUplift factory; `levellendings.com`; brand `brand_e210d8e7f5234dde`; account ID and deployed commit are NOT_CHECKED (not selected by the supplied queries).
-- Reviewed code: `fb5c09c9992b255deac7d9da0f0bbae2105e6d7c`, branch `fus-345-t10-evidence`, plus the U04 tests committed with this report.
+- Reviewed code: `62a0d7c`, branch `fus-345-t10-evidence`, plus the U04 tests committed with this report.
 - Result: **PARTIAL — T10 cannot close.** READY, rollback and automatic rollback have evidence. Same-install replay is protected, but a new Install request for a live brand is not rejected by the server.
 - Source: owner-supplied, read-only `H:/w/t12a/anjuna/longrun/input/U04.txt`.
 - Source SHA-256: `244daae8add5b5491b52066c8ad00b96adbf3952a6daf6705950fe04912059aa`.
@@ -16,7 +16,7 @@
 |---|---|---|---|---|
 | 1 | Read the designated install and its receipts from U04.txt | `ins_b28eeabc0302418cbf09`: `ready`, finished `2026-10-08T13:21:05.152Z`; 10 `ok` receipts listed below | Install reaches READY | PASS |
 | 2 | Inspect panel/server guards and test replay with local D1 and intercepted provider calls | Same-ID workflow replay performs no new work. A fresh API request after a completed install creates a second install and dispatches it. No live second-request experiment is in the export | Re-run creates no install, version or domain | PARTIAL |
-| 3 | Read the two latest operator rollback installs and receipts | `ins_44a116f385e94a6f98b1` and `ins_720b4b9abcee4a2eb908`: `rolled_back`, all four receipts `ok` for each | Rollback completes | PASS |
+| 3 | Read the two latest non-compensation rollback installs and receipts | `ins_44a116f385e94a6f98b1` and `ins_720b4b9abcee4a2eb908`: `rolled_back`, all four receipts `ok` for each | Rollback completes | PASS |
 | 4 | Read failed-step compensation evidence; run the forced-failure factory test | `ins_440f699d34384ba885a4`: failed `deploy`, successful compensation, final `rolled_back`; local test forces smoke failure and executes compensation | Failed install rolls back automatically | PASS |
 
 ### 1. READY
@@ -51,10 +51,10 @@ Tests:
 
 | Test file and exact test name | What it establishes |
 |---|---|
-| `workers/factory/test/workflows.test.ts` — `replays a READY install with a fresh step cache without new installs, versions, domains or receipts` | New U04 test. Installs once, verifies live/READY, then replays the same ID with an empty step cache. Install, revision and receipt rows stay identical. No additional intercepted network calls, script uploads, domain attachments or core mutations occur. |
+| `workers/factory/test/workflows.test.ts` — `replays a READY install with a fresh step cache without new installs, versions, domains or receipts` | U04 test. Installs once, verifies live/READY, then replays the same ID with an empty step cache. Install, revision and receipt rows stay identical. No additional intercepted network calls, script uploads, domain attachments or core mutations occur. |
 | `workers/factory/test/receipt.test.ts` — `skips work on second call when ok receipt exists` | Work executes once across two calls sharing an install ID and step. |
 | `apps/web/test/lifecycle-api.test.ts` — `rejects a second install or rollback while a lifecycle operation is active` | Existing concurrency guard returns 409 and retains one install while an operation is running. |
-| `apps/web/test/lifecycle-api.test.ts` — `documents the missing live-brand guard: a second install creates another attempt` | New U04 defect characterization. First API install returns 201; local fixture then records its READY/live completion. Second request returns 201, leaves two distinct install rows and dispatches twice. It deliberately records current behavior; it is not a passing guard acceptance test. |
+| `apps/web/test/lifecycle-api.test.ts` — `documents the missing live-brand guard: a second install creates another attempt (%s)` (owner and employee) | U04 defect characterization, verified for both owner and employee sessions. First API install returns 201; local fixture then records its READY/live completion. Second request returns 201, leaves two distinct install rows and dispatches twice. It deliberately records current behavior; it is not a passing guard acceptance test. |
 
 The API test uses a stubbed factory dispatcher. It proves a second install is created and dispatched; it does not claim a second provider version or domain was actually created. The workflow replay test proves no extra provider mutations for the same install ID only. No test can truthfully establish the requested new-request guard in this revision because that guard is absent.
 
@@ -93,13 +93,21 @@ Compensation install `compensate-ins_440f699d34384ba885a4`, kind `rollback`, sta
 | sync_runtime | ok | 2026-10-08T04:07:53.483Z |
 | receipt | ok | 2026-10-08T04:07:53.607Z |
 
-Forced-failure test: `workers/factory/test/workflows.test.ts` — `compensates first-install failure after core provision using the actual core revision`. It sets `smokeFails = true`, runs the install, asserts exactly one compensation dispatch, executes `RollbackBrandWorkflow.run`, and verifies the original install becomes `rolled_back`, the core revision is cleared and paused, and the brand has no current revision. It then verifies a new recovery attempt reaches READY. All provider requests are intercepted locally.
+Forced-failure test: `workers/factory/test/workflows.test.ts` — `compensates first-install failure after core provision using the actual core revision`. It sets `smokeFails = true`, runs the install, asserts a failed smoke receipt and failed original install, asserts exactly one compensation dispatch linked to that original install, executes `RollbackBrandWorkflow.run`, and verifies the original install becomes `rolled_back`, the core revision is cleared and paused, and the brand has no current revision. It also asserts the compensation install is `rolled_back`, all four compensation receipts are `ok`, and the original rollback receipt is `ok`. It then verifies a new recovery attempt reaches READY. All provider requests are intercepted locally.
 
 The production export proves an actual failed step and completed compensation. It does not show that the production failure was deliberately injected. Deliberate failure is established by the local test.
 
+## Round 2 review
+
+- The supplied feedback names DeepSeek but contains no findings. This round rechecks the evidence and tests without inferring missing reviewer comments.
+- Expanded the live-brand second-request characterization to both owner and employee. This exposes the missing server guard; it does not satisfy criterion 2.
+- Strengthened the deliberate smoke-failure test to check the failure receipt, original-to-compensation linkage, terminal compensation status and all four compensation receipts.
+- The production query selects no operator identity. “Non-compensation rollback” identifies rows without the `compensate-` prefix; it does not establish who initiated them.
+- The allowed edit paths exclude `apps/web/src/server/lifecycle.ts`. No source fix is included. Criterion 2 remains PARTIAL and FUS-345 remains open.
+
 ## Local verification
 
-Completed by `2026-10-09T08:13:25+07:00`. No skipped or expected-failure test was added to hide the missing guard. The API characterization passes because it reproduces the defect; this does not turn criterion 2 into PASS.
+Prior round completed by `2026-10-09T08:13:25+07:00`. The table below records that prior run; round 2 results follow. No skipped or expected-failure test was added to hide the missing guard. The API characterization passes because it reproduces the defect; this does not turn criterion 2 into PASS.
 
 | Command / check | Result |
 |---|---|
@@ -109,10 +117,21 @@ Completed by `2026-10-09T08:13:25+07:00`. No skipped or expected-failure test wa
 | `bun run test -- test/workflows.test.ts` (workers/factory) | PASS, exit 0; 23 tests. Started `2026-10-09T08:09:03+07:00`; duration 54.45s. |
 | Evidence cross-check against U04.txt | PASS: 8 cited install IDs, every production timestamp and 22 tabulated receipt rows match the export. All relative source links resolve. |
 
+### Round 2 checks
+
+Completed by `2026-10-09T08:28:47+07:00`.
+
+- Final `bun run test`: PASS, exit 0; 25/25 tasks, 24 cached, 1m37.074s. Web ran uncached: 141 tests in 7 files. Factory: 133 tests in 6 files, run uncached in the first round 2 invocation and reused from cache in the final invocation. Both owner and employee re-run cases passed. The unchanged role-table test passed on this recheck.
+
+- `bun run typecheck`: PASS, exit 0; 24/24 tasks, 23 cached, 4.446s after the final test edit.
+- First `bun run test`: failed because the new owner/employee cases reused a domain in shared local D1. Fixed with separate per-role domains.
+- Second `bun run test`: both new cases passed; an unchanged `apps/web/test/api.test.ts` role-table test exceeded its 5000ms timeout. No assertions or timeout settings were weakened.
+- Evidence cross-check: PASS; 8 cited install IDs, all cited production UTC timestamps and 22 receipt table rows match U04.txt. Source links and cited changed-file test names resolve.
+
 ## Deviations and surprises
 
 - **Blocking gap:** `startInstall` has no live-brand guard. This contradicts the assumed guard in the unit request. The panel hides the button, but a direct API request bypasses that UI restriction. T10 remains PARTIAL.
-- The export contains **six** non-compensation rollback installs on 2026-10-08, plus three compensation installs. The two latest operator rollback records are cited above; the statement that rollback ran twice is not the full history.
+- The export contains **six** non-compensation rollback installs on 2026-10-08, plus three compensation installs. The two latest non-compensation rollback records are cited above; the statement that rollback ran twice is not the full history.
 - Historical compensation did not always succeed: `ins_73af80bdf7b140768998` has a failed smoke receipt at `2026-10-08T05:10:15.736Z`. Its compensation `compensate-ins_73af80bdf7b140768998` has `attach_domains: failed` at `2026-10-08T05:15:36.995Z` and finished `failed` at `2026-10-08T05:20:47.548Z`. The original finished `failed` at `2026-10-08T05:20:47.561Z` with `recovery_required: true`. This run is not counted as successful compensation.
 - PASS for automatic rollback means the cited successful path and forced-failure test are evidenced. It does not assert that every historical failure recovered successfully.
 
