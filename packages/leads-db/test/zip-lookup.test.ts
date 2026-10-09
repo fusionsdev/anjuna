@@ -22,6 +22,7 @@ describe("ZIP lookup seed", () => {
   });
 
   it.each([
+    ["00501", "Holtsville", "NY"],
     ["42411", "Fredonia", "KY"],
     ["10001", "New York", "NY"],
     ["97003", "Beaverton", "OR"],
