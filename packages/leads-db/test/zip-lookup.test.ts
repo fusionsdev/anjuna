@@ -11,6 +11,11 @@ beforeAll(async () => {
 });
 
 describe("ZIP lookup seed", () => {
+  it("matches the baseline zip_lookup columns", async () => {
+    const { results } = await env.DB.prepare("PRAGMA table_info(zip_lookup)").all<{ name: string }>();
+    expect(results.map(({ name }) => name)).toEqual(["zip", "city", "state"]);
+  });
+
   it("seeds exactly 42,632 ZIPs on an empty D1", async () => {
     const row = await env.DB.prepare("SELECT COUNT(*) AS count FROM zip_lookup").first();
     expect(row).toEqual({ count: 42_632 });
