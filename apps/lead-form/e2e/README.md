@@ -86,27 +86,29 @@ the first failing browser command and stops the server on exit. The manifest and
 artifact are published only after both batches pass; the R2 job depends on that
 build job. Browser acceptance receives no Cloudflare secrets.
 
-## U09 acceptance verification (2026-10-09)
+## U09 acceptance verification (2026-10-09, repeated from `538d69e`)
 
 The workflow move and selector fix already existed on branch
-`fus-339-form-upload-workflow` at `6370bad`. This verification reran the local
-acceptance checks; it did not change production form behavior.
+`fus-339-form-upload-workflow` at `6370bad`. Starting from `538d69e`, a second
+verification reran the local acceptance checks and parsed the release workflow.
+The implementation remains unchanged; the results below are from that repeat run.
 
 | Acceptance | Evidence from this run |
 | --- | --- |
 | Discoverable release workflow | Parsed `.github/workflows/lead-form.yml`; exact triggers are `push.tags: ["v*"]` and `workflow_dispatch`. The old `apps/lead-form/ci/lead-form.workflow.yml` is absent. |
 | Clean bundle | `bun run build` in `apps/lead-form` passed. The scanner checked 13 files for brand domains, platform names, PostHog keys and Sentry DSNs. The release workflow calls the scanner before publishing. |
 | Stable browser acceptance | `python -m unittest discover -s e2e -p 'test_*.py'` passed 1/1 with `E2E_BROWSER_CHANNEL=msedge`. Local Worker E2E passed 8/8 normal runs and 8/8 at `--cpu-rate 4`, using `--channel msedge`. |
-| Root typecheck | `bun run typecheck`: 24/24 tasks passed, 22 cached. |
-| Root tests | `bun run test`: 25/25 tasks passed, 23 cached. Lead-form ran 29/29 tests. |
+| Root typecheck | `bun run typecheck`: 24/24 tasks passed, 23 cached. Lead-form typecheck ran uncached. |
+| Root tests | `bun run test`: 25/25 tasks passed, 24 cached. Lead-form ran 29/29 tests uncached. |
 | Release artifact contract | Parsed workflow confirms the SHA-256 manifest command, browser gates, upload dependency on build, release-only upload condition, `form@${{ github.sha }}` prefix and named secret references. |
 
 The historical 2 failed-run logs are unavailable. The deterministic regression
 reproduces the selector race described above. It does not prove that both
 historical failures had the same cause.
 
-Playwright 1.62.0 is installed locally, but its Chromium headless executable is
-absent. The default-browser regression attempt failed at launch; the Edge run
-passed. Hosted Ubuntu/Chromium execution and R2 upload were not run. The workflow
+The earlier verification found Playwright's Chromium headless executable absent.
+This repeat used installed Edge for the regression and both 8-run batches; it did
+not retry the default Chromium launch. Hosted Ubuntu/Chromium execution and R2 upload
+were not run. The workflow
 installs Chromium before its browser checks. No Cloudflare, LeadsGate or VPS calls
 were made. The local test server was stopped after verification.
