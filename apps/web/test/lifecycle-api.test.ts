@@ -38,6 +38,25 @@ describe("truthful lifecycle BFF", () => {
     }
   });
 
+  it("rejects an unknown template ID without creating draft records", async () => {
+    const listed = await call("/api/templates/sealed", { cookie: employee });
+    expect(listed.status).toBe(200);
+    const { templates } = SealedTemplatesResponse.parse(await listed.json());
+    expect(templates.some((template) => template.template_version_id === "tv-missing")).toBe(false);
+    const counts = async () => Promise.all([
+      env.FACTORY.prepare("SELECT count(*) AS n FROM brands").first(),
+      env.FACTORY.prepare("SELECT count(*) AS n FROM brand_revisions").first(),
+      env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log").first(),
+    ]);
+    const before = await counts();
+    const response = await post(employee, "/api/brands/drafts", {
+      domain: "unknown-template.test", keyword_default: "Quick Loan", template_version_id: "tv-missing",
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "template_not_sealed" });
+    expect(await counts()).toEqual(before);
+  });
+
   it("refuses Employee Rollback, Upgrade-all and Delete before any mutation or dispatch", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "owner-only.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
