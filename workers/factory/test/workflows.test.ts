@@ -10,11 +10,47 @@ import { setInstallStatus } from "../src/receipt";
 import { UpgradeAllWorkflow, type UpgradeAllParams } from "../src/workflows/upgrade-all";
 import { zip } from "../src/render";
 import type { Env } from "../src/env";
-import { queueInstallRetry } from "../../../apps/web/src/server/retry-install";
 
 beforeAll(() => applyD1Migrations(env.FACTORY, env.MIGRATIONS));
 afterEach(() => vi.unstubAllGlobals());
 const now = "2026-10-06T00:00:00.000Z";
+
+// Mirror of apps/web/src/server/retry-install.ts#queueInstallRetry. The factory test
+// must not reach across package boundaries into the web Worker's server code, so the D1
+// claim + successful-prefix copy is reproduced here. The production function is exercised
+// end-to-end through the retry route in apps/web/test/lifecycle-api.test.ts.
+async function queueInstallRetry(db: D1Database, sourceId: string): Promise<string | null> {
+  const terminal = await db.prepare("SELECT 1 FROM install_receipts WHERE install_id=? AND status IN ('failed','ok') LIMIT 1").bind(sourceId).first();
+  const at = new Date().toISOString();
+  const digest = terminal ? await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sourceId)) : null;
+  const retryId = digest
+    ? `ins_retry_${Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32)}`
+    : sourceId;
+  const eligible = `status='failed'
+    AND EXISTS (SELECT 1 FROM brands b WHERE b.brand_id=installs.brand_id
+      AND b.status IN ('draft','live','failed') AND b.current_revision_id IS installs.from_revision_id)
+    AND NOT EXISTS (SELECT 1 FROM installs active WHERE active.brand_id=installs.brand_id AND active.status IN ('queued','running'))`;
+  const claim = terminal
+    ? db.prepare(`INSERT OR IGNORE INTO installs
+        (install_id,brand_id,kind,status,from_revision_id,to_revision_id,rollback_record_json,started_by,started_role,started_at)
+        SELECT ?,brand_id,kind,'queued',from_revision_id,to_revision_id,rollback_record_json,started_by,started_role,?
+        FROM installs WHERE install_id=? AND ${eligible}`)
+      .bind(retryId, at, sourceId)
+    : db.prepare(`UPDATE installs SET status='queued',error=NULL,finished_at=NULL WHERE install_id=? AND ${eligible}`)
+      .bind(sourceId);
+  const statements: D1PreparedStatement[] = [claim];
+  if (terminal) {
+    statements.push(db.prepare(`INSERT OR IGNORE INTO install_receipts (install_id,step,status,output_json,created_at)
+      SELECT ?,step,status,output_json,created_at FROM install_receipts
+      WHERE install_id=? AND status='ok' AND step!='rollback'
+        AND id < COALESCE((SELECT MIN(id) FROM install_receipts WHERE install_id=? AND status='failed'),9223372036854775807)
+        AND EXISTS (SELECT 1 FROM installs WHERE install_id=?)`)
+      .bind(retryId, sourceId, sourceId, retryId));
+  }
+  const [claimed] = await db.batch(statements);
+  if (claimed!.meta.changes !== 1) return null;
+  return retryId;
+}
 
 // Runs production run() methods against local D1/R2. Every network request is
 // intercepted, and the strict core wire schema is checked at the boundary.
@@ -169,7 +205,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       { step: "validate", status: "ok" }, { step: "save_rollback", status: "ok" },
       { step: "render", status: "failed" }, { step: "rollback", status: "ok" },
     ]);
-    const retryId = await queueInstallRetry(env.FACTORY, f.install, { actor_id: "owner", actor_role: "owner", request_id: crypto.randomUUID() });
+    const retryId = await queueInstallRetry(env.FACTORY, f.install);
     expect(retryId).not.toBeNull();
     await env.ARTIFACTS.put(templateKey, template);
     // Validation would now fail if the retry re-executed the successful prefix.
@@ -360,7 +396,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
   it("keeps compensation running when two retries arrive before dispatch and during rollback", async () => {
     const f = await fixture();
     f.settings.smokeFails = true;
-    const retry = () => queueInstallRetry(env.FACTORY, f.install, { actor_id: "owner", actor_role: "owner", request_id: crypto.randomUUID() });
+    const retry = () => queueInstallRetry(env.FACTORY, f.install);
     const s = steps();
     s.hooks.before = async (name) => {
       if (name !== "rollback") return;
