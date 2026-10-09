@@ -1,0 +1,11 @@
+$ vitest run
+
+ RUN  v4.1.11 H:/w/t12a/anjuna-lr/U01/packages/leads-db
+
+[vitest-pool]: Timeout terminating cloudflare-pool worker for test files H:/w/t12a/anjuna-lr/U01/packages/leads-db/test/zip-lookup.test.ts.
+
+ Test Files  2 passed (2)
+      Tests  28 passed (28)
+   Start at  07:44:04
+   Duration  16.78s (transform 73ms, setup 0ms, import 132ms, tests 17.03s, environment 0ms)
+

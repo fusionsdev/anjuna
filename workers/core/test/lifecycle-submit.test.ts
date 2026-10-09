@@ -39,7 +39,7 @@ beforeAll(async () => {
       VALUES (?1, ?2, ?3, ?4, '2026-10-06T00:00:00.000Z', '2026-01', ?5)`)
       .bind(artifact.id, artifact.sha, `forms/${artifact.id}`, hash(artifact.id), artifact.bundle).run();
   }
-  await h.db.prepare("INSERT INTO zip_lookup VALUES ('60601', 'Chicago', 'IL')").run();
+  await h.db.prepare("INSERT OR IGNORE INTO zip_lookup VALUES ('60601', 'Chicago', 'IL')").run();
 });
 afterAll(async () => { await h?.mf.dispose(); });
 
