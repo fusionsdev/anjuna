@@ -127,7 +127,19 @@ gate_a() { # wt unit -> 0 pass; reasons on stdout
 review() { # unit wt -> sets REVIEW_FILE, returns 0 if every reviewer approves
   local u=$1 wt=$2 r out decision attempt
   REVIEW_TOOL_FAILED=0
-  git -C "$wt" diff origin/main...HEAD >"$LR/out/$u.diff"
+  # Large data files (the 2 MB ZIP seed) overflow the reviewer's context. Review them by summary only.
+  local big=() f n
+  while read -r f; do
+    n=$(git -C "$wt" diff origin/main...HEAD -- "$f" | wc -c)
+    [ "$n" -gt 150000 ] && big+=("$f")
+  done < <(git -C "$wt" diff --name-only origin/main...HEAD)
+  {
+    for f in "${big[@]}"; do
+      echo "# NOT SHOWN (too large to review line by line): $f, $(git -C "$wt" diff origin/main...HEAD -- "$f" | wc -c) bytes of diff, first 5 added lines:"
+      git -C "$wt" diff origin/main...HEAD -- "$f" | grep '^+' | sed -n '2,6p' | cut -c1-300
+    done
+    git -C "$wt" diff origin/main...HEAD -- . "${big[@]/#/:(exclude)}"
+  } >"$LR/out/$u.diff"
   REVIEW_FILE="$LR/out/$u.review.txt"; : >"$REVIEW_FILE"
   for r in $(card_get "$u" reviewers | tr ',' ' '); do
     [ "$r" = none ] && continue
