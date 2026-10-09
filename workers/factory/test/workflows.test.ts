@@ -232,6 +232,37 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(f.network).toHaveBeenCalledTimes(calls);
   });
 
+  it("replays a READY install with a fresh step cache without new installs, versions, domains or receipts", async () => {
+    const f = await fixture();
+    await runInstall(f);
+    expect(await f.installRow()).toEqual({ status: "ready" });
+    expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+    const snapshot = async () => ({
+      installs: (await env.FACTORY.prepare("SELECT * FROM installs WHERE brand_id=? ORDER BY install_id").bind(f.brand).all()).results,
+      revisions: (await env.FACTORY.prepare("SELECT * FROM brand_revisions WHERE brand_id=? ORDER BY revision_id").bind(f.brand).all()).results,
+      receipts: (await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY step").bind(f.install).all()).results,
+    });
+    const before = await snapshot();
+    expect(before.installs).toHaveLength(1);
+    expect(before.revisions).toHaveLength(1);
+    expect(before.revisions[0]).toMatchObject({ worker_version_id: "worker-local" });
+    expect(f.uploads).toHaveLength(1);
+    expect(f.network.mock.calls.filter(([url, init]) => String(url).endsWith("/workers/domains") && init?.method === "PUT")).toHaveLength(2);
+    const calls = f.network.mock.calls.length;
+    const applied = f.applied.length;
+
+    // Same install ID, but no in-memory Workflow step cache from the first run.
+    const replay = steps();
+    await runInstall(f, replay);
+    expect(replay.configs.size).toBe(0);
+    expect(await snapshot()).toEqual(before);
+    expect(f.network).toHaveBeenCalledTimes(calls);
+    expect(f.uploads).toHaveLength(1);
+    expect(f.applied).toHaveLength(applied);
+    expect(f.compensation).toEqual([]);
+    expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+  });
+
   it("preserves an existing live deployment when preflight rejects a foreign account", async () => {
     const f = await fixture(true);
     f.bindings.CORE_ACCOUNT = "other";
@@ -254,13 +285,29 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
   it("compensates first-install failure after core provision using the actual core revision", async () => {
     const f = await fixture(); f.settings.smokeFails = true;
     await runInstall(f);
+    expect(await smokeReceipt(f)).toMatchObject({ status: "failed" });
+    expect(await f.installRow()).toEqual({ status: "failed" });
     expect(f.compensation).toHaveLength(1);
+    const compensationId = `compensate-${f.install}`;
+    expect(f.compensation[0]).toMatchObject({
+      install_id: compensationId, original_install_id: f.install,
+      brand_id: f.brand, to_revision_id: null,
+    });
     expect(await f.brandRow()).toMatchObject({ status: "installing" });
     await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(f.compensation[0]!), steps().step);
     expect(f.applied[1]).toMatchObject({ expected_revision_id: f.revision, target_revision_id: null });
     expect(f.runtime()).toMatchObject({ paused: true, applied_revision_id: null });
     expect(await f.installRow()).toEqual({ status: "rolled_back" });
     expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
+    expect(await env.FACTORY.prepare("SELECT kind,status FROM installs WHERE install_id=?").bind(compensationId).first()).toEqual({ kind: "rollback", status: "rolled_back" });
+    const receipts = await env.FACTORY.prepare("SELECT step,status FROM install_receipts WHERE install_id=? ORDER BY step").bind(compensationId).all();
+    expect(receipts.results).toEqual([
+      { step: "attach_domains", status: "ok" },
+      { step: "receipt", status: "ok" },
+      { step: "sync_runtime", status: "ok" },
+      { step: "validate", status: "ok" },
+    ]);
+    expect(await env.FACTORY.prepare("SELECT status FROM install_receipts WHERE install_id=? AND step='rollback'").bind(f.install).first()).toEqual({ status: "ok" });
     f.settings.smokeFails = false;
     const retry = `retry-${f.install}`;
     await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,to_revision_id,status,started_by,started_at) VALUES (?,?,'install',?,'queued','owner',?)")

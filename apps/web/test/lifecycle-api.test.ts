@@ -187,6 +187,63 @@ describe("truthful lifecycle BFF", () => {
     expect(row?.status).toBe("running");
   });
 
+  it.each(["owner", "employee"] as const)("rejects a second install of a live brand without new installs, Worker versions or domains (%s)", async (role) => {
+    const cookie = role === "owner" ? owner : employee;
+    const draft = await post(cookie, "/api/brands/drafts", { domain: `live-rerun-${role}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(draft.status).toBe(201);
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const revision = `${brand.brand_id}_rev_1`;
+    let dispatches = 0;
+    const worker = { fetch: async () => { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const testEnv = makeEnv({ FACTORY_WORKER: worker });
+    const install = () => call(`/api/brands/${brand.brand_id}/install`, { cookie, method: "POST", body: {}, env: testEnv });
+    expect((await install()).status).toBe(201);
+    const first = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
+    expect(first).not.toBeNull();
+
+    // Simulate the factory's completed first install; no provider is contacted.
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("UPDATE installs SET status='ready',finished_at=? WHERE install_id=?").bind(new Date().toISOString(), first!.install_id),
+      env.FACTORY.prepare("UPDATE brands SET status='live',current_revision_id=? WHERE brand_id=?").bind(revision, brand.brand_id),
+      env.FACTORY.prepare("UPDATE brand_revisions SET worker_version_id='worker-existing' WHERE revision_id=?").bind(revision),
+    ]);
+    expect(await env.FACTORY.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ status: "live", current_revision_id: revision });
+
+    const snapshot = async () => ({
+      brand: await env.FACTORY.prepare("SELECT * FROM brands WHERE brand_id=?").bind(brand.brand_id).first(),
+      revisions: (await env.FACTORY.prepare("SELECT * FROM brand_revisions WHERE brand_id=?").bind(brand.brand_id).all()).results,
+      installs: (await env.FACTORY.prepare("SELECT * FROM installs WHERE brand_id=?").bind(brand.brand_id).all()).results,
+      audit: (await env.FACTORY.prepare("SELECT * FROM audit_log WHERE entity_id=?").bind(first!.install_id).all()).results,
+    });
+    const before = await snapshot();
+
+    const response = await install();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "conflict", message: "Only draft or failed brands can be installed" });
+    // The factory owns Worker uploads and domain attachment. No second dispatch
+    // means this rejected request cannot reach either provider mutation.
+    expect(dispatches).toBe(1);
+    expect(await snapshot()).toEqual(before);
+    const attempts = await env.FACTORY.prepare("SELECT install_id,status FROM installs WHERE brand_id=?").bind(brand.brand_id).all<{ install_id: string; status: string }>();
+    expect(attempts.results).toHaveLength(1);
+    expect(attempts.results).toContainEqual({ install_id: first!.install_id, status: "ready" });
+    expect(await env.FACTORY.prepare("SELECT revision_id,worker_version_id FROM brand_revisions WHERE brand_id=?").bind(brand.brand_id).all()).toMatchObject({ results: [{ revision_id: revision, worker_version_id: "worker-existing" }] });
+  });
+
+  it.each(["draft", "failed", "installing", "paused", "retired"])("admits Install only for draft or failed brands (status=%s)", async (status) => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: `install-state-${status}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(draft.status).toBe(201);
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await env.FACTORY.prepare("UPDATE brands SET status=? WHERE brand_id=?").bind(status, brand.brand_id).run();
+    let dispatches = 0;
+    const worker = { fetch: async () => { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const response = await call(`/api/brands/${brand.brand_id}/install`, { cookie: employee, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER: worker }) });
+    const admitted = status === "draft" || status === "failed";
+    expect(response.status).toBe(admitted ? 201 : 409);
+    expect(dispatches).toBe(admitted ? 1 : 0);
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM installs WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ n: admitted ? 1 : 0 });
+  });
+
   it("rejects a second install or rollback while a lifecycle operation is active", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "active-conflict.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };

@@ -133,6 +133,7 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
 async function startInstall(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT brand_id,status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ brand_id: string; status: string; current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
+  if (brand.status !== "draft" && brand.status !== "failed") return json(409, { error: "conflict", message: "Only draft or failed brands can be installed" });
   const body = await request.json().catch(() => ({})) as { revision_id?: string };
   const revision = await env.FACTORY.prepare("SELECT revision_id FROM brand_revisions WHERE revision_id = ?1 AND brand_id = ?2").bind(body.revision_id ?? `${brandId}_rev_1`, brandId).first<{ revision_id: string }>();
   if (!revision) return json(422, { error: "revision_missing" });
@@ -141,7 +142,8 @@ async function startInstall(request: Request, env: Env, ctx: AdminRequestContext
   const claim = await env.FACTORY.prepare(`INSERT INTO installs
     (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at)
     SELECT ?1,?2,'install','queued',?3,?4,?5,?6,?7
-    WHERE NOT EXISTS (
+    WHERE EXISTS (SELECT 1 FROM brands WHERE brand_id = ?2 AND status IN ('draft','failed'))
+    AND NOT EXISTS (
       SELECT 1 FROM installs
       WHERE brand_id = ?2 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running')
     )`).bind(installId, brandId, brand.current_revision_id, revision.revision_id, ctx.actor_id, ctx.actor_role, now).run();
