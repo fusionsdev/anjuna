@@ -5,7 +5,7 @@ branch: fus-345-compensation-lock-recovery
 lane: factory
 deps: U04
 builder: codex
-reviewers: deepseek,grok
+reviewers: deepseek
 paths: workers/factory/ apps/web/ packages/contracts/ packages/factory-db/
 merge: owner
 ---
