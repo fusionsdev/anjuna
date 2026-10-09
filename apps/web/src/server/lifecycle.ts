@@ -391,9 +391,9 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const row = await env.FACTORY.prepare(`SELECT i.install_id,i.brand_id,i.to_revision_id,i.status,
-      (b.status='installing' AND EXISTS (SELECT 1 FROM installs f WHERE f.brand_id=i.brand_id AND f.status='failed'
-        AND json_valid(f.error) AND json_extract(f.error,'$.recovery_required')=1)) AS recovery_required
-      FROM installs i JOIN brands b ON b.brand_id=i.brand_id WHERE i.install_id=?1`).bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string | null; status: string; recovery_required: number }>();
+      ((json_valid(i.error) AND json_extract(i.error,'$.recovery_required')=1)
+       OR (json_valid(i.rollback_record_json) AND json_extract(i.rollback_record_json,'$.recovery_of') IS NOT NULL)) AS recovery_required
+      FROM installs i WHERE i.install_id=?1`).bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string | null; status: string; recovery_required: number }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
     const status = (value: string): "queued" | "running" | "ready" | "failed" => value === "ok" ? "ready" : value === "skipped" ? "queued" : value === "failed" ? "failed" : value === "running" ? "running" : "queued";
