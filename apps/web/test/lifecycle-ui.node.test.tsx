@@ -82,8 +82,8 @@ describe("lifecycle state reducer", () => {
   });
 
   it.each(["draft", "live", "failed"] as const)("hides every mutation for an active %s operation", (brandStatus) => {
-    expect(lifecycleMutationAvailability(brandStatus, "queued")).toEqual({ install: false, rollback: false, retry: false });
-    expect(lifecycleMutationAvailability(brandStatus, "running")).toEqual({ install: false, rollback: false, retry: false });
+    expect(lifecycleMutationAvailability(brandStatus, "queued")).toEqual({ install: false, rollback: false, retry: false, recover: false });
+    expect(lifecycleMutationAvailability(brandStatus, "running")).toEqual({ install: false, rollback: false, retry: false, recover: false });
   });
 
   it("hides every mutation while an accepted dispatch is waiting for delayed install detail", async () => {
@@ -91,10 +91,10 @@ describe("lifecycle state reducer", () => {
     const delayedDetail = new Promise<void>((resolve) => { releaseDetail = resolve; });
     const accepted = true;
     expect(accepted).toBe(true);
-    expect(lifecycleMutationAvailability("draft", undefined, accepted)).toEqual({ install: false, rollback: false, retry: false });
+    expect(lifecycleMutationAvailability("draft", undefined, accepted)).toEqual({ install: false, rollback: false, retry: false, recover: false });
     releaseDetail();
     await delayedDetail;
-    expect(lifecycleMutationAvailability("draft", "ready", false)).toEqual({ install: true, rollback: false, retry: false });
+    expect(lifecycleMutationAvailability("draft", "ready", false)).toEqual({ install: true, rollback: false, retry: false, recover: false });
   });
 
   it("keeps an accepted install recoverable after the first detail read fails", async () => {
@@ -145,9 +145,28 @@ describe("BrandLifecycle SSR", () => {
       me={{ id: "owner", email: "owner@example.test", role: "owner" }}
       brand={{ brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "draft", current_revision_id: "rev-1", runtime_sync_status: "ready", bundle_form_version: "form@bundle-1", payload_version: "2026-01" }}
       checklist={{ drain_route: { brand_id: "brand-a", item: "drain_route", actor_id: "owner", verified_at: "2026-01-01T00:00:00Z" } }}
-      leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRetry={() => undefined} onChecklist={() => undefined}
+      leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
     />);
     expect(html).toContain("lead_id");
     expect(html).toContain("Checklist evidence");
   });
 });
+
+ it.each(["owner", "employee"] as const)("Recover is visible only to Owner (%s)", (role) => {
+   const html = renderToStaticMarkup(<LifecycleDetail
+     me={{ id: role, email: `${role}@example.test`, role }}
+     brand={{ brand_id: "b", account: "a", hostnames: ["brand.example"], status: "installing", current_revision_id: null, bundle_form_version: null, payload_version: null, runtime_sync_status: "failed" }}
+     install={{ install_id: "i", brand_id: "b", revision_id: null, status: "failed", runtime_sync_status: "failed", receipts: [], recovery_required: true }}
+     checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}}
+   />);
+   expect(html.includes("Recover (Owner)")).toBe(role === "owner");
+   expect(html).not.toContain(">Retry<");
+ });
+
+ it("splits Retry and Recover on recovery evidence, not on the retained brand status", () => {
+   // A failed manual rollback leaves the brand installing before its evidence is read.
+   expect(lifecycleMutationAvailability("installing", "failed", false, false)).toEqual({ install: false, rollback: false, retry: true, recover: false });
+   expect(lifecycleMutationAvailability("installing", "failed", false, true)).toEqual({ install: false, rollback: false, retry: false, recover: true });
+   expect(lifecycleMutationAvailability("failed", "failed", false, false)).toEqual({ install: true, rollback: true, retry: true, recover: false });
+   expect(lifecycleMutationAvailability("installing", "failed", true, true)).toEqual({ install: false, rollback: false, retry: false, recover: false });
+ });

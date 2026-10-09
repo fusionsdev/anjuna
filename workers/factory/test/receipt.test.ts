@@ -2,7 +2,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { getReceipt, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../src/receipt";
+import { getReceipt, isQueuedCompensationInstall, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../src/receipt";
 
 beforeAll(async () => {
   await applyD1Migrations(env.FACTORY, env.MIGRATIONS);
@@ -23,6 +23,24 @@ async function seedInstall(installId: string, brandId = `brand-${installId}`): P
 function uniq(): string {
   return crypto.randomUUID().slice(0, 8);
 }
+
+describe("isQueuedCompensationInstall", () => {
+  it.each([
+    ['{"recovery_of":"original"}', true],
+    ['{"recovery_\\u006ff":"original"}', true],
+    ['{"note":"recovery_of"}', false],
+    ['{"nested":{"recovery_of":"original"}}', false],
+    ['{"recovery_of":', false],
+    ['"recovery_of"', false],
+    [null, false],
+  ])("checks parsed recovery evidence %s", async (record, expected) => {
+    const id = `recover-${uniq()}`;
+    await seedInstall(id);
+    await env.FACTORY.prepare("UPDATE installs SET kind = 'rollback', rollback_record_json = ? WHERE install_id = ?")
+      .bind(record, id).run();
+    expect(await isQueuedCompensationInstall(env.FACTORY, id)).toBe(expected);
+  });
+});
 
 describe("getReceipt / saveReceipt", () => {
   it("returns null when no receipt exists", async () => {

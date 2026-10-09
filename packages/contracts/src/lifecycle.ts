@@ -208,6 +208,8 @@ export const InstallWithReceipts = z.strictObject({
   status: InstallStatus,
   runtime_sync_status: RuntimeSyncStatus,
   receipts: z.array(InstallReceipt),
+  /** The brand holds a retained lock that only Owner Recover can release. */
+  recovery_required: z.boolean().optional(),
 });
 export type InstallWithReceipts = z.infer<typeof InstallWithReceipts>;
 

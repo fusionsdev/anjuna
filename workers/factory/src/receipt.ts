@@ -143,15 +143,54 @@ export function isLinkedCompensationInstall(installId: string, originalInstallId
   return compensationInstallId(originalInstallId) === installId;
 }
 
+export async function recoverySource(db: D1Database, originalId: string, brandId: string): Promise<{ previous_revision_id: string | null; error: string } | null> {
+  const original = await db.prepare("SELECT kind,status,error,to_revision_id,rollback_record_json FROM installs WHERE install_id=? AND brand_id=?")
+    .bind(originalId, brandId).first<{ kind: string; status: string; error: string | null; to_revision_id: string | null; rollback_record_json: string | null }>();
+  if (!original || !["install", "upgrade", "rollback"].includes(original.kind) || original.status !== "failed" || !original.error) return null;
+  try {
+    const evidence = JSON.parse(original.error);
+    if (original.kind === "rollback") {
+      // A failed manual rollback retains the lock; recovery re-runs it to the same target.
+      // A failed recovery overwrites the evidence, so only the shared fields are required.
+      if (evidence?.recovery_required !== true || evidence.original_install_id !== originalId
+        || original.rollback_record_json !== null) return null;
+      return { previous_revision_id: original.to_revision_id, error: original.error };
+    }
+    const rollback = JSON.parse(original.rollback_record_json ?? "null");
+    if (evidence?.recovery_required !== true || evidence.original_install_id !== originalId
+      || typeof evidence.compensation_install_id !== "string" || !rollback
+      || !(rollback.previous_revision_id === null || typeof rollback.previous_revision_id === "string")) return null;
+    const compensation = await db.prepare("SELECT status FROM installs WHERE install_id=? AND brand_id=? AND kind='rollback'")
+      .bind(evidence.compensation_install_id, brandId).first<{ status: string }>();
+    if (compensation?.status !== "failed") return null;
+    return { previous_revision_id: rollback.previous_revision_id, error: original.error };
+  } catch { return null; }
+}
+
+async function isAuthorizedRecovery(db: D1Database, installId: string, originalId: string, brandId: string): Promise<boolean> {
+  const row = await db.prepare("SELECT kind,started_role,to_revision_id,rollback_record_json FROM installs WHERE install_id=? AND brand_id=?")
+    .bind(installId, brandId).first<{ kind: string; started_role: string; to_revision_id: string | null; rollback_record_json: string | null }>();
+  if (row?.kind !== "rollback" || row.started_role !== "owner") return false;
+  try {
+    if (JSON.parse(row.rollback_record_json ?? "null")?.recovery_of !== originalId) return false;
+    const source = await recoverySource(db, originalId, brandId);
+    return source !== null && source.previous_revision_id === row.to_revision_id;
+  } catch { return false; }
+}
+
 export function shouldRetainBrandLockOnFailure(mutationStarted: boolean, originalInstallId?: string): boolean {
   return mutationStarted || Boolean(originalInstallId);
 }
 
 export async function isQueuedCompensationInstall(db: D1Database, installId: string): Promise<boolean> {
   const row = await db.prepare(
-    "SELECT kind, status FROM installs WHERE install_id = ?",
-  ).bind(installId).first<{ kind: string; status: string }>();
-  return row?.kind === "rollback" && row.status === "queued" && installId.startsWith("compensate-");
+    "SELECT kind, status, rollback_record_json FROM installs WHERE install_id = ?",
+  ).bind(installId).first<{ kind: string; status: string; rollback_record_json: string | null }>();
+  if (row?.kind !== "rollback" || row.status !== "queued") return false;
+  if (installId.startsWith("compensate-")) return true;
+  try {
+    return JSON.parse(row.rollback_record_json ?? "null")?.recovery_of !== undefined;
+  } catch { return false; }
 }
 
 export function compensationFailureEvidence(input: {
@@ -164,6 +203,19 @@ export function compensationFailureEvidence(input: {
     ...input,
     recovery_required: true,
     audit_action: "install.compensation_failed",
+  };
+}
+
+/** Manual rollback failed after mutating Cloudflare, so the brand lock stays held for Owner recovery. */
+export function rollbackFailureEvidence(input: {
+  original_install_id: string;
+  error: string;
+  mutation_started: boolean;
+}): Record<string, unknown> {
+  return {
+    ...input,
+    recovery_required: true,
+    audit_action: "rollback.failed_lock_retained",
   };
 }
 
@@ -253,6 +305,7 @@ export async function setInstallStatus(
       if (install?.status !== "running") {
         const linkedCompensation = options.compensationForInstallId
           ? isLinkedCompensationInstall(installId, options.compensationForInstallId)
+            || await isAuthorizedRecovery(db, installId, options.compensationForInstallId, brandId)
           : false;
         if (await isQueuedCompensationInstall(db, installId) && !linkedCompensation) {
           throw new Error("Queued compensation requires its exact original install");

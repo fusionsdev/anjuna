@@ -18,6 +18,7 @@ export const PANEL_ROLE_TABLE = {
   installBrand: "employee",
   /** Plan: "Upgrade all brands" is owner only. */
   upgradeAll: "owner",
+  recoverBrand: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 

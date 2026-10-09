@@ -78,17 +78,24 @@ export function isCurrentRefresh(
   return selectedId === currentSelectedId && generation === currentGeneration;
 }
 
+/**
+ * The server's recovery_required evidence splits Retry from Recover.  A failed
+ * install with a retained lock but no evidence keeps Retry, which the API
+ * redirects to Recover when the evidence appears.
+ */
 export function lifecycleMutationAvailability(
   brandStatus: string,
   installStatus?: InstallWithReceipts["status"],
   pendingOperation = false,
-): { install: boolean; rollback: boolean; retry: boolean } {
+  recoveryRequired = false,
+): { install: boolean; rollback: boolean; retry: boolean; recover: boolean } {
   if (pendingOperation || installStatus === "queued" || installStatus === "running") {
-    return { install: false, rollback: false, retry: false };
+    return { install: false, rollback: false, retry: false, recover: false };
   }
   return {
     install: brandStatus === "draft" || brandStatus === "failed",
     rollback: brandStatus === "live" || brandStatus === "failed",
-    retry: installStatus === "failed",
+    retry: installStatus === "failed" && !recoveryRequired,
+    recover: installStatus === "failed" && recoveryRequired,
   };
 }

@@ -371,7 +371,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               compensation_install_id: compensationId,
               error: String(compensationError),
               recovery_required: true,
-              actionable: "Dispatch compensation manually after Cloudflare state is verified.",
+              actionable: "An Owner can use Recover in the brand panel to retry compensation and release the retained lock.",
             };
             await db.prepare("UPDATE installs SET status = 'failed', error = ?, finished_at = ? WHERE install_id IN (?, ?)")
               .bind(JSON.stringify(evidence), new Date().toISOString(), install_id, compensationId).run();
