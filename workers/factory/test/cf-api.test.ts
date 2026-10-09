@@ -1,5 +1,62 @@
 import { describe, expect, it } from "vitest";
-import { detachCustomDomain, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
+import { detachCustomDomain, getZone, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
+
+describe("getZone", () => {
+  const zoneResponse = (zones: Array<{ id: string; status: string }>) => Response.json({ success: true, result: zones });
+
+  function recordingFetcher(byName: (name: string) => Array<{ id: string; status: string }>) {
+    const names: string[] = [];
+    const fetcher = async (input: string) => {
+      const name = new URL(input).searchParams.get("name")!;
+      names.push(name);
+      return zoneResponse(byName(name));
+    };
+    return { fetcher, names };
+  }
+
+  it("returns the zone on the first try for an apex domain", async () => {
+    const { fetcher, names } = recordingFetcher(() => [{ id: "zone-aduplift", status: "active" }]);
+    await expect(getZone("test-token", "aduplift.ai", fetcher)).resolves.toMatchObject({ id: "zone-aduplift", status: "active" });
+    expect(names).toEqual(["aduplift.ai"]);
+  });
+
+  it("resolves a subdomain brand domain to the parent zone", async () => {
+    const { fetcher, names } = recordingFetcher((name) => (name === "aduplift.ai" ? [{ id: "zone-aduplift", status: "active" }] : []));
+    await expect(getZone("test-token", "demo05.aduplift.ai", fetcher)).resolves.toMatchObject({ id: "zone-aduplift" });
+    expect(names).toEqual(["demo05.aduplift.ai", "aduplift.ai"]);
+  });
+
+  it("resolves a deeper subdomain one label at a time", async () => {
+    const { fetcher, names } = recordingFetcher((name) => (name === "example.com" ? [{ id: "zone-example", status: "active" }] : []));
+    await expect(getZone("test-token", "a.b.example.com", fetcher)).resolves.toMatchObject({ id: "zone-example" });
+    expect(names).toEqual(["a.b.example.com", "b.example.com", "example.com"]);
+  });
+
+  it("throws listing every tried name when no zone matches at any level", async () => {
+    const { fetcher, names } = recordingFetcher(() => []);
+    await expect(getZone("test-token", "demo05.aduplift.ai", fetcher)).rejects.toThrow(
+      "Zone not found for domain demo05.aduplift.ai (tried: demo05.aduplift.ai, aduplift.ai)",
+    );
+    expect(names).toEqual(["demo05.aduplift.ai", "aduplift.ai"]);
+  });
+
+  it("still throws when the matching zone is not active", async () => {
+    const { fetcher } = recordingFetcher(() => [{ id: "zone-pending", status: "pending" }]);
+    await expect(getZone("test-token", "aduplift.ai", fetcher)).rejects.toThrow(
+      "Zone aduplift.ai is not active (status=pending)",
+    );
+  });
+
+  it("never queries a bare TLD and URL-encodes the name parameter", async () => {
+    const urls: string[] = [];
+    const fetcher = async (input: string) => {
+      urls.push(input);
+      return zoneResponse([{ id: "zone-example", status: "active" }]);
+    };
+    await expect(getZone("test-token", "site.example", fetcher)).resolves.toMatchObject({ id: "zone-example" });
+    expect(urls).toEqual(["https://api.cloudflare.com/client/v4/zones?name=site.example&per_page=1"]);
+  });
+});
 
 describe("Cloudflare response handling", () => {
   it.each([200, 204])("accepts an empty successful DELETE (%s)", async (status) => {

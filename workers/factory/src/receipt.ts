@@ -274,13 +274,18 @@ export async function withReceipt<T extends Record<string, unknown>>(
   const existing = await getReceipt(db, installId, step);
   if (existing?.status === "ok") return existing.output as T;
   // A failed receipt means this install already broke. A new attempt must use a new install_id.
-  if (existing?.status === "failed") throw new Error(String(existing.output?.error ?? "step previously failed"));
+  // Legacy rows stored `String(err)` (already "Error: "-prefixed); strip one prefix so the
+  // re-thrown message does not surface as "Error: Error: ...".
+  if (existing?.status === "failed") {
+    const stored = String(existing.output?.error ?? "step previously failed");
+    throw new Error(stored.startsWith("Error: ") ? stored.slice("Error: ".length) : stored);
+  }
 
   let result: T;
   try {
     result = await work();
   } catch (err) {
-    await saveReceipt(db, installId, step, "failed", { error: String(err) });
+    await saveReceipt(db, installId, step, "failed", { error: err instanceof Error ? err.message : String(err) });
     throw err;
   }
   await saveReceipt(db, installId, step, "ok", result);
