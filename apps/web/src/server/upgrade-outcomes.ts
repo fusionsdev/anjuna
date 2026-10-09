@@ -28,16 +28,20 @@ export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeRespon
   const byId = new Map(installs.map((row) => [row.root, row]));
   const canary = byId.get(canaryId);
   const canaryStopped = canary?.status === "failed" || canary?.status === "rolled_back";
+  const canaryReady = canary?.status === "ready";
   const outcomes = brands.map((brand, index): UpgradeAllOutcome => {
     const row = byId.get(ids[index]!);
     const eligible = brand.status === "live" && brand.template_version_id === command.from_template_version_id;
-    const waiting = !row && eligible && !canaryStopped;
+    // A live source brand with no install row is only still waiting while the canary itself has not
+    // reached `ready`. Once the canary is `ready` the workflow has committed the rest of the selection,
+    // so such a brand was never part of this command (created later, or paused at acceptance).
+    const waiting = !row && eligible && !canaryStopped && !canaryReady;
     return {
       brand_id: brand.brand_id, domain: brand.domain, is_canary: brand.brand_id === command.canary_brand_id,
       install_id: row?.install_id ?? null,
       retry_of: row && row.install_id !== row.root ? row.root : null,
       status: row?.status ?? (waiting ? "queued" : "skipped"),
-      error: row?.error ?? (row ? null : waiting ? "Waiting for an install record" : canaryStopped && eligible ? "Canary stopped; no install recorded" : "No install recorded for this command"),
+      error: row?.error ?? (row ? null : waiting ? "Waiting for an install record" : canaryStopped && eligible ? "Canary stopped; no install recorded" : canaryReady && eligible ? "Canary reached ready; no install recorded for this command" : "No install recorded for this command"),
     };
   });
   return LatestUpgradeResponse.parse({ upgrade: { audit_id: audit.id, accepted_at: audit.created_at, command, outcomes } });

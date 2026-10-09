@@ -114,6 +114,15 @@ describe("latest upgrade-all API", () => {
     expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "skipped", error: "Canary stopped; no install recorded" });
   });
 
+  it("does not report a phantom pending brand once the canary reached ready", async () => {
+    await seed();
+    await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?1").bind(ids.canary).run();
+    const { upgrade } = await latest();
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "canary")).toMatchObject({ status: "ready", is_canary: true });
+    // "waiting" is live on the source with no install row: after a completed canary it reads skipped, not queued.
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "skipped", error: "Canary reached ready; no install recorded for this command" });
+  });
+
   it.each([
     ["different actor", "other-owner", command],
     ["different target", "owner", { ...command, to_template_version_id: "tv-3" }],
