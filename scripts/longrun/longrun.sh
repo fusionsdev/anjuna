@@ -166,8 +166,8 @@ review() { # unit wt -> sets REVIEW_FILE, returns 0 if every reviewer approves
 build() { # unit wt round feedback_file
   local u=$1 wt=$2 round=$3 fb=$4 builder prompt
   builder=$(card_get "$u" builder)
-  [ "$round" -ge 3 ] && builder=relay
-  if [ "$round" = 2 ] && [ -s "$fb" ] && [ "$(bun "$HERE/jev.mjs" escalate "$fb")" = yes ]; then builder=relay; fi
+  [ "$round" -ge 3 ] && builder=${LONGRUN_ESCALATION:-deepseek}
+  if [ "$round" = 2 ] && [ -s "$fb" ] && [ "$(bun "$HERE/jev.mjs" escalate "$fb")" = yes ]; then builder=${LONGRUN_ESCALATION:-deepseek}; fi
   prompt="$LR/prompts/$u.r$round.md"
   {
     echo "No mannered prose. Answer first, short sentences, numbers and names, end on the result."
@@ -188,10 +188,12 @@ build() { # unit wt round feedback_file
     codex)
       agent_env timeout "$BUILD_TIMEOUT" codex exec -m "$CODEX_MODEL" -s danger-full-access --skip-git-repo-check -C "$wt" - \
         <"$prompt" >"$LR/out/$u.r$round.build.log" 2>&1 ;;
-    relay)
-      # Plain Opus in this worktree. The relay skill creates its own worktrees and branches, which broke the shared repo.
-      ( cd "$wt" && agent_env timeout "$BUILD_TIMEOUT" claude -p "$(cat "$prompt")" --model opus \
-        --permission-mode bypassPermissions >"$LR/out/$u.r$round.build.log" 2>&1 ) ;;
+    relay|deepseek)
+      # Escalation runs on DeepSeek (opencode build agent) so the loop does not spend the owner's Claude limit.
+      # Grok was tried and hangs in headless mode.
+      ( cd "$wt" && agent_env timeout "$BUILD_TIMEOUT" opencode run -m "${LONGRUN_DEEPSEEK_MODEL:-siliconflow/deepseek-ai/DeepSeek-V4-Pro-0813}"           --agent build -f "$prompt" -- "Follow the instructions in the attached file exactly. Edit files and commit."           </dev/null >"$LR/out/$u.r$round.build.log" 2>&1 ) ;;
+    opus)
+      ( cd "$wt" && agent_env timeout "$BUILD_TIMEOUT" claude -p "$(cat "$prompt")" --model opus         --permission-mode bypassPermissions >"$LR/out/$u.r$round.build.log" 2>&1 ) ;;
     *) echo "unknown builder $builder" >"$LR/out/$u.r$round.build.log"; return 1 ;;
   esac
 }

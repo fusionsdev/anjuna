@@ -5,7 +5,7 @@ branch: fus-345-retry-compensation-race
 lane: factory
 deps: U05
 builder: codex
-reviewers: deepseek,grok
+reviewers: deepseek
 paths: workers/factory/ apps/web/src/server/ apps/web/test/
 merge: owner
 ---
