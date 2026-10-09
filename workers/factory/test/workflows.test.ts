@@ -440,6 +440,20 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     const nextInstall = `new-${f.id}`;
     await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'install','queued','owner',?)").bind(nextInstall, f.brand, now).run();
     expect(await setInstallStatus(env.FACTORY, nextInstall, "running", undefined, f.brand)).toBe("claimed");
+
+    // A stale panel action or Workflow replay must not release the next install's lock.
+    const runtimeBeforeReplay = f.runtime();
+    const auditBeforeReplay = await env.FACTORY.prepare("SELECT * FROM audit_log WHERE entity_id IN (?,?) ORDER BY id")
+      .bind(f.install, recovery.install_id).all();
+    expect(await (await recover(f)).json()).toMatchObject({ install_id: recovery.install_id, idempotent: true });
+    await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(recovery), steps().step);
+    expect(await f.brandRow()).toEqual({ status: "installing", current_revision_id: live ? f.revision : null });
+    expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(nextInstall).first()).toEqual({ status: "running" });
+    expect(f.runtime()).toEqual(runtimeBeforeReplay);
+    expect(f.network).toHaveBeenCalledTimes(calls);
+    expect(f.compensation).toHaveLength(2);
+    expect((await env.FACTORY.prepare("SELECT * FROM audit_log WHERE entity_id IN (?,?) ORDER BY id")
+      .bind(f.install, recovery.install_id).all()).results).toEqual(auditBeforeReplay.results);
   });
 
   it("refuses Employee recovery before any mutation", async () => {
