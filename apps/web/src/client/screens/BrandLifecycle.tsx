@@ -1,4 +1,4 @@
-import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts } from "@anjuna/contracts";
+import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
@@ -26,6 +26,13 @@ const statusLabel: Record<string, string> = {
   failed: "ล้มเหลว (failed)", rolled_back: "ย้อนกลับแล้ว (rolled-back)", detached: "ถอดออกแล้ว (detached)", unmanaged: "ไม่ได้จัดการ (unmanaged)", sync_error: "ซิงก์ผิดพลาด (sync_error)",
 };
 
+const coreListLabel: Record<CoreListErrorCode, string> = {
+  core_binding_missing: "Core lifecycle binding is missing",
+  core_list_fetch_failed: "Core brand list fetch failed",
+  core_list_response_invalid: "Core brand list response is invalid",
+  core_list_account_missing: "Core brand list account is not configured",
+};
+
 export function BrandLifecycle({ me }: { me: Me }) {
   const [templates, setTemplates] = useState<SealedTemplateVersion[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
@@ -33,7 +40,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   const [brands, setBrands] = useState<LifecycleBrandSummary[]>([]);
   const [runtimeBrands, setRuntimeBrands] = useState<BrandSummary[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [coreListError, setCoreListError] = useState<string | null>(null);
+  const [coreListError, setCoreListError] = useState<CoreListError | null>(null);
   const [upgradeRefresh, setUpgradeRefresh] = useState(0);
   const [configBrandId, setConfigBrandId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -284,7 +291,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
     {pendingOperation?.brandId === selectedId && <p role="status">Install ID: <code>{pendingOperation.installId}</code> · กำลังติดตามสถานะ</p>}
     {installError && <p className="error" role="alert">{installError}</p>}
     {runtimeError && <p className="error" role="alert">{runtimeError}</p>}
-    {coreListError && <p className="error" role="alert">{coreListError}. Core brand list is unavailable; showing factory brands only. Refresh to retry.</p>}
+    {coreListError && <p className="error" role="alert">{coreListLabel[coreListError.code] ?? coreListError.message}. Core brand list is unavailable; showing factory brands only. Refresh to retry.</p>}
     {runtimeBrand && <section className="card" aria-label="Runtime config and statistics">
       <h2>การตั้งค่า runtime (Runtime config)</h2>
       <p>สถานะ runtime: {runtimeBrand.status}</p>
@@ -293,7 +300,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
     </section>}
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} />}
     {me.role === "owner" && <section className="card upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่ม Upgrade-all</button></div></section>}
-    <UpgradeOutcomes refresh={refresh + upgradeRefresh} />
+    {me.role === "owner" && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
   </div>;
 }
 

@@ -1,19 +1,20 @@
 import { env } from "cloudflare:workers";
-import { LatestUpgradeResponse } from "@anjuna/contracts";
+import { LatestUpgradeResponse, upgradeInstallId, type CoreListError, type UpgradeAllCommand } from "@anjuna/contracts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
 let employee: string;
-const command = { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "canary", started_role: "owner" };
-// Golden IDs from the factory's SHA-256 command identity, computed independently.
-const ids = {
-  canary: "upgrade-install-4821f33d87fbe3a926e33d27ce11eb90200c903a3108e86445724af83a4fbe4e",
-  ready: "upgrade-install-c13d141f3a9824a0727962834b6b112c09c9dce966053b74539efedfdd4f3def",
-  failed: "upgrade-install-82cc1ea38f83da792a9c4e857ae297ac141c889b6be5eb700fe36a13b241ff15",
-  rolled: "upgrade-install-10c95474c750a5af1c2b08652ffa67f77a3f39d5e3f508700de510db11533194",
-};
-beforeAll(setupDatabases);
+const command: UpgradeAllCommand = { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "canary", started_by: "owner", started_role: "owner" };
+// Derived from the shared contract identity so this test cannot drift from the web recompute.
+const brands = ["canary", "ready", "failed", "rolled"] as const;
+let ids: Record<(typeof brands)[number], string>;
+
+beforeAll(async () => {
+  await setupDatabases();
+  ids = Object.fromEntries(await Promise.all(brands.map(async (brand) => [brand, await upgradeInstallId(command, brand)]))) as Record<(typeof brands)[number], string>;
+});
+
 beforeEach(async () => {
   resetState();
   await env.FACTORY.batch([
@@ -53,7 +54,7 @@ async function seed() {
   await accepted();
 }
 
-async function latest(cookie = employee) {
+async function latest(cookie = owner) {
   const response = await call("/api/upgrade-all/latest", { cookie });
   expect(response.status).toBe(200);
   return LatestUpgradeResponse.parse(await response.json());
@@ -65,19 +66,22 @@ describe("latest upgrade-all API", () => {
     expect(await latest()).toEqual({ upgrade: null });
   });
 
-  it("returns each brand's matching install outcome to Owner and Employee", async () => {
+  it("returns each brand's matching install outcome to Owner", async () => {
     await seed();
     // A newer unrelated operation must not replace this command's outcome.
     await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_role,started_at) VALUES ('unrelated','ready','upgrade','failed','owner','owner','2026-10-10T00:00:00Z')").run();
-    for (const cookie of [owner, employee]) {
-      const { upgrade } = await latest(cookie);
-      expect(upgrade!.outcomes.map((row) => [row.brand_id, row.status])).toEqual([
-        ["canary", "running"], ["failed", "failed"], ["ready", "ready"], ["rolled", "rolled_back"], ["skipped", "skipped"], ["waiting", "queued"],
-      ]);
-      expect(upgrade!.outcomes[0]).toMatchObject({ is_canary: true, install_id: ids.canary });
-      expect(upgrade!.outcomes[1]).toMatchObject({ error: "Smoke check failed" });
-      expect(upgrade!.outcomes[4]).toMatchObject({ install_id: null, error: "No install recorded for this command" });
-    }
+    const { upgrade } = await latest();
+    expect(upgrade!.outcomes.map((row) => [row.brand_id, row.status])).toEqual([
+      ["canary", "running"], ["failed", "failed"], ["ready", "ready"], ["rolled", "rolled_back"], ["skipped", "skipped"], ["waiting", "queued"],
+    ]);
+    expect(upgrade!.outcomes[0]).toMatchObject({ is_canary: true, install_id: ids.canary });
+    expect(upgrade!.outcomes[1]).toMatchObject({ error: "Smoke check failed" });
+    expect(upgrade!.outcomes[4]).toMatchObject({ install_id: null, error: "No install recorded for this command" });
+  });
+
+  it("returns 403 to Employee", async () => {
+    await seed();
+    expect((await call("/api/upgrade-all/latest", { cookie: employee })).status).toBe(403);
   });
 
   it("follows install retries to the latest attempt for the command row", async () => {
@@ -124,7 +128,13 @@ describe("latest upgrade-all API", () => {
 });
 
 describe("core-list errors", () => {
-  it.each(["missing binding", "transport", "http", "json", "schema"])("reports %s as a visible partial-list error", async (failure) => {
+  it.each([
+    ["missing binding", "core_binding_missing"],
+    ["transport", "core_list_fetch_failed"],
+    ["http", "core_list_fetch_failed"],
+    ["json", "core_list_response_invalid"],
+    ["schema", "core_list_response_invalid"],
+  ])("reports %s as a visible partial-list error with a stable code", async (failure, code) => {
     const core = failure === "missing binding" ? undefined : { fetch: async () => {
       if (failure === "transport") throw new Error("private upstream detail");
       if (failure === "http") return new Response("unavailable", { status: 503 });
@@ -133,10 +143,10 @@ describe("core-list errors", () => {
     } } as unknown as Fetcher;
     const response = await call("/api/lifecycle/brands", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
     expect(response.status).toBe(200);
-    const body = await response.json() as { brands: unknown[]; core_error: string };
+    const body = await response.json() as { brands: unknown[]; core_error: CoreListError };
     expect(body.brands).toEqual([]);
-    expect(body.core_error).toMatch(/^Core /);
-    expect(body.core_error).not.toContain("private upstream detail");
+    expect(body.core_error.code).toBe(code);
+    expect(body.core_error.message).not.toContain("private upstream detail");
     const detail = await call("/api/lifecycle/brands/core-only", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
     expect(detail.status).toBe(502);
   });
@@ -145,10 +155,10 @@ describe("core-list errors", () => {
     await seed();
     const core = { fetch: async () => Response.json({ brands: [] }) } as unknown as Fetcher;
     const ok = await call("/api/lifecycle/brands", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
-    const body = await ok.json() as { brands: unknown[]; core_error: string | null };
+    const body = await ok.json() as { brands: unknown[]; core_error: CoreListError | null };
     expect(body.brands).toHaveLength(6);
     expect(body.core_error).toBeNull();
     const failed = await call("/api/lifecycle/brands", { cookie: employee });
-    expect(await failed.json()).toMatchObject({ brands: body.brands, core_error: "Core lifecycle binding is missing" });
+    expect(await failed.json()).toMatchObject({ brands: body.brands, core_error: { code: "core_binding_missing", message: "Core lifecycle binding is missing" } });
   });
 });

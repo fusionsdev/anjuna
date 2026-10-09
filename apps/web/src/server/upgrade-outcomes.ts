@@ -1,13 +1,4 @@
-import { LatestUpgradeResponse, UpgradeAllCommand, type UpgradeAllOutcome } from "@anjuna/contracts";
-
-// Match the immutable identity written by the factory's upgrade-all workflow.
-// Timestamps and target versions alone cannot separate overlapping commands.
-async function installId(command: UpgradeAllCommand, brandId: string): Promise<string> {
-  const parts = ["install", command.from_template_version_id, command.to_template_version_id,
-    command.form_artifact_id, command.canary_brand_id, command.started_by, command.started_role, brandId];
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(parts)));
-  return `upgrade-install-${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
+import { LatestUpgradeResponse, UpgradeAllCommand, upgradeInstallId, type UpgradeAllOutcome } from "@anjuna/contracts";
 
 export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeResponse> {
   const audit = await db.prepare("SELECT id,actor_id,after_json,created_at FROM audit_log WHERE action='upgrade.start' ORDER BY id DESC LIMIT 1")
@@ -17,8 +8,8 @@ export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeRespon
   const { results: brands } = await db.prepare(`SELECT b.brand_id,b.domain,b.status,r.template_version_id
     FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=b.current_revision_id ORDER BY b.domain,b.brand_id`)
     .all<{ brand_id: string; domain: string; status: string; template_version_id: string | null }>();
-  const ids = await Promise.all(brands.map((brand) => installId(command, brand.brand_id)));
-  const canaryId = await installId(command, command.canary_brand_id);
+  const ids = await Promise.all(brands.map((brand) => upgradeInstallId(command, brand.brand_id)));
+  const canaryId = await upgradeInstallId(command, command.canary_brand_id);
   // A single read keeps canary and per-brand outcomes from different snapshots
   // from being combined. No core or factory network call is needed.
   // /api/installs/:id/retry of a terminal row inserts a fresh ins_ row and an

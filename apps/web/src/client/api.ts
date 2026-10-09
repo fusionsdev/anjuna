@@ -13,6 +13,7 @@ import type {
   InstallWithReceipts,
   LifecycleBrandSummary,
   UpgradeAllCommand,
+  CoreListError,
   FunnelReportResponse,
   MailingStatusResponse,
 } from "@anjuna/contracts";
@@ -87,7 +88,7 @@ export const api = {
   users: () => request<{ users: PanelUser[] }>("GET", "/api/users").then((r) => r.users),
   createUser: (u: { email: string; name: string; password: string; role: AdminRole }) => request<unknown>("POST", "/api/users", u),
   setRole: (id: string, role: AdminRole) => request<unknown>("PATCH", `/api/users/${encodeURIComponent(id)}`, { role }),
-  lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[]; core_error?: string | null }>("GET", "/api/lifecycle/brands"),
+  lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[]; core_error?: CoreListError | null }>("GET", "/api/lifecycle/brands"),
   lifecycleBrand: (id: string) => request<{ brand: LifecycleBrandSummary }>("GET", `/api/lifecycle/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   createDraft: (body: Omit<CreateBrandDraftRequest, "brand_id" | "account" | "hostname"> & { domain: string; keyword_default: string; template_version_id: string; name?: string }) =>
     request<{ brand: { brand_id: string }; revision: { revision_id: string } }>("POST", "/api/brands/drafts", body),

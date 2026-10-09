@@ -106,6 +106,45 @@ export const UpgradeAllCommand = z
   });
 export type UpgradeAllCommand = z.infer<typeof UpgradeAllCommand>;
 
+/**
+ * Isomorphic WebCrypto digests. Cloudflare Workers and Node 20+ both expose
+ * `globalThis.crypto.subtle` and `TextEncoder`; the contracts build compiles with `types: []`
+ * (no lib.dom or @types/node), so the minimal surface is described here instead.
+ */
+interface SubtleDigest {
+  digest(algorithm: "SHA-256", data: Uint8Array): Promise<ArrayBuffer>;
+}
+interface TextEncoderLike {
+  encode(value: string): Uint8Array;
+}
+const webCrypto = globalThis as unknown as {
+  crypto: { subtle: SubtleDigest };
+  TextEncoder: new () => TextEncoderLike;
+};
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await webCrypto.crypto.subtle.digest("SHA-256", new webCrypto.TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The immutable install identity the factory's upgrade-all workflow writes for a brand, in the
+ * workflow's exact key order. The factory and the panel both derive install IDs from this, so an
+ * operator can map each brand's outcome for a past command without re-reading the workflow.
+ */
+export function upgradeInstallId(command: UpgradeAllCommand, brandId: string): Promise<string> {
+  return sha256Hex(JSON.stringify([
+    "install",
+    command.from_template_version_id,
+    command.to_template_version_id,
+    command.form_artifact_id,
+    command.canary_brand_id,
+    command.started_by,
+    command.started_role,
+    brandId,
+  ])).then((digest) => `upgrade-install-${digest}`);
+}
+
 export const UpgradeAllOutcome = z.strictObject({
   brand_id: BrandId,
   domain: Hostname,
@@ -127,6 +166,21 @@ export const LatestUpgradeResponse = z.strictObject({
   }).nullable(),
 });
 export type LatestUpgradeResponse = z.infer<typeof LatestUpgradeResponse>;
+
+export const CoreListErrorCode = z.enum([
+  "core_binding_missing",
+  "core_list_fetch_failed",
+  "core_list_response_invalid",
+  "core_list_account_missing",
+]);
+export type CoreListErrorCode = z.infer<typeof CoreListErrorCode>;
+
+/** A partial core list failure, surfaced to the operator instead of silently hiding core brands. */
+export const CoreListError = z.strictObject({
+  code: CoreListErrorCode,
+  message: z.string().min(1),
+});
+export type CoreListError = z.infer<typeof CoreListError>;
 
 export const InitialRuntime = z.strictObject({
   drain_key: DrainKey,

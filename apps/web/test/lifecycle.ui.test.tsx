@@ -93,7 +93,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("mounted lifecycle UI with API responses", () => {
   it("shows core-list failure with factory rows and clears it after a successful refresh", async () => {
-    routes.set("GET /api/lifecycle/brands", () => json({ brands: lifecycleRows, core_error: "Core brand list fetch failed" }));
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: lifecycleRows, core_error: { code: "core_list_fetch_failed", message: "Core brand list fetch failed" } }));
     render(<BrandLifecycle me={employee} />);
     expect(await screen.findByText(/Core brand list is unavailable/)).toBeTruthy();
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeTruthy();

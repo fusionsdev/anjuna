@@ -11,6 +11,8 @@ import {
   SealedTemplatesResponse,
   adminContextToHeaders,
   type AdminRequestContext,
+  type CoreListError,
+  type CoreListErrorCode,
 } from "@anjuna/contracts";
 import { z } from "zod";
 import type { Env } from "./env.js";
@@ -267,18 +269,24 @@ async function checklist(request: Request, env: Env, ctx: AdminRequestContext, b
 
 type FactoryBrandRow = Record<string, unknown> & { brand_id: string; account: string; current_revision_id: string | null };
 
+class CoreListFailure extends Error {
+  constructor(readonly code: CoreListErrorCode, message: string) {
+    super(message);
+  }
+}
+
 async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string): Promise<Map<string, { hostnames: string[]; applied_revision_id: string | null; paused: boolean; bundle_form_version: string | null }>> {
-  if (!env.CORE_LIFECYCLE) throw new Error("Core lifecycle binding is missing");
+  if (!env.CORE_LIFECYCLE) throw new CoreListFailure("core_binding_missing", "Core lifecycle binding is missing");
   let response: Response;
   try {
     response = await env.CORE_LIFECYCLE.fetch(new Request("https://core/lifecycle/runtime-list", {
       method: "POST", headers: { ...adminContextToHeaders(ctx), "content-type": "application/json", "x-lifecycle-account": account },
       body: JSON.stringify({ account }),
     }));
-  } catch { throw new Error("Core brand list fetch failed"); }
-  if (!response.ok) throw new Error("Core brand list fetch failed");
+  } catch { throw new CoreListFailure("core_list_fetch_failed", "Core brand list fetch failed"); }
+  if (!response.ok) throw new CoreListFailure("core_list_fetch_failed", "Core brand list fetch failed");
   const parsed = RuntimeListResponse.safeParse(await response.json().catch(() => null));
-  if (!parsed.success) throw new Error("Core brand list response is invalid");
+  if (!parsed.success) throw new CoreListFailure("core_list_response_invalid", "Core brand list response is invalid");
   return new Map(parsed.data.brands.map((brand) => [brand.brand_id, brand]));
 }
 
@@ -294,15 +302,19 @@ function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runti
   });
 }
 
-async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{ brands: LifecycleBrandSummary[]; core_error: string | null }> {
+async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{ brands: LifecycleBrandSummary[]; core_error: CoreListError | null }> {
   const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1)) LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
   const account = env.DEFAULT_ACCOUNT ?? results[0]?.account;
   let runtime: Awaited<ReturnType<typeof runtimeBrands>> = new Map();
-  let coreError: string | null = null;
+  let coreError: CoreListError | null = null;
   try {
     if (account) runtime = await runtimeBrands(env, ctx, account);
-    else coreError = "Core brand list account is not configured";
-  } catch (error) { coreError = error instanceof Error ? error.message : "Core brand list fetch failed"; }
+    else coreError = { code: "core_list_account_missing", message: "Core brand list account is not configured" };
+  } catch (error) {
+    coreError = error instanceof CoreListFailure
+      ? { code: error.code, message: error.message }
+      : { code: "core_list_fetch_failed", message: "Core brand list fetch failed" };
+  }
   const factoryIds = new Set(results.map((row) => row.brand_id));
   const merged = results.map((row) => withRuntimeState(row, runtime));
   for (const [brandId, state] of runtime) if (!factoryIds.has(brandId)) merged.push(LifecycleBrandSummary.parse({ brand_id: brandId, account, status: "unmanaged", current_revision_id: null, bundle_form_version: state.bundle_form_version, payload_version: null, hostnames: state.hostnames, runtime_sync_status: "ready" }));
@@ -340,7 +352,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const result = await lifecycleBrandRows(env, ctx);
     const row = result.brands.find((candidate) => candidate.brand_id === m![1]);
     return row ? json(200, { brand: row, core_error: result.core_error }) : result.core_error
-      ? json(502, { error: "core_list_failed", message: result.core_error })
+      ? json(502, { error: "core_list_failed", code: result.core_error.code, message: result.core_error.message })
       : json(404, { error: "not_found", resource: "brand" });
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|recover|checklist)$/);
@@ -414,7 +426,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: installStatus, runtime_sync_status, receipts, recovery_required: row.recovery_required === 1 });
   }
   if (path === "/api/upgrade-all/latest" && method === "GET") {
-    const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    const g = authorizePanel("upgradeAll", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     return json(200, await latestUpgrade(env.FACTORY));
   }
   if (path === "/api/upgrade-all" && method === "POST") {
