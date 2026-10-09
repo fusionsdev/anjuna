@@ -9,8 +9,10 @@ export async function recoverBrand(env: Env, input: {
   const db = env.FACTORY;
   const brand = await db.prepare("SELECT status FROM brands WHERE brand_id=?").bind(input.brand_id).first<{ status: string }>();
   if (!brand) return Response.json({ error: "not_found" }, { status: 404 });
+  // Dispatch failure copies evidence to the compensation row; only its source owns recovery.
   const original = await db.prepare(`SELECT install_id,status FROM installs i WHERE brand_id=? AND kind IN ('install','upgrade','rollback')
-      AND ((status='failed' AND json_valid(error) AND json_extract(error,'$.recovery_required')=1)
+      AND ((status='failed' AND json_valid(error) AND json_extract(error,'$.recovery_required')=1
+          AND json_extract(error,'$.original_install_id')=i.install_id)
         OR (status='rolled_back' AND EXISTS (SELECT 1 FROM installs r WHERE r.brand_id=i.brand_id
           AND r.status='rolled_back' AND json_valid(r.rollback_record_json)
           AND json_extract(r.rollback_record_json,'$.recovery_of')=i.install_id)))

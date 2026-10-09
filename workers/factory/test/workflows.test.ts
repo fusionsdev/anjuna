@@ -399,6 +399,50 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(await f.brandRow()).toMatchObject({ status: "installing" });
   }
 
+  it.each([false, true])("recovers after compensation dispatch throws (live=%s)", async (live) => {
+    const f = await fixture(live);
+    if (live) {
+      const next = `next-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?,?,2,?,?,'{}','owner',?)")
+        .bind(next, f.brand, f.version, f.artifact, now).run();
+      f.params.revision_id = next;
+    }
+    f.settings.smokeFails = true;
+    f.settings.dispatchFails = true;
+    await expect(runInstall(f)).rejects.toThrow("compensation dispatch unavailable");
+    expect(await f.brandRow()).toMatchObject({ status: "installing" });
+    expect(f.compensation).toHaveLength(0);
+    // Dispatch failure stamps both rows. The newer compensation must not hide its source.
+    const compensationId = `compensate-${f.install}`;
+    const failed = await env.FACTORY.prepare("SELECT status,error FROM installs WHERE install_id=?")
+      .bind(compensationId).first<{ status: string; error: string }>();
+    expect(failed?.status).toBe("failed");
+    expect(JSON.parse(failed!.error)).toMatchObject({ recovery_required: true, original_install_id: f.install });
+    f.settings.dispatchFails = false;
+    expect((await recover(f, "employee")).status).toBe(403);
+    expect(f.compensation).toHaveLength(0);
+    expect((await recover(f)).status).toBe(201);
+    const recovery = f.compensation[0]!;
+    expect(recovery).toMatchObject({ original_install_id: f.install, to_revision_id: live ? f.revision : null });
+    await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow,
+      event(recovery), steps().step);
+    expect(await f.brandRow()).toEqual({ status: live ? "live" : "failed", current_revision_id: live ? f.revision : null });
+    expect(await f.installRow()).toEqual({ status: "rolled_back" });
+    expect(f.runtime()).toMatchObject({ applied_revision_id: live ? f.revision : null, paused: true });
+    if (live) expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith("/deployments") && String(init?.body).includes("worker-old"))).toBe(true);
+    else expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith("/workers/domains/local-domain") && init?.method === "DELETE")).toBe(true);
+    expect(await env.FACTORY.prepare("SELECT status FROM install_receipts WHERE install_id=? AND step='receipt'").bind(recovery.install_id).first()).toEqual({ status: "ok" });
+    expect(await env.FACTORY.prepare("SELECT actor_role FROM audit_log WHERE entity_id=? AND action='install.recover'").bind(recovery.install_id).first()).toEqual({ actor_role: "owner" });
+    const calls = f.network.mock.calls.length;
+    expect(await (await recover(f)).json()).toMatchObject({ install_id: recovery.install_id, idempotent: true });
+    expect(f.compensation).toHaveLength(1);
+    expect(f.network).toHaveBeenCalledTimes(calls);
+    expect(await env.FACTORY.prepare("SELECT status,error FROM installs WHERE install_id=?").bind(compensationId).first()).toEqual(failed);
+    const nextInstall = `new-${f.id}`;
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'install','queued','owner',?)").bind(nextInstall, f.brand, now).run();
+    expect(await setInstallStatus(env.FACTORY, nextInstall, "running", undefined, f.brand)).toBe("claimed");
+  });
+
   it.each([false, true])("recovers retained lock, restores previous state and allows the next install (live=%s)", async (live) => {
     const f = await fixture(live);
     // Keep the old deployed revision separate from the failed new deployment.
