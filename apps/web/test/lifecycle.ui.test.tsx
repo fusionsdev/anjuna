@@ -158,7 +158,9 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("button", { name: "Rollback" })).toBeNull();
   });
 
-  it("does not offer unsealed versions even if the API returns them", async () => {
+  it("rejects the entire template response if it includes an unsealed version", async () => {
+    // SealedTemplatesResponse rejects the whole payload, rather than filtering
+    // individual rows. Even the sealed row must not appear after this load error.
     routes.set("GET /api/templates/sealed", () => json({ templates: [
       { template_version_id: "tv-1", name: "Starter", version: 1, status: "sealed" },
       { template_version_id: "tv-draft", name: "Unapproved", version: 2, status: "draft" },
@@ -168,6 +170,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const select = screen.getByRole("combobox", { name: "Sealed template version" });
     expect(within(select).getAllByRole("option")).toHaveLength(1);
     expect(screen.queryByRole("option", { name: /Unapproved/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /Starter/ })).toBeNull();
     expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
     expect(requests.some((request) => request.path === "/api/brands/drafts")).toBe(false);
   });
@@ -203,6 +206,7 @@ describe("mounted lifecycle UI with API responses", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
     const panel = await screen.findByRole("complementary", { name: "Brand config" });
     fireEvent.click(await within(panel).findByRole("button", { name: "Pause แบรนด์" }));
+    expect(within(panel).getByRole("button", { name: /Rollback/ })).toBeDefined();
     fireEvent.click(await within(panel).findByRole("button", { name: "Resume แบรนด์" }));
     await within(panel).findByRole("button", { name: "Pause แบรนด์" });
     expect(requests.some((r) => r.path.endsWith("/pause") && r.method === "POST")).toBe(true);
@@ -237,6 +241,8 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(panel).queryByRole("textbox", { name: "Amount buckets" })).toBeNull();
     expect(within(panel).queryByRole("combobox")).toBeNull();
     expect(within(panel).queryByRole("button", { name: "Rotate token" })).toBeNull();
+    expect(within(panel).queryByRole("heading", { name: "Rollback" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: /Rollback/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /เริ่ม Upgrade-all/ })).toBeNull();
   });
 

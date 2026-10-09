@@ -52,7 +52,7 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
 
       <KeywordSection key={brand.updated_at} brand={brand} onSave={(k) => save({ keyword_default: k })} />
 
-      <Section title="Rollback">
+      {me.role === "owner" && <Section title="Rollback">
         <button
           onClick={() => void act(() => api.rollback(brandId), "")}
           title="coming with T10"
@@ -60,7 +60,7 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
           Rollback เป็นเวอร์ชันก่อนหน้า <span className="badge">coming with T10</span>
         </button>
         <p className="muted small">ยังเป็น placeholder: ปุ่มนี้จะทำงานจริงเมื่อ factory Workflows (T10) พร้อม</p>
-      </Section>
+      </Section>}
 
       {can(me, "ab_weights") && <AbSection key={`ab${brand.updated_at}`} brand={brand} onSave={(ab) => save({ ab_config: ab })} />}
       {can(me, "amount_buckets") && <BucketsSection key={`b${brand.updated_at}`} brand={brand} onSave={(b) => save({ amount_buckets: b })} />}
