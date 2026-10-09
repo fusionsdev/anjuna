@@ -288,8 +288,7 @@ export default {
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
       try {
         return await handleApi(request, env, url);
-      } catch (error) {
-        console.error("INTERNAL", error);
+      } catch {
         return json(500, { error: "internal" });
       }
     }

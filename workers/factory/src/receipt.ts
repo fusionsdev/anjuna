@@ -186,7 +186,11 @@ export async function isQueuedCompensationInstall(db: D1Database, installId: str
   const row = await db.prepare(
     "SELECT kind, status, rollback_record_json FROM installs WHERE install_id = ?",
   ).bind(installId).first<{ kind: string; status: string; rollback_record_json: string | null }>();
-  return row?.kind === "rollback" && row.status === "queued" && (installId.startsWith("compensate-") || Boolean(row.rollback_record_json?.includes("recovery_of")));
+  if (row?.kind !== "rollback" || row.status !== "queued") return false;
+  if (installId.startsWith("compensate-")) return true;
+  try {
+    return JSON.parse(row.rollback_record_json ?? "null")?.recovery_of !== undefined;
+  } catch { return false; }
 }
 
 export function compensationFailureEvidence(input: {
