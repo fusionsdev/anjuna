@@ -218,6 +218,40 @@ describe("truthful lifecycle BFF", () => {
     expect(attempts.results[1]!.install_id).not.toBe(attempts.results[0]!.install_id);
   });
 
+  it.each([false, true])("blocks retry of an original install requiring recovery before mutation (terminal receipt=%s)", async (terminalReceipt) => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: `retained-retry-${terminalReceipt}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(draft.status).toBe(201);
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
+    const installId = failed!.install_id;
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("UPDATE brands SET status='installing' WHERE brand_id=?").bind(brand.brand_id),
+      env.FACTORY.prepare("UPDATE installs SET error=?,rollback_record_json=? WHERE install_id=?")
+        .bind(JSON.stringify({ recovery_required: true, original_install_id: installId, compensation_install_id: `compensate-${installId}` }), JSON.stringify({ previous_revision_id: null }), installId),
+      env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'rollback','failed','system',?)")
+        .bind(`compensate-${installId}`, brand.brand_id, new Date().toISOString()),
+    ]);
+    if (terminalReceipt) await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?,'smoke','failed','{}',?)")
+      .bind(installId, new Date().toISOString()).run();
+    const snapshot = async () => ({
+      brand: await env.FACTORY.prepare("SELECT * FROM brands WHERE brand_id=?").bind(brand.brand_id).first(),
+      installs: (await env.FACTORY.prepare("SELECT * FROM installs WHERE brand_id=? ORDER BY install_id").bind(brand.brand_id).all()).results,
+      audit: (await env.FACTORY.prepare("SELECT * FROM audit_log ORDER BY id").all()).results,
+      receipts: (await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY id").bind(installId).all()).results,
+    });
+    const before = await snapshot();
+    let dispatches = 0;
+    const factory = { fetch: async () => { dispatches++; return Response.json({ status: "queued" }, { status: 201 }); } } as unknown as Fetcher;
+    for (const cookie of [employee, owner]) {
+      const response = await call(`/api/installs/${installId}/retry`, { cookie, method: "POST", env: makeEnv({ FACTORY_WORKER: factory }) });
+      expect(response.status).toBe(cookie === owner ? 409 : 403);
+      if (cookie === owner) expect(await response.json()).toMatchObject({ error: "recovery_required" });
+      expect(await snapshot()).toEqual(before);
+    }
+    expect(dispatches).toBe(0);
+  });
+
   it("requires the original command's role to retry an upgrade install and refuses a retry while another operation is active", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "upgrade-retry.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };

@@ -409,11 +409,15 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       f.params.revision_id = next;
     }
     await failCompensation(f);
+    // The failed deployment may already be current when compensation fails.
+    await env.FACTORY.prepare("UPDATE brands SET current_revision_id=? WHERE brand_id=?").bind(f.params.revision_id, f.brand).run();
     const failedReceipts = await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY id").bind(f.compensation[0]!.install_id).all();
     const responses = await Promise.all([recover(f), recover(f)]);
     expect(responses.map((r) => r.status).sort()).toEqual([201, 409]);
     const recovery = f.compensation[1]!;
     expect(recovery).toMatchObject({ original_install_id: f.install, to_revision_id: live ? f.revision : null });
+    expect(await env.FACTORY.prepare("SELECT from_revision_id,to_revision_id FROM installs WHERE install_id=?").bind(recovery.install_id).first())
+      .toEqual({ from_revision_id: f.params.revision_id, to_revision_id: live ? f.revision : null });
     expect((await recover(f)).status).toBe(409);
     await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(recovery), steps().step);
     expect(await f.brandRow()).toEqual({ status: live ? "live" : "failed", current_revision_id: live ? f.revision : null });

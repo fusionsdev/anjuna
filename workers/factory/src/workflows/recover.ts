@@ -31,7 +31,7 @@ export async function recoverBrand(env: Env, input: {
   // This INSERT serializes requests without releasing the retained lock.
   const claim = await db.prepare(`INSERT INTO installs
     (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at,rollback_record_json)
-    SELECT ?1,?2,'rollback','queued',?3,?3,?4,'owner',?5,?6
+    SELECT ?1,?2,'rollback','queued',(SELECT current_revision_id FROM brands WHERE brand_id=?2),?3,?4,'owner',?5,?6
     WHERE EXISTS (SELECT 1 FROM brands WHERE brand_id=?2 AND status='installing')
       AND EXISTS (SELECT 1 FROM installs WHERE install_id=?7 AND status='failed' AND error=?8)
       AND NOT EXISTS (SELECT 1 FROM installs WHERE brand_id=?2 AND status IN ('queued','running'))`)

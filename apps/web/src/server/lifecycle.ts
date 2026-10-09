@@ -343,7 +343,10 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const row = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,from_revision_id,to_revision_id,started_by,started_role,status FROM installs WHERE install_id = ?1").bind(m[1]).first<{ install_id: string; brand_id: string; kind: string; from_revision_id: string | null; to_revision_id: string | null; started_by: string; started_role: AdminRole; status: string }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     if (row.status !== "failed") return json(409, { error: "conflict", message: "Only failed installs can be retried" });
-    const recovery = await env.FACTORY.prepare("SELECT 1 AS found FROM installs WHERE install_id=? AND json_valid(rollback_record_json) AND json_extract(rollback_record_json,'$.recovery_of') IS NOT NULL").bind(row.install_id).first();
+    const recovery = await env.FACTORY.prepare(`SELECT 1 AS found FROM installs WHERE install_id=? AND (
+      (json_valid(error) AND json_extract(error,'$.recovery_required')=1)
+      OR (json_valid(rollback_record_json) AND json_extract(rollback_record_json,'$.recovery_of') IS NOT NULL)
+    )`).bind(row.install_id).first();
     if (recovery) {
       if (!authorizePanel("recoverBrand", ctx.actor_role).ok) return forbidden(ctx.actor_role);
       return json(409, { error: "recovery_required", message: "Use Recover to retry failed compensation" });
