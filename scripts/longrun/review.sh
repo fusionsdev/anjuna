@@ -27,11 +27,12 @@ EOF
 
 case "$who" in
   deepseek)
-    opencode run -m "$DEEPSEEK_MODEL" --agent plan -f "$brief" -f "$card" -f "$diff" -- \
-      "Follow the instructions in the first attached file exactly and reply only with the review." \
-      2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' ;;
+    # opencode refuses reads outside its working directory, so it runs inside the worktree.
+    ( cd "$wt" && opencode run -m "$DEEPSEEK_MODEL" --agent plan -f "$brief" -f "$card" -f "$diff" -- \
+      "Follow the instructions in the first attached file exactly and reply only with the review." ) \
+      2>"${REVIEW_ERR:-/dev/null}" | sed 's/\x1b\[[0-9;]*m//g' ;;
   grok)
-    grok -p "$(cat "$brief")" --cwd "$wt" --permission-mode plan 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' ;;
+    grok -p "$(cat "$brief")" --cwd "$wt" --permission-mode plan 2>"${REVIEW_ERR:-/dev/null}" | sed 's/\x1b\[[0-9;]*m//g' ;;
   *) echo "VERDICT: REQUEST_CHANGES"; echo "review.sh: unknown reviewer $who" ;;
 esac
 rm -f "$brief"

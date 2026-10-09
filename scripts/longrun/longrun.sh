@@ -125,13 +125,22 @@ gate_a() { # wt unit -> 0 pass; reasons on stdout
 }
 
 review() { # unit wt -> sets REVIEW_FILE, returns 0 if every reviewer approves
-  local u=$1 wt=$2 r out decision
+  local u=$1 wt=$2 r out decision attempt
+  REVIEW_TOOL_FAILED=0
   git -C "$wt" diff origin/main...HEAD >"$LR/out/$u.diff"
   REVIEW_FILE="$LR/out/$u.review.txt"; : >"$REVIEW_FILE"
   for r in $(card_get "$u" reviewers | tr ',' ' '); do
     [ "$r" = none ] && continue
     out="$LR/out/$u.review.$r.txt"
-    timeout "$REVIEW_TIMEOUT" bash "$HERE/review.sh" "$r" "$LR/out/$u.diff" "$(card_file "$u")" "$wt" >"$out" 2>"$out.err"
+    # A review without a VERDICT line is a tool failure: retry once, then stop without burning builder rounds.
+    for attempt in 1 2; do
+      REVIEW_ERR="$out.err" timeout "$REVIEW_TIMEOUT" bash "$HERE/review.sh" "$r" "$LR/out/$u.diff" "$(card_file "$u")" "$wt" >"$out"
+      grep -q 'VERDICT:' "$out" && break
+    done
+    if ! grep -q 'VERDICT:' "$out"; then
+      log "$u" "review:$r" "no verdict (tool failure), see $out.err"
+      REVIEW_TOOL_FAILED=1; return 1
+    fi
     { echo "### reviewer: $r"; cat "$out"; echo; } >>"$REVIEW_FILE"
     decision=$(bun "$HERE/jev.mjs" review "$out")
     log "$u" "review:$r" "$decision"
@@ -266,6 +275,10 @@ run_unit() {
       fi
     fi
     if review "$u" "$wt"; then : >"$fb"; break; fi
+    if [ "$REVIEW_TOOL_FAILED" = 1 ]; then
+      park "$u" "review tool failed" "reviewer returned no verdict, see longrun/out/$u.review.*.err (code is committed in $wt)"
+      return
+    fi
     cp "$REVIEW_FILE" "$fb"
   done
 
