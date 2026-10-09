@@ -260,10 +260,19 @@ describe("truthful lifecycle BFF", () => {
     }
     const originalReceipts = (await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY id").bind(failed!.install_id).all()).results;
     const dispatched: Array<{ install_id: string }> = [];
-    const factory = { async fetch(request: Request) { dispatched.push(await request.json()); return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const receiptsAtDispatch: unknown[][] = [];
+    const factory = { async fetch(request: Request) {
+      const payload = await request.json() as { install_id: string };
+      dispatched.push(payload);
+      receiptsAtDispatch.push((await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=? ORDER BY id").bind(payload.install_id).all()).results);
+      return Response.json({ ok: true });
+    } } as unknown as Fetcher;
     const retry = () => call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST", env: makeEnv({ FACTORY_WORKER: factory }) });
     expect((await Promise.all([retry(), retry()])).map((response) => response.status).sort()).toEqual([201, 409]);
     expect(dispatched).toHaveLength(1);
+    expect(receiptsAtDispatch).toEqual([receipted
+      ? originalReceipts.slice(0, 2).map(({ step, status, output_json }) => ({ step, status, output_json }))
+      : []]);
     const retryId = dispatched[0]!.install_id;
     const attempts = (await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).all()).results;
     expect(attempts).toHaveLength(receipted ? 2 : 1);

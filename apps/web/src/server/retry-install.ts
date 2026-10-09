@@ -31,13 +31,16 @@ export async function queueInstallRetry(
       SELECT ?,?,?,'install',?,json_object('retry_of',?,'kind',kind,'brand_id',brand_id),? FROM installs WHERE install_id=? AND changes()=1`)
       .bind(ctx.actor_id, ctx.actor_role, terminal ? "install.start" : "install.retry", retryId, sourceId, now, sourceId),
   ];
-  if (terminal) {
-    statements.push(db.prepare(`INSERT INTO install_receipts (install_id,step,status,output_json,created_at)
-      SELECT ?,step,status,output_json,created_at FROM install_receipts
-      WHERE install_id=? AND status='ok' AND step!='rollback' AND changes()=1
-        AND id < COALESCE((SELECT MIN(id) FROM install_receipts WHERE install_id=? AND status='failed'),9223372036854775807)`)
-      .bind(retryId, sourceId, sourceId));
-  }
   const [claimed] = await db.batch(statements);
-  return claimed!.meta.changes === 1 ? retryId : null;
+  if (claimed!.meta.changes !== 1) return null;
+  // Only the winning claim copies receipts, before the caller dispatches it.
+  // Use claim metadata rather than the preceding statement's changes() count.
+  if (terminal) {
+    await db.prepare(`INSERT INTO install_receipts (install_id,step,status,output_json,created_at)
+      SELECT ?,step,status,output_json,created_at FROM install_receipts
+      WHERE install_id=? AND status='ok' AND step!='rollback'
+        AND id < COALESCE((SELECT MIN(id) FROM install_receipts WHERE install_id=? AND status='failed'),9223372036854775807)`)
+      .bind(retryId, sourceId, sourceId).run();
+  }
+  return retryId;
 }
