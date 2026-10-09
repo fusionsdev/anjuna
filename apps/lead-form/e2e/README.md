@@ -86,42 +86,27 @@ the first failing browser command and stops the server on exit. The manifest and
 artifact are published only after both batches pass; the R2 job depends on that
 build job. Browser acceptance receives no Cloudflare secrets.
 
-## U09 verification (2026-10-09)
+## U09 acceptance verification (2026-10-09)
 
-- Edge: 8/8 fresh-context runs passed at normal speed and 8/8 at 4x CPU throttling.
-- `bun run build` in `apps/lead-form`: passed; bundle scanner checked 13 clean files.
-- Root `bun run typecheck`: 24/24 tasks successful (23 cached).
-- Root `bun run test`: 25/25 tasks successful (24 cached); lead-form ran 29/29 tests.
-- Parsed workflow YAML: exact `push.tags: ["v*"]` plus `workflow_dispatch`,
-  release-only upload guard, and bundle scan command verified.
-- R2 upload and hosted GitHub Actions execution: not run; credentials disabled.
+The workflow move and selector fix already existed on branch
+`fus-339-form-upload-workflow` at `6370bad`. This verification reran the local
+acceptance checks; it did not change production form behavior.
 
-## U09 fix round 2 verification (2026-10-09)
+| Acceptance | Evidence from this run |
+| --- | --- |
+| Discoverable release workflow | Parsed `.github/workflows/lead-form.yml`; exact triggers are `push.tags: ["v*"]` and `workflow_dispatch`. The old `apps/lead-form/ci/lead-form.workflow.yml` is absent. |
+| Clean bundle | `bun run build` in `apps/lead-form` passed. The scanner checked 13 files for brand domains, platform names, PostHog keys and Sentry DSNs. The release workflow calls the scanner before publishing. |
+| Stable browser acceptance | `python -m unittest discover -s e2e -p 'test_*.py'` passed 1/1 with `E2E_BROWSER_CHANNEL=msedge`. Local Worker E2E passed 8/8 normal runs and 8/8 at `--cpu-rate 4`, using `--channel msedge`. |
+| Root typecheck | `bun run typecheck`: 24/24 tasks passed, 22 cached. |
+| Root tests | `bun run test`: 25/25 tasks passed, 23 cached. Lead-form ran 29/29 tests. |
+| Release artifact contract | Parsed workflow confirms the SHA-256 manifest command, browser gates, upload dependency on build, release-only upload condition, `form@${{ github.sha }}` prefix and named secret references. |
 
-The supplied DeepSeek feedback contains a reviewer name but no findings. Inspection
-found that the prior browser fix was only exercised locally. This round makes it
-a required release-build check without changing the release triggers or R2 upload.
+The historical 2 failed-run logs are unavailable. The deterministic regression
+reproduces the selector race described above. It does not prove that both
+historical failures had the same cause.
 
-- Edge: fresh 8/8 normal and 8/8 at 4x CPU throttling passed again.
-- `bun run build` in `apps/lead-form`: passed; 13 bundle files clean.
-- Root `bun run typecheck`: 24/24 tasks passed, all cached.
-- Root `bun run test`: 25/25 tasks passed, all cached.
-- Parsed workflow YAML: release-only triggers, upload dependency on the build job,
-  bundle scan, and both browser batches verified. Every shell step passed `bash -n`.
-- Hosted Ubuntu/Chromium execution and R2 upload: not run. Local browser evidence
-uses Edge; GitHub Actions installs its own Chromium through Playwright.
-
-## U09 selector regression verification (2026-10-09)
-
-- Added the deterministic browser regression to the release build job, before
-  the 2 full E2E batches. Both use the shared review-submit helper.
-- Regression: 1/1 passed in Edge.
-- Local Worker E2E: 8/8 normal and 8/8 at 4x CPU throttling passed in Edge.
-- Root `bun run typecheck`: 24/24 tasks passed (23 cached).
-- Root `bun run test`: 25/25 tasks passed (24 cached); lead-form 29/29 tests passed.
-- `bun run build`: passed; bundle scan found 13 clean files.
-- Parsed workflow YAML: release-only triggers, bundle scan, build dependency,
-  and `form@sha` prefix passed. The workflow move already existed on this branch.
-- Historical 2 failed runs remain unavailable. The selector race is reproduced
-  by the regression fixture and supported by the prior local replays above.
-- Hosted GitHub Actions, Chromium and R2 upload: not run this session.
+Playwright 1.62.0 is installed locally, but its Chromium headless executable is
+absent. The default-browser regression attempt failed at launch; the Edge run
+passed. Hosted Ubuntu/Chromium execution and R2 upload were not run. The workflow
+installs Chromium before its browser checks. No Cloudflare, LeadsGate or VPS calls
+were made. The local test server was stopped after verification.
