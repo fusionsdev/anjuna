@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { InstallWithReceipts, LifecycleBrandSummary } from "@anjuna/contracts";
+import { InstallWithReceipts, LifecycleBrandSummary, SealedTemplatesResponse } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
@@ -24,6 +24,46 @@ beforeEach(async () => {
 const post = (cookie: string, path: string, body: unknown) => call(path, { cookie, method: "POST", body });
 
 describe("truthful lifecycle BFF", () => {
+  it("offers only sealed versions from D1 and refuses unsealed draft input", async () => {
+    for (const status of ["draft", "certifying", "certified", "rejected"]) {
+      await env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES (?1,'tpl-1',?2,'sha','templates/unsealed',?3,'owner','2026-10-01T00:00:00Z')")
+        .bind(`tv-${status}`, 2 + ["draft", "certifying", "certified", "rejected"].indexOf(status), status).run();
+      expect((await post(employee, "/api/brands/drafts", { domain: "unsealed.test", keyword_default: "Quick Loan", template_version_id: `tv-${status}` })).status).toBe(422);
+    }
+    expect((await call("/api/templates/sealed")).status).toBe(401);
+    for (const cookie of [employee, owner]) {
+      const response = await call("/api/templates/sealed", { cookie });
+      expect(response.status).toBe(200);
+      expect(SealedTemplatesResponse.parse(await response.json())).toEqual({ templates: [{ template_version_id: "tv-1", name: "Starter", version: 1, status: "sealed" }] });
+    }
+  });
+
+  it("refuses Employee Rollback, Upgrade-all and Delete before any mutation or dispatch", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "owner-only.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    let dispatches = 0;
+    const testEnv = makeEnv({ FACTORY_WORKER: { fetch: async () => { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher });
+    const before = await env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log").first();
+    for (const [method, path] of [["POST", `/api/brands/${brand.brand_id}/rollback`], ["POST", "/api/upgrade-all"], ["DELETE", `/api/brands/${brand.brand_id}`]]) {
+      const response = await call(path!, { cookie: employee, method: method!, body: {}, env: testEnv });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: "forbidden_role", required_role: "owner" });
+    }
+    expect(dispatches).toBe(0);
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log").first()).toEqual(before);
+    expect(await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ status: "draft" });
+    expect((await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).all()).results).toHaveLength(0);
+    expect((await call(`/api/brands/${brand.brand_id}`, { cookie: owner, method: "DELETE" })).status).toBe(501);
+  });
+
+  it("refuses an Employee retry of a failed rollback", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "rollback-retry.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_role,started_at) VALUES ('rollback-denied',?1,'rollback','failed','owner','owner','2026-10-01T00:00:00Z')").bind(brand.brand_id).run();
+    expect((await post(employee, "/api/installs/rollback-denied/retry", {})).status).toBe(403);
+    expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id='rollback-denied'").first()).toEqual({ status: "failed" });
+  });
+
   it("rejects duplicate domains without a second brand or revision", async () => {
     const input = { domain: "duplicate-lifecycle.example", keyword_default: "quick loan", template_version_id: "tv-1" };
     expect((await post(employee, "/api/brands/drafts", input)).status).toBe(201);
@@ -193,7 +233,7 @@ describe("truthful lifecycle BFF", () => {
     const now = new Date().toISOString();
     await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,to_revision_id,started_by,started_at) VALUES ('active-install',?1,'install','running',?2,'employee',?3)").bind(brand.brand_id, `${brand.brand_id}_rev_1`, now).run();
     const install = await post(employee, `/api/brands/${brand.brand_id}/install`, {});
-    const rollback = await post(employee, `/api/brands/${brand.brand_id}/rollback`, {});
+    const rollback = await post(owner, `/api/brands/${brand.brand_id}/rollback`, {});
     expect(install.status).toBe(409);
     expect(rollback.status).toBe(409);
     expect(await install.json()).toMatchObject({ error: "lifecycle_operation_active", active_install_id: "active-install" });
@@ -267,7 +307,7 @@ describe("truthful lifecycle BFF", () => {
     await env.FACTORY.prepare("UPDATE brands SET current_revision_id=?1 WHERE brand_id=?2").bind(`${brand.brand_id}_rev_1`, brand.brand_id).run();
     let sent: unknown;
     const worker = { fetch: async (request: Request) => { sent = await request.json(); return Response.json({ instance_id: "rollback" }); } } as unknown as Fetcher;
-    const response = await call(`/api/brands/${brand.brand_id}/rollback`, { cookie: employee, method: "POST", body: { to_revision_id: "attacker-revision" }, env: makeEnv({ FACTORY_WORKER: worker }) });
+    const response = await call(`/api/brands/${brand.brand_id}/rollback`, { cookie: owner, method: "POST", body: { to_revision_id: "attacker-revision" }, env: makeEnv({ FACTORY_WORKER: worker }) });
     expect(response.status).toBe(201);
     expect(sent).toMatchObject({ to_revision_id: null });
   });

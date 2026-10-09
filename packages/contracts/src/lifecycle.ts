@@ -7,6 +7,15 @@ import { AdminRequestContext, AdminRole, AmountBuckets, DrainKey, FormVersion, P
 import { FormRoute, Keyword } from "./runtime-config.js";
 
 const Id = z.string().min(1).max(128);
+export const SealedTemplateVersion = z.strictObject({
+  template_version_id: Id,
+  name: z.string().min(1),
+  version: z.number().int().positive(),
+  status: z.literal("sealed"),
+});
+export type SealedTemplateVersion = z.infer<typeof SealedTemplateVersion>;
+export const SealedTemplatesResponse = z.strictObject({ templates: z.array(SealedTemplateVersion) });
+
 const ActorId = AdminRequestContext.shape.actor_id;
 const Timestamp = z.iso.datetime();
 const PayloadVersion = z.string().regex(/^[A-Za-z0-9._-]{1,64}$/, "Invalid payload version");

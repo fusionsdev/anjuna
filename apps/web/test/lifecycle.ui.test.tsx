@@ -41,6 +41,7 @@ beforeEach(() => {
   lifecycleRows = [structuredClone(brand)];
   requests = [];
   routes = new Map<string, Handler>([
+    ["GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-1", name: "Starter", version: 1, status: "sealed" }] })],
     ["GET /api/lifecycle/brands", () => json({ brands: lifecycleRows })],
     ["GET /api/brands", () => json({ brands: runtimeAvailable ? [{
       brand_id: config.brand_id, hostnames: config.hostnames, status: config.status,
@@ -70,6 +71,58 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("mounted lifecycle UI with API responses", () => {
+  it("lets an Employee choose a sealed template, create a draft and start Install", async () => {
+    lifecycleRows = [];
+    runtimeAvailable = false;
+    routes.set("POST /api/brands/drafts", () => {
+      lifecycleRows = [{ ...brand, status: "draft", current_revision_id: "rev-new" }];
+      return json({ brand: { brand_id: "brand-a" }, revision: { revision_id: "rev-new" } }, 201);
+    });
+    routes.set("POST /api/brands/brand-a/install", () => json({ install_id: "new-install" }, 201));
+    detail({ ...failed, install_id: "new-install", revision_id: "rev-new", status: "running", runtime_sync_status: "running" });
+    render(<BrandLifecycle me={employee} />);
+    const select = screen.getByRole("combobox", { name: "Sealed template version" });
+    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
+    expect(within(select).getAllByRole("option")).toHaveLength(2);
+    expect(screen.queryByRole("textbox", { name: "Sealed template version" })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Domain" }), { target: { value: "new-brand.test" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Keyword" }), { target: { value: "Quick Loan" } });
+    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(select, { target: { value: "tv-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "สร้าง draft" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Install" }));
+    expect((await screen.findAllByText("new-install", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ domain: "new-brand.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(requests.find((r) => r.path === "/api/brands/brand-a/install")?.body).toEqual({ revision_id: "rev-new" });
+    expect(screen.queryByRole("button", { name: "Rollback" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Upgrade-all/ })).toBeNull();
+  });
+
+  it("blocks draft creation when no sealed templates exist", async () => {
+    routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByText(/No sealed templates available/);
+    expect(screen.getByRole("combobox", { name: "Sealed template version" }).hasAttribute("disabled")).toBe(true);
+    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("reports template load failure and recovers on Refresh", async () => {
+    routes.set("GET /api/templates/sealed", () => json({ error: "internal" }, 500));
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByText(/โหลด sealed templates ไม่สำเร็จ/);
+    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+    routes.set("GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-2", name: "Fresh", version: 2, status: "sealed" }] }));
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await screen.findByRole("option", { name: "Fresh · v2 (tv-2)" });
+    expect(screen.queryByText(/โหลด sealed templates ไม่สำเร็จ/)).toBeNull();
+  });
+
+  it("hides Rollback from Employees on a live brand", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("heading", { name: "renderable.test" });
+    expect(screen.queryByRole("button", { name: "Rollback" })).toBeNull();
+  });
+
   it("loads API rows and opens working runtime pause, keyword, buckets, A/B and gate controls", async () => {
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeDefined();
