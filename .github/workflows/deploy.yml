@@ -154,24 +154,8 @@ jobs:
       - name: Deploy core (maimax)
         run: bun x wrangler deploy --config workers/core/wrangler.deploy.maimax.jsonc
 
-      - name: Check factory secrets (maimax)
-        run: |
-          bun x wrangler secret list --config workers/factory/wrangler.maimax.jsonc > /tmp/factory-secrets.json
-          MISSING=""
-          for NAME in CF_API_TOKEN CORE_TOKEN; do
-            jq -e --arg n "$NAME" 'map(.name) | index($n)' /tmp/factory-secrets.json > /dev/null || MISSING="$MISSING $NAME"
-          done
-          if [ -n "$MISSING" ]; then
-            echo "anjuna-factory (maimax) is missing secret(s):$MISSING"
-            echo "The owner must set them once:"
-            for NAME in $MISSING; do
-              echo "  bun x wrangler secret put $NAME --config workers/factory/wrangler.maimax.jsonc"
-            done
-            exit 1
-          fi
-
-      - name: Deploy factory (maimax)
-        run: bun x wrangler deploy --config workers/factory/wrangler.maimax.jsonc
+      # anjuna-factory is not deployed in the maimax account yet; add its
+      # secret check and deploy here once the owner creates it there.
 
       - name: Set core secrets (maimax)
         run: |
