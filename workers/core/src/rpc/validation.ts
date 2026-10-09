@@ -85,11 +85,10 @@ export function validateLeadPayload(raw: unknown, env: ValidationEnv):
   const city = clean(lead.city, 100);
   if (!omitted(lead.city) && city.length < 2) return { ok: false, message: "Invalid city" };
   const state = clean(lead.state, 2).toUpperCase();
-  // On lite the state is not asked; handleLead derives it from the ZIP and, when the ZIP is
-  // unknown, gateState falls back to "" which isStateRoutable() rejects — fail-closed, so an
-  // unresolvable ZIP is recorded and never sold rather than routed by default.
+  // On lite the state is not asked; submitLead derives it from the ZIP. When the ZIP is unknown
+  // the state stays "", the lead is accepted and the prepop redirect omits state for the buyer form.
   if (!omitted(lead.state) && !US_STATES.has(state)) return { ok: false, message: "Invalid state" };
-  // NEVER optional, on any variant: this is the state-screening gate.
+  // ZIP syntax is required on every variant; lookup results never block routing.
   const zip = clean(lead.zip, 5).replace(/\D/g, "");
   if (!/^\d{5}$/.test(zip)) return { ok: false, message: "Invalid ZIP code" };
 

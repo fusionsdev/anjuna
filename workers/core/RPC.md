@@ -40,8 +40,11 @@ Port source: `fusion_formv_v1`, branch `anjuna-port-base`, commit
 `8404ec27d95985b4eb3ff980a833a1b2f2fbeb05`, `functions/api/[[path]].ts`.
 `src/rpc/validation.ts` identifies its source ranges. Both `lite_v1` and `full_v1`
 follow the original validator. The lite form's unasked numeric fields use V1's `-1`
-storage sentinel and are omitted from prepop. ZIP-derived state takes precedence;
-NY, AR, VT, WV, territories, and an unresolved lite state are stored but never routed.
+storage sentinel and are omitted from prepop. ZIP-derived state takes precedence.
+ZIP and state never block routing: NY, AR, VT, WV and territories are accepted and
+prepopped with their ZIP-derived state. An unknown ZIP is accepted and prepopped
+without ZIP-derived state; a full form keeps its submitted state, as V1 does.
+Invalid state input still fails validation.
 
 The brief mentions email/phone dedupe within a V1 window. The pinned `handleLead`
 (lines 333–508) only deduplicates by client `lead_id`; it contains no contact window.
@@ -51,7 +54,8 @@ and remains unspecified. No new contact rejection policy was invented.
 
 New submissions return 201; duplicate IDs return 200 with a fresh continuation;
 invalid input returns V1 4xx messages. Duplicate continuations refer to the persisted
-lead, so a retry cannot replace its identity, PII, attribution or state screening.
+lead for trusted identifiers and use the current validated applicant and ZIP-derived
+state for prepop. A retry does not replace the stored lead's PII or attribution.
 Cross-brand ID collisions cannot mint a continuation for another brand.
 
 Click claim, lead, consent, continuation and mailing outbox commit in one D1 batch.
@@ -63,7 +67,8 @@ Continuations are random 256-bit tokens, stored only as SHA-256 hashes, valid fo
 30 minutes and consumed by a conditional UPDATE. Unknown, expired, consumed or
 other-brand tokens return 404. V1 BUYER_FIELDS, order, omission and URL encoding are
 preserved, with the brand runtime's aid and prepop base. Relative `/apply` resolves
-against the trusted lead hostname. Blocked states resolve to V1's neutral thank-you path.
+against the trusted lead hostname. Every continuation resolves to prepop; ZIP and
+state never redirect to `/complete`.
 The browser receives only its first-party continuation URL in submission JSON.
 
 ## Live settings
@@ -87,7 +92,7 @@ Existing A/B assignments stay sticky. Settings apply equally to all visitors.
 | --- | --- |
 | Existing and new contract goldens | PASS: contracts suite, including public settings secret-field rejection and both pinned-source provenance checks |
 | V1 lite/full validation | PASS: `validation.test.ts`, 52 fixture/mutation comparisons with the pinned V1 validator |
-| Site ID, consent evidence, state gate, stored attribution, 201/200/4xx | PASS: `rpc.test.ts` V1 lead path cases |
+| Site ID, consent evidence, ZIP-derived prepop state, stored attribution, 201/200/4xx | PASS: `rpc.test.ts` V1 lead path cases |
 | V1 idempotency | PASS: concurrent duplicate submissions produce one lead/outbox; separate test confirms pinned contact behavior |
 | Email/phone dedupe window in brief | UNRESOLVED: no such rule/window exists in the pinned source; owner clarification pending |
 | Atomic click claim and outbox | PASS: concurrent claim test, cross-brand claim test and forced outbox failure/rollback/retry test |
@@ -121,7 +126,5 @@ form chunk-size warning and mailing build-output warning remain unchanged.
 ## Proposed (out of scope)
 
 - Clarify whether to add contact-based dedupe and, if so, its window and matching/scope rules.
-- Add a certified neutral thank-you asset/route for state-blocked submissions. Core preserves
-  V1's `/thank-you.html?ref=...`; the current brand allowlist does not serve that page.
 - The installer/admin workflow must populate each brand's actual `form_route`; adding a
   form-route editor or changing the existing admin contract is outside this brief.
