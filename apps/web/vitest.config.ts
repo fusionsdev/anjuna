@@ -20,7 +20,8 @@ export default defineConfig(async () => {
               },
             }),
           ],
-          test: { name: "worker", include: ["test/**/*.test.ts"], exclude: ["test/**/*.node.test.ts"] },
+          // Multi-request D1 integration cases exceed 5s under a full workspace run.
+          test: { name: "worker", include: ["test/**/*.test.ts"], exclude: ["test/**/*.node.test.ts"], testTimeout: 30_000 },
         },
         {
           // Config checks and the SPA build run in Node.

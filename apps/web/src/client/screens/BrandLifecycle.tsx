@@ -1,4 +1,4 @@
-import type { BrandSummary, ChecklistEvidence, ChecklistItemName, LifecycleBrandSummary, InstallWithReceipts } from "@anjuna/contracts";
+import type { SealedTemplateVersion, BrandSummary, ChecklistEvidence, ChecklistItemName, LifecycleBrandSummary, InstallWithReceipts } from "@anjuna/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
@@ -26,6 +26,9 @@ const statusLabel: Record<string, string> = {
 };
 
 export function BrandLifecycle({ me }: { me: Me }) {
+  const [templates, setTemplates] = useState<SealedTemplateVersion[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [brands, setBrands] = useState<LifecycleBrandSummary[]>([]);
   const [runtimeBrands, setRuntimeBrands] = useState<BrandSummary[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
@@ -42,7 +45,25 @@ export function BrandLifecycle({ me }: { me: Me }) {
   const [error, setError] = useState<string | null>(null);
   const operationGeneration = useRef(0);
   const [draft, setDraft] = useState({ domain: "", keyword_default: "", template_version_id: "" });
+  const [creatingDraft, setCreatingDraft] = useState(false);
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
+
+  useEffect(() => {
+    let active = true;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    void api.sealedTemplates().then(({ templates: next }) => {
+      if (!active) return;
+      setTemplates(next);
+      setDraft((previous) => ({ ...previous, template_version_id: next.some((t) => t.template_version_id === previous.template_version_id) ? previous.template_version_id : "" }));
+    }, () => {
+      if (!active) return;
+      setTemplates([]);
+      setTemplatesError("โหลด sealed templates ไม่สำเร็จ กรุณารีเฟรช");
+    }).finally(() => { if (active) setTemplatesLoading(false); });
+    return () => { active = false; };
+  }, [refresh]);
+  const canCreateDraft = !creatingDraft && !templatesLoading && !templatesError && Boolean(draft.domain.trim()) && Boolean(draft.keyword_default.trim()) && templates.some((t) => t.template_version_id === draft.template_version_id);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
@@ -163,7 +184,19 @@ export function BrandLifecycle({ me }: { me: Me }) {
       }
     }
   }
-  async function createDraft() { await act(async () => { const result = await api.createDraft(draft); setSelectedId(result.brand.brand_id); setDraft({ domain: "", keyword_default: "", template_version_id: "" }); }); }
+  async function createDraft() {
+    if (!canCreateDraft) return;
+    setCreatingDraft(true);
+    try {
+      await act(async () => {
+        const result = await api.createDraft(draft);
+        setSelectedId(result.brand.brand_id);
+        setDraft({ domain: "", keyword_default: "", template_version_id: "" });
+      });
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
   async function dispatchOperation(action: () => Promise<{ install_id: string }>, retryOf?: string) {
     if (!selected) return;
     operationGeneration.current += 1;
@@ -217,15 +250,20 @@ export function BrandLifecycle({ me }: { me: Me }) {
 
   return <div className="lifecycle-grid">
     <section className="card lifecycle-list">
-      <div className="row split"><h1>Lifecycle แบรนด์</h1><button className="primary" onClick={() => void createDraft()}>สร้างแบรนด์ (Create draft)</button></div>
+      <div className="row split"><h1>Lifecycle แบรนด์</h1><button className="primary" disabled={!canCreateDraft} onClick={() => void createDraft()}>สร้างแบรนด์ (Create draft)</button></div>
       {error && <div className="error" role="alert">{error}</div>}
       <button onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช (Refresh)</button>
       <form className="section" onSubmit={(e) => { e.preventDefault(); void createDraft(); }}>
         <h3>เพิ่มแบรนด์ (Domain + Keyword + Template)</h3>
         <label>Domain<input required value={draft.domain} onChange={(e) => setDraft({ ...draft, domain: e.target.value })} placeholder="example.com" /></label>
         <label>Keyword<input required value={draft.keyword_default} onChange={(e) => setDraft({ ...draft, keyword_default: e.target.value })} placeholder="Fast cash" /></label>
-        <label>Sealed template version<input required value={draft.template_version_id} onChange={(e) => setDraft({ ...draft, template_version_id: e.target.value })} placeholder="template-version-id" /></label>
-        <button className="primary" type="submit">สร้าง draft</button>
+        <label>Sealed template version<select required disabled={templatesLoading || templates.length === 0} value={draft.template_version_id} onChange={(e) => setDraft({ ...draft, template_version_id: e.target.value })}>
+          <option value="">{templatesLoading ? "Loading templates…" : "Select a sealed template"}</option>
+          {templates.map((template) => <option key={template.template_version_id} value={template.template_version_id}>{template.name} · v{template.version} ({template.template_version_id})</option>)}
+        </select></label>
+        {templatesError && <p className="error" role="alert">{templatesError}</p>}
+        {!templatesLoading && !templatesError && templates.length === 0 && <p role="status">No sealed templates available. Ask an Owner to seal a template.</p>}
+        <button className="primary" type="submit" disabled={!canCreateDraft}>สร้าง draft</button>
       </form>
       <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <button key={brand.brand_id} className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><b>{brand.hostnames[0] ?? brand.brand_id}</b><span>{statusLabel[brand.status] ?? brand.status}</span></button>)}</div>
       <p className="muted small">Actions: Install · Rollback · Retry · Test sold</p>
@@ -251,7 +289,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const isManaged = brand.status !== "unmanaged";
   return <section className="card lifecycle-detail"><div className="row split"><div><h2>{brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={`pill ${brand.status}`}>{statusLabel[brand.status] ?? brand.status}</span></div>
     <div className="status-grid"><div><span className="muted">Lifecycle status</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">Runtime sync</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
-    {isManaged && <div className="form-inline">{actions.install && <button className="primary" onClick={onInstall}>Install</button>}{actions.rollback && <button onClick={onRollback}>Rollback</button>}{actions.retry && <button onClick={onRetry}>Retry</button>}</div>}
+    {isManaged && <div className="form-inline">{actions.install && <button className="primary" onClick={onInstall}>Install</button>}{me.role === "owner" && actions.rollback && <button onClick={onRollback}>Rollback</button>}{actions.retry && <button onClick={onRetry}>Retry</button>}</div>}
     {install && <div className="section"><h3>Receipts / Errors</h3><p>Install ID: <code>{install.install_id}</code></p><p>Status: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p>{install.receipts.map((receipt) => <div className="receipt" key={receipt.step}><span>{receipt.step}</span><span className={`pill ${receipt.status}`}>{receipt.status}</span>{receipt.error && <span className="error">{receipt.error}</span>}</div>)}</div>}
     <div className="section"><h3>Checklist</h3>{checklistItems.map(({ item, label }) => {
       const evidence = checklist[item];

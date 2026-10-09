@@ -9,8 +9,9 @@ export const PANEL_ROLE_TABLE = {
   listUsers: "owner",
   createUser: "owner",
   setUserRole: "owner",
-  /** Plan: "Roll back a brand to its previous version" is employee and owner. */
-  rollbackBrand: "employee",
+  /** Rollback and deletion are Owner-only. */
+  rollbackBrand: "owner",
+  deleteBrand: "owner",
   /** Plan: "Create a brand from Domain + Keyword" is employee and owner. */
   createBrand: "employee",
   /** Plan: "Install a brand" is employee and owner. */

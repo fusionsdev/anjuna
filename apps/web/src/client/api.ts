@@ -1,3 +1,4 @@
+import { SealedTemplatesResponse } from "@anjuna/contracts";
 import type {
   AdminRole,
   AlertsReportResponse,
@@ -72,6 +73,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  sealedTemplates: () => request<unknown>("GET", "/api/templates/sealed").then((body) => SealedTemplatesResponse.parse(body)),
   me: () => request<{ user: Me }>("GET", "/api/me").then((r) => r.user),
   signIn: (email: string, password: string) => request<unknown>("POST", "/api/auth/sign-in/email", { email, password }),
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
