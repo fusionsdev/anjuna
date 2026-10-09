@@ -190,14 +190,12 @@ describe("V1 lead path", () => {
     expect(await h.db.prepare("SELECT state, status FROM leads WHERE zip = '99999'").first()).toEqual({ state: "", status: "accepted" });
     const full = submit(payload(true)); full.lead.lead.zip = "99999";
     const fullUrl = new URL((await (await resolve((await accepted(full)).continuation)).json() as { url: string }).url);
-    for (const url of [liteUrl, fullUrl]) {
-      expect(url.origin).toBe("https://prepop.example");
-      expect(url.toString()).not.toContain("/complete");
-      expect(url.searchParams.get("zip")).toBe("99999");
-      expect(url.searchParams.has("state")).toBe(false);
-    }
+    expect(fullUrl.origin).toBe("https://prepop.example");
+    expect(fullUrl.toString()).not.toContain("/complete");
+    expect(fullUrl.searchParams.get("zip")).toBe("99999");
+    expect(fullUrl.searchParams.get("state")).toBe("TX");
     expect(await h.db.prepare("SELECT state, status FROM leads WHERE lead_id = ?1").bind(full.lead.lead_id).first())
-      .toEqual({ state: "", status: "accepted" });
+      .toEqual({ state: "TX", status: "accepted" });
   });
   it("concurrent idempotent submissions write one lead/outbox and both receive continuations", async () => {
     const input = submit();

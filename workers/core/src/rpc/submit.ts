@@ -37,7 +37,7 @@ export async function submitLead(input: SubmitLeadRequest, request: Request, env
   const f = lead.fields;
   const state = await env.LEADS.prepare("SELECT state FROM zip_lookup WHERE zip = ?1 LIMIT 1")
     .bind(f.zip).first<{ state: string }>();
-  f.state = state?.state?.toUpperCase() ?? "";
+  if (state?.state) f.state = state.state.toUpperCase();
   const repeat = await duplicate(env, lead, input.brand_id);
   if (repeat) return repeat;
   const clickId = lead.lead_id.replace(/-/g, "");

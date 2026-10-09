@@ -42,9 +42,9 @@ Port source: `fusion_formv_v1`, branch `anjuna-port-base`, commit
 follow the original validator. The lite form's unasked numeric fields use V1's `-1`
 storage sentinel and are omitted from prepop. ZIP-derived state takes precedence.
 ZIP and state never block routing: NY, AR, VT, WV and territories are accepted and
-prepopped with their ZIP-derived state. Unknown ZIPs are accepted and prepopped
-without state, including full forms with a submitted state. Invalid state input
-still fails validation.
+prepopped with their ZIP-derived state. An unknown ZIP is accepted and prepopped
+without ZIP-derived state; a full form keeps its submitted state, as V1 does.
+Invalid state input still fails validation.
 
 The brief mentions email/phone dedupe within a V1 window. The pinned `handleLead`
 (lines 333–508) only deduplicates by client `lead_id`; it contains no contact window.
