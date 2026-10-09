@@ -4,7 +4,7 @@ title: fix(factory): let an owner recover a lock retained after failed compensat
 branch: fus-345-compensation-lock-recovery
 lane: factory
 deps: U04
-builder: relay
+builder: codex
 reviewers: deepseek,grok
 paths: workers/factory/ apps/web/ packages/contracts/ packages/factory-db/
 merge: owner
