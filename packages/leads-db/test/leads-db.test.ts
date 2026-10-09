@@ -97,6 +97,9 @@ function insertLead(db: D1Database, leadId: string) {
 }
 
 beforeAll(async () => {
+  expect(await userTables(env.DB)).toEqual([]);
+  await applyD1Migrations(env.DB, env.MIGRATIONS);
+
   // V1 reference database: V1 db/schema.sql (fresh path) + V1 migration 010, both verbatim.
   await applyD1Migrations(env.V1_DB, env.V1_SCHEMA, "v1_migrations");
   const v1m010 = env.V1_MIGRATION_TEXTS["010_v2_sessions.sql"];
@@ -106,10 +109,6 @@ beforeAll(async () => {
 
 describe("leads-db migrations", () => {
   it("apply cleanly to an empty D1", async () => {
-    expect(await userTables(env.DB)).toEqual([]);
-
-    await applyD1Migrations(env.DB, env.MIGRATIONS);
-
     const { results } = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>();
     expect(results.map((r) => r.name)).toEqual([...LEADS_DB_MIGRATIONS]);
     expect(await userTables(env.DB)).toEqual(
@@ -136,7 +135,7 @@ describe("leads-db migrations", () => {
   });
 
   it("re-applying is a no-op", async () => {
-    await applyD1Migrations(env.DB, env.MIGRATIONS);
+    // The file-level setup already applied every migration; this only checks the ledger.
     await applyD1Migrations(env.DB, env.MIGRATIONS);
     const { results } = await env.DB.prepare("SELECT COUNT(*) AS n FROM d1_migrations").all<{ n: number }>();
     expect(results[0]?.n).toBe(LEADS_DB_MIGRATIONS.length);
@@ -148,10 +147,6 @@ describe("leads-db migrations", () => {
 });
 
 describe("V1 parity", () => {
-  beforeAll(async () => {
-    await applyD1Migrations(env.DB, env.MIGRATIONS);
-  });
-
   it("reference is the verbatim V1 db/schema.sql", () => {
     expect(env.V1_SCHEMA.map((m) => m.name)).toEqual(["schema.sql"]);
   });
@@ -224,10 +219,6 @@ describe("V1 parity", () => {
 });
 
 describe("Anjuna additions", () => {
-  beforeAll(async () => {
-    await applyD1Migrations(env.DB, env.MIGRATIONS);
-  });
-
   it("clicks and leads carry experiment_id / variant / keyword", async () => {
     const leadId = "11111111-1111-4111-8111-111111111111";
     await env.DB.batch([
