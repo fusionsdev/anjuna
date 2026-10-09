@@ -34,7 +34,13 @@ done
 
 mkdir -p "$STATE" "$LR/input" "$LR/prompts" "$LR/out" "$WT_BASE"
 touch "$LOG" "$OWNER"
-# A previous run that was killed leaves locks and "running" units behind. One supervisor at a time.
+# One supervisor at a time: a second start would reset the locks and claim the same units.
+if [ -f "$LR/supervisor.pid" ] && kill -0 "$(cat "$LR/supervisor.pid")" 2>/dev/null; then
+  echo "another supervisor is running (pid $(cat "$LR/supervisor.pid")); stop it first" >&2; exit 75
+fi
+echo $$ >"$LR/supervisor.pid"
+trap 'rm -f "$LR/supervisor.pid"' EXIT
+# A previous run that was killed leaves locks and "running" units behind.
 rmdir "$STATE"/*.lock 2>/dev/null
 for s in "$STATE"/*.status; do [ -f "$s" ] && grep -qx running "$s" && echo todo >"$s"; done
 
@@ -245,7 +251,10 @@ run_unit() {
         needs_owner) park "$u" "builder needs owner input" "builder needs owner input, see longrun/out/$u.r$round.build.log"; return ;;
       esac
     fi
-    git -C "$wt" add -A
+    # Commit only the card's paths. Tool noise (turbo's AGENTS.md block, .serena, *.log) never lands.
+    git -C "$wt" checkout -q -- AGENTS.md 2>/dev/null
+    git -C "$wt" reset -q
+    git -C "$wt" add -A -- $(card_get "$u" paths) ':(exclude,glob)**/*.log'
     git -C "$wt" diff --cached --quiet || git -C "$wt" commit -qm "$(card_get "$u" title)"
     if git -C "$wt" diff --quiet origin/main...HEAD; then echo "No changes were committed." >"$fb"; continue; fi
     if ! gate_a "$wt" "$u" >"$fb" 2>&1; then
