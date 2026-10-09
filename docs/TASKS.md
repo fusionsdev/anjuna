@@ -4,6 +4,8 @@
 
 **Date:** 2026-10-02 · **Repo:** `fusionsdev/anjuna` (greenfield; moved from `fusionops-v2` on 2026-10-02) · **Reference spike:** `spike/` in this repo (full loop proven on Cloudflare)
 
+**Status 2026-10-09:** See [HANDOFF.md](HANDOFF.md) for the main snapshot and T1–T17 evidence. T10 and T13/G1 have PASS reports; G2, G3 and T16 remain open. Merged code is not deployment evidence. PR #42 is superseded by that handoff.
+
 **Port sources (read-only, on GitHub):**
 - V1 core: `fusionsdev/fusion_formv_v1`, branch `anjuna-port-base` = commit `8404ec2`.
 - Form: `fusionsdev/aurum-form`, branch `anjuna-port-base` = commit `8ba11d3`.
