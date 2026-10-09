@@ -80,6 +80,20 @@ describe("latest upgrade-all API", () => {
     }
   });
 
+  it("follows install retries to the latest attempt for the command row", async () => {
+    await seed();
+    const retry = (id: string, of: string, status: string) => env.FACTORY.batch([
+      env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_role,started_at) VALUES (?1,'failed','upgrade',?2,'owner','owner','2026-10-09T01:00:00Z')").bind(id, status),
+      env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES ('owner','owner','install.start','install',?1,?2,'2026-10-09T01:00:00Z')")
+        .bind(id, JSON.stringify({ brand_id: "failed", retry_of: of, kind: "upgrade" })),
+    ]);
+    await retry("ins_retry1", ids.failed, "failed");
+    await retry("ins_retry2", "ins_retry1", "ready");
+    const { upgrade } = await latest();
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "failed")).toMatchObject({ install_id: "ins_retry2", retry_of: ids.failed, status: "ready", error: null });
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "ready")).toMatchObject({ install_id: ids.ready, retry_of: null });
+  });
+
   it.each(["failed", "rolled_back"])("marks unstarted source brands skipped when canary is %s", async (status) => {
     await seed();
     await env.FACTORY.prepare("UPDATE installs SET status=?1 WHERE install_id=?2").bind(status, ids.canary).run();

@@ -111,6 +111,8 @@ export const UpgradeAllOutcome = z.strictObject({
   domain: Hostname,
   is_canary: z.boolean(),
   install_id: Id.nullable(),
+  // The command's own install row when install_id is a later retry of it.
+  retry_of: Id.nullable(),
   status: z.enum(["queued", "running", "ready", "failed", "rolled_back", "skipped"]),
   error: z.string().nullable(),
 });

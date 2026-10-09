@@ -8,7 +8,8 @@ const result: LatestUpgradeResponse = { upgrade: {
   command: { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "brand-0", started_by: "owner", started_role: "owner" },
   outcomes: (["running", "ready", "failed", "rolled_back", "skipped"] as const).map((status, i) => ({
     brand_id: `brand-${i}`, domain: `brand-${i}.test`, is_canary: i === 0,
-    install_id: i === 4 ? null : `install-${i}`, status, error: i === 2 ? "Smoke check failed" : null,
+    install_id: i === 4 ? null : `install-${i}`, retry_of: i === 1 ? "upgrade-install-1" : null,
+    status, error: i === 2 ? "Smoke check failed" : null,
   })),
 } };
 const response = (value: unknown) => Response.json(value);
@@ -27,6 +28,8 @@ describe("upgrade-all outcomes", () => {
     }
     expect(within(rows[0]!).getByText("Canary")).toBeTruthy();
     expect(within(rows[2]!).getByText("Smoke check failed")).toBeTruthy();
+    expect(within(rows[1]!).getByText("upgrade-install-1")).toBeTruthy();
+    expect(within(rows[2]!).queryByText(/Retry of/)).toBeNull();
   });
 
   it("polls pending outcomes until terminal and cancels timers on unmount", async () => {

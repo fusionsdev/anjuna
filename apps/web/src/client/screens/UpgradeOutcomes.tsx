@@ -38,7 +38,7 @@ export function UpgradeOutcomes({ refresh }: { refresh: number }) {
           <th scope="row">{row.domain}<br /><code>{row.brand_id}</code></th>
           <td>{row.is_canary ? "Canary" : "—"}</td>
           <td>{row.status === "rolled_back" ? "rolled back" : row.status}</td>
-          <td>{row.install_id ? <code>{row.install_id}</code> : "—"}</td>
+          <td>{row.install_id ? <code>{row.install_id}</code> : "—"}{row.retry_of && <><br />Retry of <code>{row.retry_of}</code></>}</td>
           <td>{row.error ?? "—"}</td>
         </tr>)}</tbody>
       </table>

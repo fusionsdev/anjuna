@@ -21,10 +21,20 @@ export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeRespon
   const canaryId = await installId(command, command.canary_brand_id);
   // A single read keeps canary and per-brand outcomes from different snapshots
   // from being combined. No core or factory network call is needed.
-  const { results: installs } = await db.prepare("SELECT install_id,status,error FROM installs WHERE kind='upgrade' AND install_id IN (SELECT value FROM json_each(?1))")
+  // /api/installs/:id/retry of a terminal row inserts a fresh ins_ row and an
+  // install.start audit entry with retry_of; follow that chain so each brand
+  // shows its latest attempt for this command.
+  const { results: installs } = await db.prepare(`WITH RECURSIVE chain(root,install_id,depth) AS (
+      SELECT value,value,0 FROM json_each(?1)
+      UNION ALL
+      SELECT chain.root,a.entity_id,chain.depth+1 FROM audit_log a JOIN chain ON a.action='install.start' AND a.entity_type='install'
+        AND json_extract(a.after_json,'$.retry_of')=chain.install_id WHERE chain.depth<50)
+    SELECT chain.root,i.install_id,i.status,i.error FROM chain JOIN installs i ON i.install_id=chain.install_id
+    WHERE i.kind='upgrade' ORDER BY chain.depth`)
     .bind(JSON.stringify([...new Set([...ids, canaryId])]))
-    .all<{ install_id: string; status: UpgradeAllOutcome["status"]; error: string | null }>();
-  const byId = new Map(installs.map((row) => [row.install_id, row]));
+    .all<{ root: string; install_id: string; status: UpgradeAllOutcome["status"]; error: string | null }>();
+  // Rows arrive ordered by depth, so the last write per root is the latest retry.
+  const byId = new Map(installs.map((row) => [row.root, row]));
   const canary = byId.get(canaryId);
   const canaryStopped = canary?.status === "failed" || canary?.status === "rolled_back";
   const outcomes = brands.map((brand, index): UpgradeAllOutcome => {
@@ -34,6 +44,7 @@ export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeRespon
     return {
       brand_id: brand.brand_id, domain: brand.domain, is_canary: brand.brand_id === command.canary_brand_id,
       install_id: row?.install_id ?? null,
+      retry_of: row && row.install_id !== row.root ? row.root : null,
       status: row?.status ?? (waiting ? "queued" : "skipped"),
       error: row?.error ?? (row ? null : waiting ? "Waiting for an install record" : canaryStopped && eligible ? "Canary stopped; no install recorded" : "No install recorded for this command"),
     };
