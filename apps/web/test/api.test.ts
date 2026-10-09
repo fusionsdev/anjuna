@@ -246,6 +246,7 @@ describe("role table coverage", () => {
       createBrand: "employee",
       installBrand: "employee",
       upgradeAll: "owner",
+      recoverBrand: "owner",
     });
   });
 });

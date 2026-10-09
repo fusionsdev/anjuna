@@ -183,6 +183,19 @@ async function rollback(request: Request, env: Env, ctx: AdminRequestContext, br
   return dispatch(env, ctx, installId, brandId, "/rollback", { install_id: installId, brand_id: brandId, to_revision_id: target, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }
 
+async function recover(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
+  if (!env.FACTORY_WORKER) return json(502, { error: "factory_dispatch_failed" });
+  try {
+    const response = await env.FACTORY_WORKER.fetch(new Request("https://factory/recover", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ brand_id: brandId, started_by: ctx.actor_id, started_role: ctx.actor_role }),
+    }));
+    return json(response.status, await response.json());
+  } catch {
+    return json(502, { error: "factory_dispatch_failed", message: "Recovery dispatch could not be confirmed; refresh before retrying" });
+  }
+}
+
 async function artifactRoute(request: Request, env: Env, ctx: AdminRequestContext, path: string): Promise<Response> {
   if (ctx.actor_role !== "owner") return forbidden(ctx.actor_role);
   if (path === "/api/form-artifacts") {
@@ -312,7 +325,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const row = rows.find((candidate) => candidate.brand_id === m![1]);
     return row ? json(200, { brand: row }) : json(404, { error: "not_found", resource: "brand" });
   }
-  m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|checklist)$/);
+  m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|recover|checklist)$/);
   if (m && method === "POST") {
     const brandId = decodePathSegment(m[1]!);
     if (brandId === null) return json(400, { error: "invalid_brand_id" });
@@ -320,7 +333,8 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
       const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
       return checklist(request, env, ctx, brandId);
     }
-    const g = authorizePanel(m[2] === "install" ? "installBrand" : "rollbackBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    const g = authorizePanel(m[2] === "install" ? "installBrand" : m[2] === "recover" ? "recoverBrand" : "rollbackBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    if (m[2] === "recover") return recover(env, ctx, brandId);
     return m[2] === "install" ? startInstall(request, env, ctx, brandId) : rollback(request, env, ctx, brandId);
   }
   m = path.match(/^\/api\/installs\/([^/]+)\/retry$/);
@@ -329,6 +343,11 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const row = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,from_revision_id,to_revision_id,started_by,started_role,status FROM installs WHERE install_id = ?1").bind(m[1]).first<{ install_id: string; brand_id: string; kind: string; from_revision_id: string | null; to_revision_id: string | null; started_by: string; started_role: AdminRole; status: string }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     if (row.status !== "failed") return json(409, { error: "conflict", message: "Only failed installs can be retried" });
+    const recovery = await env.FACTORY.prepare("SELECT 1 AS found FROM installs WHERE install_id=? AND json_valid(rollback_record_json) AND json_extract(rollback_record_json,'$.recovery_of') IS NOT NULL").bind(row.install_id).first();
+    if (recovery) {
+      if (!authorizePanel("recoverBrand", ctx.actor_role).ok) return forbidden(ctx.actor_role);
+      return json(409, { error: "recovery_required", message: "Use Recover to retry failed compensation" });
+    }
     // A retry re-runs the original command, so it needs the role that command required (e.g. upgrade-all is owner-only).
     const kindAction = row.kind === "upgrade" ? "upgradeAll" : row.kind === "rollback" ? "rollbackBrand" : "installBrand";
     if (!authorizePanel(kindAction, ctx.actor_role).ok) return forbidden(ctx.actor_role);
@@ -373,7 +392,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
     const status = (value: string): "queued" | "running" | "ready" | "failed" => value === "ok" ? "ready" : value === "skipped" ? "queued" : value === "failed" ? "failed" : value === "running" ? "running" : "queued";
     const receipts = results.map((r) => { const output = r.output_json ? JSON.parse(r.output_json) as Record<string, unknown> : undefined; return { step: r.step, status: status(r.status), ...(typeof output?.error === "string" ? { error: output.error } : {}) }; });
-    const runtime_sync_status = receipts.some((r) => r.status === "failed") || row.status === "failed" ? "failed" : receipts.some((r) => r.status === "running") || row.status === "running" ? "running" : row.status === "ready" ? "ready" : "queued";
+    const runtime_sync_status = receipts.some((r) => r.status === "failed") || row.status === "failed" ? "failed" : receipts.some((r) => r.status === "running") || row.status === "running" ? "running" : row.status === "ready" || row.status === "rolled_back" ? "ready" : "queued";
     const installStatus = ["queued", "running", "ready", "failed", "rolled_back"].includes(row.status) ? row.status : "queued";
     return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: installStatus, runtime_sync_status, receipts });
   }

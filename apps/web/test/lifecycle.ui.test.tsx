@@ -329,3 +329,20 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("button", { name: /Runtime config/ })).toBeNull();
   });
 });
+
+it("Owner recovers a retained lock from the panel and sees completion receipts", async () => {
+  lifecycleRows = [{ ...brand, status: "installing", current_revision_id: null, runtime_sync_status: "failed" }];
+  history([{ install_id: failed.install_id, status: "failed", error: "Compensation failed" }]);
+  detail(failed);
+  routes.set("POST /api/brands/brand-a/recover", () => {
+    lifecycleRows = [{ ...brand, status: "failed", current_revision_id: null }];
+    return json({ install_id: "recovery-1", brand_id: "brand-a", status: "queued" }, 201);
+  });
+  detail({ ...failed, install_id: "recovery-1", revision_id: null, status: "rolled_back", runtime_sync_status: "ready", receipts: [{ step: "receipt", status: "ready" }] });
+  render(<BrandLifecycle me={owner} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Recover (Owner)" }));
+  await waitFor(() => expect(requests.filter((r) => r.path === "/api/brands/brand-a/recover")).toHaveLength(1));
+  await screen.findByText("recovery-1");
+  await screen.findByRole("button", { name: "Install" });
+  expect(screen.queryByRole("button", { name: "Recover (Owner)" })).toBeNull();
+});

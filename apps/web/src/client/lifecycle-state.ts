@@ -82,13 +82,14 @@ export function lifecycleMutationAvailability(
   brandStatus: string,
   installStatus?: InstallWithReceipts["status"],
   pendingOperation = false,
-): { install: boolean; rollback: boolean; retry: boolean } {
+): { install: boolean; rollback: boolean; retry: boolean; recover: boolean } {
   if (pendingOperation || installStatus === "queued" || installStatus === "running") {
-    return { install: false, rollback: false, retry: false };
+    return { install: false, rollback: false, retry: false, recover: false };
   }
   return {
     install: brandStatus === "draft" || brandStatus === "failed",
     rollback: brandStatus === "live" || brandStatus === "failed",
-    retry: installStatus === "failed",
+    retry: installStatus === "failed" && brandStatus !== "installing",
+    recover: brandStatus === "installing" && installStatus === "failed",
   };
 }

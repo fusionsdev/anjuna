@@ -422,3 +422,23 @@ describe("truthful lifecycle BFF", () => {
     }
   });
 });
+
+ describe("Owner recovery API", () => {
+   it("refuses Employees before dispatch and forwards the authenticated Owner identity", async () => {
+     const requests: Array<Record<string, unknown>> = [];
+     const factory = { fetch: async (request: Request) => {
+       expect(new URL(request.url).pathname).toBe("/recover");
+       requests.push(await request.json());
+       return Response.json({ install_id: "recovery-1", brand_id: "brand-1", status: "queued" }, { status: 201 });
+     } } as unknown as Fetcher;
+     const invoke = (cookie: string) => call("/api/brands/brand-1/recover", { cookie, method: "POST", body: { started_role: "owner", started_by: "forged" }, env: makeEnv({ FACTORY_WORKER: factory }) });
+     expect((await invoke(employee)).status).toBe(403);
+     expect(requests).toHaveLength(0);
+     const response = await invoke(owner);
+     expect(response.status).toBe(201);
+     expect(await response.json()).toMatchObject({ install_id: "recovery-1", status: "queued" });
+     expect(requests).toHaveLength(1);
+     expect(requests[0]).toMatchObject({ brand_id: "brand-1", started_role: "owner" });
+     expect(requests[0]!.started_by).not.toBe("forged");
+   });
+ });

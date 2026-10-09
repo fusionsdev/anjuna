@@ -3,6 +3,7 @@ import { InstallBrandWorkflow } from "./workflows/install.js";
 import { RollbackBrandWorkflow } from "./workflows/rollback.js";
 import { UpgradeAllWorkflow, upgradeWorkflowId } from "./workflows/upgrade-all.js";
 import { isQueuedCompensationInstall, rejectQueuedInstall, setInstallStatus } from "./receipt.js";
+import { recoverBrand } from "./workflows/recover.js";
 
 export { InstallBrandWorkflow, RollbackBrandWorkflow, UpgradeAllWorkflow };
 
@@ -18,6 +19,12 @@ export default {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
     const url = new URL(request.url);
+
+    if (url.pathname === "/recover") {
+      const input = await request.json<{ brand_id: string; started_by: string; started_role: string }>();
+      if (typeof input.brand_id !== "string" || typeof input.started_by !== "string") return Response.json({ error: "invalid" }, { status: 400 });
+      return recoverBrand(env, input);
+    }
 
     // POST /install  { install_id, brand_id, revision_id }
     if (url.pathname === "/install") {
