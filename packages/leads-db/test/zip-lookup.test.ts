@@ -44,13 +44,16 @@ describe("ZIP lookup seed", () => {
     }
   });
 
-  it("preserves an existing tenant ZIP when its seed batch is replayed", async () => {
+  it("fills a missing ZIP while preserving an existing tenant ZIP in the same seed batch", async () => {
     const seed = env.MIGRATIONS.find((migration) => migration.name === "0010_zip_lookup_seed.sql");
     const query = seed?.queries.find((sql) => sql.includes("('42411','Fredonia','KY')"));
     expect(query).toBeDefined();
     await env.DB.prepare("UPDATE zip_lookup SET city = 'Existing tenant city' WHERE zip = '42411'").run();
     try {
+      await env.DB.prepare("DELETE FROM zip_lookup WHERE zip = '42410'").run();
       await env.DB.prepare(query!).run();
+      expect(await env.DB.prepare("SELECT city, state FROM zip_lookup WHERE zip = '42410'").first())
+        .toEqual({ city: "Earlington", state: "KY" });
       const row = await env.DB.prepare("SELECT city, state FROM zip_lookup WHERE zip = '42411'").first();
       expect(row).toEqual({ city: "Existing tenant city", state: "KY" });
       expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM zip_lookup").first()).toEqual({
