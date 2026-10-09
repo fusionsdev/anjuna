@@ -110,6 +110,27 @@ describe("withReceipt idempotency", () => {
     ).rejects.toThrow();
     expect(called).toBe(false);
   });
+
+  it("stores the bare error message on a failed receipt", async () => {
+    const id = `i-${uniq()}`;
+    await seedInstall(id);
+    await expect(
+      withReceipt(env.FACTORY, id, "validate", async () => { throw new Error("zone unavailable"); }),
+    ).rejects.toThrow("zone unavailable");
+    const r = await getReceipt(env.FACTORY, id, "validate");
+    expect(r?.output?.error).toBe("zone unavailable");
+  });
+
+  it("re-throws a stored failed receipt without doubling the Error prefix", async () => {
+    const id = `i-${uniq()}`;
+    await seedInstall(id);
+    await saveReceipt(env.FACTORY, id, "validate", "failed", { error: "Error: Zone not found for domain demo05.aduplift.ai" });
+    const error = await withReceipt(env.FACTORY, id, "validate", async () => { return {}; }).then(
+      () => { throw new Error("expected the failed receipt to re-throw"); },
+      (e: unknown) => e,
+    );
+    expect(String(error)).toBe("Error: Zone not found for domain demo05.aduplift.ai");
+  });
 });
 
 describe("lifecycle lock claim", () => {

@@ -49,13 +49,24 @@ export interface ZoneInfo {
   status: "active" | "pending" | "initializing" | "moved" | "deleted" | "deactivated" | "read only";
 }
 
-/** Returns the zone for `domain`. Throws if zone is not active. */
+/**
+ * Returns the zone covering `domain`. Cloudflare zones are registered at the apex, so a
+ * subdomain brand domain never matches `/zones?name=` directly: try the full domain first,
+ * then strip one left label at a time (`a.b.example.com` -> `b.example.com` -> `example.com`).
+ * A bare TLD (single label) is never queried. Throws if the zone found is not active.
+ */
 export async function getZone(token: string, domain: string, fetcher?: CfFetch): Promise<ZoneInfo> {
-  const zones = await cfFetch<ZoneInfo[]>(token, "GET", `/zones?name=${domain}&per_page=1`, undefined, undefined, fetcher);
-  const zone = zones[0];
-  if (!zone) throw new Error(`Zone not found for domain ${domain}`);
-  if (zone.status !== "active") throw new Error(`Zone ${domain} is not active (status=${zone.status})`);
-  return zone;
+  const labels = domain.split(".").filter(Boolean);
+  const candidates: string[] = [];
+  for (let skip = 0; skip <= labels.length - 2; skip++) candidates.push(labels.slice(skip).join("."));
+  for (const name of candidates) {
+    const zones = await cfFetch<ZoneInfo[]>(token, "GET", `/zones?name=${encodeURIComponent(name)}&per_page=1`, undefined, undefined, fetcher);
+    const zone = zones[0];
+    if (!zone) continue;
+    if (zone.status !== "active") throw new Error(`Zone ${name} is not active (status=${zone.status})`);
+    return zone;
+  }
+  throw new Error(`Zone not found for domain ${domain} (tried: ${candidates.join(", ")})`);
 }
 
 export interface DnsRecord {
