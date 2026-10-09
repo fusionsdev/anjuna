@@ -3,7 +3,7 @@ import { sha256 } from "../auth.js";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
 import { consentText } from "./consent.js";
-import { continuation, isStateRoutable, type Applicant } from "./continuations.js";
+import { continuation, type Applicant } from "./continuations.js";
 import { validateLeadPayload, type ValidationEnv, type ValidLead } from "./validation.js";
 
 export function validationEnv(env: Env): ValidationEnv {
@@ -19,7 +19,7 @@ async function duplicate(env: Env, lead: ValidLead, brandId: string): Promise<Re
   if (!existing) return null;
   // A client cannot reuse another brand's identifier to mint a continuation for its PII.
   if (existing.brand !== brandId) return invalid("Invalid identifiers");
-  // V1 duplicate branch: hand off the current validated, ZIP-screened applicant, never the stored one.
+  // V1 duplicate branch: hand off the current validated applicant, never the stored one.
   const applicant = Object.fromEntries(BUYER_FIELDS.map((key) => [key, lead.fields[key]])) as Applicant;
   const next = await continuation(env, lead.lead_id, brandId, applicant);
   await next.statement.run();
@@ -37,7 +37,7 @@ export async function submitLead(input: SubmitLeadRequest, request: Request, env
   const f = lead.fields;
   const state = await env.LEADS.prepare("SELECT state FROM zip_lookup WHERE zip = ?1 LIMIT 1")
     .bind(f.zip).first<{ state: string }>();
-  if (state?.state) f.state = state.state.toUpperCase();
+  f.state = state?.state?.toUpperCase() ?? "";
   const repeat = await duplicate(env, lead, input.brand_id);
   if (repeat) return repeat;
   const clickId = lead.lead_id.replace(/-/g, "");
@@ -82,7 +82,7 @@ export async function submitLead(input: SubmitLeadRequest, request: Request, env
       f.work_phone || null, f.address, f.city, f.state, f.zip, unsetOr(f.address_length_months), unsetOr(f.own_home),
       f.income_type, f.employer, f.job_title, unsetOr(f.employed_months), f.pay_date1, f.pay_frequency,
       unsetOr(f.direct_deposit), unsetOr(f.monthly_income), JSON.stringify(tracking), JSON.stringify(lead.tracking),
-      JSON.stringify({ ...lead.metadata, hostname: input.hostname }), isStateRoutable(f.state) ? "accepted" : "rejected",
+      JSON.stringify({ ...lead.metadata, hostname: input.hostname }), "accepted",
       now, clickId, session?.experiment_id ?? input.experiment_id ?? null, input.experiment_id ?? null,
       session?.variant ?? input.variant ?? lead.form_variant.toLowerCase(), input.variant ?? lead.form_variant.toLowerCase(),
       session?.keyword ?? lead.tracking.keyword ?? null, lead.tracking.keyword ?? null);

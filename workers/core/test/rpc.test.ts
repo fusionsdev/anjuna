@@ -137,14 +137,19 @@ describe("V1 lead path", () => {
       .toEqual({ first_name: stored!.first_name, email: stored!.email, state: "TX" });
     expect(await h.db.prepare("SELECT COUNT(*) AS n FROM continuations WHERE applicant_json IS NOT NULL").first()).toEqual({ n: 0 });
   });
-  it("a duplicate is screened on the CURRENT ZIP-derived state", async () => {
+  it("a duplicate prepops with the CURRENT ZIP-derived state", async () => {
     const first = await accepted(submit(payload(true)));
     await h.db.prepare("INSERT INTO zip_lookup (zip, city, state) VALUES ('10001', 'New York', 'NY')").run();
     const retry = submit(payload(true));
     retry.lead.lead.zip = "10001";
     retry.lead.lead.state = "TX";
     const dup = await (await rpc("submitLead", retry)).json() as SubmitLeadAccepted;
-    expect(await (await resolve(dup.continuation)).json()).toEqual({ url: `/request/complete?ref=${first.reference}` });
+    expect(dup.status).toBe("duplicate");
+    const { url } = await (await resolve(dup.continuation)).json() as { url: string };
+    expect(url).not.toContain("/complete");
+    expect(new URL(url).origin).toBe("https://prepop.example");
+    expect(new URL(url).searchParams.get("state")).toBe("NY");
+    expect(new URL(url).searchParams.get("ref")).toBe(first.reference);
     expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state: "TX", status: "accepted" });
   });
   it("a real applicant who edits a field and resubmits the same lead_id is handed off with the edit", async () => {
@@ -155,25 +160,44 @@ describe("V1 lead path", () => {
     const { url } = await (await resolve(dup.continuation)).json() as { url: string };
     expect(new URL(url).searchParams.get("home_phone")).toBe("2145550188");
   });
-  it.each(["NY", "AR", "VT", "WV", "PR", "AE"])("ZIP-authoritative %s is recorded but never routed; a duplicate is screened on its own ZIP", async (state) => {
+  it.each(["NY", "AR", "VT", "WV", "PR", "AE"])("ZIP-authoritative %s is accepted and prepopped; a duplicate uses its own ZIP", async (state) => {
     await h.db.prepare("UPDATE zip_lookup SET state = ?1 WHERE zip = '75201'").bind(state).run();
     const input = submit(payload(true)); input.lead.lead.state = "TX";
     const first = await accepted(input);
-    expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state, status: "rejected" });
-    expect(await (await resolve(first.continuation)).json()).toEqual({ url: `/request/complete?ref=${first.reference}` });
-    const blockedRetry = await (await rpc("submitLead", input)).json() as SubmitLeadAccepted;
-    expect(await (await resolve(blockedRetry.continuation)).json()).toEqual({ url: `/request/complete?ref=${first.reference}` });
+    expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state, status: "accepted" });
+    const retry = await (await rpc("submitLead", input)).json() as SubmitLeadAccepted;
+    expect(retry.status).toBe("duplicate");
+    for (const token of [first.continuation, retry.continuation]) {
+      const { url } = await (await resolve(token)).json() as { url: string };
+      expect(url).not.toContain("/complete");
+      expect(new URL(url).origin).toBe("https://prepop.example");
+      expect(new URL(url).searchParams.get("state")).toBe(state);
+    }
     input.lead.lead.zip = "60601";
     const routedRetry = await (await rpc("submitLead", input)).json() as SubmitLeadAccepted;
     const { url } = await (await resolve(routedRetry.continuation)).json() as { url: string };
+    expect(url).not.toContain("/complete");
+    expect(new URL(url).origin).toBe("https://prepop.example");
     expect(new URL(url).searchParams.get("state")).toBe("IL");
-    expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state, status: "rejected" });
+    expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state, status: "accepted" });
   });
-  it("unknown lite ZIP fails closed; an unknown full ZIP falls back to submitted state", async () => {
+  it("unknown lite and full ZIPs are accepted and prepopped without state", async () => {
     const lite = submit(); lite.lead.lead.zip = "99999";
-    expect(await (await resolve((await accepted(lite)).continuation)).json()).toHaveProperty("url", `/request/complete?ref=${lite.lead.lead_id.slice(-8)}`);
+    const liteUrl = new URL((await (await resolve((await accepted(lite)).continuation)).json() as { url: string }).url);
+    expect(liteUrl.pathname).not.toContain("/complete");
+    expect(liteUrl.searchParams.get("zip")).toBe("99999");
+    expect(liteUrl.searchParams.has("state")).toBe(false);
+    expect(await h.db.prepare("SELECT state, status FROM leads WHERE zip = '99999'").first()).toEqual({ state: "", status: "accepted" });
     const full = submit(payload(true)); full.lead.lead.zip = "99999";
-    expect((await (await resolve((await accepted(full)).continuation)).json() as { url: string }).url).toContain("state=TX");
+    const fullUrl = new URL((await (await resolve((await accepted(full)).continuation)).json() as { url: string }).url);
+    for (const url of [liteUrl, fullUrl]) {
+      expect(url.origin).toBe("https://prepop.example");
+      expect(url.toString()).not.toContain("/complete");
+      expect(url.searchParams.get("zip")).toBe("99999");
+      expect(url.searchParams.has("state")).toBe(false);
+    }
+    expect(await h.db.prepare("SELECT state, status FROM leads WHERE lead_id = ?1").bind(full.lead.lead_id).first())
+      .toEqual({ state: "", status: "accepted" });
   });
   it("concurrent idempotent submissions write one lead/outbox and both receive continuations", async () => {
     const input = submit();
@@ -293,25 +317,22 @@ describe("signed handoffs", () => {
   });
 });
 
-it("a blocked-state lead lands on a served neutral page on the brand apex", async () => {
+it("a NY lead follows the brand continuation to prepop without a complete page", async () => {
   await h.db.prepare("UPDATE zip_lookup SET state = 'NY' WHERE zip = '60601'").run();
   const brand = await h.mf.getWorker("brand");
   const res = await brand.fetch("https://brand-a.example/api/leads", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify(payload()) });
   const { redirect_url } = await res.json() as { redirect_url: string };
   expect(res.status).toBe(201);
-  expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state: "NY", status: "rejected" });
+  expect(await h.db.prepare("SELECT state, status FROM leads").first()).toEqual({ state: "NY", status: "accepted" });
   const hop = await brand.fetch(`https://brand-a.example${redirect_url}`, { redirect: "manual" });
   await hop.text();
   expect(hop.status).toBe(302);
   const location = hop.headers.get("location")!;
-  expect(new URL(location).origin).toBe("https://brand-a.example");
-  expect(new URL(location).pathname).toBe("/request/complete");
-  const page = await brand.fetch(location);
-  expect(page.status).toBe(200);
-  const html = await page.text();
-  expect(html).toContain("Your request has been received.");
-  expect(html).not.toMatch(/prepop|lead_id=/);
+  expect(new URL(location).origin).toBe("https://prepop.example");
+  expect(new URL(location).pathname).toBe("/apply");
+  expect(location).not.toContain("/complete");
+  expect(new URL(location).searchParams.get("state")).toBe("NY");
 });
 
 it("Miniflare brand → recordClick → submitLead → continuation → postback(cid) → pending closes the money path", async () => {
