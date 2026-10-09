@@ -115,21 +115,25 @@ describe("mailing cron", () => {
       values.push(`('lead-${i}', 'session', 'test', 'lite_v1', 'form-default', 'brand-a', 'brand-a.example', 1000, 'OTHER', 'Test', 'Applicant', '1990-01-01', 'test@example.com', '2145550123', '100 Example St', 'Dallas', 'TX', '75201', 24, 0, 'EMPLOYMENT', 'Example', 'Clerk', 24, '2026-10-09', 'BIWEEKLY', 1, 3000, '{}', '{}', '2026-01-01T00:00:00.000Z', 'cid${i}')`);
     }
     // Seed both tables in one proxy call; per-row calls are slow on Windows.
-    await h.db.batch([
+    const seeded = await h.db.batch([
       h.db.prepare(`INSERT INTO leads (
-      lead_id, session_id, form_version, form_variant, site_id, brand, hostname,
-      requested_amount, loan_purpose, first_name, last_name, birth_date, email, home_phone,
-      address, city, state, zip, address_length_months, own_home, income_type, employer,
-      job_title, employed_months, pay_date1, pay_frequency, direct_deposit, monthly_income,
-      tracking_json, metadata_json, created_at, click_id
+        lead_id, session_id, form_version, form_variant, site_id, brand, hostname,
+        requested_amount, loan_purpose, first_name, last_name, birth_date, email, home_phone,
+        address, city, state, zip, address_length_months, own_home, income_type, employer,
+        job_title, employed_months, pay_date1, pay_frequency, direct_deposit, monthly_income,
+        tracking_json, metadata_json, created_at, click_id
       ) VALUES ${values.join(",")}`),
       h.db.prepare("INSERT INTO mailing_outbox (lead_id, brand, created_at) SELECT lead_id, brand, datetime('now') FROM leads"),
     ]);
+    expect(seeded.map((result) => result.meta.changes)).toEqual([total, total]);
     const listmonk = new FakeListmonk();
     const result = await runMailing(env(configured), { listmonk });
     expect(result).toEqual({ ran: true, batches: MAX_OUTBOX_BATCHES });
-    const pending = await h.db.prepare("SELECT COUNT(*) AS n FROM mailing_outbox WHERE status = 'pending'").first<{ n: number }>();
-    expect(pending!.n).toBe(10);
+    const counts = await h.db.prepare("SELECT status, COUNT(*) AS n FROM mailing_outbox GROUP BY status ORDER BY status").all();
+    expect(counts.results).toEqual([
+      { status: "pending", n: 10 },
+      { status: "sent", n: MAX_OUTBOX_BATCHES * 50 },
+    ]);
   });
 });
 
