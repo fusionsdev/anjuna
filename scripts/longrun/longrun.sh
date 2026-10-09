@@ -215,7 +215,7 @@ park() { # unit reason owner_note
 # ---------- one unit ----------
 
 run_unit() {
-  local u=$1 branch wt fb round q rc pr db sql line acct
+  local u=$1 branch wt fb round q rc pr db sql line acct run
   branch=$(card_get "$u" branch)
   wt="$WT_BASE/$u"
   log "$u" start "$(card_get "$u" title)"
@@ -310,6 +310,11 @@ run_unit() {
   log "$u" pr "#$pr"
   sleep 30
   if ! timeout "$CI_TIMEOUT" gh pr checks "$pr" --watch --fail-fast >"$LR/out/$u.ci.log" 2>&1; then
+    # apps/web lifecycle.ui.test.tsx is flaky on CI; rerun failed jobs once before parking.
+    run=$(gh pr checks "$pr" --json link -q '.[].link' 2>/dev/null | grep -oE 'runs/[0-9]+' | head -1 | cut -d/ -f2)
+    [ -n "$run" ] && gh run rerun "$run" --failed >/dev/null 2>&1 && sleep 30 && log "$u" ci-rerun "#$pr run $run"
+  fi
+  if ! timeout "$CI_TIMEOUT" gh pr checks "$pr" --watch --fail-fast >>"$LR/out/$u.ci.log" 2>&1; then
     park "$u" "CI not green on #$pr" "PR #$pr CI not green, see longrun/out/$u.ci.log"
     return
   fi
