@@ -5,7 +5,13 @@ set -uo pipefail
 who=$1 diff=$2 card=$3 wt=$4
 DEEPSEEK_MODEL=${LONGRUN_DEEPSEEK_MODEL:-siliconflow/deepseek-ai/DeepSeek-V4-Pro-0813}
 
-brief=$(mktemp)
+# Reviewers may only read inside the worktree, so the inputs are copied there (never committed: outside card paths).
+mkdir -p "$wt/.longrun-review"
+cp "$diff" "$wt/.longrun-review/change.diff"; cp "$card" "$wt/.longrun-review/card.md"
+diff="$wt/.longrun-review/change.diff"; card="$wt/.longrun-review/card.md"
+trap 'rm -rf "$wt/.longrun-review"' EXIT
+
+brief="$wt/.longrun-review/brief.md"
 cat >"$brief" <<EOF
 No mannered prose. Answer first, short sentences, numbers and names, end on the result.
 
@@ -35,4 +41,4 @@ case "$who" in
     grok -p "$(cat "$brief")" --cwd "$wt" --permission-mode plan 2>"${REVIEW_ERR:-/dev/null}" | sed 's/\x1b\[[0-9;]*m//g' ;;
   *) echo "VERDICT: REQUEST_CHANGES"; echo "review.sh: unknown reviewer $who" ;;
 esac
-rm -f "$brief"
+
