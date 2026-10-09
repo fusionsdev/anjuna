@@ -297,7 +297,10 @@ run_unit() {
     oracle "$u" learn "Anjuna long-run unit $u: PR #$pr green and reviewed on $(date +%F), waiting for owner merge (money path): $(card_get "$u" title)."
     release "$u"; return
   fi
-  gh pr merge "$pr" --squash --delete-branch >>"$LR/out/$u.ci.log" 2>&1 || { park "$u" "merge failed #$pr"; return; }
+  # --delete-branch would try to switch the main clone to main locally; delete the remote branch separately.
+  gh pr merge "$pr" --squash >>"$LR/out/$u.ci.log" 2>&1
+  [ "$(gh pr view "$pr" --json state -q .state)" = MERGED ] || { park "$u" "merge failed #$pr"; return; }
+  git -C "$ROOT" push -q origin --delete "$branch" 2>/dev/null
   log "$u" merged "#$pr"
   status_set "$u" merged
   oracle "$u" learn "Anjuna long-run unit $u merged on $(date +%F) as PR #$pr: $(card_get "$u" title). Acceptance: $(card_body "$u" | awk '/^## Acceptance/{f=1;next} f' | tr '
