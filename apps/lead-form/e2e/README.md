@@ -55,6 +55,21 @@ the consent input, and clicks **Submit Secure Inquiry** inside `main` by name.
 It checks parsed redirect parameters and propagates failures. It adds no fixed sleeps
 and does not change production form behavior.
 
+`test_ui_e2e.py` locks the browser in that outgoing-screen state and proves that
+the old selectors see zero checkboxes and target **Previous Section**. It then
+mounts the review screen after a delay and calls the same `submit_review` helper
+used by the full E2E. The check requires consent and submission, and fails if the
+helper goes back. The delay simulates the animation; the helper waits on elements.
+
+Run the regression from `apps/lead-form`:
+
+```sh
+python -m unittest discover -s e2e -p 'test_*.py'
+```
+
+Set `E2E_BROWSER_CHANNEL=msedge` to use installed Edge. In PowerShell, use
+`$env:E2E_BROWSER_CHANNEL = 'msedge'` before the command. CI uses Chromium.
+
 ## Release workflow
 
 `.github/workflows/lead-form.yml` runs on `v*` tag pushes or manual dispatch only.
@@ -94,4 +109,19 @@ a required release-build check without changing the release triggers or R2 uploa
 - Parsed workflow YAML: release-only triggers, upload dependency on the build job,
   bundle scan, and both browser batches verified. Every shell step passed `bash -n`.
 - Hosted Ubuntu/Chromium execution and R2 upload: not run. Local browser evidence
-  uses Edge; GitHub Actions installs its own Chromium through Playwright.
+uses Edge; GitHub Actions installs its own Chromium through Playwright.
+
+## U09 selector regression verification (2026-10-09)
+
+- Added the deterministic browser regression to the release build job, before
+  the 2 full E2E batches. Both use the shared review-submit helper.
+- Regression: 1/1 passed in Edge.
+- Local Worker E2E: 8/8 normal and 8/8 at 4x CPU throttling passed in Edge.
+- Root `bun run typecheck`: 24/24 tasks passed (23 cached).
+- Root `bun run test`: 25/25 tasks passed (24 cached); lead-form 29/29 tests passed.
+- `bun run build`: passed; bundle scan found 13 clean files.
+- Parsed workflow YAML: release-only triggers, bundle scan, build dependency,
+  and `form@sha` prefix passed. The workflow move already existed on this branch.
+- Historical 2 failed runs remain unavailable. The selector race is reproduced
+  by the regression fixture and supported by the prior local replays above.
+- Hosted GitHub Actions, Chromium and R2 upload: not run this session.

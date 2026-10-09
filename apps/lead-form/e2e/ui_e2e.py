@@ -10,6 +10,20 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import expect, sync_playwright
 
 
+def submit_review(page):
+    # The sticky step label can change while AnimatePresence still shows Contact
+    # Details. Wait for the actual main screen, then consent and the named action.
+    main = page.get_by_role("main")
+    expect(main.get_by_role("heading", name="Review & Agreement", exact=True)).to_be_visible()
+    consent = main.get_by_role("checkbox")
+    expect(consent).to_be_visible()
+    consent.check()
+    expect(consent).to_be_checked()
+    submit = main.get_by_role("button", name="Submit Secure Inquiry", exact=True)
+    expect(submit).to_be_enabled()
+    submit.click()
+
+
 def run(browser, base, number, cpu_rate):
     context = browser.new_context(service_workers="block")
     unexpected = []
@@ -59,17 +73,7 @@ def run(browser, base, number, cpu_rate):
         page.get_by_placeholder("example@domain.com", exact=True).fill("ui-spike@example.com")
         page.locator("button[type=submit]").click()
 
-        # AnimatePresence retains the outgoing screen. A heading/text match alone
-        # does not mean the consent input is mounted. all() returns [] immediately;
-        # then the old ':enabled.last' selector clicks Previous Section instead.
-        expect(main.get_by_role("heading", name="Review & Agreement", exact=True)).to_be_visible()
-        consent = main.get_by_role("checkbox")
-        expect(consent).to_be_visible()
-        consent.check()
-        expect(consent).to_be_checked()
-        submit = main.get_by_role("button", name="Submit Secure Inquiry", exact=True)
-        expect(submit).to_be_enabled()
-        submit.click()
+        submit_review(page)
         page.wait_for_url("**/request/provider?c=**")
         expect(page.locator("body")).to_have_text("Local buyer stand-in")
         assert observed["lead_status"] == 201, observed

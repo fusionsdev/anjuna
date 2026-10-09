@@ -73,6 +73,7 @@ jobs:
           WRANGLER_SEND_METRICS: "false"
         run: |
           set -euo pipefail
+          python -m unittest discover -s e2e -p 'test_*.py'
           mkdir -p .e2e
           node e2e/serve.mjs > .e2e/server.log 2>&1 &
           server_pid=$!
