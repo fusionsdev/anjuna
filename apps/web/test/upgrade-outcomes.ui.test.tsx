@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LatestUpgradeResponse } from "@anjuna/contracts";
-import { UpgradeOutcomes } from "../src/client/screens/UpgradeOutcomes";
+import { MAX_UPGRADE_POLLS, UpgradeOutcomes } from "../src/client/screens/UpgradeOutcomes";
 
 const result: LatestUpgradeResponse = { upgrade: {
   audit_id: 1, accepted_at: "2026-10-09T00:00:00Z",
@@ -54,6 +54,25 @@ describe("upgrade-all outcomes", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
+  it("stops polling a stuck upgrade after the cap and resumes on refresh", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn(async () => response(result));
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<UpgradeOutcomes refresh={0} />);
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000 * MAX_UPGRADE_POLLS); });
+    expect(fetcher).toHaveBeenCalledTimes(MAX_UPGRADE_POLLS + 1);
+    expect(screen.getByRole("alert").textContent).toContain("Auto-refresh stopped after 6 minutes");
+    expect(screen.getByText("running")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(fetcher).toHaveBeenCalledTimes(MAX_UPGRADE_POLLS + 1);
+    view.rerender(<UpgradeOutcomes refresh={1} />);
+    await act(async () => {});
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(MAX_UPGRADE_POLLS + 2);
+    view.unmount();
+  });
+
   it("shows a fetch failure and recovers on refresh", async () => {
     const fetcher = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(response({ upgrade: null }));
     vi.stubGlobal("fetch", fetcher);
@@ -63,5 +82,19 @@ describe("upgrade-all outcomes", () => {
     view.rerender(<UpgradeOutcomes refresh={1} />);
     await screen.findByText("No accepted upgrade-all yet.");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("preserves outcomes with a stale-data warning when polling fails", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn().mockResolvedValueOnce(response(result)).mockRejectedValueOnce(new Error("offline"));
+    vi.stubGlobal("fetch", fetcher);
+    render(<UpgradeOutcomes refresh={0} />);
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(screen.getByRole("alert").textContent).toContain("Showing previously loaded outcomes.");
+    expect(screen.getAllByRole("row")).toHaveLength(6);
+    expect(screen.getByText("Smoke check failed")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

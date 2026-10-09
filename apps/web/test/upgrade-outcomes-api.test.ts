@@ -94,6 +94,14 @@ describe("latest upgrade-all API", () => {
     expect(upgrade!.outcomes.find((row) => row.brand_id === "ready")).toMatchObject({ install_id: ids.ready, retry_of: null });
   });
 
+  it("keeps the latest accepted outcomes when a newer upgrade submission fails", async () => {
+    await seed();
+    const previous = await latest();
+    await env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES ('owner','owner','upgrade.failed','upgrade','rejected',?1,'2026-10-10T00:00:00Z')")
+      .bind(JSON.stringify({ ...command, to_template_version_id: "tv-3", error: "factory_transport_failed" })).run();
+    expect(await latest()).toEqual(previous);
+  });
+
   it.each(["failed", "rolled_back"])("marks unstarted source brands skipped when canary is %s", async (status) => {
     await seed();
     await env.FACTORY.prepare("UPDATE installs SET status=?1 WHERE install_id=?2").bind(status, ids.canary).run();
