@@ -61,6 +61,7 @@ beforeEach(() => {
   lifecycleRows = [structuredClone(brand)];
   requests = [];
   routes = new Map<string, Handler>([
+    ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
     ["GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-1", name: "Starter", version: 1, status: "sealed" }] })],
     ["GET /api/lifecycle/brands", () => json({ brands: lifecycleRows })],
     ["GET /api/brands", () => json({ brands: runtimeAvailable ? [{
@@ -91,6 +92,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("mounted lifecycle UI with API responses", () => {
+  it("shows core-list failure with factory rows and clears it after a successful refresh", async () => {
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: lifecycleRows, core_error: "Core brand list fetch failed" }));
+    render(<BrandLifecycle me={employee} />);
+    expect(await screen.findByText(/Core brand list is unavailable/)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeTruthy();
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: lifecycleRows, core_error: null }));
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    await waitFor(() => expect(screen.queryByText(/Core brand list is unavailable/)).toBeNull());
+  });
+
+  it("reloads latest outcomes immediately after an accepted upgrade-all", async () => {
+    routes.set("POST /api/upgrade-all", () => json({ instance_id: "new-upgrade" }, 201));
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByText("No accepted upgrade-all yet.");
+    const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
+    const before = reads();
+    fireEvent.click(screen.getByRole("button", { name: "เริ่ม Upgrade-all" }));
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+  });
+
   it("lets an Employee choose a sealed template, create a draft and start Install", async () => {
     lifecycleRows = [];
     runtimeAvailable = false;

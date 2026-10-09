@@ -106,6 +106,26 @@ export const UpgradeAllCommand = z
   });
 export type UpgradeAllCommand = z.infer<typeof UpgradeAllCommand>;
 
+export const UpgradeAllOutcome = z.strictObject({
+  brand_id: BrandId,
+  domain: Hostname,
+  is_canary: z.boolean(),
+  install_id: Id.nullable(),
+  status: z.enum(["queued", "running", "ready", "failed", "rolled_back", "skipped"]),
+  error: z.string().nullable(),
+});
+export type UpgradeAllOutcome = z.infer<typeof UpgradeAllOutcome>;
+
+export const LatestUpgradeResponse = z.strictObject({
+  upgrade: z.strictObject({
+    audit_id: z.number().int(),
+    accepted_at: Timestamp,
+    command: UpgradeAllCommand,
+    outcomes: z.array(UpgradeAllOutcome),
+  }).nullable(),
+});
+export type LatestUpgradeResponse = z.infer<typeof LatestUpgradeResponse>;
+
 export const InitialRuntime = z.strictObject({
   drain_key: DrainKey,
   aid: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/, "Invalid aid"),
