@@ -138,10 +138,8 @@ const STEPS_FULL_V1: StepConfig[] = [
 //
 // Why each surviving field survives — none of these is a style choice:
 //   requested_amount  the one question LeadsGate surfaces at every prepop level
-//   zip               COMPLIANCE. handleLead screens state via zipToState(zip) -> isStateRoutable().
-//                     With no ZIP there is nothing to screen on, and the only options would be to
-//                     route everything (selling into NY/AR/VT/WV, which we are barred from) or to
-//                     route nothing. It also yields city and state through the existing lookup,
+//   zip               ZIP and state never block routing. An unknown ZIP is prepopped without
+//                     state. The ZIP yields city and state through the existing lookup,
 //                     so one input returns three fields.
 //   first name / last_name   kept as TWO inputs rather than one "Full name". Splitting a single
 //                     name string would need a parsing heuristic, and heuristics mangle real
