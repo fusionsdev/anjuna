@@ -144,11 +144,18 @@ export function isLinkedCompensationInstall(installId: string, originalInstallId
 }
 
 export async function recoverySource(db: D1Database, originalId: string, brandId: string): Promise<{ previous_revision_id: string | null; error: string } | null> {
-  const original = await db.prepare("SELECT kind,status,error,rollback_record_json FROM installs WHERE install_id=? AND brand_id=?")
-    .bind(originalId, brandId).first<{ kind: string; status: string; error: string | null; rollback_record_json: string | null }>();
-  if (!original || !["install", "upgrade"].includes(original.kind) || original.status !== "failed" || !original.error) return null;
+  const original = await db.prepare("SELECT kind,status,error,to_revision_id,rollback_record_json FROM installs WHERE install_id=? AND brand_id=?")
+    .bind(originalId, brandId).first<{ kind: string; status: string; error: string | null; to_revision_id: string | null; rollback_record_json: string | null }>();
+  if (!original || !["install", "upgrade", "rollback"].includes(original.kind) || original.status !== "failed" || !original.error) return null;
   try {
     const evidence = JSON.parse(original.error);
+    if (original.kind === "rollback") {
+      // A failed manual rollback retains the lock; recovery re-runs it to the same target.
+      // A failed recovery overwrites the evidence, so only the shared fields are required.
+      if (evidence?.recovery_required !== true || evidence.original_install_id !== originalId
+        || original.rollback_record_json !== null) return null;
+      return { previous_revision_id: original.to_revision_id, error: original.error };
+    }
     const rollback = JSON.parse(original.rollback_record_json ?? "null");
     if (evidence?.recovery_required !== true || evidence.original_install_id !== originalId
       || typeof evidence.compensation_install_id !== "string" || !rollback
@@ -192,6 +199,19 @@ export function compensationFailureEvidence(input: {
     ...input,
     recovery_required: true,
     audit_action: "install.compensation_failed",
+  };
+}
+
+/** Manual rollback failed after mutating Cloudflare, so the brand lock stays held for Owner recovery. */
+export function rollbackFailureEvidence(input: {
+  original_install_id: string;
+  error: string;
+  mutation_started: boolean;
+}): Record<string, unknown> {
+  return {
+    ...input,
+    recovery_required: true,
+    audit_action: "rollback.failed_lock_retained",
   };
 }
 

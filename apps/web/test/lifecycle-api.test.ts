@@ -250,6 +250,18 @@ describe("truthful lifecycle BFF", () => {
       expect(await snapshot()).toEqual(before);
     }
     expect(dispatches).toBe(0);
+    const detail = await call(`/api/installs/${installId}`, { cookie: employee });
+    expect(await detail.json()).toMatchObject({ install_id: installId, status: "failed", recovery_required: true });
+  });
+
+  it("reports no recovery evidence for a failed rollback that released the lock", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "released-rollback.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const installId = `rb_${brand.brand_id}`;
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,error,started_by,started_at) VALUES (?,?,'rollback','failed','Brand not found','owner',?)")
+      .bind(installId, brand.brand_id, new Date().toISOString()).run();
+    const detail = await call(`/api/installs/${installId}`, { cookie: employee });
+    expect(await detail.json()).toMatchObject({ install_id: installId, status: "failed", recovery_required: false });
   });
 
   it("requires the original command's role to retry an upgrade install and refuses a retry while another operation is active", async () => {

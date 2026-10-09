@@ -156,9 +156,17 @@ describe("BrandLifecycle SSR", () => {
    const html = renderToStaticMarkup(<LifecycleDetail
      me={{ id: role, email: `${role}@example.test`, role }}
      brand={{ brand_id: "b", account: "a", hostnames: ["brand.example"], status: "installing", current_revision_id: null, bundle_form_version: null, payload_version: null, runtime_sync_status: "failed" }}
-     install={{ install_id: "i", brand_id: "b", revision_id: null, status: "failed", runtime_sync_status: "failed", receipts: [] }}
+     install={{ install_id: "i", brand_id: "b", revision_id: null, status: "failed", runtime_sync_status: "failed", receipts: [], recovery_required: true }}
      checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}}
    />);
    expect(html.includes("Recover (Owner)")).toBe(role === "owner");
    expect(html).not.toContain(">Retry<");
+ });
+
+ it("splits Retry and Recover on recovery evidence, not on the retained brand status", () => {
+   // A failed manual rollback leaves the brand installing before its evidence is read.
+   expect(lifecycleMutationAvailability("installing", "failed", false, false)).toEqual({ install: false, rollback: false, retry: true, recover: false });
+   expect(lifecycleMutationAvailability("installing", "failed", false, true)).toEqual({ install: false, rollback: false, retry: false, recover: true });
+   expect(lifecycleMutationAvailability("failed", "failed", false, false)).toEqual({ install: true, rollback: true, retry: true, recover: false });
+   expect(lifecycleMutationAvailability("installing", "failed", true, true)).toEqual({ install: false, rollback: false, retry: false, recover: false });
  });

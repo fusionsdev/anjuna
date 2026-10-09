@@ -9,7 +9,7 @@ export async function recoverBrand(env: Env, input: {
   const db = env.FACTORY;
   const brand = await db.prepare("SELECT status FROM brands WHERE brand_id=?").bind(input.brand_id).first<{ status: string }>();
   if (!brand) return Response.json({ error: "not_found" }, { status: 404 });
-  const original = await db.prepare(`SELECT install_id,status FROM installs i WHERE brand_id=? AND kind IN ('install','upgrade')
+  const original = await db.prepare(`SELECT install_id,status FROM installs i WHERE brand_id=? AND kind IN ('install','upgrade','rollback')
       AND ((status='failed' AND json_valid(error) AND json_extract(error,'$.recovery_required')=1)
         OR (status='rolled_back' AND EXISTS (SELECT 1 FROM installs r WHERE r.brand_id=i.brand_id
           AND r.status='rolled_back' AND json_valid(r.rollback_record_json)
@@ -23,7 +23,7 @@ export async function recoverBrand(env: Env, input: {
   }
   const source = original && await recoverySource(db, original.install_id, input.brand_id);
   if (brand.status !== "installing" || !source) {
-    return Response.json({ error: "recovery_not_required", message: "Recovery requires a failed install with failed compensation and a retained lock" }, { status: 409 });
+    return Response.json({ error: "recovery_not_required", message: "Recovery requires a failed install with failed compensation, or a failed rollback, and a retained lock" }, { status: 409 });
   }
   const installId = `recover-${crypto.randomUUID()}`;
   const now = new Date().toISOString();

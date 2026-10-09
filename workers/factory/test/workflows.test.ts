@@ -474,4 +474,31 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(f.compensation[2]!), steps().step);
     expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
   });
+
+  it("recovers the retained lock after a failed manual rollback and frees it for the next install", async () => {
+    const f = await fixture(true);
+    await env.FACTORY.prepare("UPDATE installs SET kind='rollback' WHERE install_id=?").bind(f.install).run();
+    f.settings.coreFails = true;
+    await expect(RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow,
+      event({ install_id: f.install, brand_id: f.brand, to_revision_id: f.revision }), steps().step)).rejects.toThrow("Core lifecycle request failed (503)");
+    f.settings.coreFails = false;
+    expect(await f.brandRow()).toMatchObject({ status: "installing" });
+    const failed = await env.FACTORY.prepare("SELECT error FROM installs WHERE install_id=?").bind(f.install).first<{ error: string }>();
+    expect(JSON.parse(failed!.error)).toMatchObject({ recovery_required: true, original_install_id: f.install, audit_action: "rollback.failed_lock_retained" });
+    expect(await env.FACTORY.prepare("SELECT actor_role FROM audit_log WHERE entity_id=? AND action='rollback.failed_lock_retained'").bind(f.install).first()).toEqual({ actor_role: "system" });
+    expect((await recover(f, "employee")).status).toBe(403);
+    expect(f.compensation).toHaveLength(0);
+    expect((await recover(f)).status).toBe(201);
+    const recovery = f.compensation[0]!;
+    expect(recovery).toMatchObject({ original_install_id: f.install, to_revision_id: f.revision });
+    await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(recovery), steps().step);
+    expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+    expect(await f.installRow()).toEqual({ status: "rolled_back" });
+    expect(await env.FACTORY.prepare("SELECT status FROM install_receipts WHERE install_id=? AND step='rollback'").bind(f.install).first()).toEqual({ status: "ok" });
+    expect(await (await recover(f)).json()).toMatchObject({ install_id: recovery.install_id, idempotent: true });
+    expect(f.compensation).toHaveLength(1);
+    const nextInstall = `new-${f.id}`;
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'install','queued','owner',?)").bind(nextInstall, f.brand, now).run();
+    expect(await setInstallStatus(env.FACTORY, nextInstall, "running", undefined, f.brand)).toBe("claimed");
+  });
 });

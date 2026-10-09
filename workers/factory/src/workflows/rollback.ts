@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { attachCustomDomain, deployScript, detachCustomDomain, listCustomDomains } from "../cf-api.js";
-import { compensationFailureEvidence, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../receipt.js";
+import { compensationFailureEvidence, rollbackFailureEvidence, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../receipt.js";
 import { rollbackTargetBelongsToBrand } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import type { Env } from "../env.js";
@@ -195,6 +195,19 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
       await setInstallStatus(db, install_id, "failed", message, brand_id, {
         retainBrandLock: shouldRetainBrandLockOnFailure(mutationStarted, original_install_id),
       });
+      if (!original_install_id && mutationStarted) {
+        // Retry cannot claim the retained lock, so record evidence for Owner Recover.
+        const evidence = rollbackFailureEvidence({ original_install_id: install_id, error: message, mutation_started: true });
+        const now = new Date().toISOString();
+        await db.batch([
+          db.prepare("UPDATE installs SET error = ? WHERE install_id = ? AND status = 'failed'")
+            .bind(JSON.stringify(evidence), install_id),
+          db.prepare(`INSERT INTO audit_log
+            (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+            VALUES ('system', 'system', 'rollback.failed_lock_retained', 'install', ?, NULL, ?, ?)`)
+            .bind(install_id, JSON.stringify(evidence), now),
+        ]);
+      }
       if (original_install_id) {
         const evidence = compensationFailureEvidence({
           original_install_id,

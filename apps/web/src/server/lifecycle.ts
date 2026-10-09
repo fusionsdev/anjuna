@@ -390,14 +390,17 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-    const row = await env.FACTORY.prepare("SELECT i.install_id,i.brand_id,i.to_revision_id,i.status FROM installs i JOIN brands b ON b.brand_id=i.brand_id WHERE i.install_id=?1").bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string | null; status: string }>();
+    const row = await env.FACTORY.prepare(`SELECT i.install_id,i.brand_id,i.to_revision_id,i.status,
+      (b.status='installing' AND EXISTS (SELECT 1 FROM installs f WHERE f.brand_id=i.brand_id AND f.status='failed'
+        AND json_valid(f.error) AND json_extract(f.error,'$.recovery_required')=1)) AS recovery_required
+      FROM installs i JOIN brands b ON b.brand_id=i.brand_id WHERE i.install_id=?1`).bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string | null; status: string; recovery_required: number }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
     const status = (value: string): "queued" | "running" | "ready" | "failed" => value === "ok" ? "ready" : value === "skipped" ? "queued" : value === "failed" ? "failed" : value === "running" ? "running" : "queued";
     const receipts = results.map((r) => { const output = r.output_json ? JSON.parse(r.output_json) as Record<string, unknown> : undefined; return { step: r.step, status: status(r.status), ...(typeof output?.error === "string" ? { error: output.error } : {}) }; });
     const runtime_sync_status = receipts.some((r) => r.status === "failed") || row.status === "failed" ? "failed" : receipts.some((r) => r.status === "running") || row.status === "running" ? "running" : row.status === "ready" || row.status === "rolled_back" ? "ready" : "queued";
     const installStatus = ["queued", "running", "ready", "failed", "rolled_back"].includes(row.status) ? row.status : "queued";
-    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: installStatus, runtime_sync_status, receipts });
+    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: installStatus, runtime_sync_status, receipts, recovery_required: row.recovery_required === 1 });
   }
   if (path === "/api/upgrade-all" && method === "POST") {
     const g = authorizePanel("upgradeAll", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);

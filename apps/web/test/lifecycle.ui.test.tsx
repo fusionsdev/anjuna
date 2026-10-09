@@ -333,7 +333,7 @@ describe("mounted lifecycle UI with API responses", () => {
 it("Owner recovers a retained lock from the panel and sees completion receipts", async () => {
   lifecycleRows = [{ ...brand, status: "installing", current_revision_id: null, runtime_sync_status: "failed" }];
   history([{ install_id: failed.install_id, status: "failed", error: "Compensation failed" }]);
-  detail(failed);
+  detail({ ...failed, recovery_required: true });
   routes.set("POST /api/brands/brand-a/recover", () => {
     lifecycleRows = [{ ...brand, status: "failed", current_revision_id: null }];
     return json({ install_id: "recovery-1", brand_id: "brand-a", status: "queued" }, 201);
