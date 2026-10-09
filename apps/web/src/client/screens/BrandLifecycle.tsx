@@ -45,6 +45,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   const [error, setError] = useState<string | null>(null);
   const operationGeneration = useRef(0);
   const [draft, setDraft] = useState({ domain: "", keyword_default: "", template_version_id: "" });
+  const [creatingDraft, setCreatingDraft] = useState(false);
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => {
@@ -62,7 +63,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
     }).finally(() => { if (active) setTemplatesLoading(false); });
     return () => { active = false; };
   }, [refresh]);
-  const canCreateDraft = !templatesLoading && !templatesError && Boolean(draft.domain.trim()) && Boolean(draft.keyword_default.trim()) && templates.some((t) => t.template_version_id === draft.template_version_id);
+  const canCreateDraft = !creatingDraft && !templatesLoading && !templatesError && Boolean(draft.domain.trim()) && Boolean(draft.keyword_default.trim()) && templates.some((t) => t.template_version_id === draft.template_version_id);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
@@ -183,7 +184,19 @@ export function BrandLifecycle({ me }: { me: Me }) {
       }
     }
   }
-  async function createDraft() { if (!canCreateDraft) return; await act(async () => { const result = await api.createDraft(draft); setSelectedId(result.brand.brand_id); setDraft({ domain: "", keyword_default: "", template_version_id: "" }); }); }
+  async function createDraft() {
+    if (!canCreateDraft) return;
+    setCreatingDraft(true);
+    try {
+      await act(async () => {
+        const result = await api.createDraft(draft);
+        setSelectedId(result.brand.brand_id);
+        setDraft({ domain: "", keyword_default: "", template_version_id: "" });
+      });
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
   async function dispatchOperation(action: () => Promise<{ install_id: string }>, retryOf?: string) {
     if (!selected) return;
     operationGeneration.current += 1;

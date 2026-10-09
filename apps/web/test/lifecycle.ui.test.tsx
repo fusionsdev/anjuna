@@ -98,6 +98,41 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("heading", { name: /Upgrade-all/ })).toBeNull();
   });
 
+  it.each(["สร้าง draft", "สร้างแบรนด์ (Create draft)"])("blocks duplicate draft submissions through %s and permits retry after failure", async (buttonName) => {
+    let finishDraft!: (response: Response) => void;
+    routes.set("POST /api/brands/drafts", () => new Promise<Response>((resolve) => { finishDraft = resolve; }));
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
+    const domain = screen.getByRole("textbox", { name: "Domain" });
+    const keyword = screen.getByRole("textbox", { name: "Keyword" });
+    const select = screen.getByRole("combobox", { name: "Sealed template version" });
+    fireEvent.change(domain, { target: { value: "pending.test" } });
+    fireEvent.change(keyword, { target: { value: "Quick Loan" } });
+    fireEvent.change(select, { target: { value: "tv-1" } });
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+
+    const createButtons = [screen.getByRole("button", { name: "สร้าง draft" }), screen.getByRole("button", { name: "สร้างแบรนด์ (Create draft)" })];
+    for (const button of createButtons) {
+      expect(button).toHaveProperty("disabled", true);
+      fireEvent.click(button);
+    }
+    // Enter can submit a form without clicking either disabled button.
+    fireEvent.submit(domain.closest("form")!);
+    expect(requests.filter((request) => request.path === "/api/brands/drafts")).toHaveLength(1);
+
+    await act(async () => { finishDraft(json({ error: "internal" }, 500)); });
+    await waitFor(() => {
+      for (const button of createButtons) expect(button).toHaveProperty("disabled", false);
+    });
+    expect(domain).toHaveProperty("value", "pending.test");
+    expect(keyword).toHaveProperty("value", "Quick Loan");
+    expect(select).toHaveProperty("value", "tv-1");
+    routes.set("POST /api/brands/drafts", () => json({ error: "internal" }, 500));
+    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+    await waitFor(() => expect(requests.filter((request) => request.path === "/api/brands/drafts")).toHaveLength(2));
+    await waitFor(() => expect(createButtons[0]).toHaveProperty("disabled", false));
+  });
+
   it("blocks draft creation when no sealed templates exist", async () => {
     routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
     render(<BrandLifecycle me={employee} />);
