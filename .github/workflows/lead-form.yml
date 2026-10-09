@@ -1,8 +1,4 @@
-# STAGED WORKFLOW. Install it with:  git mv apps/lead-form/ci/lead-form.workflow.yml .github/workflows/lead-form.yml
-# It lives here only because the token that opened this PR lacks GitHub's `workflow` scope, which
-# is required to push anything under .github/workflows/. Content is final; only the path changes.
-#
-# T4 / FO-4: build the Anjuna Form ONCE per commit, prove the bundle is brand-clean, and store it
+# T4 / FO-4: build the Anjuna Form for an explicit release, prove the bundle is brand-clean, and store it
 # in R2 as an immutable `form@<sha>/` prefix with a SHA-256 manifest. Brand Workers (T7/T10)
 # copy from that prefix; nothing here deploys a Worker.
 #
@@ -15,16 +11,7 @@ name: lead-form
 
 on:
   push:
-    branches: [main]
-    paths:
-      - "apps/lead-form/**"
-      - ".github/workflows/lead-form.yml"
-      - "bun.lock"
-  pull_request:
-    paths:
-      - "apps/lead-form/**"
-      - ".github/workflows/lead-form.yml"
-      - "bun.lock"
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -81,8 +68,8 @@ jobs:
           retention-days: 7
 
   upload:
-    # Only commits on main are published. Pull requests stop after the build job.
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Publishing is a release action: version tags or explicit manual dispatch only.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     needs: build
     runs-on: ubuntu-latest
     environment: r2-artifacts
