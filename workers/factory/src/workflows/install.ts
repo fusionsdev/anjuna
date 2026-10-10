@@ -308,8 +308,18 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       // ── Step 8: Smoke test ─────────────────────────────────────────────────
       // Persist only the final outcome. A failed receipt inside the callback would
       // short-circuit every Workflow retry instead of re-fetching the hostnames.
+      // An upgrade can target a brand the operator paused: it serves the 503 pause page and
+      // stays paused, so smoke expects that page. Core is read on every attempt, inside the
+      // step, so a pause toggled during the retry window is seen and the cached step result
+      // stays the single replayed outcome. A failed read throws and retries; it never
+      // downgrades to a guess. An absent runtime has no pause flag and is smoked as live.
       await withReceipt(db, install_id, "smoke", () =>
-        step.do("smoke", SMOKE_RETRY_CONFIG, () => smokeBrand(hostnames)),
+        step.do("smoke", SMOKE_RETRY_CONFIG, async () => {
+          const state = previous_revision_id
+            ? await new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN).runtimeState({ brand_id, account })
+            : null;
+          return smokeBrand(hostnames, { paused: state?.state === "applied" && state.paused });
+        }),
       );
 
       if (previous_revision_id) {

@@ -88,7 +88,7 @@ function steps() {
 }
 function event<T>(payload: T) { return { payload } as WorkflowEvent<T>; }
 
-async function fixture(live = false, subdomain = false) {
+async function fixture(live = false, subdomain = false, paused = true) {
   const id = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
   const brand = `brand_${id}`;
   const revision = `rev-${id}`;
@@ -110,16 +110,20 @@ async function fixture(live = false, subdomain = false) {
   await env.ARTIFACTS.put("runtime/brand-runtime.js", "export default {fetch(){return new Response('local')}}");
   let runtime: RuntimeStateResponse = live ? {
     state: "applied", brand_id: brand, account: "test",
-    applied_revision_id: revision, last_lifecycle_install_id: "previous-install", paused: true,
+    applied_revision_id: revision, last_lifecycle_install_id: "previous-install", paused,
     bundle_form_version: "form@old", credential_account_match: true,
   } : { state: "absent", brand_id: brand, account: "test", credential_account_match: true };
   const applied: Array<ReturnType<typeof ApplyRuntimeRequest.parse>> = [];
-  const settings = { smokeFails: false, uploadFails: false, dispatchFails: false, coreFails: false,
+  const settings = { smokeFails: false, uploadFails: false, dispatchFails: false, coreFails: false, stateMode: "ok" as "ok" | "fail" | "absent",
     zoneName: subdomain ? "sub.example" : domain,
     apex: [] as Array<Response | Error>, www: [] as Array<Response | Error> };
   const core = { async fetch(request: Request) {
     const input = await request.json() as Record<string, unknown>;
-    if (new URL(request.url).pathname.endsWith("runtime-state")) return Response.json(runtime);
+    if (new URL(request.url).pathname.endsWith("runtime-state")) {
+      if (settings.stateMode === "fail") return new Response("core unavailable", { status: 503 });
+      if (settings.stateMode === "absent") return Response.json({ state: "absent", brand_id: brand, account: "test", credential_account_match: true });
+      return Response.json(runtime);
+    }
     const parsed = ApplyRuntimeRequest.parse(input);
     if (settings.coreFails) return new Response("core unavailable", { status: 503 });
     applied.push(parsed);
@@ -148,7 +152,9 @@ async function fixture(live = false, subdomain = false) {
       const response = (apex ? settings.apex : settings.www).shift();
       if (response instanceof Error) throw response;
       return response ?? (apex
-        ? new Response('<h1><span data-kw>Quick Loan</span></h1><form data-cta action="/go"></form>', { status: settings.smokeFails ? 500 : runtime.state === "applied" && runtime.paused ? 503 : 200 })
+        ? runtime.state === "applied" && runtime.paused && !settings.smokeFails
+          ? new Response("<!doctype html><title>Temporarily unavailable</title><h1>Temporarily unavailable</h1>", { status: 503 })
+          : new Response('<h1><span data-kw>Quick Loan</span></h1><form data-cta action="/go"></form>', { status: settings.smokeFails ? 500 : 200 })
         : new Response(null, { status: 301, headers: { Location: `https://${domain}/` } }));
     }
     if (url.hostname !== "api.cloudflare.com") throw new Error(`Unexpected external request: ${url}`);
@@ -540,6 +546,112 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(dispatch).toHaveBeenCalledTimes(status === "ready" ? 2 : 1);
     if (status === "ready") await run(); else await expect(run()).rejects.toThrow("Canary install failed");
     expect(dispatch).toHaveBeenCalledTimes(status === "ready" ? 2 : 1);
+  });
+
+  describe("smoke during upgrade", () => {
+    type Fixture = Awaited<ReturnType<typeof fixture>>;
+    async function addUpgradeRevision(f: Fixture) {
+      const next = `next-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?,?,2,?,?,'{}','owner',?)")
+        .bind(next, f.brand, f.version, f.artifact, now).run();
+      f.params.revision_id = next;
+    }
+    const smokeOutput = async (installId: string) => JSON.parse((await env.FACTORY.prepare(
+      "SELECT output_json FROM install_receipts WHERE install_id=? AND step='smoke' AND status='ok'",
+    ).bind(installId).first<{ output_json: string }>())!.output_json) as unknown;
+
+    it("upgrade-all completes for a paused brand: pause page smoke passes, READY, still paused", async () => {
+      const f = await fixture(true);
+      await env.FACTORY.prepare("DELETE FROM installs WHERE install_id=?").bind(f.install).run();
+      const target = `target-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_at,created_by,created_at) VALUES (?,?,2,?,?,'sealed',?,'owner',?)").bind(target, f.template, target, `${f.id}/site.zip`, now, now).run();
+      const dispatched: InstallParams[] = [];
+      f.bindings.INSTALL_WORKFLOW = { async create({ params }: { params: InstallParams }) {
+        dispatched.push(params);
+        await InstallBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as InstallBrandWorkflow, event(params), steps().step);
+        return { id: params.install_id };
+      } } as unknown as Workflow;
+      const params: UpgradeAllParams = { from_template_version_id: f.version, to_template_version_id: target, form_artifact_id: f.artifact, canary_brand_id: f.brand, started_by: "owner", started_role: "owner" };
+      await UpgradeAllWorkflow.prototype.run.call({ env: f.bindings } as unknown as UpgradeAllWorkflow, event(params), steps().step);
+      expect(dispatched).toHaveLength(1);
+      const install = dispatched[0]!;
+      expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(install.install_id).first()).toEqual({ status: "ready" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: install.revision_id });
+      expect(f.runtime()).toMatchObject({ paused: true, applied_revision_id: install.revision_id });
+      expect(await smokeOutput(install.install_id)).toEqual({ apex_status: 503, www_status: 301 });
+      expect(smokeCalls(f)).toHaveLength(2);
+    });
+
+    it("smokes a live brand upgrade for the landing page (regression)", async () => {
+      const f = await fixture(true, false, false);
+      await addUpgradeRevision(f);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await smokeOutput(f.install)).toEqual({ apex_status: 200, www_status: 301 });
+      expect(f.runtime()).toMatchObject({ paused: false, applied_revision_id: f.params.revision_id });
+    });
+
+    it("fails a live upgrade whose apex answers the pause page", async () => {
+      const f = await fixture(true, false, false);
+      await addUpgradeRevision(f);
+      f.settings.apex.push(new Response("<h1>Temporarily unavailable</h1>", { status: 503 }));
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await smokeReceipt(f)).toMatchObject({ status: "failed", output_json: expect.stringContaining("apex returned 503 (expected 200") });
+      expect(smokeCalls(f)).toHaveLength(2);
+    });
+
+    it("fails a paused upgrade whose apex serves the landing page without retry", async () => {
+      const f = await fixture(true);
+      await addUpgradeRevision(f);
+      f.settings.apex.push(new Response('<h1><span data-kw>Quick Loan</span></h1><form data-cta></form>', { status: 200 }));
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await smokeReceipt(f)).toMatchObject({ status: "failed", output_json: expect.stringContaining("apex returned 200 (expected 503") });
+      expect(smokeCalls(f)).toHaveLength(2);
+    });
+
+    it("retries a failed pause-state read instead of assuming live or paused", async () => {
+      const f = await fixture(true);
+      await addUpgradeRevision(f);
+      const s = steps();
+      s.hooks.before = async (name) => { if (name === "smoke") f.settings.stateMode = "fail"; };
+      s.hooks.retry = async (name) => { if (name === "smoke") f.settings.stateMode = "ok"; };
+      await runInstall(f, s);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(smokeCalls(f)).toHaveLength(2);
+      expect(await smokeOutput(f.install)).toEqual({ apex_status: 503, www_status: 301 });
+    });
+
+    it("fails the install when the pause-state read never recovers, without fetching the brand", async () => {
+      const f = await fixture(true);
+      await addUpgradeRevision(f);
+      const s = steps();
+      s.hooks.before = async (name) => { if (name === "smoke") f.settings.stateMode = "fail"; };
+      await runInstall(f, s);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await smokeReceipt(f)).toMatchObject({ status: "failed", output_json: expect.stringContaining("Core lifecycle request failed (503)") });
+      expect(smokeCalls(f)).toHaveLength(0);
+    });
+
+    it("treats an absent runtime state as not paused", async () => {
+      const f = await fixture(true);
+      await addUpgradeRevision(f);
+      const s = steps();
+      s.hooks.before = async (name) => { if (name === "smoke") f.settings.stateMode = "absent"; };
+      await runInstall(f, s);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await smokeReceipt(f)).toMatchObject({ status: "failed", output_json: expect.stringContaining("apex returned 503 (expected 200") });
+    });
+
+    it("does not read the runtime state for smoke on a first install", async () => {
+      const f = await fixture();
+      const s = steps();
+      s.hooks.before = async (name) => { if (name === "smoke") f.settings.stateMode = "fail"; };
+      await runInstall(f, s);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await smokeOutput(f.install)).toEqual({ apex_status: 200, www_status: 301 });
+    });
   });
 
   const recover = (f: Awaited<ReturnType<typeof fixture>>, role = "owner") => factory.fetch(new Request("https://factory/recover", {
