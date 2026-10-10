@@ -33,6 +33,15 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const lastBody = (path: string) => requests.filter((r) => r.path === path && r.method === "PATCH").at(-1)?.body;
 const history = (installs: unknown[]) => routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
 const detail = (install: InstallWithReceipts) => routes.set(`GET /api/installs/${install.install_id}`, () => json(install));
+const nameLabel = "ชื่อแบรนด์ (Brand name)";
+const domainLabel = "โดเมน (Domain)";
+const keywordLabel = "คีย์เวิร์ด (Keyword)";
+const templateLabel = "เวอร์ชันเทมเพลต (Sealed template version)";
+const createDraftName = "สร้างแบรนด์ (Create draft)";
+const installName = "ติดตั้ง (Install)";
+const rollbackName = "ย้อนกลับ (Rollback)";
+const retryName = "ลองใหม่ (Retry)";
+const recoverName = "กู้คืน (Recover, Owner)";
 const section = (panel: HTMLElement, heading: string | RegExp) => within(within(panel).getByRole("heading", { name: heading }).closest("section")!);
 
 beforeEach(() => {
@@ -81,71 +90,95 @@ describe("mounted lifecycle UI with API responses", () => {
     routes.set("POST /api/brands/brand-a/install", () => json({ install_id: "new-install" }, 201));
     detail({ ...failed, install_id: "new-install", revision_id: "rev-new", status: "running", runtime_sync_status: "running" });
     render(<BrandLifecycle me={employee} />);
-    const select = screen.getByRole("combobox", { name: "Sealed template version" });
+    const select = screen.getByRole("combobox", { name: templateLabel });
     await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
     expect(within(select).getAllByRole("option")).toHaveLength(2);
-    expect(screen.queryByRole("textbox", { name: "Sealed template version" })).toBeNull();
-    fireEvent.change(screen.getByRole("textbox", { name: "Domain" }), { target: { value: "new-brand.test" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Keyword" }), { target: { value: "Quick Loan" } });
-    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("textbox", { name: templateLabel })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: nameLabel }), { target: { value: "New Brand" } });
+    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "new-brand.test" } });
+    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
+    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(select, { target: { value: "tv-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "สร้าง draft" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Install" }));
+    fireEvent.click(screen.getByRole("button", { name: createDraftName }));
+    fireEvent.click(await screen.findByRole("button", { name: installName }));
     expect((await screen.findAllByText("new-install", { selector: "code" })).length).toBeGreaterThan(0);
-    expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ domain: "new-brand.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ name: "New Brand", domain: "new-brand.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(requests.find((r) => r.path === "/api/brands/brand-a/install")?.body).toEqual({ revision_id: "rev-new" });
-    expect(screen.queryByRole("button", { name: "Rollback" })).toBeNull();
+    expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
     expect(screen.queryByRole("heading", { name: /Upgrade-all/ })).toBeNull();
   });
 
-  it.each(["สร้าง draft", "สร้างแบรนด์ (Create draft)"])("blocks duplicate draft submissions through %s and permits retry after failure", async (buttonName) => {
+  it("offers exactly one create button and requires a brand name before submitting", async () => {
+    routes.set("POST /api/brands/drafts", () => json({ brand: { brand_id: "brand-a" }, revision: { revision_id: "rev-new" } }, 201));
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
+    expect(screen.getAllByRole("button", { name: /Create draft/ })).toHaveLength(1);
+    const create = screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement;
+    const name = screen.getByRole("textbox", { name: nameLabel }) as HTMLInputElement;
+    expect(name.required).toBe(true);
+    expect(name.maxLength).toBe(60);
+    expect(name.placeholder).toBe("Level Lending");
+    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "maple.test" } });
+    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
+    fireEvent.change(screen.getByRole("combobox", { name: templateLabel }), { target: { value: "tv-1" } });
+    expect(create.disabled).toBe(true);
+    fireEvent.change(name, { target: { value: "   " } });
+    expect(create.disabled).toBe(true);
+    fireEvent.change(name, { target: { value: "  Maple Cash  " } });
+    expect(create.disabled).toBe(false);
+    fireEvent.click(create);
+    await waitFor(() => expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ name: "Maple Cash", domain: "maple.test", keyword_default: "Quick Loan", template_version_id: "tv-1" }));
+    await waitFor(() => expect(name.value).toBe(""));
+    expect(create.disabled).toBe(true);
+  });
+
+  it("blocks duplicate draft submissions and permits retry after failure", async () => {
     let finishDraft!: (response: Response) => void;
     routes.set("POST /api/brands/drafts", () => new Promise<Response>((resolve) => { finishDraft = resolve; }));
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
-    const domain = screen.getByRole("textbox", { name: "Domain" });
-    const keyword = screen.getByRole("textbox", { name: "Keyword" });
-    const select = screen.getByRole("combobox", { name: "Sealed template version" });
+    const brandName = screen.getByRole("textbox", { name: nameLabel });
+    const domain = screen.getByRole("textbox", { name: domainLabel });
+    const keyword = screen.getByRole("textbox", { name: keywordLabel });
+    const select = screen.getByRole("combobox", { name: templateLabel });
+    fireEvent.change(brandName, { target: { value: "Pending Brand" } });
     fireEvent.change(domain, { target: { value: "pending.test" } });
     fireEvent.change(keyword, { target: { value: "Quick Loan" } });
     fireEvent.change(select, { target: { value: "tv-1" } });
-    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+    const createButton = screen.getByRole("button", { name: createDraftName });
+    fireEvent.click(createButton);
 
-    const createButtons = [screen.getByRole("button", { name: "สร้าง draft" }), screen.getByRole("button", { name: "สร้างแบรนด์ (Create draft)" })];
-    for (const button of createButtons) {
-      expect(button).toHaveProperty("disabled", true);
-      fireEvent.click(button);
-    }
-    // Enter can submit a form without clicking either disabled button.
+    expect(createButton).toHaveProperty("disabled", true);
+    fireEvent.click(createButton);
+    // Enter can submit a form without clicking the disabled button.
     fireEvent.submit(domain.closest("form")!);
     expect(requests.filter((request) => request.path === "/api/brands/drafts")).toHaveLength(1);
 
     await act(async () => { finishDraft(json({ error: "internal" }, 500)); });
-    await waitFor(() => {
-      for (const button of createButtons) expect(button).toHaveProperty("disabled", false);
-    });
+    await waitFor(() => expect(createButton).toHaveProperty("disabled", false));
+    expect(brandName).toHaveProperty("value", "Pending Brand");
     expect(domain).toHaveProperty("value", "pending.test");
     expect(keyword).toHaveProperty("value", "Quick Loan");
     expect(select).toHaveProperty("value", "tv-1");
     routes.set("POST /api/brands/drafts", () => json({ error: "internal" }, 500));
-    fireEvent.click(screen.getByRole("button", { name: buttonName }));
+    fireEvent.click(createButton);
     await waitFor(() => expect(requests.filter((request) => request.path === "/api/brands/drafts")).toHaveLength(2));
-    await waitFor(() => expect(createButtons[0]).toHaveProperty("disabled", false));
+    await waitFor(() => expect(createButton).toHaveProperty("disabled", false));
   });
 
   it("blocks draft creation when no sealed templates exist", async () => {
     routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
     render(<BrandLifecycle me={employee} />);
-    await screen.findByText(/No sealed templates available/);
-    expect(screen.getByRole("combobox", { name: "Sealed template version" }).hasAttribute("disabled")).toBe(true);
-    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByText(/ยังไม่มี sealed template/);
+    expect(screen.getByRole("combobox", { name: templateLabel }).hasAttribute("disabled")).toBe(true);
+    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("reports template load failure and recovers on Refresh", async () => {
     routes.set("GET /api/templates/sealed", () => json({ error: "internal" }, 500));
     render(<BrandLifecycle me={employee} />);
     await screen.findByText(/โหลด sealed templates ไม่สำเร็จ/);
-    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
     routes.set("GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-2", name: "Fresh", version: 2, status: "sealed" }] }));
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     await screen.findByRole("option", { name: "Fresh · v2 (tv-2)" });
@@ -155,7 +188,7 @@ describe("mounted lifecycle UI with API responses", () => {
   it("hides Rollback from Employees on a live brand", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "renderable.test" });
-    expect(screen.queryByRole("button", { name: "Rollback" })).toBeNull();
+    expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
   });
 
   it("rejects the entire template response if it includes an unsealed version", async () => {
@@ -167,21 +200,22 @@ describe("mounted lifecycle UI with API responses", () => {
     ] }));
     render(<BrandLifecycle me={employee} />);
     await screen.findByText(/โหลด sealed templates ไม่สำเร็จ/);
-    const select = screen.getByRole("combobox", { name: "Sealed template version" });
+    const select = screen.getByRole("combobox", { name: templateLabel });
     expect(within(select).getAllByRole("option")).toHaveLength(1);
     expect(screen.queryByRole("option", { name: /Unapproved/ })).toBeNull();
     expect(screen.queryByRole("option", { name: /Starter/ })).toBeNull();
-    expect((screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
     expect(requests.some((request) => request.path === "/api/brands/drafts")).toBe(false);
   });
 
   it("clears a removed template selection on Refresh before allowing another draft", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
-    const select = screen.getByRole("combobox", { name: "Sealed template version" });
-    const create = screen.getByRole("button", { name: "สร้าง draft" }) as HTMLButtonElement;
-    fireEvent.change(screen.getByRole("textbox", { name: "Domain" }), { target: { value: "refresh.test" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Keyword" }), { target: { value: "Quick Loan" } });
+    const select = screen.getByRole("combobox", { name: templateLabel });
+    const create = screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement;
+    fireEvent.change(screen.getByRole("textbox", { name: nameLabel }), { target: { value: "Refresh Brand" } });
+    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "refresh.test" } });
+    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
     fireEvent.change(select, { target: { value: "tv-1" } });
     expect(create.disabled).toBe(false);
 
@@ -229,7 +263,7 @@ describe("mounted lifecycle UI with API responses", () => {
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ flow_gate_mode: "signed_cookie" }));
     fireEvent.click(within(panel).getByRole("button", { name: "ปิด" }));
     expect(screen.queryByRole("complementary", { name: "Brand config" })).toBeNull();
-    expect(screen.getByText(/7-day stats · Leads: 9 · Sold: 3 · Pending: 2/)).toBeDefined();
+    expect(screen.getByText(/สถิติ 7 วัน · ลีด \(Leads\): 9 · ขายได้ \(Sold\): 3 · รอผล \(Pending\): 2/)).toBeDefined();
   });
 
   it("keeps employee runtime controls accessible with owner-only controls hidden", async () => {
@@ -252,7 +286,9 @@ describe("mounted lifecycle UI with API responses", () => {
     lifecycleRows = [{ ...brand, status: "draft", runtime_sync_status: "queued", bundle_form_version: null, payload_version: null }];
     render(<BrandLifecycle me={employee} />);
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeDefined();
-    expect(await screen.findByRole("button", { name: "Install" })).toBeDefined();
+    // No confirmed form artifact: Install is shown but disabled, with the reason.
+    expect(await screen.findByRole("button", { name: installName })).toHaveProperty("disabled", true);
+    expect((await screen.findByRole("note")).textContent).toBe("ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว");
     expect(screen.queryByRole("button", { name: /Runtime config/ })).toBeNull();
   });
 
@@ -266,24 +302,24 @@ describe("mounted lifecycle UI with API responses", () => {
       return json({ install_id: failed.install_id, brand_id: "brand-a", status: "running" }, 201);
     });
     render(<BrandLifecycle me={employee} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Install" }));
+    fireEvent.click(await screen.findByRole("button", { name: installName }));
     expect(await screen.findByText("failed-1", { selector: "code" })).toBeDefined();
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Factory Worker binding is missing");
-    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    fireEvent.click(await screen.findByRole("button", { name: retryName }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/installs/failed-1/retry")).toBe(true));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry" })).toBeNull());
-    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("button", { name: retryName })).toBeNull());
+    expect(screen.queryByRole("button", { name: installName })).toBeNull();
   });
 
   it("recovers the latest failed attempt and its persisted error on reload and Refresh", async () => {
     history([{ ...failed, error: "Factory transport failed" }, { install_id: "older-ready", status: "ready", error: null }]);
     detail(failed);
     const first = render(<BrandLifecycle me={owner} />);
-    expect(await screen.findByRole("button", { name: "Retry" })).toBeDefined();
+    expect(await screen.findByRole("button", { name: retryName })).toBeDefined();
     expect(screen.getByText("Factory transport failed")).toBeDefined();
     first.unmount();
     render(<BrandLifecycle me={owner} />);
-    expect(await screen.findByRole("button", { name: "Retry" })).toBeDefined();
+    expect(await screen.findByRole("button", { name: retryName })).toBeDefined();
     expect(screen.getByText("failed-1", { selector: "code" })).toBeDefined();
 
     const latest = { ...failed, install_id: "failed-2", receipts: [{ step: "sync_runtime", status: "failed" as const, error: "Core sync failed" }] };
@@ -293,7 +329,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(await screen.findByText("failed-2", { selector: "code" })).toBeDefined();
     expect(await screen.findByText("Core sync failed")).toBeDefined();
     expect(screen.queryByText("failed-1", { selector: "code" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
+    expect(screen.getByRole("button", { name: retryName })).toBeDefined();
   });
 
   it("recovers an active install before failed history, polls receipts, and stops at terminal state", async () => {
@@ -303,12 +339,12 @@ describe("mounted lifecycle UI with API responses", () => {
     vi.useFakeTimers();
     await act(async () => { render(<BrandLifecycle me={owner} />); });
     expect(screen.getAllByText("active-1", { selector: "code" }).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Rollback" })).toBeNull();
+    expect(screen.queryByRole("button", { name: retryName })).toBeNull();
+    expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
     detail({ ...running, status: "ready", runtime_sync_status: "ready", receipts: [{ step: "sync_runtime", status: "ready" }] });
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
     expect(screen.getByText("sync_runtime")).toBeDefined();
-    expect(screen.getByRole("button", { name: "Rollback" })).toBeDefined();
+    expect(screen.getByRole("button", { name: rollbackName })).toBeDefined();
     const reads = requests.filter((r) => r.path === "/api/installs/active-1").length;
     await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
     expect(requests.filter((r) => r.path === "/api/installs/active-1")).toHaveLength(reads);
@@ -323,7 +359,7 @@ describe("mounted lifecycle UI with API responses", () => {
     render(<BrandLifecycle me={employee} />);
     await waitFor(() => expect(release).toBeTypeOf("function"));
     fireEvent.click(screen.getByRole("button", { name: /second.test/ }));
-    await screen.findByRole("button", { name: "Install" });
+    await screen.findByRole("button", { name: installName });
     await act(async () => { release(json({ brand_id: "brand-a", installs: [{ ...failed, error: "stale failure" }] })); });
     expect(screen.queryByText("failed-1", { selector: "code" })).toBeNull();
     expect(screen.queryByText("stale failure")).toBeNull();
@@ -341,9 +377,9 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   });
   detail({ ...failed, install_id: "recovery-1", revision_id: null, status: "rolled_back", runtime_sync_status: "ready", receipts: [{ step: "receipt", status: "ready" }] });
   render(<BrandLifecycle me={owner} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Recover (Owner)" }));
+  fireEvent.click(await screen.findByRole("button", { name: recoverName }));
   await waitFor(() => expect(requests.filter((r) => r.path === "/api/brands/brand-a/recover")).toHaveLength(1));
   await screen.findByText("recovery-1");
-  await screen.findByRole("button", { name: "Install" });
-  expect(screen.queryByRole("button", { name: "Recover (Owner)" })).toBeNull();
+  await screen.findByRole("button", { name: installName });
+  expect(screen.queryByRole("button", { name: recoverName })).toBeNull();
 });

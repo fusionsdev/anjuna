@@ -125,13 +125,14 @@ describe("BrandLifecycle SSR", () => {
   it("renders Thai labels with technical terms, receipts, checklist, and owner upgrade controls", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "owner", email: "owner@example.test", role: "owner" }} />);
     expect(html).toContain("สร้างแบรนด์");
-    expect(html).toContain("Domain");
-    expect(html).toContain("Keyword");
-    expect(html).toContain("Install");
-    expect(html).toContain("Rollback");
-    expect(html).toContain("Retry");
-    expect(html).toContain("Test sold");
-    expect(html).toContain("Upgrade-all");
+    expect(html).toContain("ชื่อแบรนด์ (Brand name)");
+    expect(html).toContain("โดเมน (Domain)");
+    expect(html).toContain("คีย์เวิร์ด (Keyword)");
+    expect(html).toContain("เวอร์ชันเทมเพลต (Sealed template version)");
+    expect(html).toContain("การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold");
+    expect(html).toContain("อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)");
+    expect(html).toContain("อัปเกรดแบบ canary ก่อน");
+    expect(html.match(/Create draft/g)).toHaveLength(1);
   });
 
   it("does not render upgrade-all for employees", () => {
@@ -148,7 +149,37 @@ describe("BrandLifecycle SSR", () => {
       leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
     />);
     expect(html).toContain("lead_id");
-    expect(html).toContain("Checklist evidence");
+    expect(html).toContain("หลักฐาน:");
+    expect(html).toContain("รายการตรวจ (Checklist)");
+  });
+
+  const detailHtml = (versions: { bundle_form_version: string | null; payload_version: string | null }, status: "draft" | "live" = "draft") => renderToStaticMarkup(<LifecycleDetail
+    me={{ id: "employee", email: "employee@example.test", role: "employee" }}
+    brand={{ brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status, current_revision_id: null, runtime_sync_status: "queued", ...versions }}
+    checklist={{}} leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
+  />);
+  const installButton = (html: string) => html.match(/<button[^>]*>ติดตั้ง \(Install\)<\/button>/)?.[0];
+  const note = "ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว";
+
+  it.each([
+    ["form version", { bundle_form_version: null, payload_version: "2026-01" }],
+    ["payload version", { bundle_form_version: "form@bundle-1", payload_version: null }],
+    ["both versions", { bundle_form_version: null, payload_version: null }],
+  ])("disables Install and explains why when the %s is missing", (_, versions) => {
+    const html = detailHtml(versions);
+    expect(installButton(html)).toContain("disabled");
+    expect(html).toContain(`<p class="muted small" role="note">${note}</p>`);
+  });
+
+  it("enables Install without a note when form and payload versions are both set", () => {
+    const html = detailHtml({ bundle_form_version: "form@bundle-1", payload_version: "2026-01" });
+    expect(installButton(html)).toBeDefined();
+    expect(installButton(html)).not.toContain("disabled");
+    expect(html).not.toContain(note);
+  });
+
+  it("does not show the Install note when Install is not offered", () => {
+    expect(detailHtml({ bundle_form_version: null, payload_version: null }, "live")).not.toContain(note);
   });
 });
 
@@ -159,8 +190,8 @@ describe("BrandLifecycle SSR", () => {
      install={{ install_id: "i", brand_id: "b", revision_id: null, status: "failed", runtime_sync_status: "failed", receipts: [], recovery_required: true }}
      checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}}
    />);
-   expect(html.includes("Recover (Owner)")).toBe(role === "owner");
-   expect(html).not.toContain(">Retry<");
+   expect(html.includes("กู้คืน (Recover, Owner)")).toBe(role === "owner");
+   expect(html).not.toContain(">ลองใหม่ (Retry)<");
  });
 
  it("splits Retry and Recover on recovery evidence, not on the retained brand status", () => {
