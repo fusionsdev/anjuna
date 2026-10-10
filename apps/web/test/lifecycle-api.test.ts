@@ -300,6 +300,79 @@ describe("truthful lifecycle BFF", () => {
     expect(attempts.results[1]!.install_id).not.toBe(attempts.results[0]!.install_id);
   });
 
+  it.each(["not_queued", "queued", "running"])("refuses two concurrent retries while compensation is %s without creating anything", async (compensationStatus) => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: `compensation-${compensationStatus.replaceAll("_", "-")}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(draft.status).toBe(201);
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
+    const installId = failed!.install_id;
+    await env.FACTORY.prepare("UPDATE brands SET status='installing' WHERE brand_id=?").bind(brand.brand_id).run();
+    await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?,'smoke','failed','{}',?)").bind(installId, new Date().toISOString()).run();
+    if (compensationStatus !== "not_queued") {
+      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'rollback',?,'system',?)")
+        .bind(`compensate-${installId}`, brand.brand_id, compensationStatus, new Date().toISOString()).run();
+    }
+    const snapshot = async () => ({
+      brand: await env.FACTORY.prepare("SELECT * FROM brands WHERE brand_id=?").bind(brand.brand_id).first(),
+      installs: (await env.FACTORY.prepare("SELECT * FROM installs WHERE brand_id=? ORDER BY install_id").bind(brand.brand_id).all()).results,
+      receipts: (await env.FACTORY.prepare("SELECT * FROM install_receipts ORDER BY id").all()).results,
+      audits: (await env.FACTORY.prepare("SELECT * FROM audit_log ORDER BY id").all()).results,
+    });
+    const before = await snapshot();
+    let dispatches = 0;
+    const factory = { async fetch() { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const retry = () => call(`/api/installs/${installId}/retry`, { cookie: employee, method: "POST", env: makeEnv({ FACTORY_WORKER: factory }) });
+    expect((await Promise.all([retry(), retry()])).map((response) => response.status)).toEqual([409, 409]);
+    expect(dispatches).toBe(0);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it.each([false, true])("dispatches only one of two concurrent retries (receipts=%s)", async (receipted) => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: `concurrent-retry-${receipted}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
+    if (receipted) {
+      for (const [step, status, output] of [["validate", "ok", '{"zone_id":"local-zone"}'], ["save_rollback", "ok", '{"previous_revision_id":null}'], ["render", "failed", '{"error":"missing template"}'], ["rollback", "ok", '{"compensation":"not_required"}']] as const) {
+        await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?,?,?,?,?)")
+          .bind(failed!.install_id, step, status, output, new Date().toISOString()).run();
+      }
+      await env.FACTORY.prepare("UPDATE installs SET rollback_record_json=? WHERE install_id=?").bind('{"previous_revision_id":null}', failed!.install_id).run();
+    }
+    const originalReceipts = (await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY id").bind(failed!.install_id).all()).results;
+    const dispatched: Array<{ install_id: string }> = [];
+    const receiptsAtDispatch: unknown[][] = [];
+    const factory = { async fetch(request: Request) {
+      const payload = await request.json() as { install_id: string };
+      dispatched.push(payload);
+      receiptsAtDispatch.push((await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=? ORDER BY id").bind(payload.install_id).all()).results);
+      return Response.json({ ok: true });
+    } } as unknown as Fetcher;
+    const retry = () => call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST", env: makeEnv({ FACTORY_WORKER: factory }) });
+    expect((await Promise.all([retry(), retry()])).map((response) => response.status).sort()).toEqual([201, 409]);
+    expect(dispatched).toHaveLength(1);
+    expect(receiptsAtDispatch).toEqual([receipted
+      ? originalReceipts.slice(0, 2).map(({ step, status, output_json }) => ({ step, status, output_json }))
+      : []]);
+    const retryId = dispatched[0]!.install_id;
+    const attempts = (await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).all()).results;
+    expect(attempts).toHaveLength(receipted ? 2 : 1);
+    const audits = (await env.FACTORY.prepare("SELECT action FROM audit_log WHERE entity_id=? AND action=?")
+      .bind(retryId, receipted ? "install.start" : "install.retry").all()).results;
+    expect(audits).toHaveLength(1);
+    if (receipted) {
+      expect((await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=? ORDER BY id").bind(retryId).all()).results)
+        .toEqual(originalReceipts.slice(0, 2).map(({ step, status, output_json }) => ({ step, status, output_json })));
+      expect((await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY id").bind(failed!.install_id).all()).results).toEqual(originalReceipts);
+      expect(await env.FACTORY.prepare("SELECT rollback_record_json FROM installs WHERE install_id=?").bind(retryId).first()).toEqual({ rollback_record_json: '{"previous_revision_id":null}' });
+      // A fast failed successor must not let a stale Retry create a second child.
+      await env.FACTORY.prepare("UPDATE installs SET status='failed' WHERE install_id=?").bind(retryId).run();
+      expect((await retry()).status).toBe(409);
+      expect(dispatched).toHaveLength(1);
+    }
+  });
+
   it.each([false, true])("blocks retry of an original install requiring recovery before mutation (terminal receipt=%s)", async (terminalReceipt) => {
     const draft = await post(employee, "/api/brands/drafts", { domain: `retained-retry-${terminalReceipt}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(draft.status).toBe(201);

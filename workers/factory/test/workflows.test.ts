@@ -15,6 +15,43 @@ beforeAll(() => applyD1Migrations(env.FACTORY, env.MIGRATIONS));
 afterEach(() => vi.unstubAllGlobals());
 const now = "2026-10-06T00:00:00.000Z";
 
+// Mirror of apps/web/src/server/retry-install.ts#queueInstallRetry. The factory test
+// must not reach across package boundaries into the web Worker's server code, so the D1
+// claim + successful-prefix copy is reproduced here. The production function is exercised
+// end-to-end through the retry route in apps/web/test/lifecycle-api.test.ts.
+async function queueInstallRetry(db: D1Database, sourceId: string): Promise<string | null> {
+  const terminal = await db.prepare("SELECT 1 FROM install_receipts WHERE install_id=? AND status IN ('failed','ok') LIMIT 1").bind(sourceId).first();
+  const at = new Date().toISOString();
+  const digest = terminal ? await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sourceId)) : null;
+  const retryId = digest
+    ? `ins_retry_${Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32)}`
+    : sourceId;
+  const eligible = `status='failed'
+    AND EXISTS (SELECT 1 FROM brands b WHERE b.brand_id=installs.brand_id
+      AND b.status IN ('draft','live','failed') AND b.current_revision_id IS installs.from_revision_id)
+    AND NOT EXISTS (SELECT 1 FROM installs active WHERE active.brand_id=installs.brand_id AND active.status IN ('queued','running'))`;
+  const claim = terminal
+    ? db.prepare(`INSERT OR IGNORE INTO installs
+        (install_id,brand_id,kind,status,from_revision_id,to_revision_id,rollback_record_json,started_by,started_role,started_at)
+        SELECT ?,brand_id,kind,'queued',from_revision_id,to_revision_id,rollback_record_json,started_by,started_role,?
+        FROM installs WHERE install_id=? AND ${eligible}`)
+      .bind(retryId, at, sourceId)
+    : db.prepare(`UPDATE installs SET status='queued',error=NULL,finished_at=NULL WHERE install_id=? AND ${eligible}`)
+      .bind(sourceId);
+  const statements: D1PreparedStatement[] = [claim];
+  if (terminal) {
+    statements.push(db.prepare(`INSERT OR IGNORE INTO install_receipts (install_id,step,status,output_json,created_at)
+      SELECT ?,step,status,output_json,created_at FROM install_receipts
+      WHERE install_id=? AND status='ok' AND step!='rollback'
+        AND id < COALESCE((SELECT MIN(id) FROM install_receipts WHERE install_id=? AND status='failed'),9223372036854775807)
+        AND EXISTS (SELECT 1 FROM installs WHERE install_id=?)`)
+      .bind(retryId, sourceId, sourceId, retryId));
+  }
+  const [claimed] = await db.batch(statements);
+  if (claimed!.meta.changes !== 1) return null;
+  return retryId;
+}
+
 // Runs production run() methods against local D1/R2. Every network request is
 // intercepted, and the strict core wire schema is checked at the boundary.
 function steps() {
@@ -167,6 +204,35 @@ function runInstall(f: Awaited<ReturnType<typeof fixture>>, s = steps()) {
 }
 
 describe("production lifecycle Workflow.run integration (local-only)", () => {
+  it("resumes a failed-receipt retry at render, preserving validation and rollback evidence", async () => {
+    const f = await fixture();
+    const templateKey = `${f.id}/site.zip`;
+    const template = await (await env.ARTIFACTS.get(templateKey))!.arrayBuffer();
+    await env.ARTIFACTS.delete(templateKey);
+    await runInstall(f);
+    expect(await f.installRow()).toEqual({ status: "failed" });
+    expect(f.compensation).toHaveLength(0);
+    const receipts = (await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY id").bind(f.install).all()).results;
+    expect(receipts.map(({ step, status }) => ({ step, status }))).toEqual([
+      { step: "validate", status: "ok" }, { step: "save_rollback", status: "ok" },
+      { step: "render", status: "failed" }, { step: "rollback", status: "ok" },
+    ]);
+    const retryId = await queueInstallRetry(env.FACTORY, f.install);
+    expect(retryId).not.toBeNull();
+    await env.ARTIFACTS.put(templateKey, template);
+    // Validation would now fail if the retry re-executed the successful prefix.
+    f.bindings.CORE_SERVICE_NAME = "";
+    f.network.mockClear();
+    await runInstall({ ...f, params: { ...f.params, install_id: retryId! } });
+    expect(await env.FACTORY.prepare("SELECT status,rollback_record_json FROM installs WHERE install_id=?").bind(retryId).first())
+      .toEqual({ status: "ready", rollback_record_json: '{"previous_revision_id":null}' });
+    expect(f.network.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith("/zones"))).toBe(false);
+    expect(f.uploads).toHaveLength(1);
+    expect(f.compensation).toHaveLength(0);
+    expect((await env.FACTORY.prepare("SELECT * FROM install_receipts WHERE install_id=? ORDER BY id").bind(f.install).all()).results).toEqual(receipts);
+    expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+  });
+
   const smokeCalls = (f: Awaited<ReturnType<typeof fixture>>) => f.network.mock.calls.filter(([url]) => String(url).endsWith(".example/"));
   const smokeReceipt = (f: Awaited<ReturnType<typeof fixture>>) => env.FACTORY.prepare(
     "SELECT status,output_json FROM install_receipts WHERE install_id=? AND step='smoke'",
@@ -389,6 +455,33 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     await runInstall(f);
     expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(retry).first()).toEqual({ status: "ready" });
     expect(f.runtime()).toMatchObject({ paused: false, applied_revision_id: f.revision });
+  });
+
+  it("keeps compensation running when two retries arrive before dispatch and during rollback", async () => {
+    const f = await fixture();
+    f.settings.smokeFails = true;
+    const retry = () => queueInstallRetry(env.FACTORY, f.install);
+    const s = steps();
+    s.hooks.before = async (name) => {
+      if (name !== "rollback") return;
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await f.brandRow()).toMatchObject({ status: "installing" });
+      expect(f.compensation).toHaveLength(0);
+      expect(await Promise.all([retry(), retry()])).toEqual([null, null]);
+      expect((await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(f.brand).all()).results).toHaveLength(1);
+    };
+    await runInstall(f, s);
+    expect(f.compensation).toHaveLength(1);
+    const rollback = steps();
+    rollback.hooks.before = async (name) => {
+      if (name !== "attach_domains") return;
+      expect(await Promise.all([retry(), retry()])).toEqual([null, null]);
+      expect((await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(f.brand).all()).results).toHaveLength(2);
+    };
+    await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(f.compensation[0]!), rollback.step);
+    expect(await f.installRow()).toEqual({ status: "rolled_back" });
+    expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
+    expect(f.runtime()).toMatchObject({ paused: true, applied_revision_id: null });
   });
 
   it("still compensates on replay when every mutation step is cached", async () => {

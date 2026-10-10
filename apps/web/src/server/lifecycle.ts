@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
 import { authorizePanel } from "./panel-roles.js";
+import { queueInstallRetry } from "./retry-install.js";
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), {
   status, headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -352,8 +353,8 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     if (!row) return json(404, { error: "not_found", resource: "install" });
     if (row.status !== "failed") return json(409, { error: "conflict", message: "Only failed installs can be retried" });
     const recovery = await env.FACTORY.prepare(`SELECT 1 AS found FROM installs WHERE install_id=? AND (
-      (json_valid(error) AND json_extract(error,'$.recovery_required')=1)
-      OR (json_valid(rollback_record_json) AND json_extract(rollback_record_json,'$.recovery_of') IS NOT NULL)
+      (CASE WHEN json_valid(error) THEN json_extract(error,'$.recovery_required')=1 ELSE 0 END)
+      OR (CASE WHEN json_valid(rollback_record_json) THEN json_extract(rollback_record_json,'$.recovery_of') IS NOT NULL ELSE 0 END)
     )`).bind(row.install_id).first();
     if (recovery) {
       if (!authorizePanel("recoverBrand", ctx.actor_role).ok) return forbidden(ctx.actor_role);
@@ -364,18 +365,10 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     if (!authorizePanel(kindAction, ctx.actor_role).ok) return forbidden(ctx.actor_role);
     const active = await activeLifecycleOperation(env.FACTORY, row.brand_id);
     if (active) return json(409, { error: "conflict", message: `Brand already has an active ${active.kind} (${active.install_id})` });
-    const terminal = await env.FACTORY.prepare("SELECT 1 AS found FROM install_receipts WHERE install_id=?1 AND status IN ('failed','ok') LIMIT 1").bind(row.install_id).first();
-    let installId = row.install_id;
-    if (terminal) {
-      installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
-      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at) VALUES (?1,?2,?3,'queued',?4,?5,?6,?7,?8)").bind(installId, row.brand_id, row.kind, row.from_revision_id, row.to_revision_id, row.started_by, row.started_role, new Date().toISOString()).run();
-      await audit(env.FACTORY, ctx, "install.start", "install", installId, { brand_id: row.brand_id, retry_of: row.install_id, kind: row.kind });
-    } else {
-      await env.FACTORY.batch([
-        env.FACTORY.prepare("UPDATE installs SET status='queued',error=NULL,finished_at=NULL WHERE install_id=?1").bind(installId),
-        env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES (?1,?2,'install.retry','install',?3,?4,?5)").bind(ctx.actor_id, ctx.actor_role, installId, JSON.stringify({ retry_of: row.install_id, kind: row.kind }), new Date().toISOString()),
-      ]);
-    }
+    // The atomic claim also checks the brand lock: failure is persisted before
+    // compensation is queued, so an active-install query alone misses that gap.
+    const installId = await queueInstallRetry(env.FACTORY, row.install_id, ctx);
+    if (!installId) return json(409, { error: "conflict", message: "Compensation or another lifecycle operation is unfinished, this attempt was already retried, or the brand revision changed" });
     const payload = row.kind === "rollback"
       ? { install_id: installId, brand_id: row.brand_id, to_revision_id: row.to_revision_id, started_by: row.started_by, started_role: row.started_role }
       : { install_id: installId, brand_id: row.brand_id, revision_id: row.to_revision_id, started_by: row.started_by, started_role: row.started_role };
