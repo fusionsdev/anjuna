@@ -1,6 +1,9 @@
 import { LatestUpgradeResponse, UpgradeAllCommand, upgradeInstallId, upgradeRevisionId, type UpgradeAllOutcome } from "@anjuna/contracts";
 
-export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeResponse> {
+// The workflow waits at most about 10 minutes (60 polls of 10 s) for the canary, so 15 minutes covers a healthy run.
+export const MAX_WAIT_FOR_INSTALL_MS = 15 * 60_000;
+
+export async function latestUpgrade(db: D1Database, now: Date = new Date()): Promise<LatestUpgradeResponse> {
   const audit = await db.prepare("SELECT id,actor_id,after_json,created_at FROM audit_log WHERE action='upgrade.start' ORDER BY id DESC LIMIT 1")
     .first<{ id: number; actor_id: string; after_json: string; created_at: string }>();
   if (!audit) return { upgrade: null };
@@ -37,6 +40,9 @@ export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeRespon
   const gate = installs.find((row) => row.install_id === canaryId);
   const canaryStopped = gate?.status === "failed" || gate?.status === "rolled_back";
   const canaryPending = !gate;
+  // After the cap a brand with no install row is not waiting any more: the workflow stopped or failed.
+  const acceptedMs = Date.parse(audit.created_at);
+  const capExpired = Number.isFinite(acceptedMs) && now.getTime() - acceptedMs >= MAX_WAIT_FOR_INSTALL_MS;
   const outcomes = brands.map((brand, index): UpgradeAllOutcome => {
     const row = byId.get(ids[index]!);
     const selected = selectedRevisions.has(revisionIds[index]!);
@@ -44,13 +50,13 @@ export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeRespon
     // No install row yet: a brand the workflow selected is queued until the bulk step writes its row,
     // also after the canary is ready. Before the canary has an install row, create_revisions may not
     // have run yet, so live source brands read queued. A brand with no revision row was never selected.
-    const waiting = !row && !canaryStopped && (selected || (canaryPending && eligible));
+    const waiting = !row && !canaryStopped && !capExpired && (selected || (canaryPending && eligible));
     return {
       brand_id: brand.brand_id, domain: brand.domain, is_canary: brand.brand_id === command.canary_brand_id,
       install_id: row?.install_id ?? null,
       retry_of: row && row.install_id !== row.root ? row.root : null,
       status: row?.status ?? (waiting ? "queued" : "skipped"),
-      error: row?.error ?? (row ? null : waiting ? "Waiting for an install record" : canaryStopped && selected ? "Canary stopped; no install recorded" : "No install recorded for this command"),
+      error: row?.error ?? (row ? null : waiting ? "Waiting for an install record" : canaryStopped && selected ? "Canary stopped; no install recorded" : capExpired && (selected || (canaryPending && eligible)) ? "No install recorded within 15 minutes; the upgrade workflow stopped or failed" : "No install recorded for this command"),
     };
   });
   return LatestUpgradeResponse.parse({ upgrade: { audit_id: audit.id, accepted_at: audit.created_at, command, outcomes } });

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { LatestUpgradeResponse, upgradeInstallId, upgradeRevisionId, type CoreListError, type UpgradeAllCommand } from "@anjuna/contracts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { latestUpgrade } from "../src/server/upgrade-outcomes";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
@@ -29,12 +30,16 @@ beforeEach(async () => {
   owner = await sessions.owner(); employee = await sessions.employee();
 });
 
-async function accepted(actor = "owner", payload = command) {
-  await env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES (?1,'owner','upgrade.start','upgrade','command',?2,'2026-10-09T00:00:00Z')")
-    .bind(actor, JSON.stringify(payload)).run();
+// Route tests accept "now" so the 15 minute no-install cap never trips; cap tests pin ACCEPTED_AT and inject a clock.
+const ACCEPTED_AT = "2026-10-09T00:00:00Z";
+const minutesAfter = (minutes: number) => new Date(Date.parse(ACCEPTED_AT) + minutes * 60_000);
+
+async function accepted(actor = "owner", payload = command, createdAt = new Date().toISOString()) {
+  await env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES (?1,'owner','upgrade.start','upgrade','command',?2,?3)")
+    .bind(actor, JSON.stringify(payload), createdAt).run();
 }
 
-async function seed() {
+async function seed(acceptedAt?: string) {
   await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES ('tv-1','tpl',1,'sha','template','draft','owner','2026-10-01T00:00:00Z')"),
@@ -53,7 +58,7 @@ async function seed() {
     await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,is_canary,status,started_by,started_role,started_at,error) VALUES (?1,?2,'upgrade',?3,?4,'owner','owner','2026-10-09T00:00:00Z',?5)")
       .bind(ids[brand], brand, brand === "canary" ? 1 : 0, status, brand === "failed" ? "Smoke check failed" : null).run();
   }
-  await accepted();
+  await accepted("owner", command, acceptedAt);
 }
 
 // What the workflow's create_revisions step persists for every selected brand before the canary starts.
@@ -93,6 +98,48 @@ describe("latest upgrade-all API", () => {
   it("returns 403 to Employee", async () => {
     await seed();
     expect((await call("/api/upgrade-all/latest", { cookie: employee })).status).toBe(403);
+  });
+
+  describe("15 minute cap on waiting without an install row", () => {
+    const outcome = async (minutes: number, brand: string) => {
+      const { upgrade } = LatestUpgradeResponse.parse(await latestUpgrade(env.FACTORY, minutesAfter(minutes)));
+      return upgrade!.outcomes.find((row) => row.brand_id === brand)!;
+    };
+    const STOPPED = "No install recorded within 15 minutes; the upgrade workflow stopped or failed";
+
+    it("keeps a selected brand queued under 15 minutes and reads skipped from 15 minutes on", async () => {
+      await seed(ACCEPTED_AT);
+      await selectBrands("canary", "ready", "failed", "rolled", "waiting");
+      await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?1").bind(ids.canary).run();
+      expect(await outcome(14.9, "waiting")).toMatchObject({ status: "queued", error: "Waiting for an install record" });
+      expect(await outcome(15, "waiting")).toMatchObject({ status: "skipped", install_id: null, error: STOPPED });
+      expect(await outcome(60, "waiting")).toMatchObject({ status: "skipped", error: STOPPED });
+    });
+
+    it("applies the same cap to the pre-selection fallback and to the canary itself", async () => {
+      await seed(ACCEPTED_AT);
+      await env.FACTORY.prepare("DELETE FROM installs WHERE install_id=?1").bind(ids.canary).run();
+      expect(await outcome(14.9, "waiting")).toMatchObject({ status: "queued" });
+      expect(await outcome(14.9, "canary")).toMatchObject({ status: "queued" });
+      expect(await outcome(15, "waiting")).toMatchObject({ status: "skipped", error: STOPPED });
+      expect(await outcome(15, "canary")).toMatchObject({ status: "skipped", install_id: null, error: STOPPED });
+    });
+
+    it("keeps the status of a brand that has an install row past 15 minutes", async () => {
+      await seed(ACCEPTED_AT);
+      await selectBrands("canary", "ready", "failed", "rolled", "waiting");
+      expect(await outcome(120, "canary")).toMatchObject({ status: "running", error: null });
+      expect(await outcome(120, "ready")).toMatchObject({ status: "ready" });
+      expect(await outcome(120, "failed")).toMatchObject({ status: "failed", error: "Smoke check failed" });
+    });
+
+    it("keeps its own error when the canary stopped", async () => {
+      await seed(ACCEPTED_AT);
+      await selectBrands("canary", "ready", "failed", "rolled", "waiting");
+      await env.FACTORY.prepare("UPDATE installs SET status='failed' WHERE install_id=?1").bind(ids.canary).run();
+      expect(await outcome(5, "waiting")).toMatchObject({ status: "skipped", error: "Canary stopped; no install recorded" });
+      expect(await outcome(60, "waiting")).toMatchObject({ status: "skipped", error: "Canary stopped; no install recorded" });
+    });
   });
 
   // The workflow gates the bulk step on the original canary install row only; a retry of a failed
