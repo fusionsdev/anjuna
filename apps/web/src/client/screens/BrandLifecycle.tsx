@@ -255,7 +255,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   }
   async function retry() {
     if (!selected || !install) return;
-    await dispatchOperation(() => api.retryInstall(install.install_id), install.install_id);
+    await dispatchOperation(async () => { const accepted = await api.retryInstall(install.install_id); setUpgradeRefresh((value) => value + 1); return accepted; }, install.install_id);
   }
   async function recover() {
     if (!selected) return;

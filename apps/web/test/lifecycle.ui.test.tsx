@@ -391,6 +391,35 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("button", { name: /Runtime config/ })).toBeNull();
   });
 
+  it("reloads terminal upgrade outcomes after an install retry is accepted", async () => {
+    runtimeAvailable = false;
+    lifecycleRows = [{ ...brand, status: "draft", runtime_sync_status: "queued" }];
+    detail(failed);
+    const outcomeRow = (install_id: string, status: string, retry_of: string | null) => ({
+      brand_id: "brand-a", domain: "renderable.test", is_canary: true, install_id, retry_of, status, error: status === "failed" ? "Smoke check failed" : null,
+    });
+    const upgradeBody = (outcomes: unknown[]) => ({ upgrade: {
+      audit_id: 1, accepted_at: "2026-10-09T00:00:00Z",
+      command: { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "brand-a", started_by: "owner", started_role: "owner" },
+      outcomes,
+    } });
+    let retried = false;
+    routes.set("GET /api/upgrade-all/latest", () => json(upgradeBody([retried ? outcomeRow("retry-install", "ready", "failed-1") : outcomeRow("failed-1", "failed", null)])));
+    routes.set("POST /api/brands/brand-a/install", () => json({ error: "factory_dispatch_failed", install_id: failed.install_id, message: "Factory Worker binding is missing" }, 502));
+    routes.set("POST /api/installs/failed-1/retry", () => {
+      retried = true;
+      detail({ ...failed, status: "running", runtime_sync_status: "running" });
+      return json({ install_id: failed.install_id, brand_id: "brand-a", status: "running" }, 201);
+    });
+    render(<BrandLifecycle me={owner} />);
+    expect(await screen.findByText("Smoke check failed")).toBeDefined();
+    fireEvent.click(await screen.findByRole("button", { name: installName }));
+    fireEvent.click(await screen.findByRole("button", { name: retryName }));
+    await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/installs/failed-1/retry")).toBe(true));
+    expect(await screen.findByText("retry-install", { selector: "code" })).toBeDefined();
+    expect(screen.queryByText("Smoke check failed")).toBeNull();
+  });
+
   it("surfaces the failed dispatch ID and error and retries that exact install", async () => {
     runtimeAvailable = false;
     lifecycleRows = [{ ...brand, status: "draft", runtime_sync_status: "queued" }];
