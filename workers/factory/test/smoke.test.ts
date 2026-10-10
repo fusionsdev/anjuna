@@ -54,3 +54,65 @@ describe("smoke hostnames", () => {
     expect(urls).toEqual(["https://withulaon.com/", "https://www.withulaon.com/"]);
   });
 });
+
+describe("smoke for a paused brand", () => {
+  const pausePage = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Temporarily unavailable</title><h1>Temporarily unavailable</h1><p>Please try again later.</p></html>';
+  const pausedApex = () => new Response(pausePage, { status: 503, headers: { "content-type": "text/html; charset=utf-8", "retry-after": "300" } });
+  const landing = () => new Response('<h1><span data-kw>Quick Loan</span></h1><form data-cta action="/go"></form>', { status: 200 });
+  const wwwRedirect = () => new Response(null, { status: 301, headers: { Location: "https://brand.example/" } });
+  const stub = (apex: () => Response, www: () => Response = wwwRedirect) =>
+    vi.stubGlobal("fetch", vi.fn(async (input: string | Request | URL) => (String(input).startsWith("https://www.") ? www() : apex())));
+
+  it("passes when the apex answers 503 with the pause page and www redirects to the apex", async () => {
+    stub(pausedApex);
+    await expect(smokeBrand(["brand.example", "www.brand.example"], { paused: true })).resolves.toEqual({ apex_status: 503, www_status: 301 });
+  });
+
+  it("passes for a paused subdomain brand with a single hostname", async () => {
+    stub(pausedApex);
+    await expect(smokeBrand(["demo05.aduplift.ai"], { paused: true })).resolves.toEqual({ apex_status: 503 });
+  });
+
+  it("fails without retry when a paused brand serves the live landing page", async () => {
+    stub(landing);
+    const error = await smokeBrand(["brand.example", "www.brand.example"], { paused: true }).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect(String(error)).toContain("apex returned 200 (expected 503");
+  });
+
+  it.each(["anjuna", "Anjuna", "AURUM", "aurum"])("fails without retry when the pause page contains %s", async (word) => {
+    stub(() => new Response(`${pausePage}<!-- ${word} -->`, { status: 503 }));
+    const error = await smokeBrand(["brand.example", "www.brand.example"], { paused: true }).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect(String(error)).toContain("forbidden brand string");
+  });
+
+  it("fails without retry when the 503 is not the pause page", async () => {
+    stub(() => new Response("upstream error", { status: 503 }));
+    await expect(smokeBrand(["brand.example", "www.brand.example"], { paused: true })).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it("still requires the www 301 to the apex", async () => {
+    stub(pausedApex, () => new Response(pausePage, { status: 503 }));
+    const wrongStatus = await smokeBrand(["brand.example", "www.brand.example"], { paused: true }).catch((err: unknown) => err);
+    expect(wrongStatus).toBeInstanceOf(NonRetryableError);
+    expect(String(wrongStatus)).toContain("www returned 503 (expected 301");
+    stub(pausedApex, () => new Response(null, { status: 301, headers: { Location: "https://elsewhere.example/" } }));
+    await expect(smokeBrand(["brand.example", "www.brand.example"], { paused: true })).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it("keeps retrying edge 525 for a paused brand", async () => {
+    stub(() => new Response("edge unavailable", { status: 525 }));
+    const error = await smokeBrand(["brand.example", "www.brand.example"], { paused: true }).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(NonRetryableError);
+  });
+
+  it("keeps failing a live brand that answers 503, with or without the option", async () => {
+    stub(pausedApex);
+    const live = await smokeBrand(["brand.example", "www.brand.example"]).catch((err: unknown) => err);
+    expect(live).toBeInstanceOf(NonRetryableError);
+    expect(String(live)).toContain("apex returned 503 (expected 200");
+    await expect(smokeBrand(["brand.example", "www.brand.example"], { paused: false })).rejects.toBeInstanceOf(NonRetryableError);
+  });
+});
