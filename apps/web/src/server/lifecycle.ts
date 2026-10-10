@@ -5,6 +5,8 @@ import {
   RuntimeListResponse,
   PrepopBase,
   cleanKeyword,
+  BrandName,
+  isBrandClean,
   LifecycleBrandSummary,
   SealedTemplatesResponse,
   adminContextToHeaders,
@@ -29,6 +31,7 @@ const Artifact = z.strictObject({
 const Draft = z.strictObject({
   domain: z.string().min(1).max(253).transform((value) => value.toLowerCase().replace(/\.$/, "")).refine((value) => !value.startsWith("www."), "Use the apex domain, not a www hostname").refine((value) => /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/.test(value), "Must be a valid apex domain"),
   keyword_default: z.string().min(1).max(60).transform(cleanKeyword).refine((value) => Boolean(value), "Keyword is empty after normalization"), template_version_id: Id,
+  name: BrandName.optional(),
 });
 const Upgrade = z.strictObject({
   from_template_version_id: Id, to_template_version_id: Id, form_artifact_id: Id,
@@ -109,6 +112,11 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   const parsed = Draft.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
   const { domain, keyword_default, template_version_id } = parsed.data;
+  const name = parsed.data.name ?? domain.split(".")[0]!.replaceAll("-", " ");
+  if (parsed.data.name === undefined && (!isBrandClean(name) || name.length > 60)) {
+    const message = isBrandClean(name) ? "ชื่อแบรนด์ที่สร้างจากโดเมนยาวเกิน 60 ตัวอักษร กรุณาระบุชื่อแบรนด์" : "ชื่อแบรนด์มีคำที่ไม่อนุญาต";
+    return json(422, { error: "invalid", issues: [{ code: "custom", path: ["name"], message }] });
+  }
   const defaults = tenantDefaults(env);
   if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
   const template = await env.FACTORY.prepare("SELECT template_version_id FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'").bind(template_version_id).first();
@@ -122,14 +130,14 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   const now = new Date().toISOString();
   const config = JSON.stringify({ keyword_default });
   try { await env.FACTORY.batch([
-    env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, domain.split(".")[0]!.replaceAll("-", " "), defaults.account, domain, keyword_default, ctx.actor_id, now),
+    env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, name, defaults.account, domain, keyword_default, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,1,?3,?4,?5,?6,?7)").bind(revisionId, brandId, template_version_id, artifact.form_artifact_id, config, ctx.actor_id, now),
-    env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES (?1,?2,'brand.create','brand',?3,?4,?5)").bind(ctx.actor_id, ctx.actor_role, brandId, JSON.stringify({ domain, template_version_id, form_artifact_id: artifact.form_artifact_id }), now),
+    env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES (?1,?2,'brand.create','brand',?3,?4,?5)").bind(ctx.actor_id, ctx.actor_role, brandId, JSON.stringify({ domain, name, template_version_id, form_artifact_id: artifact.form_artifact_id }), now),
   ]); } catch (error) {
     if (String(error).toLowerCase().includes("unique") || String(error).toLowerCase().includes("domain")) return json(409, { error: "conflict", message: "Domain is already registered" });
     throw error;
   }
-  return json(201, { brand: { brand_id: brandId, name: domain.split(".")[0], domain, keyword_default, status: "draft" }, revision: { revision_id: revisionId, revision: 1, template_version_id, form_artifact_id: artifact.form_artifact_id } });
+  return json(201, { brand: { brand_id: brandId, name, domain, keyword_default, status: "draft" }, revision: { revision_id: revisionId, revision: 1, template_version_id, form_artifact_id: artifact.form_artifact_id } });
 }
 
 async function startInstall(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
@@ -275,7 +283,7 @@ async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string
 function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never): LifecycleBrandSummary {
   const state = runtime.get(row.brand_id);
   return LifecycleBrandSummary.parse({
-    brand_id: row.brand_id, account: row.account,
+    brand_id: row.brand_id, name: typeof row.name === "string" && row.name ? row.name : undefined, account: row.account,
     hostnames: state?.hostnames ?? [row.domain, `www.${row.domain}`], status: row.status,
     current_revision_id: row.current_revision_id,
     bundle_form_version: state?.bundle_form_version ?? row.bundle_form_version ?? null,
@@ -285,7 +293,7 @@ function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runti
 }
 
 async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<LifecycleBrandSummary[]> {
-  const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=b.current_revision_id LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
+  const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1)) LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
   const account = env.DEFAULT_ACCOUNT ?? results[0]?.account;
   const runtime = account ? await runtimeBrands(env, ctx, account) : new Map();
   const factoryIds = new Set(results.map((row) => row.brand_id));

@@ -88,7 +88,7 @@ function steps() {
 }
 function event<T>(payload: T) { return { payload } as WorkflowEvent<T>; }
 
-async function fixture(live = false) {
+async function fixture(live = false, subdomain = false) {
   const id = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
   const brand = `brand_${id}`;
   const revision = `rev-${id}`;
@@ -96,11 +96,12 @@ async function fixture(live = false) {
   const template = `template-${id}`;
   const version = `tv-${id}`;
   const artifact = `form-${id}`;
+  const domain = subdomain ? `${id}.sub.example` : `${id}.example`;
   const db = env.FACTORY;
   await db.prepare("INSERT INTO templates (template_id,name,framework,created_by,created_at) VALUES (?,?,'react_spa','owner',?)").bind(template, template, now).run();
   await db.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_at,created_by,created_at) VALUES (?,?,1,?,?,'sealed',?,'owner',?)").bind(version, template, id, `${id}/site.zip`, now, now).run();
   await db.prepare("INSERT INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,created_at,payload_version,bundle_form_version) VALUES (?,?,?,?,?,'2026-01','form@old')").bind(artifact, id, `${id}/form.zip`, id, now).run();
-  await db.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,current_revision_id,created_by,created_at,updated_at) VALUES (?,?,'test',?,'Quick Loan',?,?,'owner',?,?)").bind(brand, "Example", `${id}.example`, live ? "live" : "draft", live ? revision : null, now, now).run();
+  await db.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,current_revision_id,created_by,created_at,updated_at) VALUES (?,?,'test',?,'Quick Loan',?,?,'owner',?,?)").bind(brand, "Example", domain, live ? "live" : "draft", live ? revision : null, now, now).run();
   await db.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,worker_version_id,created_by,created_at) VALUES (?,?,1,?,?,'{}',?,'owner',?)").bind(revision, brand, version, artifact, live ? "worker-old" : null, now).run();
   await db.prepare("INSERT INTO installs (install_id,brand_id,kind,from_revision_id,to_revision_id,status,started_by,started_at) VALUES (?,?,'install',?,?,'queued','owner',?)").bind(install, brand, live ? revision : null, revision, now).run();
   const enc = new TextEncoder();
@@ -114,6 +115,7 @@ async function fixture(live = false) {
   } : { state: "absent", brand_id: brand, account: "test", credential_account_match: true };
   const applied: Array<ReturnType<typeof ApplyRuntimeRequest.parse>> = [];
   const settings = { smokeFails: false, uploadFails: false, dispatchFails: false, coreFails: false,
+    zoneName: subdomain ? "sub.example" : domain,
     apex: [] as Array<Response | Error>, www: [] as Array<Response | Error> };
   const core = { async fetch(request: Request) {
     const input = await request.json() as Record<string, unknown>;
@@ -135,20 +137,25 @@ async function fixture(live = false) {
   } };
   const compensation: RollbackParams[] = [];
   const uploads: Array<{ bindings: Array<Record<string, unknown>>; assets?: { jwt: string; config?: Record<string, unknown> } }> = [];
-  const domains = new Set(live ? ["local-domain"] : []);
+  // Custom Domains attached to the brand script, keyed by hostname so a www hostname left
+  // behind by an older install is distinguishable from the bare brand domain.
+  const domains = new Set<string>(live ? [domain] : []);
   const network = vi.fn(async (input: string | Request | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
     const ok = (result: unknown) => Response.json({ success: true, result });
-    if (url.hostname === `${id}.example` || url.hostname === `www.${id}.example`) {
-      const apex = url.hostname === `${id}.example`;
+    if (url.hostname === domain || url.hostname === `www.${domain}`) {
+      const apex = url.hostname === domain;
       const response = (apex ? settings.apex : settings.www).shift();
       if (response instanceof Error) throw response;
       return response ?? (apex
         ? new Response('<h1><span data-kw>Quick Loan</span></h1><form data-cta action="/go"></form>', { status: settings.smokeFails ? 500 : runtime.state === "applied" && runtime.paused ? 503 : 200 })
-        : new Response(null, { status: 301, headers: { Location: `https://${id}.example/` } }));
+        : new Response(null, { status: 301, headers: { Location: `https://${domain}/` } }));
     }
     if (url.hostname !== "api.cloudflare.com") throw new Error(`Unexpected external request: ${url}`);
-    if (url.pathname.endsWith("/zones")) return ok([{ id: "zone-local", status: "active" }]);
+    if (url.pathname.endsWith("/zones")) {
+      const queried = url.searchParams.get("name");
+      return queried === settings.zoneName ? ok([{ id: "zone-local", status: "active", name: queried ?? "" }]) : ok([]);
+    }
     if (url.pathname.endsWith("/dns_records")) return ok([]);
     if (url.pathname.endsWith(`/scripts/brand-${brand}/assets-upload-session`)) return ok({ jwt: "local-session", buckets: [] });
     if (url.pathname.endsWith(`/scripts/brand-${brand}`)) {
@@ -162,11 +169,16 @@ async function fixture(live = false) {
       return ok(init?.method === "POST" ? deployment : { deployments: [deployment] });
     }
     if (url.pathname.endsWith("/workers/domains")) {
-      if (init?.method === "PUT") { domains.add("local-domain"); return ok({ id: "local-domain" }); }
-      return ok([...domains].map((id) => ({ id })));
+      if (init?.method === "PUT") {
+        const { hostname } = JSON.parse(String(init.body)) as { hostname: string };
+        domains.add(hostname);
+        return ok({ id: `local-${hostname}`, hostname });
+      }
+      return ok([...domains].map((hostname) => ({ id: `local-${hostname}`, hostname })));
     }
-    if (url.pathname.endsWith("/workers/domains/local-domain") && init?.method === "DELETE") {
-      domains.delete("local-domain");
+    const domainId = /\/workers\/domains\/(.+)$/.exec(url.pathname);
+    if (domainId && init?.method === "DELETE") {
+      domains.delete(domainId[1]!.replace(/^local-/, ""));
       return new Response(null, { status: 204 });
     }
     throw new Error(`Unexpected CF request: ${url}`);
@@ -290,6 +302,58 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     await runInstall(f);
     expect(f.uploads[0]!.assets).toEqual({ jwt: "local-session", config: { html_handling: "none", run_worker_first: true } });
     expect(f.uploads[0]!.bindings).toContainEqual({ type: "assets", name: "ASSETS" });
+  });
+
+  it("attaches and smokes the apex plus www for a brand on its own zone", async () => {
+    const f = await fixture();
+    await runInstall(f);
+    expect(await f.installRow()).toEqual({ status: "ready" });
+    const attached = f.network.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/workers/domains") && init?.method === "PUT")
+      .map(([, init]) => (JSON.parse(String(init!.body)) as { hostname: string }).hostname);
+    expect(attached).toEqual([`${f.id}.example`, `www.${f.id}.example`]);
+    expect(f.applied[0]!.hostnames).toEqual([`${f.id}.example`, `www.${f.id}.example`]);
+    expect(JSON.parse((await smokeReceipt(f))!.output_json!)).toEqual({ apex_status: 200, www_status: 301 });
+  });
+
+  it("attaches and smokes only the bare domain for a subdomain-zone brand and never touches www", async () => {
+    const f = await fixture(false, true);
+    await runInstall(f);
+    expect(await f.installRow()).toEqual({ status: "ready" });
+    const attached = f.network.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/workers/domains") && init?.method === "PUT")
+      .map(([, init]) => (JSON.parse(String(init!.body)) as { hostname: string }).hostname);
+    expect(attached).toEqual([`${f.id}.sub.example`]);
+    expect(f.network.mock.calls.some(([url]) => String(url).includes(`www.${f.id}.sub.example`))).toBe(false);
+    const dnsNames = f.network.mock.calls
+      .filter(([url]) => String(url).includes("/dns_records"))
+      .map(([url]) => new URL(String(url)).searchParams.get("name"));
+    expect(dnsNames).toEqual([`${f.id}.sub.example`]);
+    expect(f.applied[0]!.hostnames).toEqual([`${f.id}.sub.example`]);
+    expect(smokeCalls(f)).toHaveLength(1);
+    expect(JSON.parse((await smokeReceipt(f))!.output_json!)).toEqual({ apex_status: 200 });
+    const receipt = await env.FACTORY.prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step='attach_domains'")
+      .bind(f.install).first<{ output_json: string }>();
+    expect(JSON.parse(receipt!.output_json)).toEqual({ apex_domain_id: `local-${f.id}.sub.example` });
+  });
+
+  it("rolls back an older subdomain install whose receipt still carries a www domain", async () => {
+    const f = await fixture(false, true);
+    f.settings.smokeFails = true;
+    await runInstall(f);
+    expect(f.compensation).toHaveLength(1);
+    // The install ran before per-zone hostnames existed and attached www.<domain> too.
+    await f.network("https://api.cloudflare.com/client/v4/accounts/test/workers/domains", {
+      method: "PUT", body: JSON.stringify({ hostname: `www.${f.id}.sub.example`, service: `brand-${f.brand}` }),
+    });
+    await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(f.compensation[0]!), steps().step);
+    const deleted = f.network.mock.calls
+      .filter(([url, init]) => /\/workers\/domains\/local-/.test(String(url)) && init?.method === "DELETE")
+      .map(([url]) => String(url).split("/workers/domains/")[1]!);
+    expect(deleted.sort()).toEqual([`local-${f.id}.sub.example`, `local-www.${f.id}.sub.example`].sort());
+    expect(f.applied[1]!.hostnames).toEqual([`${f.id}.sub.example`]);
+    expect(await f.installRow()).toEqual({ status: "rolled_back" });
+    expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
   });
 
   it("provisions before deploy, uses tenant defaults and marks READY only after core verification", async () => {
@@ -523,7 +587,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(await f.installRow()).toEqual({ status: "rolled_back" });
     expect(f.runtime()).toMatchObject({ applied_revision_id: live ? f.revision : null, paused: true });
     if (live) expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith("/deployments") && String(init?.body).includes("worker-old"))).toBe(true);
-    else expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith("/workers/domains/local-domain") && init?.method === "DELETE")).toBe(true);
+    else expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith(`/workers/domains/local-${f.id}.example`) && init?.method === "DELETE")).toBe(true);
     expect(await env.FACTORY.prepare("SELECT status FROM install_receipts WHERE install_id=? AND step='receipt'").bind(recovery.install_id).first()).toEqual({ status: "ok" });
     expect(await env.FACTORY.prepare("SELECT actor_role FROM audit_log WHERE entity_id=? AND action='install.recover'").bind(recovery.install_id).first()).toEqual({ actor_role: "owner" });
     const calls = f.network.mock.calls.length;
@@ -560,7 +624,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(await f.brandRow()).toEqual({ status: live ? "live" : "failed", current_revision_id: live ? f.revision : null });
     expect(f.runtime()).toMatchObject({ applied_revision_id: live ? f.revision : null, paused: true });
     if (live) expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith("/deployments") && String(init?.body).includes("worker-old"))).toBe(true);
-    else expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith("/workers/domains/local-domain") && init?.method === "DELETE")).toBe(true);
+    else expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith(`/workers/domains/local-${f.id}.example`) && init?.method === "DELETE")).toBe(true);
     expect(await f.installRow()).toEqual({ status: "rolled_back" });
     if (!live) {
       const detached = await env.FACTORY.prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step='attach_domains'").bind(recovery.install_id).first<{ output_json: string }>();

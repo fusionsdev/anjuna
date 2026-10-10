@@ -76,13 +76,20 @@ describe("employee can run the day", () => {
   });
 
   it("pauses and resumes a brand", async () => {
-    const paused = await post(employee, "/api/brands/brand-a/pause", { reason: "reject spike" });
+    const paused = await post(owner, "/api/brands/brand-a/pause", { reason: "reject spike" });
     expect(paused.status).toBe(200);
     expect(await paused.json()).toMatchObject({ brand_id: "brand-a", status: "paused", changed: true });
-    const again = await post(employee, "/api/brands/brand-a/pause");
+    const again = await post(owner, "/api/brands/brand-a/pause");
     expect(await again.json()).toMatchObject({ changed: false, audit_id: null });
     const resumed = await post(employee, "/api/brands/brand-a/resume");
     expect(await resumed.json()).toMatchObject({ status: "live", changed: true });
+  });
+
+  it("refuses an Employee pause with 403 owner-only and leaves the brand live", async () => {
+    const res = await post(employee, "/api/brands/brand-a/pause", { reason: "x" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "forbidden_role", required_role: "owner" });
+    expect(await (await call("/api/brands/brand-a", { cookie: employee })).json()).toMatchObject({ brand: { status: "live" } });
   });
 
   it("edits keyword_default", async () => {
@@ -242,6 +249,7 @@ describe("role table coverage", () => {
       createUser: "owner",
       setUserRole: "owner",
       rollbackBrand: "owner",
+      pauseBrand: "owner",
       deleteBrand: "owner",
       createBrand: "employee",
       installBrand: "employee",
@@ -299,19 +307,20 @@ describe("audit", () => {
 
   it("the panel never writes brand/config audit rows itself (core does)", async () => {
     await patch(employee, { keyword_default: "Panel Check" });
-    await post(employee, "/api/brands/brand-a/pause");
+    await post(owner, "/api/brands/brand-a/pause");
     expect((await auditRows()).filter((r) => r.action.startsWith("brand."))).toEqual([]);
   });
 
   it("an employee sees only their own entries; the owner sees all", async () => {
-    await post(employee, "/api/brands/brand-a/pause");
+    await post(owner, "/api/brands/brand-a/pause");
+    await post(employee, "/api/brands/brand-a/resume");
     await patch(owner, { keyword_default: "Owner Edit" });
 
     const emp = AuditListResponse.parse(await (await call("/api/audit?limit=200", { cookie: employee })).json());
     const empId = ((await (await call("/api/me", { cookie: employee })).json()) as { user: { id: string } }).user.id;
     expect(emp.entries.length).toBeGreaterThan(0);
     expect(emp.entries.every((e) => e.actor_id === empId)).toBe(true);
-    expect(emp.entries.map((e) => e.action)).toContain("brand.pause");
+    expect(emp.entries.map((e) => e.action)).toContain("brand.resume");
     expect(emp.entries.map((e) => e.action)).toContain("auth.sign_in");
 
     const own = AuditListResponse.parse(await (await call("/api/audit?limit=200", { cookie: owner })).json());

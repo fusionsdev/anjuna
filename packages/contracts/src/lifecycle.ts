@@ -215,6 +215,8 @@ export type InstallWithReceipts = z.infer<typeof InstallWithReceipts>;
 
 export const LifecycleBrandSummary = z.strictObject({
   brand_id: BrandId,
+  /** Screen name from `brands.name`. Absent for a core-only brand. Rows made before the name field hold a domain-derived name, so it is not held to the create rule. */
+  name: z.string().min(1).optional(),
   account: Id,
   hostnames: z.array(Hostname).min(1),
   status: z.union([LifecycleStatus, z.enum(["unmanaged", "paused", "retired"])]),

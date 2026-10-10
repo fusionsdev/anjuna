@@ -57,6 +57,19 @@ describe("truthful lifecycle BFF", () => {
     expect(await counts()).toEqual(before);
   });
 
+  it("lets an Employee Install (201) but refuses Employee Pause and Rollback (403)", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "emp-install.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const worker = { fetch: async () => Response.json({ ok: true, instance_id: "ins-emp" }) } as unknown as Fetcher;
+    const testEnv = makeEnv({ FACTORY_WORKER: worker });
+    expect((await call(`/api/brands/${brand.brand_id}/install`, { cookie: employee, method: "POST", body: {}, env: testEnv })).status).toBe(201);
+    for (const action of ["pause", "rollback"]) {
+      const response = await call(`/api/brands/${brand.brand_id}/${action}`, { cookie: employee, method: "POST", body: {}, env: testEnv });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: "forbidden_role", required_role: "owner" });
+    }
+  });
+
   it("refuses Employee Rollback, Upgrade-all and Delete before any mutation or dispatch", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "owner-only.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
@@ -189,6 +202,75 @@ describe("truthful lifecycle BFF", () => {
     const rows = (await list.json() as { brands: unknown[] }).brands.map((row) => LifecycleBrandSummary.parse(row));
     expect(rows.find((row) => row.brand_id === brand.brand_id)).toMatchObject({ hostnames: ["renderable.test", "www.renderable.test"], runtime_sync_status: "queued" });
     expect(await env.FACTORY.prepare("SELECT keyword_default FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ keyword_default: "Quick Loan" });
+  });
+
+  it("stores the supplied brand name, trims it, and audits it; without a name it derives one from the domain", async () => {
+    const named = await post(employee, "/api/brands/drafts", { domain: "maple-cash.test", name: "  Maple Cash  ", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(named.status).toBe(201);
+    const { brand } = await named.json() as { brand: { brand_id: string; name: string } };
+    expect(brand.name).toBe("Maple Cash");
+    expect(await env.FACTORY.prepare("SELECT name FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ name: "Maple Cash" });
+    const audit = await env.FACTORY.prepare("SELECT after_json FROM audit_log WHERE action='brand.create' AND entity_id=?").bind(brand.brand_id).first<{ after_json: string }>();
+    expect(JSON.parse(audit!.after_json)).toMatchObject({ domain: "maple-cash.test", name: "Maple Cash" });
+
+    const derived = await post(employee, "/api/brands/drafts", { domain: "level-lending.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(derived.status).toBe(201);
+    const { brand: fallback } = await derived.json() as { brand: { brand_id: string; name: string } };
+    expect(fallback.name).toBe("level lending");
+    expect(await env.FACTORY.prepare("SELECT name FROM brands WHERE brand_id=?").bind(fallback.brand_id).first()).toEqual({ name: "level lending" });
+  });
+
+  it.each(["Anjuna Loans", "my AURUM cash", "<b>x", "   ", "-Leading dash", "x".repeat(61)])("rejects brand name %j with 422 and creates nothing", async (name) => {
+    const before = await env.FACTORY.prepare("SELECT count(*) AS n FROM brands").first();
+    const response = await post(employee, "/api/brands/drafts", { domain: "bad-name.test", name, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "invalid" });
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM brands").first()).toEqual(before);
+  });
+
+  it("accepts a Thai brand name with combining marks and stores it unchanged", async () => {
+    const response = await post(employee, "/api/brands/drafts", { domain: "thai-name.test", name: "สินเชื่อ ด่วน", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(response.status).toBe(201);
+    const { brand } = await response.json() as { brand: { brand_id: string; name: string } };
+    expect(brand.name).toBe("สินเชื่อ ด่วน");
+    expect(await env.FACTORY.prepare("SELECT name FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ name: "สินเชื่อ ด่วน" });
+  });
+
+  it("rejects a domain-derived brand name that contains a reserved word", async () => {
+    const before = await env.FACTORY.prepare("SELECT count(*) AS n FROM brands").first();
+    const response = await post(employee, "/api/brands/drafts", { domain: "aurum-cash.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "invalid", issues: [{ path: ["name"] }] });
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM brands").first()).toEqual(before);
+  });
+
+  it("lists the form and payload versions of a fresh draft while current_revision_id stays null", async () => {
+    const response = await post(employee, "/api/brands/drafts", { domain: "fresh-draft.test", name: "Fresh Draft", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await response.json() as { brand: { brand_id: string } };
+    const artifact = await env.FACTORY.prepare("SELECT fa.bundle_form_version, fa.payload_version FROM brand_revisions r JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id WHERE r.revision_id=?").bind(`${brand.brand_id}_rev_1`).first<{ bundle_form_version: string; payload_version: string }>();
+    expect(artifact?.bundle_form_version).toMatch(/^form@/);
+    const list = await call("/api/lifecycle/brands", { cookie: employee });
+    const rows = (await list.json() as { brands: unknown[] }).brands.map((row) => LifecycleBrandSummary.parse(row));
+    const expected = { current_revision_id: null, bundle_form_version: artifact!.bundle_form_version, payload_version: artifact!.payload_version, runtime_sync_status: "queued" };
+    expect(rows.find((row) => row.brand_id === brand.brand_id)).toMatchObject(expected);
+    const single = await call(`/api/lifecycle/brands/${brand.brand_id}`, { cookie: employee });
+    expect(LifecycleBrandSummary.parse((await single.json() as { brand: unknown }).brand)).toMatchObject(expected);
+  });
+
+  it("joins the current revision when set and the first revision when current_revision_id is null", async () => {
+    const at = "2026-10-02T00:00:00Z";
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("INSERT INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-pin-2','abcdef9','forms/fa-pin-2','manifest-pin-2','2026-01','form@abcdef9','2026-09-01T00:00:00Z')"),
+      env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand_pin_live','Pin Live','test-account','pin-live.test','Quick Loan','live','brand_pin_live_rev_1','owner',?1,?1)").bind(at),
+      env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand_pin_failed','Pin Failed','test-account','pin-failed.test','Quick Loan','failed',NULL,'owner',?1,?1)").bind(at),
+      env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES ('brand_pin_live_rev_1','brand_pin_live',1,'tv-1','fa-1','{}','owner',?1)").bind(at),
+      env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES ('brand_pin_live_rev_2','brand_pin_live',2,'tv-1','fa-pin-2','{}','owner',?1)").bind(at),
+      env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES ('brand_pin_failed_rev_1','brand_pin_failed',1,'tv-1','fa-1','{}','owner',?1)").bind(at),
+    ]);
+    const list = await call("/api/lifecycle/brands", { cookie: employee });
+    const rows = (await list.json() as { brands: unknown[] }).brands.map((row) => LifecycleBrandSummary.parse(row));
+    expect(rows.find((row) => row.brand_id === "brand_pin_live")).toMatchObject({ current_revision_id: "brand_pin_live_rev_1", bundle_form_version: "form@abcdef1", payload_version: "2026-01" });
+    expect(rows.find((row) => row.brand_id === "brand_pin_failed")).toMatchObject({ current_revision_id: null, bundle_form_version: "form@abcdef1", payload_version: "2026-01" });
   });
 
   it("persists dispatch failures, sends exact immutable payloads, and retries the same install", async () => {
@@ -512,6 +594,28 @@ describe("truthful lifecycle BFF", () => {
       expect.objectContaining({ brand_id: brand.brand_id, runtime_sync_status: "ready" }),
       expect.objectContaining({ brand_id: "core-only", status: "unmanaged", runtime_sync_status: "ready" }),
     ]) });
+  });
+
+  it("returns the stored brand name in the list and the detail, hostname unchanged", async () => {
+    const named = await post(employee, "/api/brands/drafts", { name: "Level Lending", domain: "level-named.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await named.json() as { brand: { brand_id: string } };
+    const unnamed = await post(employee, "/api/brands/drafts", { domain: "plain-fallback.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand: other } = await unnamed.json() as { brand: { brand_id: string } };
+    const list = LifecycleBrandSummary.array().parse(((await (await call("/api/lifecycle/brands", { cookie: employee })).json()) as { brands: unknown[] }).brands);
+    expect(list.find((row) => row.brand_id === brand.brand_id)).toMatchObject({ name: "Level Lending", hostnames: ["level-named.test", "www.level-named.test"] });
+    expect(list.find((row) => row.brand_id === other.brand_id)?.name).toBe("plain fallback");
+    const detail = await call(`/api/lifecycle/brands/${brand.brand_id}`, { cookie: employee });
+    expect(LifecycleBrandSummary.parse(((await detail.json()) as { brand: unknown }).brand)).toMatchObject({ name: "Level Lending" });
+  });
+
+  it("leaves name off a core-only unmanaged brand", async () => {
+    const core = { fetch: async () => Response.json({ brands: [
+      { brand_id: "core-nameless", account: "test-account", hostnames: ["core-nameless.example", "www.core-nameless.example"], applied_revision_id: null, paused: true, bundle_form_version: null },
+    ] }) } as unknown as Fetcher;
+    const list = await call("/api/lifecycle/brands", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
+    const row = (await list.json() as { brands: Array<Record<string, unknown>> }).brands.find((b) => b.brand_id === "core-nameless");
+    expect(row).toBeDefined();
+    expect("name" in row!).toBe(false);
   });
 
   it("resolves rollback target server-side and ignores a caller override", async () => {
