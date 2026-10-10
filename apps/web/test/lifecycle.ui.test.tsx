@@ -105,7 +105,7 @@ describe("mounted lifecycle UI with API responses", () => {
   it("reloads latest outcomes immediately after an accepted upgrade-all", async () => {
     routes.set("POST /api/upgrade-all", () => json({ instance_id: "new-upgrade" }, 201));
     render(<BrandLifecycle me={owner} />);
-    await screen.findByText("No accepted upgrade-all yet.");
+    await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
     const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
     const before = reads();
     fireEvent.click(screen.getByRole("button", { name: "เริ่ม Upgrade-all" }));

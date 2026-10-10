@@ -22,14 +22,14 @@ describe("upgrade-all outcomes", () => {
     await screen.findByText("brand-0.test");
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows).toHaveLength(5);
-    for (const [index, status] of ["running", "ready", "failed", "rolled back", "skipped"].entries()) {
+    for (const [index, status] of ["กำลังทำงาน (running)", "พร้อมใช้งาน (ready)", "ล้มเหลว (failed)", "ย้อนกลับแล้ว (rolled-back)", "ข้าม (skipped)"].entries()) {
       expect(within(rows[index]!).getByText(`brand-${index}.test`)).toBeTruthy();
       expect(within(rows[index]!).getByText(status)).toBeTruthy();
     }
-    expect(within(rows[0]!).getByText("Canary")).toBeTruthy();
+    expect(within(rows[0]!).getByText("ทดลองก่อน (Canary)")).toBeTruthy();
     expect(within(rows[2]!).getByText("Smoke check failed")).toBeTruthy();
     expect(within(rows[1]!).getByText("upgrade-install-1")).toBeTruthy();
-    expect(within(rows[2]!).queryByText(/Retry of/)).toBeNull();
+    expect(within(rows[2]!).queryByText(/ลองใหม่จาก \(Retry of\)/)).toBeNull();
   });
 
   it("polls pending outcomes until terminal and cancels timers on unmount", async () => {
@@ -39,10 +39,10 @@ describe("upgrade-all outcomes", () => {
     vi.stubGlobal("fetch", fetcher);
     const view = render(<UpgradeOutcomes refresh={0} />);
     await act(async () => {});
-    expect(screen.getByText("running")).toBeTruthy();
+    expect(screen.getByText("กำลังทำงาน (running)")).toBeTruthy();
     next.upgrade!.outcomes[0]!.status = "ready";
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-    expect(screen.queryByText("running")).toBeNull();
+    expect(screen.queryByText("กำลังทำงาน (running)")).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -62,8 +62,8 @@ describe("upgrade-all outcomes", () => {
     await act(async () => {});
     await act(async () => { await vi.advanceTimersByTimeAsync(3000 * MAX_UPGRADE_POLLS); });
     expect(fetcher).toHaveBeenCalledTimes(MAX_UPGRADE_POLLS + 1);
-    expect(screen.getByRole("alert").textContent).toContain("Auto-refresh stopped after 6 minutes");
-    expect(screen.getByText("running")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("หยุดรีเฟรชอัตโนมัติหลัง 6 นาที");
+    expect(screen.getByText("กำลังทำงาน (running)")).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
     expect(fetcher).toHaveBeenCalledTimes(MAX_UPGRADE_POLLS + 1);
     view.rerender(<UpgradeOutcomes refresh={1} />);
@@ -77,10 +77,10 @@ describe("upgrade-all outcomes", () => {
     const fetcher = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(response({ upgrade: null }));
     vi.stubGlobal("fetch", fetcher);
     const view = render(<UpgradeOutcomes refresh={0} />);
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Could not load upgrade-all outcomes. Refresh to retry.");
-    expect(screen.queryByText("No accepted upgrade-all yet.")).toBeNull();
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "โหลดผลอัปเกรดทุกแบรนด์ไม่ได้ (Could not load upgrade-all outcomes) กรุณารีเฟรชเพื่อลองใหม่");
+    expect(screen.queryByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)")).toBeNull();
     view.rerender(<UpgradeOutcomes refresh={1} />);
-    await screen.findByText("No accepted upgrade-all yet.");
+    await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -91,7 +91,7 @@ describe("upgrade-all outcomes", () => {
     render(<UpgradeOutcomes refresh={0} />);
     await act(async () => {});
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-    expect(screen.getByRole("alert").textContent).toContain("Showing previously loaded outcomes.");
+    expect(screen.getByRole("alert").textContent).toContain("แสดงผลที่โหลดไว้ก่อนหน้า (Showing previously loaded outcomes)");
     expect(screen.getAllByRole("row")).toHaveLength(6);
     expect(screen.getByText("Smoke check failed")).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); });

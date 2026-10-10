@@ -27,10 +27,10 @@ const statusLabel: Record<string, string> = {
 };
 
 const coreListLabel: Record<CoreListErrorCode, string> = {
-  core_binding_missing: "Core lifecycle binding is missing",
-  core_list_fetch_failed: "Core brand list fetch failed",
-  core_list_response_invalid: "Core brand list response is invalid",
-  core_list_account_missing: "Core brand list account is not configured",
+  core_binding_missing: "ไม่พบการเชื่อมต่อ Core lifecycle (Core lifecycle binding is missing)",
+  core_list_fetch_failed: "ดึงรายการแบรนด์จาก Core ไม่สำเร็จ (Core brand list fetch failed)",
+  core_list_response_invalid: "ข้อมูลรายการแบรนด์จาก Core ไม่ถูกต้อง (Core brand list response is invalid)",
+  core_list_account_missing: "ยังไม่ได้ตั้งค่าบัญชีสำหรับรายการแบรนด์ Core (Core brand list account is not configured)",
 };
 
 export function BrandLifecycle({ me }: { me: Me }) {
@@ -291,7 +291,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
     {pendingOperation?.brandId === selectedId && <p role="status">Install ID: <code>{pendingOperation.installId}</code> · กำลังติดตามสถานะ</p>}
     {installError && <p className="error" role="alert">{installError}</p>}
     {runtimeError && <p className="error" role="alert">{runtimeError}</p>}
-    {coreListError && <p className="error" role="alert">{coreListLabel[coreListError.code] ?? coreListError.message}. Core brand list is unavailable; showing factory brands only. Refresh to retry.</p>}
+    {coreListError && <p className="error" role="alert">{coreListLabel[coreListError.code] ?? coreListError.message}. ใช้รายการแบรนด์จาก Core ไม่ได้ จึงแสดงเฉพาะแบรนด์จาก factory (Core brand list is unavailable) กรุณารีเฟรชเพื่อลองใหม่</p>}
     {runtimeBrand && <section className="card" aria-label="Runtime config and statistics">
       <h2>การตั้งค่า runtime (Runtime config)</h2>
       <p>สถานะ runtime: {runtimeBrand.status}</p>
