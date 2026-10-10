@@ -31,9 +31,12 @@ export async function latestUpgrade(db: D1Database): Promise<LatestUpgradeRespon
   const selectedRevisions = new Set((selectedResult as D1Result<{ revision_id: string }>).results.map((row) => row.revision_id));
   // Rows arrive ordered by depth, so the last write per root is the latest retry.
   const byId = new Map(installs.map((row) => [row.root, row]));
-  const canary = byId.get(canaryId);
-  const canaryStopped = canary?.status === "failed" || canary?.status === "rolled_back";
-  const canaryPending = !canary;
+  // The workflow gates the bulk step on the original deterministic canary row only. A retry of a failed
+  // canary runs one individual install and never resumes the workflow, so the gate reads the original
+  // row (install_id === canaryId), while the displayed canary outcome stays the latest retry.
+  const gate = installs.find((row) => row.install_id === canaryId);
+  const canaryStopped = gate?.status === "failed" || gate?.status === "rolled_back";
+  const canaryPending = !gate;
   const outcomes = brands.map((brand, index): UpgradeAllOutcome => {
     const row = byId.get(ids[index]!);
     const selected = selectedRevisions.has(revisionIds[index]!);

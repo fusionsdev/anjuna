@@ -95,6 +95,22 @@ describe("latest upgrade-all API", () => {
     expect((await call("/api/upgrade-all/latest", { cookie: employee })).status).toBe(403);
   });
 
+  // The workflow gates the bulk step on the original canary install row only; a retry of a failed
+  // canary dispatches one individual install and never resumes the workflow.
+  it.each(["running", "ready"])("shows a %s canary retry but keeps selected brands skipped while the original canary stays failed", async (retryStatus) => {
+    await seed();
+    await selectBrands("canary", "ready", "failed", "rolled", "waiting");
+    await env.FACTORY.prepare("UPDATE installs SET status='failed' WHERE install_id=?1").bind(ids.canary).run();
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,is_canary,status,started_by,started_role,started_at) VALUES ('ins_canary_retry','canary','upgrade',1,?1,'owner','owner','2026-10-09T01:00:00Z')").bind(retryStatus),
+      env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES ('owner','owner','install.start','install','ins_canary_retry',?1,'2026-10-09T01:00:00Z')")
+        .bind(JSON.stringify({ brand_id: "canary", retry_of: ids.canary, kind: "upgrade" })),
+    ]);
+    const { upgrade } = await latest();
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "canary")).toMatchObject({ status: retryStatus, install_id: "ins_canary_retry", retry_of: ids.canary, is_canary: true });
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "skipped", install_id: null, error: "Canary stopped; no install recorded" });
+  });
+
   it("follows install retries to the latest attempt for the command row", async () => {
     await seed();
     const retry = (id: string, of: string, status: string) => env.FACTORY.batch([
