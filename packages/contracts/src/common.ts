@@ -16,6 +16,24 @@ export const Hostname = z
   .regex(/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/, "Invalid hostname");
 export type Hostname = z.infer<typeof Hostname>;
 
+/**
+ * Charset and length of a brand screen name (1 to 60 characters; letters, marks, digits, space, & . ' -),
+ * with surrounding whitespace tolerated because the value is trimmed. `&` and `-` are written as
+ * \x26 and \x2d so the source compiles as an HTML `pattern` under both the u and v flags.
+ * The forbidden-word check is not a charset rule and lives in `BrandName`.
+ */
+export const BRAND_NAME_PATTERN = String.raw`\s*[\p{L}\p{N}][\p{L}\p{M}\p{N} .\x26'\x2d]{0,59}\s*`;
+
+/** Brand screen name. The control panel server and the create form both use this rule. */
+export const BrandName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(60)
+  .regex(new RegExp(`^(?:${BRAND_NAME_PATTERN})$`, "u"), "ชื่อแบรนด์ใช้ได้เฉพาะตัวอักษร ตัวเลข ช่องว่าง และ & . ' -")
+  .refine(isBrandClean, "ชื่อแบรนด์มีคำที่ไม่อนุญาต");
+export type BrandName = z.infer<typeof BrandName>;
+
 /** Five-digit US ZIP. */
 export const Zip5 = z.string().regex(/^\d{5}$/, "Invalid ZIP");
 
