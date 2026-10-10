@@ -50,7 +50,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
 
     try {
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      const { zone_id, domain, account, current_revision_id } = await step.do("validate", async () => {
+      const { zone_id, domain, hostnames: cachedHostnames, account, current_revision_id } = await step.do("validate", async () => {
         return withReceipt(db, install_id, "validate", async () => {
           const brand = await db
             .prepare("SELECT domain, account, current_revision_id FROM brands WHERE brand_id = ?")
@@ -58,11 +58,18 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
             .first<BrandRow>();
           if (!brand) throw new Error(`Brand ${brand_id} not found`);
 
-          const { getZone } = await import("../cf-api.js");
+          const { getZone, brandHostnames } = await import("../cf-api.js");
           const zone = await getZone(CF_API_TOKEN, brand.domain);
-          return { zone_id: zone.id, domain: brand.domain, account: brand.account, current_revision_id: brand.current_revision_id };
+          return {
+            zone_id: zone.id, domain: brand.domain,
+            hostnames: brandHostnames(brand.domain, zone.name),
+            account: brand.account, current_revision_id: brand.current_revision_id,
+          };
         });
       });
+      // A Workflow replaying a rollback started before per-zone hostnames has a cached
+      // validate output without them; keep the apex plus www pair those runs used.
+      const hostnames = cachedHostnames ?? [domain, `www.${domain}`];
 
       if (!to_revision_id) {
         mutationStarted = true;
@@ -87,7 +94,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           if (current.state === "absent") return { state: "absent", paused: false };
           mutationStarted = true;
           const result = await client.applyRuntime({
-            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            install_id, brand_id, account, hostnames,
             expected_revision_id: current.applied_revision_id, target_revision_id: null,
             actor_id: "system", actor_role: "owner",
           });
@@ -132,7 +139,7 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           if (current.state !== "applied") throw new Error("Core runtime is missing during rollback");
           mutationStarted = true;
           const result = await client.applyRuntime({
-            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            install_id, brand_id, account, hostnames,
             expected_revision_id: original_install_id ? current.applied_revision_id : current_revision_id, target_revision_id: to_revision_id,
             bundle_form_version,
             actor_id: "system", actor_role: "owner",
@@ -146,11 +153,13 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           return withReceipt(db, install_id, "attach_domains", async () => {
             const scriptName = `brand-${brand_id}`;
             mutationStarted = true;
-            const [apex, www] = await Promise.all([
-              attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, domain, scriptName),
-              attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, `www.${domain}`, scriptName),
-            ]);
-            return { apex_domain_id: apex.id, www_domain_id: www.id };
+            const attached = await Promise.all(
+              hostnames.map((hostname) => attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, hostname, scriptName)),
+            );
+            return {
+              apex_domain_id: attached[0]!.id,
+              ...(attached[1] ? { www_domain_id: attached[1].id } : {}),
+            };
           });
         });
 

@@ -223,7 +223,7 @@ describe("apex DNS preflight", () => {
       const name = new URL(input).searchParams.get("name")!;
       return Response.json({ success: true, result: records[name] ?? [] });
     };
-    const found = await apexDnsRecords("token", "zone-1", "brand.example", fetcher);
+    const found = await apexDnsRecords("token", "zone-1", ["brand.example", "www.brand.example"], fetcher);
     for (const url of urls) {
       const params = new URL(url).searchParams;
       expect(params.get("name")).not.toContain(",");
@@ -233,9 +233,19 @@ describe("apex DNS preflight", () => {
     expect(found.map((r) => `${r.type} ${r.name}`)).toEqual(["A brand.example", "CNAME www.brand.example", "AAAA www.brand.example"]);
   });
 
+  it("never queries a www hostname for a subdomain brand", async () => {
+    const names: string[] = [];
+    const fetcher = async (input: string) => {
+      names.push(new URL(input).searchParams.get("name")!);
+      return Response.json({ success: true, result: [] });
+    };
+    expect(await apexDnsRecords("token", "zone-1", ["demo05.aduplift.ai"], fetcher)).toEqual([]);
+    expect(names).toEqual(["demo05.aduplift.ai"]);
+  });
+
   it("returns nothing for a zone whose apex and www carry only non-blocking records", async () => {
     const fetcher = async () => Response.json({ success: true, result: [{ id: "1", type: "TXT", name: "brand.example" }] });
-    expect(await apexDnsRecords("token", "zone-1", "brand.example", fetcher)).toEqual([]);
+    expect(await apexDnsRecords("token", "zone-1", ["brand.example", "www.brand.example"], fetcher)).toEqual([]);
   });
 });
 
@@ -251,23 +261,37 @@ describe("apex DNS preflight fallback", () => {
 
   it("uses the public DNS view when the zone DNS API refuses the token (10000)", async () => {
     const fetcher = doh({ "CNAME www.brand.example": [{ name: "www.brand.example.", type: 5 }] });
-    expect(await apexDnsRecords("token", "zone-1", "brand.example", fetcher)).toEqual([
+    expect(await apexDnsRecords("token", "zone-1", ["brand.example", "www.brand.example"], fetcher)).toEqual([
       { id: "public-dns", type: "CNAME", name: "www.brand.example" },
     ]);
   });
 
   it("reports no conflicts for empty apex and www in the public view", async () => {
-    expect(await apexDnsRecords("token", "zone-1", "brand.example", doh({}))).toEqual([]);
+    expect(await apexDnsRecords("token", "zone-1", ["brand.example", "www.brand.example"], doh({}))).toEqual([]);
+  });
+
+  it("checks only the bare domain in the public view for a subdomain brand", async () => {
+    const names: string[] = [];
+    const fetcher = async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === "api.cloudflare.com") {
+        return Response.json({ success: false, errors: [{ code: 10000, message: "Authentication error" }], result: null });
+      }
+      names.push(`${url.searchParams.get("type")} ${url.searchParams.get("name")}`);
+      return Response.json({ Status: 0, Answer: [] });
+    };
+    expect(await apexDnsRecords("token", "zone-1", ["demo05.aduplift.ai"], fetcher)).toEqual([]);
+    expect(names).toEqual(["A demo05.aduplift.ai", "AAAA demo05.aduplift.ai", "CNAME demo05.aduplift.ai"]);
   });
 
   it("does not fall back on other API errors", async () => {
     const fetcher = async () => Response.json({ success: false, errors: [{ code: 7003, message: "Could not route" }], result: null });
-    await expect(apexDnsRecords("token", "zone-1", "brand.example", fetcher)).rejects.toThrow("7003");
+    await expect(apexDnsRecords("token", "zone-1", ["brand.example"], fetcher)).rejects.toThrow("7003");
   });
 
   it("fails closed when the public lookup itself fails", async () => {
     const fetcher = async () => new Response("down", { status: 502 });
-    await expect(publicApexDnsRecords("brand.example", fetcher)).rejects.toThrow("HTTP 502");
+    await expect(publicApexDnsRecords(["brand.example"], fetcher)).rejects.toThrow("HTTP 502");
   });
 });
 
