@@ -1,6 +1,6 @@
-import { upgradeInstallId as contractUpgradeInstallId, type UpgradeAllCommand } from "@anjuna/contracts";
+import { upgradeInstallId as contractUpgradeInstallId, upgradeRevisionId as contractUpgradeRevisionId, type UpgradeAllCommand } from "@anjuna/contracts";
 import { describe, expect, it } from "vitest";
-import { upgradeInstallId as factoryUpgradeInstallId } from "../../../workers/factory/src/workflows/upgrade-all.js";
+import { upgradeInstallId as factoryUpgradeInstallId, upgradeRevisionId as factoryUpgradeRevisionId } from "../../../workers/factory/src/workflows/upgrade-all.js";
 
 const command: UpgradeAllCommand = {
   from_template_version_id: "tv-1",
@@ -51,6 +51,25 @@ describe("upgrade install-id parity (contracts vs factory)", () => {
           cmd.canary_brand_id,
         );
         expect(contractId).toBe(factoryId);
+      }
+    }
+  });
+
+  it("derives byte-identical revision IDs across the module boundary and every identity axis", async () => {
+    const variants: UpgradeAllCommand[] = [
+      command,
+      { ...command, to_template_version_id: "tv-3" },
+      { ...command, canary_brand_id: "other-canary" },
+      { ...command, started_by: "other-owner" },
+      { ...command, from_template_version_id: "tv-0" },
+      { ...command, form_artifact_id: "fa-2" },
+    ];
+    for (const cmd of variants) {
+      for (const brand of brands) {
+        const factoryId = await factoryUpgradeRevisionId(
+          cmd.from_template_version_id, cmd.to_template_version_id, cmd.form_artifact_id, brand, cmd.started_by, cmd.started_role, cmd.canary_brand_id,
+        );
+        expect(await contractUpgradeRevisionId(cmd, brand)).toBe(factoryId);
       }
     }
   });

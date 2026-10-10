@@ -132,6 +132,23 @@ async function sha256Hex(value: string): Promise<string> {
  * workflow's exact key order. The factory and the panel both derive install IDs from this, so an
  * operator can map each brand's outcome for a past command without re-reading the workflow.
  */
+/**
+ * The revision ID the workflow's `create_revisions` step inserts for every selected brand before the
+ * canary starts. A row with this ID is persisted proof that the brand was selected for this command.
+ */
+export function upgradeRevisionId(command: UpgradeAllCommand, brandId: string): Promise<string> {
+  return sha256Hex(JSON.stringify([
+    "revision",
+    command.from_template_version_id,
+    command.to_template_version_id,
+    command.form_artifact_id,
+    command.canary_brand_id,
+    command.started_by,
+    command.started_role,
+    brandId,
+  ])).then((digest) => `upgrade-revision-${digest}`);
+}
+
 export function upgradeInstallId(command: UpgradeAllCommand, brandId: string): Promise<string> {
   return sha256Hex(JSON.stringify([
     "install",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { upgradeInstallId, type UpgradeAllCommand } from "../src/index.js";
+import { upgradeInstallId, upgradeRevisionId, type UpgradeAllCommand } from "../src/index.js";
 
 const command: UpgradeAllCommand = {
   from_template_version_id: "tv-1",
@@ -23,5 +23,16 @@ describe("upgrade-install identity", () => {
     expect(await upgradeInstallId(command, "ready")).not.toBe(await upgradeInstallId({ ...command, to_template_version_id: "tv-3" }, "ready"));
     expect(await upgradeInstallId(command, "ready")).not.toBe(await upgradeInstallId({ ...command, canary_brand_id: "waiting" }, "ready"));
     expect(await upgradeInstallId(command, "ready")).not.toBe(await upgradeInstallId({ ...command, started_by: "other-owner" }, "ready"));
+  });
+});
+
+describe("upgrade-revision identity", () => {
+  it("is distinct from the install identity and from each brand and command axis", async () => {
+    const id = await upgradeRevisionId(command, "ready");
+    expect(id).toMatch(/^upgrade-revision-[0-9a-f]{64}$/);
+    expect(id).not.toBe(await upgradeInstallId(command, "ready"));
+    expect(id).not.toBe(await upgradeRevisionId(command, "failed"));
+    expect(id).not.toBe(await upgradeRevisionId({ ...command, canary_brand_id: "waiting" }, "ready"));
+    expect(id).not.toBe(await upgradeRevisionId({ ...command, started_by: "other-owner" }, "ready"));
   });
 });

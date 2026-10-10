@@ -97,4 +97,26 @@ describe("upgrade-all outcomes", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps polling while a selected brand is queued after the canary is ready", async () => {
+    vi.useFakeTimers();
+    const next = structuredClone(result);
+    next.upgrade!.outcomes = [
+      { ...next.upgrade!.outcomes[0]!, status: "ready" },
+      { brand_id: "brand-1", domain: "brand-1.test", is_canary: false, install_id: null, retry_of: null, status: "queued", error: "Waiting for an install record" },
+    ];
+    const fetcher = vi.fn(async () => response(next));
+    vi.stubGlobal("fetch", fetcher);
+    render(<UpgradeOutcomes refresh={0} />);
+    await act(async () => {});
+    expect(screen.getByText("รอคิว (queued)")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    next.upgrade!.outcomes[1] = { ...next.upgrade!.outcomes[1]!, install_id: "install-1", status: "failed", error: "Smoke check failed" };
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(screen.getByText("ล้มเหลว (failed)")).toBeTruthy();
+    expect(screen.getByText("Smoke check failed")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
 });

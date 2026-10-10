@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { LatestUpgradeResponse, upgradeInstallId, type CoreListError, type UpgradeAllCommand } from "@anjuna/contracts";
+import { LatestUpgradeResponse, upgradeInstallId, upgradeRevisionId, type CoreListError, type UpgradeAllCommand } from "@anjuna/contracts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
@@ -21,6 +21,7 @@ beforeEach(async () => {
     env.FACTORY.prepare("DELETE FROM installs WHERE brand_id IN ('canary','ready','failed','rolled','skipped','waiting')"),
     env.FACTORY.prepare("DELETE FROM brand_revisions WHERE brand_id IN ('canary','ready','failed','rolled','skipped','waiting')"),
     env.FACTORY.prepare("DELETE FROM brands WHERE brand_id IN ('canary','ready','failed','rolled','skipped','waiting')"),
+    env.FACTORY.prepare("DELETE FROM brand_revisions WHERE revision_id LIKE 'upgrade-revision-%'"),
     env.FACTORY.prepare("DELETE FROM template_versions WHERE template_id='tpl'"),
     env.FACTORY.prepare("DELETE FROM templates WHERE template_id='tpl'"),
     env.FACTORY.prepare("DELETE FROM form_artifacts WHERE form_artifact_id='fa-1'"),
@@ -37,6 +38,7 @@ async function seed() {
   await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES ('tv-1','tpl',1,'sha','template','draft','owner','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES ('tv-2','tpl',2,'sha2','template2','draft','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,created_at) VALUES ('fa-1','abcdef1','form','sha','2026-10-01T00:00:00Z')"),
   ]);
   for (const brand of ["canary", "ready", "failed", "rolled", "skipped", "waiting"]) {
@@ -54,6 +56,14 @@ async function seed() {
   await accepted();
 }
 
+// What the workflow's create_revisions step persists for every selected brand before the canary starts.
+async function selectBrands(...selected: string[]) {
+  for (const brand of selected) {
+    await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,2,'tv-2','fa-1','{}','owner','2026-10-09T00:00:00Z')")
+      .bind(await upgradeRevisionId(command, brand), brand).run();
+  }
+}
+
 async function latest(cookie = owner) {
   const response = await call("/api/upgrade-all/latest", { cookie });
   expect(response.status).toBe(200);
@@ -68,6 +78,7 @@ describe("latest upgrade-all API", () => {
 
   it("returns each brand's matching install outcome to Owner", async () => {
     await seed();
+    await selectBrands("canary", "ready", "failed", "rolled", "waiting");
     // A newer unrelated operation must not replace this command's outcome.
     await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_role,started_at) VALUES ('unrelated','ready','upgrade','failed','owner','owner','2026-10-10T00:00:00Z')").run();
     const { upgrade } = await latest();
@@ -108,19 +119,45 @@ describe("latest upgrade-all API", () => {
 
   it.each(["failed", "rolled_back"])("marks unstarted source brands skipped when canary is %s", async (status) => {
     await seed();
+    await selectBrands("canary", "ready", "failed", "rolled", "waiting");
     await env.FACTORY.prepare("UPDATE installs SET status=?1 WHERE install_id=?2").bind(status, ids.canary).run();
     const { upgrade } = await latest();
     expect(upgrade!.outcomes.find((row) => row.brand_id === "canary")).toMatchObject({ status, is_canary: true });
     expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "skipped", error: "Canary stopped; no install recorded" });
   });
 
-  it("does not report a phantom pending brand once the canary reached ready", async () => {
+  it("keeps a selected brand queued after the canary reached ready until its install row exists", async () => {
     await seed();
+    await selectBrands("canary", "ready", "failed", "rolled", "waiting");
     await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?1").bind(ids.canary).run();
     const { upgrade } = await latest();
     expect(upgrade!.outcomes.find((row) => row.brand_id === "canary")).toMatchObject({ status: "ready", is_canary: true });
-    // "waiting" is live on the source with no install row: after a completed canary it reads skipped, not queued.
-    expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "skipped", error: "Canary reached ready; no install recorded for this command" });
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "queued", install_id: null, error: "Waiting for an install record" });
+  });
+
+  it("reads skipped for a live source brand with no revision row once the canary reached ready", async () => {
+    await seed();
+    await selectBrands("canary", "ready", "failed", "rolled");
+    await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?1").bind(ids.canary).run();
+    const { upgrade } = await latest();
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "skipped", install_id: null, error: "No install recorded for this command" });
+  });
+
+  it("reads a selected brand's install row status once the bulk step created it", async () => {
+    await seed();
+    await selectBrands("canary", "ready", "failed", "rolled", "waiting");
+    await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?1").bind(ids.canary).run();
+    await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_role,started_at) VALUES (?1,'waiting','upgrade','running','owner','owner','2026-10-09T00:01:00Z')")
+      .bind(await upgradeInstallId(command, "waiting")).run();
+    const { upgrade } = await latest();
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "running" });
+  });
+
+  it("reads queued before the workflow has persisted any revision while the canary has no install row", async () => {
+    await seed();
+    await env.FACTORY.prepare("DELETE FROM installs WHERE install_id=?1").bind(ids.canary).run();
+    const { upgrade } = await latest();
+    expect(upgrade!.outcomes.find((row) => row.brand_id === "waiting")).toMatchObject({ status: "queued" });
   });
 
   it.each([
