@@ -42,7 +42,8 @@ export function UpgradeOutcomes({ refresh }: { refresh: number }) {
     {error && <p className="error" role="alert">{error}{result?.upgrade && " แสดงผลที่โหลดไว้ก่อนหน้า (Showing previously loaded outcomes)"}</p>}
     {stalled && <p className="error" role="alert">หยุดรีเฟรชอัตโนมัติหลัง 6 นาที (Auto-refresh stopped): บางแบรนด์ยังรอคิวหรือกำลังทำงาน การติดตั้งอาจค้าง กรุณารีเฟรชเพื่อตรวจอีกครั้ง</p>}
     {!result && !error && <p role="status">กำลังโหลดผลอัปเกรด (Loading upgrade-all outcomes)…</p>}
-    {result?.upgrade === null && <p>ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)</p>}
+    {result?.command_error && <p className="error" role="alert">คำสั่งอัปเกรดล่าสุดอ่านไม่ได้ (Latest upgrade command is unreadable): audit #{result.command_error.audit_id}</p>}
+    {result?.upgrade === null && !result.command_error && <p>ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)</p>}
     {result?.upgrade && <>
       <p><code>{result.upgrade.command.from_template_version_id}</code> → <code>{result.upgrade.command.to_template_version_id}</code> · รับคำสั่งเมื่อ (Accepted) {result.upgrade.accepted_at}</p>
       <table className="table">

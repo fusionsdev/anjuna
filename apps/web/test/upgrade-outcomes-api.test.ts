@@ -100,6 +100,46 @@ describe("latest upgrade-all API", () => {
     expect((await call("/api/upgrade-all/latest", { cookie: employee })).status).toBe(403);
   });
 
+  describe("upgrade-all command validation", () => {
+    const startRows = async () => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='upgrade.start'").first<{ n: number }>())!.n;
+    const factory = { fetch: async () => Response.json({ instance_id: "wf" }, { status: 201 }) } as unknown as Fetcher;
+    const post = (canary: string) => call("/api/upgrade-all", {
+      cookie: owner, method: "POST", env: makeEnv({ FACTORY_WORKER: factory }),
+      body: { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: canary },
+    });
+
+    it.each(["Canary", "has space", "-leading", ""])("rejects canary id %j before dispatch and writes no upgrade.start row", async (canary) => {
+      const before = await startRows();
+      const response = await post(canary);
+      expect(response.status).toBe(422);
+      expect(await startRows()).toBe(before);
+    });
+
+    it("accepts a canary id that satisfies BrandId and audits upgrade.start", async () => {
+      const before = await startRows();
+      expect((await post("brand-x")).status).toBe(201);
+      expect(await startRows()).toBe(before + 1);
+    });
+
+    it("answers 200 with a visible command_error when the persisted command is unreadable", async () => {
+      await seed();
+      await accepted("owner", { ...command, canary_brand_id: "Canary Brand" });
+      const response = await call("/api/upgrade-all/latest", { cookie: owner });
+      expect(response.status).toBe(200);
+      const body = LatestUpgradeResponse.parse(await response.json());
+      expect(body.upgrade).toBeNull();
+      expect(body.command_error).toMatchObject({ message: "Latest upgrade command is unreadable" });
+      expect(typeof body.command_error!.audit_id).toBe("number");
+    });
+
+    it("answers 200 with a command_error when the persisted command is not JSON", async () => {
+      await env.FACTORY.prepare("INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at) VALUES ('owner','owner','upgrade.start','upgrade','command','not json',?1)").bind(new Date().toISOString()).run();
+      const response = await call("/api/upgrade-all/latest", { cookie: owner });
+      expect(response.status).toBe(200);
+      expect(LatestUpgradeResponse.parse(await response.json()).command_error).toBeTruthy();
+    });
+  });
+
   describe("15 minute cap on waiting without an install row", () => {
     const outcome = async (minutes: number, brand: string) => {
       const { upgrade } = LatestUpgradeResponse.parse(await latestUpgrade(env.FACTORY, minutesAfter(minutes)));

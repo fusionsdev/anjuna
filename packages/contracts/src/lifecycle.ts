@@ -181,6 +181,8 @@ export const LatestUpgradeResponse = z.strictObject({
     command: UpgradeAllCommand,
     outcomes: z.array(UpgradeAllOutcome),
   }).nullable(),
+  // Set when the newest upgrade.start audit row cannot be read as a command; `upgrade` is then null.
+  command_error: z.strictObject({ audit_id: z.number().int(), message: z.string() }).optional(),
 });
 export type LatestUpgradeResponse = z.infer<typeof LatestUpgradeResponse>;
 

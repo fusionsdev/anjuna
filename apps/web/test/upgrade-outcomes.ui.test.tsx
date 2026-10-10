@@ -119,4 +119,11 @@ describe("upgrade-all outcomes", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
+
+  it("shows an alert instead of the empty state when the latest command is unreadable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ upgrade: null, command_error: { audit_id: 7, message: "Latest upgrade command is unreadable" } })));
+    render(<UpgradeOutcomes refresh={0} />);
+    expect((await screen.findByRole("alert")).textContent).toContain("คำสั่งอัปเกรดล่าสุดอ่านไม่ได้ (Latest upgrade command is unreadable)");
+    expect(screen.queryByText(/No accepted upgrade-all yet/)).toBeNull();
+  });
 });

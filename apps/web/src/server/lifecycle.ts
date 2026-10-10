@@ -5,6 +5,7 @@ import {
   RuntimeListResponse,
   PrepopBase,
   cleanKeyword,
+  BrandId,
   BrandName,
   isBrandClean,
   LifecycleBrandSummary,
@@ -38,7 +39,7 @@ const Draft = z.strictObject({
 });
 const Upgrade = z.strictObject({
   from_template_version_id: Id, to_template_version_id: Id, form_artifact_id: Id,
-  canary_brand_id: Id,
+  canary_brand_id: BrandId,
 }).refine((v) => v.from_template_version_id !== v.to_template_version_id, { message: "source and target must differ" });
 
 type Db = D1Database;

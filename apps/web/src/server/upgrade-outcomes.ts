@@ -7,7 +7,12 @@ export async function latestUpgrade(db: D1Database, now: Date = new Date()): Pro
   const audit = await db.prepare("SELECT id,actor_id,after_json,created_at FROM audit_log WHERE action='upgrade.start' ORDER BY id DESC LIMIT 1")
     .first<{ id: number; actor_id: string; after_json: string; created_at: string }>();
   if (!audit) return { upgrade: null };
-  const command = UpgradeAllCommand.parse({ ...JSON.parse(audit.after_json), started_by: audit.actor_id });
+  let raw: unknown;
+  try { raw = JSON.parse(audit.after_json); } catch { raw = null; }
+  const parsedCommand = UpgradeAllCommand.safeParse(raw && typeof raw === "object" ? { ...raw, started_by: audit.actor_id } : null);
+  // A row accepted before the route validated with the shared contract must not turn into a 500.
+  if (!parsedCommand.success) return { upgrade: null, command_error: { audit_id: audit.id, message: "Latest upgrade command is unreadable" } };
+  const command = parsedCommand.data;
   const { results: brands } = await db.prepare(`SELECT b.brand_id,b.domain,b.status,r.template_version_id
     FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=b.current_revision_id ORDER BY b.domain,b.brand_id`)
     .all<{ brand_id: string; domain: string; status: string; template_version_id: string | null }>();
