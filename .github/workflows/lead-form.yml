@@ -123,6 +123,15 @@ jobs:
       R2_BUCKET: ${{ vars.R2_ARTIFACTS_BUCKET }}
       PREFIX: form@${{ github.sha }}
     steps:
+      - name: Require the r2-artifacts environment settings
+        run: |
+          set -euo pipefail
+          missing=0
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::r2-artifacts environment is missing secrets.CLOUDFLARE_API_TOKEN"; missing=1; }
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "::error::r2-artifacts environment is missing secrets.CLOUDFLARE_ACCOUNT_ID"; missing=1; }
+          [ -n "$R2_BUCKET" ] || { echo "::error::r2-artifacts environment is missing vars.R2_ARTIFACTS_BUCKET"; missing=1; }
+          exit "$missing"
+
       - uses: actions/download-artifact@v4
         with:
           name: form-${{ github.sha }}
