@@ -1,4 +1,4 @@
-import type { SealedTemplateVersion, BrandSummary, ChecklistEvidence, ChecklistItemName, LifecycleBrandSummary, InstallWithReceipts } from "@anjuna/contracts";
+import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts } from "@anjuna/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
@@ -63,7 +63,8 @@ export function BrandLifecycle({ me }: { me: Me }) {
     }).finally(() => { if (active) setTemplatesLoading(false); });
     return () => { active = false; };
   }, [refresh]);
-  const canCreateDraft = !creatingDraft && !templatesLoading && !templatesError && Boolean(draft.name.trim()) && Boolean(draft.domain.trim()) && Boolean(draft.keyword_default.trim()) && templates.some((t) => t.template_version_id === draft.template_version_id);
+  const nameValid = BrandName.safeParse(draft.name).success;
+  const canCreateDraft = !creatingDraft && !templatesLoading && !templatesError && nameValid &&Boolean(draft.domain.trim()) && Boolean(draft.keyword_default.trim()) && templates.some((t) => t.template_version_id === draft.template_version_id);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
@@ -259,7 +260,9 @@ export function BrandLifecycle({ me }: { me: Me }) {
       <button onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช (Refresh)</button>
       <form className="section" onSubmit={(e) => { e.preventDefault(); void createDraft(); }}>
         <h3>เพิ่มแบรนด์ (Domain + Keyword + Template)</h3>
-        <label>ชื่อแบรนด์ (Brand name)<input required maxLength={60} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Level Lending" /></label>
+        <label>ชื่อแบรนด์ (Brand name)<input required maxLength={60} pattern={BRAND_NAME_PATTERN} aria-describedby="brand-name-hint" aria-invalid={Boolean(draft.name.trim()) && !nameValid} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Level Lending" /></label>
+        <small id="brand-name-hint" className="muted">ตัวอักษร ตัวเลข ช่องว่าง และ &amp; . ' - ไม่เกิน 60 ตัว (Letters, digits, space, &amp; . ' -, up to 60)</small>
+        {Boolean(draft.name.trim()) && !nameValid && <p className="error small" role="alert">ชื่อแบรนด์ไม่ถูกต้อง (Invalid brand name)</p>}
         <label>โดเมน (Domain)<input required value={draft.domain} onChange={(e) => setDraft({ ...draft, domain: e.target.value })} placeholder="example.com" /></label>
         <label>คีย์เวิร์ด (Keyword)<input required value={draft.keyword_default} onChange={(e) => setDraft({ ...draft, keyword_default: e.target.value })} placeholder="Fast cash" /></label>
         <label>เวอร์ชันเทมเพลต (Sealed template version)<select required disabled={templatesLoading || templates.length === 0} value={draft.template_version_id} onChange={(e) => setDraft({ ...draft, template_version_id: e.target.value })}>
@@ -270,7 +273,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
         {!templatesLoading && !templatesError && templates.length === 0 && <p role="status">ยังไม่มี sealed template กรุณาให้ Owner seal เทมเพลตก่อน</p>}
         <button className="primary" type="submit" disabled={!canCreateDraft}>สร้างแบรนด์ (Create draft)</button>
       </form>
-      <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <button key={brand.brand_id} className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><b>{brand.hostnames[0] ?? brand.brand_id}</b><span>{statusLabel[brand.status] ?? brand.status}</span></button>)}</div>
+      <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <button key={brand.brand_id} className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><span><b>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</span><span>{statusLabel[brand.status] ?? brand.status}</span></button>)}</div>
       <p className="muted small">การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold</p>
     </section>
     {selected && <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRetry={() => void retry()} onRecover={() => void recover()} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />}
@@ -293,7 +296,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const actions = lifecycleMutationAvailability(brand.status, install?.status, pendingOperation, install?.recovery_required === true);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
-  return <section className="card lifecycle-detail"><div className="row split"><div><h2>{brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={`pill ${brand.status}`}>{statusLabel[brand.status] ?? brand.status}</span></div>
+  return <section className="card lifecycle-detail"><div className="row split"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={`pill ${brand.status}`}>{statusLabel[brand.status] ?? brand.status}</span></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
     {isManaged && <div className="form-inline">{actions.install && <button className="primary" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{actions.retry && <button onClick={onRetry}>ลองใหม่ (Retry)</button>}{actions.recover && me.role === "owner" && <button className="danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
     {install && <div className="section"><h3>ผลการทำงานและข้อผิดพลาด (Receipts / Errors)</h3><p>Install ID: <code>{install.install_id}</code></p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p>{install.receipts.map((receipt) => <div className="receipt" key={receipt.step}><span>{receipt.step}</span><span className={`pill ${receipt.status}`}>{receipt.status}</span>{receipt.error && <span className="error">{receipt.error}</span>}</div>)}</div>}

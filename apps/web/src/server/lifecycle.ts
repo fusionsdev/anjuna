@@ -5,6 +5,7 @@ import {
   RuntimeListResponse,
   PrepopBase,
   cleanKeyword,
+  BrandName,
   isBrandClean,
   LifecycleBrandSummary,
   SealedTemplatesResponse,
@@ -29,7 +30,7 @@ const Artifact = z.strictObject({
 const Draft = z.strictObject({
   domain: z.string().min(1).max(253).transform((value) => value.toLowerCase().replace(/\.$/, "")).refine((value) => !value.startsWith("www."), "Use the apex domain, not a www hostname").refine((value) => /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/.test(value), "Must be a valid apex domain"),
   keyword_default: z.string().min(1).max(60).transform(cleanKeyword).refine((value) => Boolean(value), "Keyword is empty after normalization"), template_version_id: Id,
-  name: z.string().trim().min(1).max(60).regex(/^[\p{L}\p{N}][\p{L}\p{M}\p{N} .&'-]{0,59}$/u, "ชื่อแบรนด์ใช้ได้เฉพาะตัวอักษร ตัวเลข ช่องว่าง และ & . ' -").refine(isBrandClean, "ชื่อแบรนด์มีคำที่ไม่อนุญาต").optional(),
+  name: BrandName.optional(),
 });
 const Upgrade = z.strictObject({
   from_template_version_id: Id, to_template_version_id: Id, form_artifact_id: Id,
@@ -281,7 +282,7 @@ async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string
 function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never): LifecycleBrandSummary {
   const state = runtime.get(row.brand_id);
   return LifecycleBrandSummary.parse({
-    brand_id: row.brand_id, account: row.account,
+    brand_id: row.brand_id, name: typeof row.name === "string" && row.name ? row.name : undefined, account: row.account,
     hostnames: state?.hostnames ?? [row.domain, `www.${row.domain}`], status: row.status,
     current_revision_id: row.current_revision_id,
     bundle_form_version: state?.bundle_form_version ?? row.bundle_form_version ?? null,

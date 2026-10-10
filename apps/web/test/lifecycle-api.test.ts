@@ -523,6 +523,28 @@ describe("truthful lifecycle BFF", () => {
     ]) });
   });
 
+  it("returns the stored brand name in the list and the detail, hostname unchanged", async () => {
+    const named = await post(employee, "/api/brands/drafts", { name: "Level Lending", domain: "level-named.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await named.json() as { brand: { brand_id: string } };
+    const unnamed = await post(employee, "/api/brands/drafts", { domain: "plain-fallback.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand: other } = await unnamed.json() as { brand: { brand_id: string } };
+    const list = LifecycleBrandSummary.array().parse(((await (await call("/api/lifecycle/brands", { cookie: employee })).json()) as { brands: unknown[] }).brands);
+    expect(list.find((row) => row.brand_id === brand.brand_id)).toMatchObject({ name: "Level Lending", hostnames: ["level-named.test", "www.level-named.test"] });
+    expect(list.find((row) => row.brand_id === other.brand_id)?.name).toBe("plain fallback");
+    const detail = await call(`/api/lifecycle/brands/${brand.brand_id}`, { cookie: employee });
+    expect(LifecycleBrandSummary.parse(((await detail.json()) as { brand: unknown }).brand)).toMatchObject({ name: "Level Lending" });
+  });
+
+  it("leaves name off a core-only unmanaged brand", async () => {
+    const core = { fetch: async () => Response.json({ brands: [
+      { brand_id: "core-nameless", account: "test-account", hostnames: ["core-nameless.example", "www.core-nameless.example"], applied_revision_id: null, paused: true, bundle_form_version: null },
+    ] }) } as unknown as Fetcher;
+    const list = await call("/api/lifecycle/brands", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
+    const row = (await list.json() as { brands: Array<Record<string, unknown>> }).brands.find((b) => b.brand_id === "core-nameless");
+    expect(row).toBeDefined();
+    expect("name" in row!).toBe(false);
+  });
+
   it("resolves rollback target server-side and ignores a caller override", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "rollback-authority.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };

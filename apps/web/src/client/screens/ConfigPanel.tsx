@@ -38,7 +38,7 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
     <Drawer onClose={onClose} title={brand.hostnames[0]!}>
       {toast && <div className={toast.kind === "ok" ? "ok" : "error"} role="status">{toast.text}</div>}
       <p className="muted small">
-        บัญชี {brand.account} · <span className={`pill ${brand.status}`}>{brand.status}</span> · form <code>{brand.form_version ?? "—"}</code>
+        บัญชี (Account) {brand.account} · <span className={`pill ${brand.status}`}>{brand.status}</span> · ฟอร์ม (form) <code>{brand.form_version ?? "—"}</code>
       </p>
 
       <Section title="สถานะ (Pause / Resume)">
@@ -46,18 +46,18 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
           className={brand.status === "live" ? "danger" : "primary"}
           onClick={() => act(() => api.setStatus(brandId, brand.status === "live" ? "pause" : "resume"), brand.status === "live" ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว")}
         >
-          {brand.status === "live" ? "Pause แบรนด์" : "Resume แบรนด์"}
+          {brand.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
         </button>}
       </Section>
 
       <KeywordSection key={brand.updated_at} brand={brand} onSave={(k) => save({ keyword_default: k })} />
 
-      {me.role === "owner" && <Section title="Rollback">
+      {me.role === "owner" && <Section title="ย้อนกลับ (Rollback)">
         <button
           onClick={() => void act(() => api.rollback(brandId), "")}
-          title="coming with T10"
+          title="เร็ว ๆ นี้ (coming with T10)"
         >
-          Rollback เป็นเวอร์ชันก่อนหน้า <span className="badge">coming with T10</span>
+          ย้อนกลับเป็นเวอร์ชันก่อนหน้า (Rollback) <span className="badge">เร็ว ๆ นี้ (coming with T10)</span>
         </button>
         <p className="muted small">ยังเป็น placeholder: ปุ่มนี้จะทำงานจริงเมื่อ factory Workflows (T10) พร้อม</p>
       </Section>}
@@ -65,7 +65,7 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
       {can(me, "ab_weights") && <AbSection key={`ab${brand.updated_at}`} brand={brand} onSave={(ab) => save({ ab_config: ab })} />}
       {can(me, "amount_buckets") && <BucketsSection key={`b${brand.updated_at}`} brand={brand} onSave={(b) => save({ amount_buckets: b })} />}
       {can(me, "flow_gate_mode") && (
-        <Section title="Flow gate">
+        <Section title="เกตของโฟลว์ (Flow gate)">
           <select value={brand.flow_gate_mode} onChange={(e) => save({ flow_gate_mode: e.target.value as FlowGateMode })}>
             <option value="param">param</option>
             <option value="signed_cookie">signed_cookie</option>
@@ -94,10 +94,10 @@ function Drawer({ title, onClose, children }: { title: string; onClose: () => vo
   return (
     <div className="drawer-wrap">
       <div className="scrim" onClick={onClose} />
-      <aside className="drawer" aria-label="Brand config">
+      <aside className="drawer" aria-label="การตั้งค่าแบรนด์ (Brand config)">
         <header>
           <h2>{title}</h2>
-          <button className="link" onClick={onClose}>ปิด</button>
+          <button className="link" onClick={onClose}>ปิด (Close)</button>
         </header>
         {children}
       </aside>
@@ -117,10 +117,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function KeywordSection({ brand, onSave }: { brand: BrandConfig; onSave: (k: string | null) => void }) {
   const [v, setV] = useState(brand.keyword_default ?? "");
   return (
-    <Section title="Keyword default">
+    <Section title="คีย์เวิร์ดเริ่มต้น (Keyword default)">
       <div className="row">
         <input value={v} maxLength={60} onChange={(e) => setV(e.target.value)} placeholder="ว่าง = ใช้ข้อความเริ่มต้นของ template" />
-        <button className="primary" onClick={() => onSave(v.trim() === "" ? null : v.trim())}>บันทึก</button>
+        <button className="primary" onClick={() => onSave(v.trim() === "" ? null : v.trim())}>บันทึก (Save)</button>
       </div>
     </Section>
   );
@@ -129,11 +129,11 @@ function KeywordSection({ brand, onSave }: { brand: BrandConfig; onSave: (k: str
 function AbSection({ brand, onSave }: { brand: BrandConfig; onSave: (ab: BrandConfig["ab_config"]) => void }) {
   const ab = brand.ab_config;
   const [weights, setWeights] = useState<number[]>(ab?.variants.map((v) => v.weight) ?? []);
-  if (!ab) return <Section title="A/B weights"><p className="muted">ไม่มี A/B test ที่รันอยู่</p></Section>;
+  if (!ab) return <Section title="น้ำหนัก A/B (A/B weights)"><p className="muted">ไม่มี A/B test ที่รันอยู่</p></Section>;
   const sum = weights.reduce((s, w) => s + w, 0);
   const two = ab.variants.length === 2;
   return (
-    <Section title="A/B weights (รวมต้องเป็น 100%)">
+    <Section title="น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)">
       {two ? (
         <>
           <input
@@ -142,7 +142,7 @@ function AbSection({ brand, onSave }: { brand: BrandConfig; onSave: (ab: BrandCo
             max={100}
             step={1}
             value={weights[0]}
-            aria-label="A/B weight"
+            aria-label="น้ำหนัก A/B (A/B weight)"
             onChange={(e) => setWeights([Number(e.target.value), 100 - Number(e.target.value)])}
           />
           <div className="row split">
@@ -161,7 +161,7 @@ function AbSection({ brand, onSave }: { brand: BrandConfig; onSave: (ab: BrandCo
       )}
       <div className={sum === 100 ? "muted small" : "error"}>รวม {sum}%</div>
       <button className="primary" disabled={sum !== 100} onClick={() => onSave({ ...ab, variants: ab.variants.map((v, i) => ({ id: v.id, weight: weights[i]! })) })}>
-        บันทึก A/B
+        บันทึก A/B (Save A/B)
       </button>
     </Section>
   );
@@ -172,10 +172,10 @@ function BucketsSection({ brand, onSave }: { brand: BrandConfig; onSave: (b: num
   const parsed = text.split(",").map((s) => s.trim()).filter(Boolean).map(Number);
   const valid = parsed.length > 0 && parsed.every((n, i) => Number.isInteger(n) && n > 0 && (i === 0 || n > parsed[i - 1]!));
   return (
-    <Section title="Amount buckets">
+    <Section title="ช่วงยอดเงิน (Amount buckets)">
       <div className="row">
-        <input value={text} onChange={(e) => setText(e.target.value)} aria-label="Amount buckets" />
-        <button className="primary" disabled={!valid} onClick={() => onSave(parsed)}>บันทึก</button>
+        <input value={text} onChange={(e) => setText(e.target.value)} aria-label="ช่วงยอดเงิน (Amount buckets)" />
+        <button className="primary" disabled={!valid} onClick={() => onSave(parsed)}>บันทึก (Save)</button>
       </div>
       {!valid && <div className="error small">ใส่ตัวเลขจำนวนเต็ม เรียงจากน้อยไปมาก คั่นด้วยจุลภาค</div>}
     </Section>
@@ -187,10 +187,10 @@ function MoneySection({ brand, onSave, onRotate }: { brand: BrandConfig; onSave:
   const [prepop, setPrepop] = useState(brand.prepop_base);
   const [drain, setDrain] = useState(brand.drain_key);
   return (
-    <Section title="Money-path (เฉพาะ Owner)">
-      <label>LeadsGate aid<input value={aid} onChange={(e) => setAid(e.target.value)} /></label>
-      <label>Prepop base<input value={prepop} onChange={(e) => setPrepop(e.target.value)} /></label>
-      <label>Drain key<input value={drain} onChange={(e) => setDrain(e.target.value)} /></label>
+    <Section title="เส้นทางเงิน (Money-path, Owner เท่านั้น)">
+      <label>รหัส LeadsGate (LeadsGate aid)<input value={aid} onChange={(e) => setAid(e.target.value)} /></label>
+      <label>URL ฐาน prepop (Prepop base)<input value={prepop} onChange={(e) => setPrepop(e.target.value)} /></label>
+      <label>คีย์ drain (Drain key)<input value={drain} onChange={(e) => setDrain(e.target.value)} /></label>
       <button
         className="primary"
         onClick={() =>
@@ -201,11 +201,11 @@ function MoneySection({ brand, onSave, onRotate }: { brand: BrandConfig; onSave:
           })
         }
       >
-        บันทึก
+        บันทึก (Save)
       </button>
       <div className="row split">
-        <span>Postback token: <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว" : "ยังไม่ได้ตั้งค่า"}</b></span>
-        <button className="danger" onClick={onRotate}>Rotate token</button>
+        <span>โทเคน postback (Postback token): <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว" : "ยังไม่ได้ตั้งค่า"}</b></span>
+        <button className="danger" onClick={onRotate}>หมุนโทเคน (Rotate token)</button>
       </div>
     </Section>
   );
@@ -214,9 +214,9 @@ function MoneySection({ brand, onSave, onRotate }: { brand: BrandConfig; onSave:
 function TokenModal({ token, onClose }: { token: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="modal-wrap" role="dialog" aria-modal="true" aria-label="Postback token ใหม่">
+    <div className="modal-wrap" role="dialog" aria-modal="true" aria-label="โทเคน postback ใหม่ (New postback token)">
       <div className="card modal">
-        <h2>Postback token ใหม่</h2>
+        <h2>โทเคน postback ใหม่ (New postback token)</h2>
         <div className="warn">คุณจะไม่เห็น token นี้อีก (you will not see this again) — คัดลอกแล้วนำไปใส่ใน LeadsGate postback URL ทันที</div>
         <code className="token">{token}</code>
         <div className="row">
@@ -227,9 +227,9 @@ function TokenModal({ token, onClose }: { token: string; onClose: () => void }) 
               setCopied(true);
             }}
           >
-            {copied ? "คัดลอกแล้ว" : "คัดลอก"}
+            {copied ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}
           </button>
-          <button onClick={onClose}>ปิด</button>
+          <button onClick={onClose}>ปิด (Close)</button>
         </div>
       </div>
     </div>

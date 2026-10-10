@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LifecycleBrandSummary, type BrandConfig, type InstallWithReceipts } from "@anjuna/contracts";
+import { BRAND_NAME_PATTERN, LifecycleBrandSummary, type BrandConfig, type InstallWithReceipts } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
@@ -42,6 +42,17 @@ const installName = "ติดตั้ง (Install)";
 const rollbackName = "ย้อนกลับ (Rollback)";
 const retryName = "ลองใหม่ (Retry)";
 const recoverName = "กู้คืน (Recover, Owner)";
+const configLabel = "การตั้งค่าแบรนด์ (Brand config)";
+const pauseName = "หยุดชั่วคราว (Pause)";
+const resumeName = "เปิดใช้งานต่อ (Resume)";
+const keywordSection = "คีย์เวิร์ดเริ่มต้น (Keyword default)";
+const saveName = "บันทึก (Save)";
+const bucketsLabel = "ช่วงยอดเงิน (Amount buckets)";
+const abWeightLabel = "น้ำหนัก A/B (A/B weight)";
+const saveAbName = "บันทึก A/B (Save A/B)";
+const flowGateSection = "เกตของโฟลว์ (Flow gate)";
+const closeName = "ปิด (Close)";
+const rotateName = "หมุนโทเคน (Rotate token)";
 const section = (panel: HTMLElement, heading: string | RegExp) => within(within(panel).getByRole("heading", { name: heading }).closest("section")!);
 
 beforeEach(() => {
@@ -238,47 +249,114 @@ describe("mounted lifecycle UI with API responses", () => {
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeDefined();
     fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
-    const panel = await screen.findByRole("complementary", { name: "Brand config" });
-    fireEvent.click(await within(panel).findByRole("button", { name: "Pause แบรนด์" }));
+    const panel = await screen.findByRole("complementary", { name: configLabel });
+    fireEvent.click(await within(panel).findByRole("button", { name: pauseName }));
     expect(within(panel).getByRole("button", { name: /Rollback/ })).toBeDefined();
-    fireEvent.click(await within(panel).findByRole("button", { name: "Resume แบรนด์" }));
-    await within(panel).findByRole("button", { name: "Pause แบรนด์" });
+    fireEvent.click(await within(panel).findByRole("button", { name: resumeName }));
+    await within(panel).findByRole("button", { name: pauseName });
     expect(requests.some((r) => r.path.endsWith("/pause") && r.method === "POST")).toBe(true);
     expect(requests.some((r) => r.path.endsWith("/resume") && r.method === "POST")).toBe(true);
 
-    fireEvent.change(section(panel, "Keyword default").getByRole("textbox"), { target: { value: "Fast Cash" } });
-    fireEvent.click(section(panel, "Keyword default").getByRole("button", { name: "บันทึก" }));
+    fireEvent.change(section(panel, keywordSection).getByRole("textbox"), { target: { value: "Fast Cash" } });
+    fireEvent.click(section(panel, keywordSection).getByRole("button", { name: saveName }));
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ keyword_default: "Fast Cash", expected_updated_at: expect.any(String) }));
-    await waitFor(() => expect((section(panel, "Keyword default").getByRole("textbox") as HTMLInputElement).value).toBe("Fast Cash"));
+    await waitFor(() => expect((section(panel, keywordSection).getByRole("textbox") as HTMLInputElement).value).toBe("Fast Cash"));
 
-    fireEvent.change(within(panel).getByRole("textbox", { name: "Amount buckets" }), { target: { value: "200, 600" } });
-    fireEvent.click(section(panel, "Amount buckets").getByRole("button", { name: "บันทึก" }));
+    fireEvent.change(within(panel).getByRole("textbox", { name: bucketsLabel }), { target: { value: "200, 600" } });
+    fireEvent.click(section(panel, bucketsLabel).getByRole("button", { name: saveName }));
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ amount_buckets: [200, 600] }));
 
-    fireEvent.change(await within(panel).findByRole("slider", { name: "A/B weight" }), { target: { value: "70" } });
-    fireEvent.click(within(panel).getByRole("button", { name: "บันทึก A/B" }));
+    fireEvent.change(await within(panel).findByRole("slider", { name: abWeightLabel }), { target: { value: "70" } });
+    fireEvent.click(within(panel).getByRole("button", { name: saveAbName }));
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ ab_config: { variants: [{ id: "lite_v1", weight: 70 }, { id: "full_v1", weight: 30 }] } }));
 
-    fireEvent.change(section(panel, "Flow gate").getByRole("combobox"), { target: { value: "signed_cookie" } });
+    fireEvent.change(section(panel, flowGateSection).getByRole("combobox"), { target: { value: "signed_cookie" } });
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ flow_gate_mode: "signed_cookie" }));
-    fireEvent.click(within(panel).getByRole("button", { name: "ปิด" }));
-    expect(screen.queryByRole("complementary", { name: "Brand config" })).toBeNull();
+    fireEvent.click(within(panel).getByRole("button", { name: closeName }));
+    expect(screen.queryByRole("complementary", { name: configLabel })).toBeNull();
     expect(screen.getByText(/สถิติ 7 วัน · ลีด \(Leads\): 9 · ขายได้ \(Sold\): 3 · รอผล \(Pending\): 2/)).toBeDefined();
   });
 
   it("keeps employee runtime controls accessible with owner-only controls hidden", async () => {
     render(<BrandLifecycle me={employee} />);
     fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
-    const panel = await screen.findByRole("complementary", { name: "Brand config" });
+    const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("textbox");
-    expect(within(panel).queryByRole("button", { name: "Pause แบรนด์" })).toBeNull();
-    expect(section(panel, "Keyword default").getByRole("textbox")).toBeDefined();
-    expect(within(panel).queryByRole("textbox", { name: "Amount buckets" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: pauseName })).toBeNull();
+    expect(section(panel, keywordSection).getByRole("textbox")).toBeDefined();
+    expect(within(panel).queryByRole("textbox", { name: bucketsLabel })).toBeNull();
     expect(within(panel).queryByRole("combobox")).toBeNull();
-    expect(within(panel).queryByRole("button", { name: "Rotate token" })).toBeNull();
-    expect(within(panel).queryByRole("heading", { name: "Rollback" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: rotateName })).toBeNull();
+    expect(within(panel).queryByRole("heading", { name: rollbackName })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /Rollback/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /เริ่ม Upgrade-all/ })).toBeNull();
+  });
+
+  it("labels every control in the config panel as Thai (English)", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    routes.set("PATCH /api/brands/brand-a", () => json({ brand: config, issued_postback_token: "tok_0123456789abcdef" }));
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+    const panel = await screen.findByRole("complementary", { name: configLabel });
+    await within(panel).findByRole("button", { name: pauseName });
+    expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
+      "สถานะ (Pause / Resume)", keywordSection, rollbackName, "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
+    ]);
+    for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)"]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
+    expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();
+    expect(within(panel).getByText(/โทเคน postback \(Postback token\):/)).toBeDefined();
+    // Every button reads Thai first with the English term in parentheses.
+    const thaiThenEnglish = /^[฀-๿][^()]*\([A-Za-z][^()]*\)/;
+    for (const button of within(panel).getAllByRole("button")) expect(button.textContent, button.textContent ?? "").toMatch(thaiThenEnglish);
+    fireEvent.click(within(panel).getByRole("button", { name: rotateName }));
+    const modal = await screen.findByRole("dialog", { name: "โทเคน postback ใหม่ (New postback token)" });
+    expect(within(modal).getByRole("heading", { name: "โทเคน postback ใหม่ (New postback token)" })).toBeDefined();
+    expect(within(modal).getByRole("button", { name: "คัดลอก (Copy)" })).toBeDefined();
+    expect(within(modal).getByRole("button", { name: closeName })).toBeDefined();
+  });
+
+  it("shows the brand name in the list and the detail header with the hostname as secondary text", async () => {
+    runtimeAvailable = false;
+    lifecycleRows = [{ ...brand, name: "Level Lending" }];
+    render(<BrandLifecycle me={employee} />);
+    const item = await screen.findByRole("button", { name: /Level Lending/ });
+    expect(item.textContent).toContain("renderable.test");
+    expect(within(item).getByText("Level Lending").tagName).toBe("B");
+    expect(within(item).getByText("renderable.test").tagName).not.toBe("B");
+    const header = await screen.findByRole("heading", { name: "Level Lending" });
+    expect(header.textContent).toBe("Level Lending");
+    expect(header.closest("section")!.textContent).toContain("renderable.test");
+  });
+
+  it("falls back to the hostname when a brand has no stored name", async () => {
+    runtimeAvailable = false;
+    render(<BrandLifecycle me={employee} />);
+    const item = await screen.findByRole("button", { name: /renderable.test/ });
+    expect(within(item).getByText("renderable.test").tagName).toBe("B");
+    expect((await screen.findByRole("heading", { name: "renderable.test" })).textContent).toBe("renderable.test");
+  });
+
+  it("validates the brand name on the client with the shared rule and keeps a short hint", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
+    const name = screen.getByRole("textbox", { name: nameLabel }) as HTMLInputElement;
+    const create = screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement;
+    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "maple.test" } });
+    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
+    fireEvent.change(screen.getByRole("combobox", { name: templateLabel }), { target: { value: "tv-1" } });
+    expect(name.pattern).toBe(BRAND_NAME_PATTERN);
+    expect(name.getAttribute("aria-describedby")).toBeTruthy();
+    expect(document.getElementById(name.getAttribute("aria-describedby")!)!.textContent).toBe("ตัวอักษร ตัวเลข ช่องว่าง และ & . ' - ไม่เกิน 60 ตัว (Letters, digits, space, & . ' -, up to 60)");
+    for (const bad of ["Lead_Cash", "x".repeat(61), "Anjuna Loans", "-Lead"]) {
+      fireEvent.change(name, { target: { value: bad } });
+      expect(create.disabled, bad).toBe(true);
+      expect(name.getAttribute("aria-invalid"), bad).toBe("true");
+    }
+    expect(screen.getByRole("alert").textContent).toBe("ชื่อแบรนด์ไม่ถูกต้อง (Invalid brand name)");
+    fireEvent.change(name, { target: { value: "Smith & Sons" } });
+    expect(name.validity.patternMismatch).toBe(false);
+    expect(name.getAttribute("aria-invalid")).toBe("false");
+    expect(create.disabled).toBe(false);
   });
 
   it("renders a factory-only draft from the API and does not offer runtime config", async () => {
