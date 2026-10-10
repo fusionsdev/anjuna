@@ -7,8 +7,8 @@ export const SMOKE_RETRY_CONFIG = {
   timeout: "10 seconds",
 } satisfies WorkflowStepConfig;
 
-async function checkEndpoint(domain: string, host: "apex" | "www"): Promise<number> {
-  const url = `https://${host === "www" ? "www." : ""}${domain}/`;
+async function checkEndpoint(hostname: string, host: "apex" | "www", apex: string): Promise<number> {
+  const url = `https://${hostname}/`;
   let response: Response;
   let body = "";
   try {
@@ -33,20 +33,28 @@ async function checkEndpoint(domain: string, host: "apex" | "www"): Promise<numb
   if (host === "apex" && (!/<span\b[^>]*\sdata-kw(?:\s|=|>)/i.test(body) || !/<form\b[^>]*\sdata-cta(?:\s|=|>)/i.test(body))) {
     throw new NonRetryableError("Smoke: apex missing expected landing content (data-kw/data-cta)");
   }
-  if (host === "www" && response.headers.get("location") !== `https://${domain}/`) {
+  if (host === "www" && response.headers.get("location") !== `https://${apex}/`) {
     throw new NonRetryableError("Smoke: www redirect does not target the apex");
   }
   return response.status;
 }
 
-export async function smokeBrand(domain: string): Promise<{ apex_status: number; www_status: number }> {
-  const results = await Promise.allSettled([checkEndpoint(domain, "apex"), checkEndpoint(domain, "www")]);
+/**
+ * Smokes the brand hostnames: the first is the brand apex (200 with landing content), a
+ * second is its www (301 to the apex). Subdomain brands pass a single hostname.
+ */
+export async function smokeBrand(hostnames: string[]): Promise<{ apex_status: number; www_status?: number }> {
+  const apex = hostnames[0]!;
+  const results = await Promise.allSettled(
+    hostnames.map((hostname, index) => checkEndpoint(hostname, index === 0 ? "apex" : "www", apex)),
+  );
   // An application failure wins even if the other hostname is still propagating.
   for (const result of results) {
     if (result.status === "rejected" && result.reason instanceof NonRetryableError) throw result.reason;
   }
-  const [apex, www] = results;
-  if (apex.status === "rejected") throw apex.reason;
-  if (www.status === "rejected") throw www.reason;
-  return { apex_status: apex.value, www_status: www.value };
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+  }
+  const statuses = results.map((result) => (result as PromiseFulfilledResult<number>).value);
+  return hostnames.length > 1 ? { apex_status: statuses[0]!, www_status: statuses[1]! } : { apex_status: statuses[0]! };
 }

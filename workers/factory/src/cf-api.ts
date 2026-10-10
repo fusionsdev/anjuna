@@ -46,7 +46,20 @@ async function cfFetch<T>(
 
 export interface ZoneInfo {
   id: string;
+  name: string;
   status: "active" | "pending" | "initializing" | "moved" | "deleted" | "deactivated" | "read only";
+}
+
+/**
+ * Hostnames a brand serves on its zone. A brand whose domain equals the zone name is an
+ * apex brand and serves the apex plus `www.`; a brand on a subdomain of the zone serves
+ * only the bare subdomain, because Universal SSL covers the zone apex and `*.zone` but
+ * never a second-level name such as `www.<subdomain>.<zone>`.
+ */
+export function brandHostnames(domain: string, zoneName: string): string[] {
+  const bare = domain.toLowerCase().replace(/\.$/, "");
+  const zone = zoneName.toLowerCase().replace(/\.$/, "");
+  return bare === zone ? [bare, `www.${bare}`] : [bare];
 }
 
 /**
@@ -81,15 +94,15 @@ const BLOCKING_TYPES = new Set(["A", "AAAA", "CNAME"]);
 const DOH_TYPES: Record<number, string> = { 1: "A", 5: "CNAME", 28: "AAAA" };
 
 /**
- * Public DNS view of the apex and www hostnames (DNS-over-HTTPS, no credentials).
+ * Public DNS view of the brand hostnames (DNS-over-HTTPS, no credentials).
  * Used only when the zone DNS API refuses the token (Cloudflare error 10000): account API
  * tokens can be rejected by the zone DNS records endpoint even with DNS permissions. Proxied
  * and DNS-only records are both visible publicly, and Custom Domain attach still refuses a
  * hostname that already has records, so this keeps the preflight without widening the token.
  */
-export async function publicApexDnsRecords(domain: string, fetcher: CfFetch = globalThis.fetch): Promise<DnsRecord[]> {
+export async function publicApexDnsRecords(hostnames: string[], fetcher: CfFetch = globalThis.fetch): Promise<DnsRecord[]> {
   const found: DnsRecord[] = [];
-  for (const name of [domain, `www.${domain}`]) {
+  for (const name of hostnames) {
     for (const type of ["A", "AAAA", "CNAME"]) {
       const res = await fetcher(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`, {
         headers: { accept: "application/dns-json" },
@@ -110,15 +123,15 @@ export async function publicApexDnsRecords(domain: string, fetcher: CfFetch = gl
 }
 
 /**
- * Returns A, AAAA and CNAME records on the apex and www hostnames.
+ * Returns A, AAAA and CNAME records on the brand hostnames.
  * The list API filters `name` and `type` by a single exact value each, so query each hostname
  * on its own and filter the type here. Falls back to the public DNS view when the zone DNS
  * API answers 10000 (authentication) for this token.
  */
-export async function apexDnsRecords(token: string, zoneId: string, domain: string, fetcher?: CfFetch): Promise<DnsRecord[]> {
+export async function apexDnsRecords(token: string, zoneId: string, hostnames: string[], fetcher?: CfFetch): Promise<DnsRecord[]> {
   const found: DnsRecord[] = [];
   try {
-    for (const name of [domain, `www.${domain}`]) {
+    for (const name of hostnames) {
       const records = await cfFetch<DnsRecord[]>(
         token, "GET",
         `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}&per_page=100`,
@@ -128,8 +141,8 @@ export async function apexDnsRecords(token: string, zoneId: string, domain: stri
     }
   } catch (error) {
     if (!(error instanceof Error) || !/failed: 10000:/.test(error.message)) throw error;
-    console.warn(`zone DNS API refused the token for ${domain}; using the public DNS view for the preflight`);
-    return publicApexDnsRecords(domain, fetcher);
+    console.warn(`zone DNS API refused the token for ${hostnames[0]}; using the public DNS view for the preflight`);
+    return publicApexDnsRecords(hostnames, fetcher);
   }
   return found;
 }

@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import {
-  apexDnsRecords, attachCustomDomain, assetContentType, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
+  apexDnsRecords, attachCustomDomain, assetContentType, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
@@ -63,7 +63,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
     try {
       await step.do("claim_install", () => setInstallStatus(db, install_id, "running", undefined, brand_id));
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      const { zone_id, domain, name, account, previous_revision_id, initial_runtime } = await step.do("validate", async () => {
+      const { zone_id, domain, hostnames: cachedHostnames, name, account, previous_revision_id, initial_runtime } = await step.do("validate", async () => {
         return withReceipt(db, install_id, "validate", async () => {
           const brand = await db
             .prepare("SELECT brand_id, name, account, domain, keyword_default, current_revision_id FROM brands WHERE brand_id = ?")
@@ -113,7 +113,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           });
 
           const zone = await getZone(CF_API_TOKEN, brand.domain);
-          const conflicts = await apexDnsRecords(CF_API_TOKEN, zone.id, brand.domain);
+          const hostnames = brandHostnames(brand.domain, zone.name);
+          const conflicts = await apexDnsRecords(CF_API_TOKEN, zone.id, hostnames);
           if (conflicts.length > 0) {
             const names = conflicts.map((r) => `${r.type} ${r.name}`).join(", ");
             throw new Error(`Existing DNS records block Custom Domain attach: ${names}`);
@@ -122,6 +123,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           return {
             zone_id: zone.id,
             domain: brand.domain,
+            hostnames,
             name: brand.name,
             account: brand.account,
             previous_revision_id: brand.current_revision_id,
@@ -129,6 +131,9 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           };
         });
       });
+      // A Workflow replaying an install started before per-zone hostnames has a cached
+      // validate output without them; those installs attached apex plus www, so keep that pair.
+      const hostnames = cachedHostnames ?? [domain, `www.${domain}`];
 
       // ── Step 2: Save rollback record ───────────────────────────────────────
       await step.do("save_rollback", async () => {
@@ -257,7 +262,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
           mutationStarted = true;
           const result = await client.applyRuntime({
-            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            install_id, brand_id, account, hostnames,
             expected_revision_id: null, target_revision_id: revision_id,
             actor_id: "system", actor_role: "owner", initial_runtime,
           });
@@ -290,11 +295,13 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
         return withReceipt(db, install_id, "attach_domains", async () => {
           const scriptName = `brand-${brand_id}`;
           mutationStarted = true;
-          const [apex, www] = await Promise.all([
-            attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, domain, scriptName),
-            attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, `www.${domain}`, scriptName),
-          ]);
-          return { apex_domain_id: apex.id, www_domain_id: www.id };
+          const attached = await Promise.all(
+            hostnames.map((hostname) => attachCustomDomain(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, hostname, scriptName)),
+          );
+          return {
+            apex_domain_id: attached[0]!.id,
+            ...(attached[1] ? { www_domain_id: attached[1].id } : {}),
+          };
         });
       });
 
@@ -302,7 +309,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       // Persist only the final outcome. A failed receipt inside the callback would
       // short-circuit every Workflow retry instead of re-fetching the hostnames.
       await withReceipt(db, install_id, "smoke", () =>
-        step.do("smoke", SMOKE_RETRY_CONFIG, () => smokeBrand(domain)),
+        step.do("smoke", SMOKE_RETRY_CONFIG, () => smokeBrand(hostnames)),
       );
 
       if (previous_revision_id) {
@@ -310,7 +317,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
           mutationStarted = true;
           const result = await client.applyRuntime({
-            install_id, brand_id, account, hostnames: [domain, `www.${domain}`],
+            install_id, brand_id, account, hostnames,
             expected_revision_id: previous_revision_id, target_revision_id: revision_id,
             actor_id: "system", actor_role: "owner", initial_runtime,
           });

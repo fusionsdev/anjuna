@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { detachCustomDomain, getZone, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
+import { brandHostnames, detachCustomDomain, getZone, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
+
+describe("brandHostnames", () => {
+  it("serves the apex and its www for a brand on its own zone", () => {
+    expect(brandHostnames("withulaon.com", "withulaon.com")).toEqual(["withulaon.com", "www.withulaon.com"]);
+  });
+
+  it("serves only the bare domain for a brand on a subdomain of its zone", () => {
+    expect(brandHostnames("demo05.aduplift.ai", "aduplift.ai")).toEqual(["demo05.aduplift.ai"]);
+  });
+
+  it("compares case-insensitively and tolerates a trailing dot", () => {
+    expect(brandHostnames("Aduplift.AI.", "aduplift.ai")).toEqual(["aduplift.ai", "www.aduplift.ai"]);
+    expect(brandHostnames("Demo05.Aduplift.AI", "ADUPLIFT.AI.")).toEqual(["demo05.aduplift.ai"]);
+  });
+});
 
 describe("getZone", () => {
-  const zoneResponse = (zones: Array<{ id: string; status: string }>) => Response.json({ success: true, result: zones });
+  const zoneResponse = (zones: Array<{ id: string; name?: string; status: string }>) => Response.json({ success: true, result: zones });
 
-  function recordingFetcher(byName: (name: string) => Array<{ id: string; status: string }>) {
+  function recordingFetcher(byName: (name: string) => Array<{ id: string; name?: string; status: string }>) {
     const names: string[] = [];
     const fetcher = async (input: string) => {
       const name = new URL(input).searchParams.get("name")!;
@@ -15,20 +30,20 @@ describe("getZone", () => {
   }
 
   it("returns the zone on the first try for an apex domain", async () => {
-    const { fetcher, names } = recordingFetcher(() => [{ id: "zone-aduplift", status: "active" }]);
-    await expect(getZone("test-token", "aduplift.ai", fetcher)).resolves.toMatchObject({ id: "zone-aduplift", status: "active" });
+    const { fetcher, names } = recordingFetcher(() => [{ id: "zone-aduplift", name: "aduplift.ai", status: "active" }]);
+    await expect(getZone("test-token", "aduplift.ai", fetcher)).resolves.toMatchObject({ id: "zone-aduplift", name: "aduplift.ai", status: "active" });
     expect(names).toEqual(["aduplift.ai"]);
   });
 
-  it("resolves a subdomain brand domain to the parent zone", async () => {
-    const { fetcher, names } = recordingFetcher((name) => (name === "aduplift.ai" ? [{ id: "zone-aduplift", status: "active" }] : []));
-    await expect(getZone("test-token", "demo05.aduplift.ai", fetcher)).resolves.toMatchObject({ id: "zone-aduplift" });
+  it("resolves a subdomain brand domain to the parent zone and its name", async () => {
+    const { fetcher, names } = recordingFetcher((name) => (name === "aduplift.ai" ? [{ id: "zone-aduplift", name: "aduplift.ai", status: "active" }] : []));
+    await expect(getZone("test-token", "demo05.aduplift.ai", fetcher)).resolves.toMatchObject({ id: "zone-aduplift", name: "aduplift.ai" });
     expect(names).toEqual(["demo05.aduplift.ai", "aduplift.ai"]);
   });
 
   it("resolves a deeper subdomain one label at a time", async () => {
-    const { fetcher, names } = recordingFetcher((name) => (name === "example.com" ? [{ id: "zone-example", status: "active" }] : []));
-    await expect(getZone("test-token", "a.b.example.com", fetcher)).resolves.toMatchObject({ id: "zone-example" });
+    const { fetcher, names } = recordingFetcher((name) => (name === "example.com" ? [{ id: "zone-example", name: "example.com", status: "active" }] : []));
+    await expect(getZone("test-token", "a.b.example.com", fetcher)).resolves.toMatchObject({ id: "zone-example", name: "example.com" });
     expect(names).toEqual(["a.b.example.com", "b.example.com", "example.com"]);
   });
 
@@ -51,9 +66,9 @@ describe("getZone", () => {
     const urls: string[] = [];
     const fetcher = async (input: string) => {
       urls.push(input);
-      return zoneResponse([{ id: "zone-example", status: "active" }]);
+      return zoneResponse([{ id: "zone-example", name: "site.example", status: "active" }]);
     };
-    await expect(getZone("test-token", "site.example", fetcher)).resolves.toMatchObject({ id: "zone-example" });
+    await expect(getZone("test-token", "site.example", fetcher)).resolves.toMatchObject({ id: "zone-example", name: "site.example" });
     expect(urls).toEqual(["https://api.cloudflare.com/client/v4/zones?name=site.example&per_page=1"]);
   });
 });
@@ -98,7 +113,7 @@ describe("Cloudflare response handling", () => {
   });
 
   it.each(["", "<html>bad response</html>"])("reports invalid public DNS responses: %s", async (body) => {
-    await expect(publicApexDnsRecords("example.com", async () => new Response(body)))
+    await expect(publicApexDnsRecords(["example.com"], async () => new Response(body)))
       .rejects.toThrow("Public DNS lookup A example.com failed: HTTP 200");
   });
 
