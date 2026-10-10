@@ -57,6 +57,19 @@ describe("truthful lifecycle BFF", () => {
     expect(await counts()).toEqual(before);
   });
 
+  it("lets an Employee Install (201) but refuses Employee Pause and Rollback (403)", async () => {
+    const draft = await post(employee, "/api/brands/drafts", { domain: "emp-install.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    const worker = { fetch: async () => Response.json({ ok: true, instance_id: "ins-emp" }) } as unknown as Fetcher;
+    const testEnv = makeEnv({ FACTORY_WORKER: worker });
+    expect((await call(`/api/brands/${brand.brand_id}/install`, { cookie: employee, method: "POST", body: {}, env: testEnv })).status).toBe(201);
+    for (const action of ["pause", "rollback"]) {
+      const response = await call(`/api/brands/${brand.brand_id}/${action}`, { cookie: employee, method: "POST", body: {}, env: testEnv });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: "forbidden_role", required_role: "owner" });
+    }
+  });
+
   it("refuses Employee Rollback, Upgrade-all and Delete before any mutation or dispatch", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "owner-only.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
