@@ -1,8 +1,9 @@
-import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts } from "@anjuna/contracts";
+import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { ConfigPanel } from "./ConfigPanel";
+import { UpgradeOutcomes } from "./UpgradeOutcomes";
 
 type InstallHistoryRow = { install_id: string; status: string; error: string | null };
 
@@ -25,6 +26,13 @@ const statusLabel: Record<string, string> = {
   failed: "ล้มเหลว (failed)", rolled_back: "ย้อนกลับแล้ว (rolled-back)", detached: "ถอดออกแล้ว (detached)", unmanaged: "ไม่ได้จัดการ (unmanaged)", sync_error: "ซิงก์ผิดพลาด (sync_error)",
 };
 
+const coreListLabel: Record<CoreListErrorCode, string> = {
+  core_binding_missing: "ไม่พบการเชื่อมต่อ Core lifecycle (Core lifecycle binding is missing)",
+  core_list_fetch_failed: "ดึงรายการแบรนด์จาก Core ไม่สำเร็จ (Core brand list fetch failed)",
+  core_list_response_invalid: "ข้อมูลรายการแบรนด์จาก Core ไม่ถูกต้อง (Core brand list response is invalid)",
+  core_list_account_missing: "ยังไม่ได้ตั้งค่าบัญชีสำหรับรายการแบรนด์ Core (Core brand list account is not configured)",
+};
+
 export function BrandLifecycle({ me }: { me: Me }) {
   const [templates, setTemplates] = useState<SealedTemplateVersion[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
@@ -32,6 +40,8 @@ export function BrandLifecycle({ me }: { me: Me }) {
   const [brands, setBrands] = useState<LifecycleBrandSummary[]>([]);
   const [runtimeBrands, setRuntimeBrands] = useState<BrandSummary[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [coreListError, setCoreListError] = useState<CoreListError | null>(null);
+  const [upgradeRefresh, setUpgradeRefresh] = useState(0);
   const [configBrandId, setConfigBrandId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [state, setState] = useState<LifecycleState>();
@@ -73,6 +83,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
       if (lifecycle.status === "rejected") throw lifecycle.reason;
       const result = lifecycle.value;
       setBrands(result.brands);
+      setCoreListError(result.core_error ?? null);
       if (runtime.status === "fulfilled") {
         setRuntimeBrands(runtime.value.brands);
         setRuntimeError(null);
@@ -244,7 +255,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
   }
   async function retry() {
     if (!selected || !install) return;
-    await dispatchOperation(() => api.retryInstall(install.install_id), install.install_id);
+    await dispatchOperation(async () => { const accepted = await api.retryInstall(install.install_id); setUpgradeRefresh((value) => value + 1); return accepted; }, install.install_id);
   }
   async function recover() {
     if (!selected) return;
@@ -280,6 +291,7 @@ export function BrandLifecycle({ me }: { me: Me }) {
     {pendingOperation?.brandId === selectedId && <p role="status">Install ID: <code>{pendingOperation.installId}</code> · กำลังติดตามสถานะ</p>}
     {installError && <p className="error" role="alert">{installError}</p>}
     {runtimeError && <p className="error" role="alert">{runtimeError}</p>}
+    {coreListError && <p className="error" role="alert">{coreListLabel[coreListError.code] ?? coreListError.message}. ใช้รายการแบรนด์จาก Core ไม่ได้ จึงแสดงเฉพาะแบรนด์จาก factory (Core brand list is unavailable) กรุณารีเฟรชเพื่อลองใหม่</p>}
     {runtimeBrand && <section className="card" aria-label="Runtime config and statistics">
       <h2>การตั้งค่า runtime (Runtime config)</h2>
       <p>สถานะ runtime: {runtimeBrand.status}</p>
@@ -287,7 +299,8 @@ export function BrandLifecycle({ me }: { me: Me }) {
       <button onClick={() => setConfigBrandId(runtimeBrand.brand_id)}>ตั้งค่าแบรนด์ (Runtime config)</button>
     </section>}
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} />}
-    {me.role === "owner" && <section className="card upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="danger" onClick={() => void act(() => api.upgradeAll(upgrade))}>เริ่ม Upgrade-all</button></div></section>}
+    {me.role === "owner" && <section className="card upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่ม Upgrade-all</button></div></section>}
+    {me.role === "owner" && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
   </div>;
 }
 

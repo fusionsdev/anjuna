@@ -106,6 +106,101 @@ export const UpgradeAllCommand = z
   });
 export type UpgradeAllCommand = z.infer<typeof UpgradeAllCommand>;
 
+/**
+ * Isomorphic WebCrypto digests. Cloudflare Workers and Node 20+ both expose
+ * `globalThis.crypto.subtle` and `TextEncoder`; the contracts build compiles with `types: []`
+ * (no lib.dom or @types/node), so the minimal surface is described here instead.
+ */
+interface SubtleDigest {
+  digest(algorithm: "SHA-256", data: Uint8Array): Promise<ArrayBuffer>;
+}
+interface TextEncoderLike {
+  encode(value: string): Uint8Array;
+}
+const webCrypto = globalThis as unknown as {
+  crypto: { subtle: SubtleDigest };
+  TextEncoder: new () => TextEncoderLike;
+};
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await webCrypto.crypto.subtle.digest("SHA-256", new webCrypto.TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The immutable install identity the factory's upgrade-all workflow writes for a brand, in the
+ * workflow's exact key order. The factory and the panel both derive install IDs from this, so an
+ * operator can map each brand's outcome for a past command without re-reading the workflow.
+ */
+/**
+ * The revision ID the workflow's `create_revisions` step inserts for every selected brand before the
+ * canary starts. A row with this ID is persisted proof that the brand was selected for this command.
+ */
+export function upgradeRevisionId(command: UpgradeAllCommand, brandId: string): Promise<string> {
+  return sha256Hex(JSON.stringify([
+    "revision",
+    command.from_template_version_id,
+    command.to_template_version_id,
+    command.form_artifact_id,
+    command.canary_brand_id,
+    command.started_by,
+    command.started_role,
+    brandId,
+  ])).then((digest) => `upgrade-revision-${digest}`);
+}
+
+export function upgradeInstallId(command: UpgradeAllCommand, brandId: string): Promise<string> {
+  return sha256Hex(JSON.stringify([
+    "install",
+    command.from_template_version_id,
+    command.to_template_version_id,
+    command.form_artifact_id,
+    command.canary_brand_id,
+    command.started_by,
+    command.started_role,
+    brandId,
+  ])).then((digest) => `upgrade-install-${digest}`);
+}
+
+export const UpgradeAllOutcome = z.strictObject({
+  brand_id: BrandId,
+  domain: Hostname,
+  is_canary: z.boolean(),
+  install_id: Id.nullable(),
+  // The command's own install row when install_id is a later retry of it.
+  retry_of: Id.nullable(),
+  status: z.enum(["queued", "running", "ready", "failed", "rolled_back", "skipped"]),
+  error: z.string().nullable(),
+});
+export type UpgradeAllOutcome = z.infer<typeof UpgradeAllOutcome>;
+
+export const LatestUpgradeResponse = z.strictObject({
+  upgrade: z.strictObject({
+    audit_id: z.number().int(),
+    accepted_at: Timestamp,
+    command: UpgradeAllCommand,
+    outcomes: z.array(UpgradeAllOutcome),
+  }).nullable(),
+  // Set when the newest upgrade.start audit row cannot be read as a command; `upgrade` is then null.
+  command_error: z.strictObject({ audit_id: z.number().int(), message: z.string() }).optional(),
+});
+export type LatestUpgradeResponse = z.infer<typeof LatestUpgradeResponse>;
+
+export const CoreListErrorCode = z.enum([
+  "core_binding_missing",
+  "core_list_fetch_failed",
+  "core_list_response_invalid",
+  "core_list_account_missing",
+]);
+export type CoreListErrorCode = z.infer<typeof CoreListErrorCode>;
+
+/** A partial core list failure, surfaced to the operator instead of silently hiding core brands. */
+export const CoreListError = z.strictObject({
+  code: CoreListErrorCode,
+  message: z.string().min(1),
+});
+export type CoreListError = z.infer<typeof CoreListError>;
+
 export const InitialRuntime = z.strictObject({
   drain_key: DrainKey,
   aid: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/, "Invalid aid"),

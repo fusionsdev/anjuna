@@ -1,4 +1,4 @@
-import { SealedTemplatesResponse } from "@anjuna/contracts";
+import { LatestUpgradeResponse, SealedTemplatesResponse } from "@anjuna/contracts";
 import type {
   AdminRole,
   AlertsReportResponse,
@@ -13,6 +13,7 @@ import type {
   InstallWithReceipts,
   LifecycleBrandSummary,
   UpgradeAllCommand,
+  CoreListError,
   FunnelReportResponse,
   MailingStatusResponse,
 } from "@anjuna/contracts";
@@ -87,7 +88,7 @@ export const api = {
   users: () => request<{ users: PanelUser[] }>("GET", "/api/users").then((r) => r.users),
   createUser: (u: { email: string; name: string; password: string; role: AdminRole }) => request<unknown>("POST", "/api/users", u),
   setRole: (id: string, role: AdminRole) => request<unknown>("PATCH", `/api/users/${encodeURIComponent(id)}`, { role }),
-  lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[] }>("GET", "/api/lifecycle/brands"),
+  lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[]; core_error?: CoreListError | null }>("GET", "/api/lifecycle/brands"),
   lifecycleBrand: (id: string) => request<{ brand: LifecycleBrandSummary }>("GET", `/api/lifecycle/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   createDraft: (body: Omit<CreateBrandDraftRequest, "brand_id" | "account" | "hostname"> & { domain: string; keyword_default: string; template_version_id: string; name?: string }) =>
     request<{ brand: { brand_id: string }; revision: { revision_id: string } }>("POST", "/api/brands/drafts", body),
@@ -99,6 +100,7 @@ export const api = {
   checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }> }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
   attestChecklist: (brandId: string, item: ChecklistItemName, lead_id?: string) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/checklist`, { item, ...(lead_id ? { lead_id } : {}) }),
   upgradeAll: (body: Omit<UpgradeAllCommand, "started_by" | "started_role">) => request<unknown>("POST", "/api/upgrade-all", body),
+  latestUpgrade: () => request<unknown>("GET", "/api/upgrade-all/latest").then((body) => LatestUpgradeResponse.parse(body)),
   funnel: (query: { from: string; to: string; brand?: string }) => {
     const params = new URLSearchParams({ from: query.from, to: query.to });
     if (query.brand) params.set("brand", query.brand);
