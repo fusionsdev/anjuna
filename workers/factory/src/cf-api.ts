@@ -9,6 +9,20 @@ export type CfFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const CF_API = "https://api.cloudflare.com/client/v4";
 
+/**
+ * A Cloudflare failure. `deterministic` marks one that the same input always repeats, so a
+ * Workflow step can stop at once instead of retrying: a 4xx other than 408 and 429 (bad token,
+ * missing scope, unknown resource) or a zone that is absent or inactive. 5xx, 408, 429, network
+ * errors and unreadable 200 bodies stay retriable.
+ */
+export class CfError extends Error {
+  constructor(message: string, readonly deterministic: boolean) { super(message); }
+}
+
+function deterministicStatus(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
 async function responseJson<T>(res: Response, context: string, allowEmpty = false): Promise<T> {
   const text = await res.text();
   // Workers Custom Domain DELETE succeeds with no JSON envelope (200 or 204).
@@ -19,7 +33,7 @@ async function responseJson<T>(res: Response, context: string, allowEmpty = fals
     return json as T;
   } catch {
     const detail = text.trim() ? `invalid JSON envelope: ${text.slice(0, 200)}` : "empty response";
-    throw new Error(`${context} failed: HTTP ${res.status}: ${detail}`);
+    throw new CfError(`${context} failed: HTTP ${res.status}: ${detail}`, deterministicStatus(res.status));
   }
 }
 
@@ -39,7 +53,7 @@ async function cfFetch<T>(
   if (json === undefined) return undefined as T;
   if (!res.ok || !json.success) {
     const msg = json.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") ?? "unknown error";
-    throw new Error(`${context} failed: ${msg} (HTTP ${res.status})`);
+    throw new CfError(`${context} failed: ${msg} (HTTP ${res.status})`, deterministicStatus(res.status));
   }
   return json.result;
 }
@@ -76,10 +90,10 @@ export async function getZone(token: string, domain: string, fetcher?: CfFetch):
     const zones = await cfFetch<ZoneInfo[]>(token, "GET", `/zones?name=${encodeURIComponent(name)}&per_page=1`, undefined, undefined, fetcher);
     const zone = zones[0];
     if (!zone) continue;
-    if (zone.status !== "active") throw new Error(`Zone ${name} is not active (status=${zone.status})`);
+    if (zone.status !== "active") throw new CfError(`Zone ${name} is not active (status=${zone.status})`, true);
     return zone;
   }
-  throw new Error(`Zone not found for domain ${domain} (tried: ${candidates.join(", ")})`);
+  throw new CfError(`Zone not found for domain ${domain} (tried: ${candidates.join(", ")})`, true);
 }
 
 export interface DnsRecord {
