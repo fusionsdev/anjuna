@@ -106,6 +106,21 @@ describe("redeploy a live brand", () => {
     expect(dispatches).toHaveLength(0);
   });
 
+  it("answers 201 for a brand that core reports as paused: pause lives in core and the factory status stays live", async () => {
+    const { brandId } = await liveBrand();
+    const core = { fetch: async () => Response.json({ brands: [
+      { brand_id: brandId, account: "test-account", hostnames: [`${brandId}.test`], applied_revision_id: `${brandId}-rev-1`, paused: true, bundle_form_version: "form@abcdef1" },
+    ] }) } as unknown as Fetcher;
+    const coreEnv = makeEnv({ FACTORY_WORKER: factory, CORE_LIFECYCLE: core });
+    // The lifecycle list, which the panel reads, carries the factory status: live.
+    const list = await call("/api/lifecycle/brands", { cookie: owner, env: coreEnv });
+    expect((await list.json() as { brands: Array<{ brand_id: string; status: string }> }).brands.find((brand) => brand.brand_id === brandId)).toMatchObject({ status: "live" });
+    const response = await call(`/api/brands/${brandId}/redeploy`, { cookie: owner, method: "POST", body: {}, env: coreEnv });
+    expect(response.status).toBe(201);
+    expect(dispatches).toHaveLength(1);
+    expect(await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id=?").bind(brandId).first()).toEqual({ status: "live" });
+  });
+
   it("answers 409 for a live brand without a deployed revision", async () => {
     const { brandId } = await liveBrand();
     await env.FACTORY.prepare("UPDATE brands SET current_revision_id=NULL WHERE brand_id=?").bind(brandId).run();

@@ -174,3 +174,74 @@ describe("Redeploy with the latest form in the brand detail", () => {
     expect(bodies).toEqual([{}]);
   });
 });
+
+describe("Redeploy of a brand that core reports as paused", () => {
+  // Pause lives in core. The factory brand stays live, so the lifecycle row says live and only the runtime row says paused.
+  const pausedInCore = () => routes.set("GET /api/brands", () => json({ brands: [{
+    brand_id: "brand-a", hostnames: ["renderable.test"], status: "paused", flow_gate_mode: "param", ab_config: null,
+    form_version: "form@abcdef1", stats_7d: { leads: 0, sold: 0, pending: 0 },
+  }], generated_at: "2026-10-06T00:00:00Z" }));
+  const stays = "ยังคงหยุดชั่วคราว (The brand stays paused.)";
+  let bodies: unknown[];
+  beforeEach(() => {
+    bodies = [];
+    showBrand({ newer_form: newerForm });
+    pausedInCore();
+    routes.set("POST /api/brands/brand-a/redeploy", (init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return json({ install_id: "redeploy-ins", brand_id: "brand-a", status: "running" }, 201);
+    });
+  });
+
+  it("offers both buttons to an Owner", async () => {
+    render(<BrandLifecycle me={owner} />);
+    expect(await screen.findByRole("button", { name: redeployName })).toBeTruthy();
+    expect(screen.getByRole("button", { name: latestName })).toBeTruthy();
+    expect(await screen.findByText("สถานะ runtime: paused")).toBeTruthy();
+  });
+
+  it("offers neither to an Employee", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it.each(["draft", "failed", "installing"] as const)("still offers neither for a %s brand", async (status) => {
+    showBrand({ status, newer_form: newerForm } as Partial<LifecycleBrandSummary>);
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it("says in the Redeploy confirm text that the brand stays paused", async () => {
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect(String(confirm.mock.calls[0]![0])).toContain(stays);
+  });
+
+  it("says in the Redeploy with latest form confirm text that the brand stays paused", async () => {
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: latestName }));
+    expect(String(confirm.mock.calls[0]![0])).toContain(stays);
+  });
+
+  it("does not say it for a brand that is not paused", async () => {
+    routes.set("GET /api/brands", () => json({ brands: [], generated_at: "2026-10-06T00:00:00Z" }));
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect(String(confirm.mock.calls[0]![0])).not.toContain("paused");
+  });
+
+  it("posts the redeploy for a paused brand", async () => {
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(redeployPosts()).toHaveLength(1);
+    expect(bodies).toEqual([{}]);
+  });
+});

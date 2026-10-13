@@ -252,15 +252,19 @@ export function BrandLifecycle({ me }: { me: Me }) {
     if (!selected) return;
     await dispatchOperation(() => api.rollbackLifecycle(selected.brand_id));
   }
+  // Pause lives in core and the factory brand stays live, so a paused brand can be redeployed; it stays paused.
+  function pausedNote() {
+    return runtimeBrands.find((brand) => brand.brand_id === selectedId)?.status === "paused" ? "\n\nแบรนด์นี้ยังคงหยุดชั่วคราว (The brand stays paused.)" : "";
+  }
   async function redeploy() {
     if (!selected) return;
-    if (!window.confirm("ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน? (Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.)")) return;
+    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน? (Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.)${pausedNote()}`)) return;
     await dispatchOperation(() => api.redeploy(selected.brand_id));
   }
   async function redeployLatest() {
     const target = selected?.newer_form;
     if (!selected || !target) return;
-    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}? (Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.)`)) return;
+    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}? (Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.)${pausedNote()}`)) return;
     await dispatchOperation(() => api.redeploy(selected.brand_id, target.form_artifact_id));
   }
   async function startInstall() {
