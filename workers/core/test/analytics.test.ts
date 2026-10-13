@@ -223,7 +223,22 @@ describe("posthog proxy", () => {
       { event: "a", properties: { token: REAL_KEY, $set: { token: "user-data" } } }, { event: "b", properties: { token: REAL_KEY } }] });
     expect(JSON.parse(upstream[1]!.body)).toEqual({ api_key: REAL_KEY, token: REAL_KEY, distinct_id: "anon-1" });
   });
-  it.each(["/", "/static/array.js", "/admin/", "/e/../x", "/s/", "/e/extra/"])("forwards only ingest endpoints, not %s", async (path) => {
+  it("accepts the lead form's POST <proxy>/e/ batch body and swaps api_key and every batch[].properties.token", async () => {
+    const body = json({ api_key: "placeholder", sent_at: "2026-10-13T00:00:00.000Z", batch: [
+      { event: "form_started", properties: { token: "placeholder", distinct_id: "anon-1", $current_url: "/request" } },
+      { event: "form_step_viewed", properties: { token: "placeholder", distinct_id: "anon-1", form_step: 2 } },
+    ] });
+    const response = await forward(configured, "posthog", { path: "/e/", body });
+    expect([response.status, await response.text()]).toEqual([204, ""]);
+    expect(upstream).toHaveLength(1);
+    expect(upstream[0]!.url).toBe("https://us.i.posthog.com/e/");
+    expect(JSON.parse(upstream[0]!.body)).toEqual({ api_key: REAL_KEY, sent_at: "2026-10-13T00:00:00.000Z", batch: [
+      { event: "form_started", properties: { token: REAL_KEY, distinct_id: "anon-1", $current_url: "/request" } },
+      { event: "form_step_viewed", properties: { token: REAL_KEY, distinct_id: "anon-1", form_step: 2 } },
+    ] });
+    expect(upstream[0]!.body).not.toContain("placeholder");
+  });
+  it.each(["/", "/static/array.js","/admin/", "/e/../x", "/s/", "/e/extra/"])("forwards only ingest endpoints, not %s", async (path) => {
     const response = await forward(configured, "posthog", { path });
     // "/e/../x" fails the contract itself, every other path fails the endpoint allowlist.
     await expectError(response, 400, "invalid");

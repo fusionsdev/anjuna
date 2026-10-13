@@ -129,15 +129,17 @@ describe("Workers Rate Limiting binding", () => {
     });
     try {
       await real.seedAccount();
-      await real.seedBrand();
       for (let attempt = 0; attempt < 2; attempt++) {
+        // A new brand per attempt means a new limiter key, so a rollover cannot leave spent budget behind.
+        const brand = `brand-attempt-${attempt}`;
+        await real.seedBrand(brand);
+        const before = (await real.db.prepare("SELECT COUNT(*) AS n FROM client_errors").first<{ n: number }>())!.n;
         const window = Math.floor(Date.now() / 60_000);
-        await real.db.prepare("DELETE FROM client_errors").run();
         const statuses = [];
-        for (let i = 0; i < 3; i++) statuses.push((await forward(real, "errors", {})).status);
+        for (let i = 0; i < 3; i++) statuses.push((await forward(real, "errors", { brand_id: brand })).status);
         if (window !== Math.floor(Date.now() / 60_000)) continue;
         expect(statuses).toEqual([204, 204, 429]);
-        expect((await real.db.prepare("SELECT COUNT(*) AS n FROM client_errors").first<{ n: number }>())!.n).toBe(2);
+        expect((await real.db.prepare("SELECT COUNT(*) AS n FROM client_errors").first<{ n: number }>())!.n - before).toBe(2);
         return;
       }
       throw new Error("the rate limit window rolled over twice");
