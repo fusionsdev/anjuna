@@ -25,6 +25,16 @@ export const ANALYTICS_FORWARD_PATHS = {
   telemetry: "/analytics/telemetry", errors: "/analytics/errors",
 } as const satisfies Record<AnalyticsKind, string>;
 
+// Not TextEncoder: this package builds without DOM or Node types. A lone surrogate counts 3, as in UTF-8 encoding.
+function utf8Length(text: string): number {
+  let bytes = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0)!;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
 export const AnalyticsForwardRequest = z.strictObject({
   brand_id: BrandId,
   hostname: Hostname,
@@ -36,7 +46,7 @@ export const AnalyticsForwardRequest = z.strictObject({
   /** The visitor's original request body, decoded as text. */
   body: z.string(),
 }).superRefine((request, ctx) => {
-  if (new TextEncoder().encode(request.body).length > ANALYTICS_LIMITS[request.kind]) {
+  if (utf8Length(request.body) > ANALYTICS_LIMITS[request.kind]) {
     ctx.addIssue({ code: "custom", path: ["body"], message: "Body exceeds the limit for this kind" });
   }
 });
