@@ -1,0 +1,8 @@
+{
+  "brand_id": "brand-a",
+  "hostname": "brand-a.example",
+  "kind": "errors",
+  "path": "/",
+  "content_type": "application/json",
+  "body": "{\"error_type\":\"timeout\",\"error_message\":\"request timed out\",\"session_id\":\"5b0b4a7e-6a6e-4a63-9f1c-0d2f6d7c1a11\",\"screen_id\":\"step-14\",\"occurred_at\":\"2026-10-13T00:00:00.000Z\"}"
+}

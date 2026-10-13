@@ -1,0 +1,8 @@
+{
+  "brand_id": "brand-a",
+  "hostname": "brand-a.example",
+  "kind": "posthog",
+  "path": "/e/",
+  "content_type": "application/json",
+  "body": "{\"api_key\":\"placeholder\",\"event\":\"form_started\",\"properties\":{\"token\":\"placeholder\",\"distinct_id\":\"anon-1\"}}"
+}

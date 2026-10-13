@@ -1,5 +1,5 @@
 import {
-  CLICK_PARAM_KEYS, CLICK_TRIGGER_KEYS, HANDOFF_TTL_SECONDS, FormLeadPayload, OpaqueToken, Keyword,
+  ANALYTICS_LIMITS, CLICK_PARAM_KEYS, CLICK_TRIGGER_KEYS, HANDOFF_TTL_SECONDS, FormLeadPayload, OpaqueToken, Keyword,
   LeadsRpc, cleanKeyword, encodeRuntimeConfig, isBrandClean,
   type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
 } from "@anjuna/contracts";
@@ -14,7 +14,6 @@ const PAUSE_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><title>
 const COMPLETE_HTML = (ref: string) => `<!doctype html><html lang="en"><meta charset="utf-8">` +
   `<meta name="viewport" content="width=device-width,initial-scale=1"><title>Request received</title>` +
   `<h1>Thank you</h1><p>Your request has been received.</p>${ref ? `<p>Reference: ${ref}</p>` : ""}</html>`;
-export const ANALYTICS_LIMITS = { posthog: 256 * 1024, sentry: 1024 * 1024, telemetry: 64 * 1024, errors: 64 * 1024 } as const;
 
 function adParams(url: URL): ClickParams {
   const params: ClickParams = {};
@@ -171,6 +170,8 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
       }), config.coreTimeoutMs);
       return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
     } catch (error) {
+      // Core's per brand limit: drop like an accepted event. A success status makes neither SDK retry.
+      if (error instanceof CoreError && error.status === 429) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
       return json({ error: error instanceof PayloadTooLarge ? "payload_too_large" : "unavailable" }, error instanceof PayloadTooLarge ? 413 : 503);
     }
   }

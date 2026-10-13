@@ -1,0 +1,8 @@
+{
+  "brand_id": "brand-a",
+  "hostname": "brand-a.example",
+  "kind": "telemetry",
+  "path": "/",
+  "content_type": "application/json",
+  "body": "{\"event_type\":\"form_step_viewed\",\"session_id\":\"5b0b4a7e-6a6e-4a63-9f1c-0d2f6d7c1a11\",\"occurred_at\":\"2026-10-13T00:00:00.000Z\",\"form_version\":\"2026-01\",\"form_variant\":\"lite_v1\",\"build_id\":\"unknown\",\"device_class\":\"mobile\",\"browser_family\":\"chrome\",\"touch_capable\":true,\"brand\":\"Brand A\",\"form_step\":2}"
+}

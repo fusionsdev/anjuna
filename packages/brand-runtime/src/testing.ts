@@ -1,4 +1,4 @@
-import { HANDOFF_TTL_SECONDS, LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest, type BrandSettingsResponse } from "@anjuna/contracts";
+import { AnalyticsForwardRequest, HANDOFF_TTL_SECONDS, LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest, type BrandSettingsResponse } from "@anjuna/contracts";
 import { CoreError, type AnalyticsRequest, type CoreClient, type CoreResult } from "./core-client.js";
 
 /** In-memory fake: no network, crypto signing, persistence, or provider calls. */
@@ -63,7 +63,7 @@ export class MockCoreClient implements CoreClient {
     return { status: 200, data: { valid: true, ...data } };
   }
   async forwardAnalytics(body: AnalyticsRequest): Promise<void> {
-    this.analytics.push(body);
+    this.analytics.push(AnalyticsForwardRequest.parse(body));
     if (this.failure) throw this.failure;
   }
 }

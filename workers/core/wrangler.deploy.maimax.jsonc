@@ -35,6 +35,12 @@
       "migrations_dir": "../../packages/factory-db/migrations"
     }
   ],
+  "ratelimits": [
+    { "name": "POSTHOG_LIMITER", "namespace_id": "4101", "simple": { "limit": 300, "period": 60 } },
+    { "name": "SENTRY_LIMITER", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } },
+    { "name": "TELEMETRY_LIMITER", "namespace_id": "4103", "simple": { "limit": 600, "period": 60 } },
+    { "name": "ERRORS_LIMITER", "namespace_id": "4104", "simple": { "limit": 30, "period": 60 } }
+  ],
   "vars": {
     "LIFECYCLE_ACCOUNT": "maimax"
   }
