@@ -31,6 +31,8 @@ const Artifact = z.strictObject({
   git_sha: z.string().regex(/^[0-9a-f]{7,64}$/i),
   bundle_form_version: z.string().regex(/^form@[A-Za-z0-9._-]+$/),
   payload_version: z.literal("2026-01"),
+  // SHA-256 of the released form ZIP, printed by the lead-form workflow. Absent keeps the "registered" placeholder.
+  manifest_sha256: z.string().regex(/^[0-9a-f]{64}$/i, "Must be 64 hex characters").transform((value) => value.toLowerCase()).optional(),
 });
 const Draft = z.strictObject({
   domain: z.string().min(1).max(253).transform((value) => value.toLowerCase().replace(/\.$/, "")).refine((value) => !value.startsWith("www."), "Use the apex domain, not a www hostname").refine((value) => /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/.test(value), "Must be a valid apex domain"),
@@ -251,7 +253,7 @@ async function artifactRoute(request: Request, env: Env, ctx: AdminRequestContex
     const parsed = Artifact.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
     try {
-      await env.FACTORY.prepare("INSERT INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)").bind(parsed.data.form_artifact_id, parsed.data.git_sha, `forms/${parsed.data.form_artifact_id}`, "registered", parsed.data.payload_version, parsed.data.bundle_form_version, new Date().toISOString()).run();
+      await env.FACTORY.prepare("INSERT INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)").bind(parsed.data.form_artifact_id, parsed.data.git_sha, `forms/${parsed.data.form_artifact_id}`, parsed.data.manifest_sha256 ?? "registered", parsed.data.payload_version, parsed.data.bundle_form_version, new Date().toISOString()).run();
     } catch { return json(409, { error: "conflict" }); }
     await audit(env.FACTORY, ctx, "form_artifact.register", "form_artifact", parsed.data.form_artifact_id, { template_version_id: parsed.data.template_version_id, payload_version: parsed.data.payload_version });
     return json(201, { form_artifact: parsed.data });
