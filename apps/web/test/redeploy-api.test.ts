@@ -388,4 +388,75 @@ describe("redeploy a live brand", () => {
       expect(JSON.stringify(after)).not.toContain(install_id);
     });
   });
+
+  // A redeploy is stored as kind 'upgrade'. The panel tells it from an upgrade-all by its revision id, which the redeploy
+  // route writes as <brand_id>_redeploy_<install_id> and which a retry copies. The audit entry is not used: a retry audits install.start.
+  describe("the operation label of an install", () => {
+    type Row = { install_id: string; operation?: string };
+    const operations = async (cookie: string, brandId: string) => Object.fromEntries(
+      ((await (await call(`/api/brands/${brandId}/installs`, { cookie })).json()) as { installs: Row[] }).installs.map((row) => [row.install_id, row.operation]));
+    const detailOperation = async (installId: string) => ((await (await call(`/api/installs/${installId}`, { cookie: owner })).json()) as Row).operation;
+    // to_revision_id is a foreign key, so each row gets a revision of its own (numbers 2 to 4; a redeploy takes the next free one).
+    let revision = 1;
+    const insert = async (brandId: string, id: string, kind: string, toRevision: string, startedAt: string) => {
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,?3,'tv-1','fa-1','{}','owner',?4)")
+        .bind(toRevision, brandId, ++revision, startedAt).run();
+      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at,finished_at) VALUES (?1,?2,?3,'ready',NULL,?4,'owner','owner',?5,?5)")
+        .bind(id, brandId, kind, toRevision, startedAt).run();
+    };
+    beforeEach(() => { revision = 1; });
+
+    it("labels install, rollback, upgrade and redeploy rows in the history and the detail", async () => {
+      const { brandId } = await liveBrand();
+      await insert(brandId, "op-rollback", "rollback", `${brandId}-rev-rollback`, "2026-10-02T00:00:00Z");
+      await insert(brandId, "op-upgrade", "upgrade", `${brandId}-rev-upgrade`, "2026-10-03T00:00:00Z");
+      const { install_id } = await (await redeploy(owner, brandId)).json() as { install_id: string };
+      const expected = { [`${brandId}-first`]: "install", "op-rollback": "rollback", "op-upgrade": "upgrade", [install_id]: "redeploy" };
+      expect(await operations(employee, brandId)).toEqual(expected);
+      for (const [id, operation] of Object.entries(expected)) expect(await detailOperation(id)).toBe(operation);
+    });
+
+    it("labels an install of a redeployed revision as install, not redeploy", async () => {
+      const { brandId } = await liveBrand();
+      await insert(brandId, "op-later-install", "install", `${brandId}_redeploy_ins_old`, "2026-10-04T00:00:00Z");
+      expect((await operations(owner, brandId))["op-later-install"]).toBe("install");
+      expect(await detailOperation("op-later-install")).toBe("install");
+    });
+
+    it("labels an upgrade whose revision is not a redeploy of this brand as upgrade", async () => {
+      const { brandId } = await liveBrand();
+      await insert(brandId, "op-other", "upgrade", `other-${brandId}_redeploy_ins_x`, "2026-10-04T00:00:00Z");
+      expect(await detailOperation("op-other")).toBe("upgrade");
+    });
+
+    it("keeps the redeploy label when a failed redeploy is retried in place", async () => {
+      const { brandId } = await liveBrand();
+      workerStatus = 500;
+      const { install_id } = await (await redeploy(owner, brandId)).json() as { install_id: string };
+      workerStatus = 200;
+      const retry = await call(`/api/installs/${install_id}/retry`, { cookie: owner, method: "POST", body: {}, env: testEnv() });
+      expect(retry.status).toBe(201);
+      expect(((await retry.json()) as { install_id: string }).install_id).toBe(install_id);
+      expect(await detailOperation(install_id)).toBe("redeploy");
+    });
+
+    it("keeps the redeploy label on the successor row of a retried redeploy that had receipts", async () => {
+      const { brandId } = await liveBrand();
+      const { install_id } = await (await redeploy(owner, brandId)).json() as { install_id: string };
+      await env.FACTORY.batch([
+        env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?1,'smoke','failed','{}',?2)").bind(install_id, new Date().toISOString()),
+        env.FACTORY.prepare("UPDATE installs SET status='failed',error='smoke failed',finished_at=?2 WHERE install_id=?1").bind(install_id, new Date().toISOString()),
+      ]);
+      const retry = await call(`/api/installs/${install_id}/retry`, { cookie: owner, method: "POST", body: {}, env: testEnv() });
+      expect(retry.status).toBe(201);
+      const successor = ((await retry.json()) as { install_id: string }).install_id;
+      expect(successor).not.toBe(install_id);
+      // The audit trail of the successor is install.start with retry_of, so only the revision id can say redeploy.
+      expect(await env.FACTORY.prepare("SELECT action FROM audit_log WHERE entity_id=?").bind(successor).first()).toEqual({ action: "install.start" });
+      const labels = await operations(owner, brandId);
+      expect(labels[install_id]).toBe("redeploy");
+      expect(labels[successor]).toBe("redeploy");
+      expect(await detailOperation(successor)).toBe("redeploy");
+    });
+  });
 });

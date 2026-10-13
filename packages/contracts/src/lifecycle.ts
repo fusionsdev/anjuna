@@ -296,10 +296,18 @@ export const InstallReceipt = z.strictObject({
   error: z.string().max(500).optional(),
 });
 
+/**
+ * What an install row did, as the panel shows it. `installs.kind` has no redeploy value, so a redeploy is stored as
+ * `upgrade` and told apart by its revision id (see `installOperation` in the web app).
+ */
+export const InstallOperation = z.enum(["install", "rollback", "upgrade", "redeploy"]);
+export type InstallOperation = z.infer<typeof InstallOperation>;
+
 export const InstallWithReceipts = z.strictObject({
   install_id: Id,
   brand_id: BrandId,
   revision_id: Id.nullable(),
+  operation: InstallOperation.optional(),
   status: InstallStatus,
   runtime_sync_status: RuntimeSyncStatus,
   receipts: z.array(InstallReceipt),

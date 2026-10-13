@@ -175,6 +175,29 @@ describe("Redeploy with the latest form in the brand detail", () => {
   });
 });
 
+describe("the operation label in the receipts panel", () => {
+  // The first line under the Receipts / Errors heading, not the install ID line that tracks a pending operation.
+  const receiptsLine = async () => (await screen.findByRole("heading", { name: /Receipts/ })).parentElement!.querySelector("p")!;
+  it.each([
+    ["install", "ติดตั้ง (Install)"],
+    ["rollback", "ย้อนกลับ (Rollback)"],
+    ["upgrade", "อัปเกรดทุกแบรนด์ (Upgrade-all)"],
+    ["redeploy", "ติดตั้งใหม่ (Redeploy)"],
+  ] as const)("shows %s as %s next to the install ID", async (operation, label) => {
+    showBrand({}, [{ install_id: "redeploy-ins", status: "ready", error: null, operation }]);
+    routes.set("GET /api/installs/redeploy-ins", () => json({ ...running, status: "ready", runtime_sync_status: "ready", operation }));
+    render(<BrandLifecycle me={owner} />);
+    expect((await receiptsLine()).textContent).toBe(`รหัสติดตั้ง (Install ID): redeploy-ins · ${label}`);
+  });
+
+  it("shows no label for an install the server did not label", async () => {
+    showBrand({}, [{ install_id: "redeploy-ins", status: "ready", error: null }]);
+    routes.set("GET /api/installs/redeploy-ins", () => json({ ...running, status: "ready", runtime_sync_status: "ready" }));
+    render(<BrandLifecycle me={owner} />);
+    expect((await receiptsLine()).textContent).toBe("รหัสติดตั้ง (Install ID): redeploy-ins");
+  });
+});
+
 describe("Redeploy of a brand that core reports as paused", () => {
   // Pause lives in core. The factory brand stays live, so the lifecycle row says live and only the runtime row says paused.
   const pausedInCore = () => routes.set("GET /api/brands", () => json({ brands: [{
