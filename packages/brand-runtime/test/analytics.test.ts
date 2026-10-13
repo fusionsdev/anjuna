@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { ANALYTICS_LIMITS, CoreError, HttpsCoreClient, createBrandWorker } from "../src/index.js";
 import { setup } from "./helpers.js";
 
+// posthog-js retries every response that is not 200 and not 4xx, so a 204 sends each event twice (FUS-339).
+// The PostHog proxy answers the way PostHog's capture endpoint does. Everything else answers an empty 204.
+const POSTHOG_OK = [200, '{"status":1}'] as const;
+const EMPTY_OK = [204, ""] as const;
+const answer = async (response: Response) => [response.status, await response.text()];
+
 describe("ADR-0004 forwarding", () => {
   it.each([
     ["/_t", "posthog", "/"], ["/_t/i/v0/", "posthog", "/i/v0/"],
@@ -10,13 +16,18 @@ describe("ADR-0004 forwarding", () => {
     const { get, core } = setup();
     const body = kind === "sentry" ? '{"dsn":"https://placeholder@invalid.example/0"}\n{"type":"event"}\n{}' : '{"api_key":"placeholder","event":"form_started","disable_compression":true}';
     const response = await get(path!, { method: "POST", body, headers: { "content-type": "application/json", authorization: "client-controlled", cookie: "sensitive=value" } });
-    expect(response.status).toBe(204);
-    expect(await response.text()).toBe("");
+    expect(await answer(response)).toEqual(kind === "posthog" ? POSTHOG_OK : EMPTY_OK);
     expect(core.analytics).toEqual([{ kind, path: suffix, brand_id: "brand-a", hostname: "brand-a.example", content_type: "application/json", body }]);
+  });
+  it("answers a proxied PostHog POST with the static JSON success PostHog's capture endpoint sends", async () => {
+    const { get } = setup();
+    const response = await get("/_t/e/", { method: "POST", body: "{}" });
+    expect(await answer(response)).toEqual(POSTHOG_OK);
+    expect(Object.fromEntries(response.headers)).toEqual({ "cache-control": "no-store", "content-type": "application/json" });
   });
   it("supports configured proxy paths with exact Sentry and bounded PostHog prefixes", async () => {
     const { get } = setup({ proxies: { posthog: "/measure", sentry: "/fault" } });
-    expect((await get("/measure/i/v0/", { method: "POST", body: "{}" })).status).toBe(204);
+    expect((await get("/measure/i/v0/", { method: "POST", body: "{}" })).status).toBe(200);
     expect((await get("/fault", { method: "POST", body: "{}" })).status).toBe(204);
     for (const path of ["/_t", "/measures", "/fault/anything"]) expect((await get(path, { method: "POST" })).status).toBe(404);
   });
@@ -41,12 +52,12 @@ describe("ADR-0004 forwarding", () => {
     expect((await get("/_t/i/v0/", { method: "POST", body: stream })).status).toBe(413);
     expect(core.analytics).toHaveLength(0);
   });
-  it.each(["/_t", "/_e", "/api/telemetry", "/api/errors"])("drops %s with an empty 204 when core rate limits it, so SDKs do not retry", async (path) => {
+  it.each(["/_t", "/_e", "/api/telemetry", "/api/errors"])("drops %s with the same success answer when core rate limits it, so SDKs do not retry", async (path) => {
     const { get, core } = setup();
     core.failure = new CoreError(429);
     const response = await get(path, { method: "POST", body: "{}" });
-    expect([response.status, await response.text()]).toEqual([204, ""]);
-    expect([...response.headers.keys()]).toEqual(["cache-control"]);
+    expect(await answer(response)).toEqual(path === "/_t" ? POSTHOG_OK : EMPTY_OK);
+    expect([...response.headers.keys()].sort()).toEqual(path === "/_t" ? ["cache-control", "content-type"] : ["cache-control"]);
   });
   it("maps a 429 from the real transport the same way, and any other core status to 503", async () => {
     for (const [status, expected] of [[429, 204], [500, 503], [403, 503], [401, 503]] as const) {
@@ -55,6 +66,20 @@ describe("ADR-0004 forwarding", () => {
       const response = await worker.fetch(new Request("https://brand-a.example/api/telemetry", { method: "POST", body: "{}" }));
       expect(response.status).toBe(expected);
     }
+  });
+  it("answers a PostHog POST with a retriable 503 when core fails, and a 429 from core with the success answer", async () => {
+    for (const [status, expected] of [[429, [...POSTHOG_OK]], [500, [503, '{"error":"unavailable"}']], [403, [503, '{"error":"unavailable"}']]] as const) {
+      const core = new HttpsCoreClient({ credential: "test" }, async () => Response.json({ error: "x" }, { status }));
+      const worker = createBrandWorker({ ...setup().config, core });
+      const response = await worker.fetch(new Request("https://brand-a.example/_t/e/", { method: "POST", body: "{}" }));
+      expect(await answer(response)).toEqual(expected);
+    }
+  });
+  it("ignores a query string such as ?retry_count=1 when matching the PostHog proxy path", async () => {
+    const { get, core } = setup();
+    const response = await get("/_t/e/?retry_count=1&ip=0&ver=1.2&compression=gzip-js&_=1", { method: "POST", body: "{}" });
+    expect(await answer(response)).toEqual(POSTHOG_OK);
+    expect(core.analytics.map((forwarded) => forwarded.path)).toEqual(["/e/"]);
   });
   it("requires uncompressed payloads and masks core failure", async () => {
     const { get, core } = setup();

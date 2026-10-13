@@ -8,6 +8,8 @@ import { initPostHog, posthogConfig, POSTHOG_PLACEHOLDER_KEY, trackEvent } from 
 // stubs must exist before the import above is evaluated.
 const net = vi.hoisted(() => {
   const calls: { via: string; method: string; url: string; body: string }[] = [];
+  // What the stubbed brand proxy answers. Tests change it; beforeEach resets it to the SDK-friendly default.
+  const reply = { status: 200, body: "{}", contentType: "application/json" };
   class FakeXhr {
     method = "";
     url = "";
@@ -27,7 +29,11 @@ const net = vi.hoisted(() => {
   }
   const fakeFetch = async (url: unknown, init?: { method?: string; body?: unknown }) => {
     calls.push({ via: "fetch", method: init?.method ?? "GET", url: String(url), body: String(init?.body ?? "") });
-    return { status: 200, ok: true, text: async () => "{}", json: async () => ({}) };
+    const { status, body, contentType } = reply;
+    return {
+      status, ok: status >= 200 && status < 300, text: async () => body,
+      headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? contentType : null) },
+    };
   };
   const w = globalThis as unknown as Record<string, unknown>;
   w.XMLHttpRequest = FakeXhr;
@@ -39,7 +45,7 @@ const net = vi.hoisted(() => {
       return true;
     },
   });
-  return { calls };
+  return { calls, reply };
 });
 
 describe("posthogConfig", () => {
@@ -77,6 +83,7 @@ describe("initPostHog (real SDK, stubbed transport)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     net.calls.length = 0;
+    Object.assign(net.reply, { status: 200, body: "{}", contentType: "application/json" });
     scripts.length = 0;
     // jsdom's user agent is on posthog-js's bot list; use a browser one so capture is not dropped.
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue(
@@ -133,5 +140,45 @@ describe("initPostHog (real SDK, stubbed transport)", () => {
       expect(c.url).not.toContain("compression");
       expect(() => JSON.parse(c.body)).not.toThrow();
     }
+  });
+
+  // FUS-339: posthog-js retries every response that is not 200 and not 4xx (retry-queue.js,
+  // `statusCode !== 200 && (statusCode < 400 || statusCode >= 500)`), so a 204 is a failure to the SDK.
+  // Each test loads a fresh SDK: the singleton keeps its retry queue and pagehide listeners between tests.
+  describe("response handling", () => {
+    // What the brand Worker answers a proxied PostHog POST (packages/brand-runtime/src/worker.ts).
+    // Pinned to the same literal by packages/brand-runtime/test/analytics.test.ts.
+    const BRAND_POSTHOG_ANSWER = { status: 200, body: '{"status":1}', contentType: "application/json" };
+
+    const sendOneEvent = async () => {
+      // No jitter: the first retry is due at 3 s and goes out on the 6 s poll, the second is due at 18 s.
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      vi.resetModules();
+      const fresh = await import("../src/lib/analytics");
+      fresh.initPostHog("/_ph");
+      fresh.trackEvent("landing_viewed", { route: "/" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      return net.calls.map((c) => c.url);
+    };
+
+    it("retries an empty 204 with ?retry_count=1, so one event is sent twice", async () => {
+      Object.assign(net.reply, { status: 204, body: "", contentType: "" });
+      expect(await sendOneEvent()).toEqual(["/_ph/e/", "/_ph/e/?retry_count=1"]);
+    });
+
+    it("does not retry the brand's PostHog answer: one event, one request", async () => {
+      Object.assign(net.reply, BRAND_POSTHOG_ANSWER);
+      expect(await sendOneEvent()).toEqual(["/_ph/e/"]);
+    });
+
+    it("does not retry a 200 with an empty body either, so the retry rule is the status and not the body", async () => {
+      Object.assign(net.reply, { status: 200, body: "", contentType: "" });
+      expect(await sendOneEvent()).toEqual(["/_ph/e/"]);
+    });
+
+    it("still retries a 503 from the brand Worker (core failure)", async () => {
+      Object.assign(net.reply, { status: 503, body: '{"error":"unavailable"}', contentType: "application/json" });
+      expect(await sendOneEvent()).toEqual(["/_ph/e/", "/_ph/e/?retry_count=1"]);
+    });
   });
 });

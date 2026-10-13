@@ -26,7 +26,7 @@ describe("factory entry", () => {
     const env = { ...fixture(), CORE: { fetch: forwardTo(forwarded) } };
     for (const [path, kind] of [["/api/telemetry", "telemetry"], ["/api/errors", "errors"], ["/_t/e/", "posthog"], ["/_e", "sentry"]] as const) {
       const res = await entry.fetch(new Request(`https://brand-a.example${path}`, { method: "POST", body: "{}" }), env);
-      expect([res.status, await res.text()]).toEqual([204, ""]);
+      expect([res.status, await res.text()]).toEqual(kind === "posthog" ? [200, '{"status":1}'] : [204, ""]);
       const request = forwarded.at(-1)!;
       expect([request.method, request.url, request.headers.get("authorization")]).toEqual(["POST", `https://core.aduplift.ai/analytics/${kind}`, "Bearer t"]);
       expect(await request.json()).toMatchObject({ brand_id: "brand-a", hostname: "brand-a.example", kind });
