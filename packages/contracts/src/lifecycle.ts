@@ -319,5 +319,7 @@ export const LifecycleBrandSummary = z.strictObject({
   runtime_sync_status: z.union([RuntimeSyncStatus, z.literal("sync_error")]),
   bundle_form_version: FormVersion.nullable(),
   payload_version: PayloadVersion.nullable(),
+  /** The newest registered form artifact the tenant can use, when it is newer than the brand's own. Absent otherwise. */
+  newer_form: z.strictObject({ form_artifact_id: Id, bundle_form_version: FormVersion }).optional(),
 });
 export type LifecycleBrandSummary = z.infer<typeof LifecycleBrandSummary>;

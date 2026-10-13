@@ -6,6 +6,8 @@ import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
 const redeployName = "ติดตั้งใหม่ (Redeploy)";
+const latestName = "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)";
+const newerForm = { form_artifact_id: "fa-2", bundle_form_version: "form@abcdef2" };
 const liveBrand = LifecycleBrandSummary.parse({
   brand_id: "brand-a", account: "test-account", hostnames: ["renderable.test", "www.renderable.test"],
   status: "live", current_revision_id: "rev-1", runtime_sync_status: "ready",
@@ -102,5 +104,81 @@ describe("Redeploy button in the brand detail", () => {
     expect(requests.some((r) => r.path === "/api/installs/redeploy-ins")).toBe(true);
     // The run is active, so no second redeploy can be started from the screen.
     await waitFor(() => expect(screen.queryByRole("button", { name: redeployName })).toBeNull());
+  });
+});
+
+describe("Redeploy with the latest form in the brand detail", () => {
+  let bodies: unknown[];
+  beforeEach(() => {
+    bodies = [];
+    showBrand({ newer_form: newerForm });
+    routes.set("POST /api/brands/brand-a/redeploy", (init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return json({ install_id: "redeploy-ins", brand_id: "brand-a", status: "running" }, 201);
+    });
+  });
+
+  it("is offered next to Redeploy to an Owner when a newer compatible form exists", async () => {
+    render(<BrandLifecycle me={owner} />);
+    expect(await screen.findByRole("button", { name: latestName })).toBeTruthy();
+    expect(screen.getByRole("button", { name: redeployName })).toBeTruthy();
+  });
+
+  it("is not offered when the brand already runs the newest form", async () => {
+    showBrand({});
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("button", { name: redeployName });
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it("is not offered to an Employee", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it.each(["draft", "failed", "installing", "paused"] as const)("is not offered to an Owner for a %s brand", async (status) => {
+    showBrand({ status, newer_form: newerForm } as Partial<LifecycleBrandSummary>);
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it("is hidden while an install of the brand is running", async () => {
+    showBrand({ newer_form: newerForm }, [{ install_id: "redeploy-ins", status: "running", error: null }]);
+    render(<BrandLifecycle me={owner} />);
+    await screen.findAllByText("redeploy-ins", { selector: "code" });
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it("names the target form version and the current one in the confirm text, and sends nothing when declined", async () => {
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    await brandSelected();
+    fireEvent.click(await screen.findByRole("button", { name: latestName }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const text = String(confirm.mock.calls[0]![0]);
+    expect(text).toContain("form@abcdef2");
+    expect(text).toContain("form@abcdef1");
+    expect(text).toContain("Redeploy");
+    expect(redeployPosts()).toHaveLength(0);
+  });
+
+  it("posts the chosen artifact once after confirmation and shows the new install", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await brandSelected();
+    fireEvent.click(await screen.findByRole("button", { name: latestName }));
+    expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(redeployPosts()).toHaveLength(1);
+    expect(bodies).toEqual([{ form_artifact_id: "fa-2" }]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: latestName })).toBeNull());
+  });
+
+  it("the plain Redeploy button still keeps the current form", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await brandSelected();
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(bodies).toEqual([{}]);
   });
 });

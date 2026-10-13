@@ -39,6 +39,11 @@ const Draft = z.strictObject({
   keyword_default: z.string().min(1).max(60).transform(cleanKeyword).refine((value) => Boolean(value), "Keyword is empty after normalization"), template_version_id: Id,
   name: BrandName.optional(),
 });
+// Absent form_artifact_id keeps the form the brand runs.
+const Redeploy = z.strictObject({ form_artifact_id: Id.optional() });
+// The artifact rule shared by draft creation, the redeploy choice and the "newer form" offer: the tenant's payload version
+// (bound as ?1) and a form@ bundle id.
+const COMPATIBLE_FORM = "payload_version = ?1 AND bundle_form_version GLOB 'form@*'";
 const Upgrade = z.strictObject({
   from_template_version_id: Id, to_template_version_id: Id, form_artifact_id: Id,
   canary_brand_id: BrandId,
@@ -127,7 +132,7 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
   const template = await env.FACTORY.prepare("SELECT template_version_id FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'").bind(template_version_id).first();
   if (!template) return json(422, { error: "template_not_sealed" });
-  const artifact = await env.FACTORY.prepare("SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE payload_version = ?1 AND bundle_form_version GLOB 'form@*' ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1").bind(defaults.payload_version).first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
+  const artifact = await env.FACTORY.prepare(`SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE ${COMPATIBLE_FORM} ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1`).bind(defaults.payload_version).first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
   if (!artifact) return json(422, { error: "compatible_form_artifact_missing" });
   const existing = await env.FACTORY.prepare("SELECT brand_id FROM brands WHERE domain = ?1").bind(domain).first();
   if (existing) return json(409, { error: "conflict", message: "Domain is already registered" });
@@ -201,10 +206,22 @@ async function rollback(request: Request, env: Env, ctx: AdminRequestContext, br
 // A live brand re-installs at its current template version and form artifact. It is an upgrade-kind
 // install (from_revision_id set, so smoke, sync_runtime and compensation all apply) onto a copy of the
 // current revision, which lets the existing Workflow upload the current runtime bundle again.
-async function redeploy(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
+// With form_artifact_id the copy carries that artifact instead, so the brand moves to a newer registered form;
+// the install Workflow stays the authority on it (validateInstallInputs) and a rollback returns to the old revision.
+async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ status: string; current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
   if (brand.status !== "live" || !brand.current_revision_id) return json(409, { error: "conflict", message: "Only live brands can be redeployed" });
+  const parsed = Redeploy.safeParse((await request.json().catch(() => null)) ?? {});
+  if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
+  const formArtifactId = parsed.data.form_artifact_id ?? null;
+  if (formArtifactId) {
+    const defaults = tenantDefaults(env);
+    if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
+    const artifact = await env.FACTORY.prepare(`SELECT (${COMPATIBLE_FORM}) AS compatible FROM form_artifacts WHERE form_artifact_id = ?2`).bind(defaults.payload_version, formArtifactId).first<{ compatible: number | null }>();
+    if (!artifact) return json(422, { error: "form_artifact_not_found" });
+    if (!artifact.compatible) return json(422, { error: "form_artifact_incompatible", message: "Form artifact does not match the tenant payload version" });
+  }
   const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const revisionId = `${brandId}_redeploy_${installId}`;
   const now = new Date().toISOString();
@@ -212,13 +229,13 @@ async function redeploy(env: Env, ctx: AdminRequestContext, brandId: string): Pr
   // that revision exists, so a refused request leaves neither row and a double click claims one install.
   const [revisionClaim, installClaim] = await env.FACTORY.batch([
     env.FACTORY.prepare(`INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at)
-      SELECT ?1,?2,(SELECT MAX(revision) + 1 FROM brand_revisions WHERE brand_id = ?2),r.template_version_id,r.form_artifact_id,r.config_json,?3,?4
+      SELECT ?1,?2,(SELECT MAX(revision) + 1 FROM brand_revisions WHERE brand_id = ?2),r.template_version_id,COALESCE(?5,r.form_artifact_id),r.config_json,?3,?4
       FROM brands b JOIN brand_revisions r ON r.revision_id = b.current_revision_id
       WHERE b.brand_id = ?2 AND b.status = 'live'
       AND NOT EXISTS (
         SELECT 1 FROM installs
         WHERE brand_id = ?2 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running')
-      )`).bind(revisionId, brandId, ctx.actor_id, now),
+      )`).bind(revisionId, brandId, ctx.actor_id, now, formArtifactId),
     env.FACTORY.prepare(`INSERT INTO installs
       (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at)
       SELECT ?1,?2,'upgrade','queued',b.current_revision_id,?3,?4,?5,?6
@@ -230,7 +247,7 @@ async function redeploy(env: Env, ctx: AdminRequestContext, brandId: string): Pr
     if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
     return json(409, { error: "lifecycle_operation_active", message: "Lifecycle operation claim was not admitted" });
   }
-  await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId });
+  await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId, ...(formArtifactId ? { form_artifact_id: formArtifactId } : {}) });
   return dispatch(env, ctx, installId, brandId, "/install", { install_id: installId, brand_id: brandId, revision_id: revisionId, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }
 
@@ -329,7 +346,9 @@ async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string
   return new Map(parsed.data.brands.map((brand) => [brand.brand_id, brand]));
 }
 
-function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never): LifecycleBrandSummary {
+type NewestForm = { form_artifact_id: string; bundle_form_version: string; created_at: string };
+
+function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never, newest: NewestForm | null): LifecycleBrandSummary {
   const state = runtime.get(row.brand_id);
   return LifecycleBrandSummary.parse({
     brand_id: row.brand_id, name: typeof row.name === "string" && row.name ? row.name : undefined, account: row.account,
@@ -337,12 +356,16 @@ function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runti
     current_revision_id: row.current_revision_id,
     bundle_form_version: state?.bundle_form_version ?? row.bundle_form_version ?? null,
     payload_version: row.payload_version ?? null,
+    newer_form: newest && newest.form_artifact_id !== row.form_artifact_id && (typeof row.form_created_at !== "string" || newest.created_at > row.form_created_at)
+      ? { form_artifact_id: newest.form_artifact_id, bundle_form_version: newest.bundle_form_version } : undefined,
     runtime_sync_status: state ? (state.applied_revision_id === row.current_revision_id ? "ready" : "sync_error") : row.status === "draft" ? "queued" : "sync_error",
   });
 }
 
 async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{ brands: LifecycleBrandSummary[]; core_error: CoreListError | null }> {
-  const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1)) LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
+  const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version,fa.created_at AS form_created_at FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1)) LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
+  const defaults = tenantDefaults(env);
+  const newest = defaults ? await env.FACTORY.prepare(`SELECT form_artifact_id, bundle_form_version, created_at FROM form_artifacts WHERE ${COMPATIBLE_FORM} ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1`).bind(defaults.payload_version).first<NewestForm>() : null;
   const account = env.DEFAULT_ACCOUNT ?? results[0]?.account;
   let runtime: Awaited<ReturnType<typeof runtimeBrands>> = new Map();
   let coreError: CoreListError | null = null;
@@ -355,7 +378,7 @@ async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{
       : { code: "core_list_fetch_failed", message: "Core brand list fetch failed" };
   }
   const factoryIds = new Set(results.map((row) => row.brand_id));
-  const merged = results.map((row) => withRuntimeState(row, runtime));
+  const merged = results.map((row) => withRuntimeState(row, runtime, newest));
   for (const [brandId, state] of runtime) if (!factoryIds.has(brandId)) merged.push(LifecycleBrandSummary.parse({ brand_id: brandId, account, status: "unmanaged", current_revision_id: null, bundle_form_version: state.bundle_form_version, payload_version: null, hostnames: state.hostnames, runtime_sync_status: "ready" }));
   return { brands: merged, core_error: coreError };
 }
@@ -404,7 +427,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     }
     const g = authorizePanel(m[2] === "install" ? "installBrand" : m[2] === "recover" ? "recoverBrand" : m[2] === "redeploy" ? "redeployBrand" : "rollbackBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     if (m[2] === "recover") return recover(env, ctx, brandId);
-    if (m[2] === "redeploy") return redeploy(env, ctx, brandId);
+    if (m[2] === "redeploy") return redeploy(request, env, ctx, brandId);
     return m[2] === "install" ? startInstall(request, env, ctx, brandId) : rollback(request, env, ctx, brandId);
   }
   m = path.match(/^\/api\/installs\/([^/]+)\/retry$/);
