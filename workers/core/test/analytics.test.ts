@@ -106,8 +106,14 @@ describe.each(ANALYTICS_KINDS)("%s endpoint access", (kind) => {
 
 describe("telemetry", () => {
   const row = () => configured.db.prepare("SELECT * FROM traffic_events").all<Record<string, unknown>>();
+  // The V1 clock window is relative to now, so every timestamp here is too.
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
   it("stores an allowlisted event with the authenticated hostname and answers an empty 204", async () => {
-    const response = await forward(configured, "telemetry");
+    const occurredAt = ago(MINUTE);
+    const body = JSON.stringify({ ...JSON.parse(golden("telemetry").body), occurred_at: occurredAt });
+    const response = await forward(configured, "telemetry", { body });
     expect([response.status, await response.text()]).toEqual([204, ""]);
     const { results } = await row();
     expect(results).toHaveLength(1);
@@ -115,7 +121,7 @@ describe("telemetry", () => {
       event_type: "form_step_viewed", session_id: "5b0b4a7e-6a6e-4a63-9f1c-0d2f6d7c1a11", hostname: "brand-a.example",
       brand: "Brand A", form_version: "2026-01", form_variant: "lite_v1", build_id: "unknown", form_step: 2,
       device_class: "mobile", browser_family: "chrome", touch_capable: 1, click_session_id: null, clock_skew: 0,
-      occurred_at: "2026-10-13T00:00:00.000Z",
+      occurred_at: occurredAt,
     });
     expect(results[0]!.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(upstream).toHaveLength(0);
@@ -131,13 +137,24 @@ describe("telemetry", () => {
     }
     expect((await row()).results).toHaveLength(0);
   });
-  it("substitutes server time and flags a client clock outside the V1 window", async () => {
-    for (const occurred_at of ["2001-01-01T00:00:00.000Z", "garbage"]) {
-      await forward(configured, "telemetry", { body: json({ ...events, occurred_at }) });
-    }
+  it.each([
+    ["older than 24 hours", () => ago(25 * HOUR)],
+    ["more than 5 minutes ahead", () => ago(-10 * MINUTE)],
+    ["unparseable", () => "garbage"],
+  ])("substitutes server time and flags a client clock that is %s", async (_name, occurredAt) => {
+    await forward(configured, "telemetry", { body: json({ ...events, occurred_at: occurredAt() }) });
     const { results } = await row();
-    expect(results.map((item) => item.clock_skew)).toEqual([1, 1]);
-    expect(results.every((item) => item.occurred_at === item.created_at)).toBe(true);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ clock_skew: 1 });
+    expect(results[0]!.occurred_at).toBe(results[0]!.created_at);
+  });
+  it.each([
+    ["23 hours old", () => ago(23 * HOUR)],
+    ["1 minute ahead", () => ago(-MINUTE)],
+  ])("keeps a client clock that is %s", async (_name, occurredAt) => {
+    const value = occurredAt();
+    await forward(configured, "telemetry", { body: json({ ...events, occurred_at: value }) });
+    expect((await row()).results[0]).toMatchObject({ clock_skew: 0, occurred_at: value });
   });
   it("needs no PostHog or Sentry configuration", async () => {
     expect((await forward(open, "telemetry")).status).toBe(204);
