@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockingDnsRecords, brandHostnames, detachCustomDomain, getZone, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
+import { CfError, blockingDnsRecords, brandHostnames, detachCustomDomain, getZone, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
 
 describe("brandHostnames", () => {
   it("serves the apex and its www for a brand on its own zone", () => {
@@ -62,6 +62,12 @@ describe("getZone", () => {
     );
   });
 
+  it("marks a missing and an inactive zone as deterministic failures", async () => {
+    const missing = await getZone("t", "nowhere.example", recordingFetcher(() => []).fetcher).catch((e: unknown) => e);
+    const pending = await getZone("t", "aduplift.ai", recordingFetcher(() => [{ id: "z", status: "pending" }]).fetcher).catch((e: unknown) => e);
+    expect([(missing as CfError).deterministic, (pending as CfError).deterministic]).toEqual([true, true]);
+  });
+
   it("never queries a bare TLD and URL-encodes the name parameter", async () => {
     const urls: string[] = [];
     const fetcher = async (input: string) => {
@@ -105,6 +111,20 @@ describe("Cloudflare response handling", () => {
     await expect(detachCustomDomain("test-token", "account", "domain", async () =>
       Response.json({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }, { status: 403 })))
       .rejects.toThrow("failed: 10000: Authentication error (HTTP 403)");
+  });
+
+  it.each([[400, true], [401, true], [403, true], [404, true], [408, false], [429, false], [500, false], [502, false], [503, false]])(
+    "marks HTTP %s deterministic=%s", async (status, deterministic) => {
+      const error = await listCustomDomains("t", "acct", "zone", "script", async () =>
+        Response.json({ success: false, errors: [{ code: 1, message: "no" }] }, { status })).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(CfError);
+      expect((error as CfError).deterministic).toBe(deterministic);
+    });
+
+  it("keeps a network error and an unreadable 200 body retriable", async () => {
+    await expect(listCustomDomains("t", "acct", "zone", "script", async () => { throw new TypeError("network"); })).rejects.toBeInstanceOf(TypeError);
+    const error = await listCustomDomains("t", "acct", "zone", "script", async () => new Response("<html>", { status: 200 })).catch((e: unknown) => e);
+    expect((error as CfError).deterministic).toBe(false);
   });
 
   it("rejects an HTTP error even if the envelope says success", async () => {
@@ -203,6 +223,18 @@ describe("blockingDnsRecords", () => {
     const a = api({ dns: [aaaa("brand.example.com")] });
     const bare = withDomains(a, [{ id: "d1", hostname: "brand.example.com" }]);
     await expect(blockingDnsRecords("t", "acct", "zone-1", "brand-x", ["brand.example.com"], bare)).resolves.toEqual([]);
+  });
+
+  // Field names `id`, `hostname`, `service`, `zone_id` and `environment` come from the wrangler 4.124.0 bundle
+  // (the Workers Domains PUT body and the domain record it prints as `hostname` and `service`). No live
+  // response was recorded, so an entry with and one without `service` are both kept as the two shapes seen.
+  it.each([
+    ["with service", { id: "dom-1", hostname: "brand.example.com", service: "brand-x", environment: "production", zone_id: "zone-1" }],
+    ["without service", { id: "dom-1", hostname: "brand.example.com", environment: "production", zone_id: "zone-1" }],
+  ])("accepts an own entry shaped like the Workers Domains list (%s)", async (_label, entry) => {
+    const a = api({ dns: [aaaa("brand.example.com")] });
+    const listed = withDomains(a, [entry as Domain]);
+    await expect(blockingDnsRecords("t", "acct", "zone-1", "brand-x", ["brand.example.com"], listed)).resolves.toEqual([]);
   });
 
   it("fails closed when the Custom Domains list cannot be read", async () => {

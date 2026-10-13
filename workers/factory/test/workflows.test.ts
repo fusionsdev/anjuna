@@ -60,6 +60,9 @@ function steps() {
   let inside = false;
   const hooks = { before: async (_name: string) => {}, sleep: async () => {}, retry: async (_name: string) => {} };
   const configs = new Map<string, WorkflowStepConfig>();
+  // Callback runs per step, and the error a step finally threw after its configured retries.
+  const attempts = new Map<string, number>();
+  const failures = new Map<string, unknown>();
   const step = {
     async do(name: string, configOrWork: WorkflowStepConfig | (() => Promise<unknown>), callback?: () => Promise<unknown>) {
       const config = typeof configOrWork === "function" ? {} : configOrWork;
@@ -71,9 +74,10 @@ function steps() {
       inside = true;
       try {
         for (let attempt = 0; ; attempt++) {
+          attempts.set(name, attempt + 1);
           try { const value = await work(); cache.set(name, value); return value; }
           catch (err) {
-            if (err instanceof NonRetryableError || attempt >= (config.retries?.limit ?? 0)) throw err;
+            if (err instanceof NonRetryableError || attempt >= (config.retries?.limit ?? 0)) { failures.set(name, err); throw err; }
             await hooks.retry(name);
           }
         }
@@ -85,7 +89,7 @@ function steps() {
       await hooks.sleep();
     },
   } as unknown as WorkflowStep;
-  return { step, cache, hooks, configs };
+  return { step, cache, hooks, configs, attempts, failures };
 }
 function event<T>(payload: T) { return { payload } as WorkflowEvent<T>; }
 
@@ -119,10 +123,14 @@ async function fixture(live = false, subdomain = false, paused = true) {
     zoneName: subdomain ? "sub.example" : domain,
     // Zone records that no Custom Domain of this brand explains (a hand-made A or CNAME).
     foreignDns: [] as Array<{ type: string; name: string }>,
+    // HTTP statuses answered, one per call, before the zone, Workers Domains list and Core runtime-state calls succeed.
+    zoneHttp: [] as number[], domainsHttp: [] as number[], stateHttp: [] as number[], zoneStatus: "active",
     apex: [] as Array<Response | Error>, www: [] as Array<Response | Error> };
   const core = { async fetch(request: Request) {
     const input = await request.json() as Record<string, unknown>;
     if (new URL(request.url).pathname.endsWith("runtime-state")) {
+      const refused = settings.stateHttp.shift();
+      if (refused) return new Response("core refused", { status: refused });
       if (settings.stateMode === "fail") return new Response("core unavailable", { status: 503 });
       if (settings.stateMode === "absent") return Response.json({ state: "absent", brand_id: brand, account: "test", credential_account_match: true });
       return Response.json(runtime);
@@ -163,8 +171,10 @@ async function fixture(live = false, subdomain = false, paused = true) {
     }
     if (url.hostname !== "api.cloudflare.com") throw new Error(`Unexpected external request: ${url}`);
     if (url.pathname.endsWith("/zones")) {
+      const refused = settings.zoneHttp.shift();
+      if (refused) return Response.json({ success: false, errors: [{ code: 9999, message: "zone lookup refused" }] }, { status: refused });
       const queried = url.searchParams.get("name");
-      return queried === settings.zoneName ? ok([{ id: "zone-local", status: "active", name: queried ?? "" }]) : ok([]);
+      return queried === settings.zoneName ? ok([{ id: "zone-local", status: settings.zoneStatus, name: queried ?? "" }]) : ok([]);
     }
     // Cloudflare creates the DNS record of every attached Custom Domain itself, so the zone of an
     // installed brand holds one AAAA record per hostname it serves.
@@ -190,6 +200,8 @@ async function fixture(live = false, subdomain = false, paused = true) {
         domains.set(hostname, service);
         return ok({ id: `local-${hostname}`, hostname, service });
       }
+      const refused = settings.domainsHttp.shift();
+      if (refused) return Response.json({ success: false, errors: [{ code: 9999, message: "domains list refused" }] }, { status: refused });
       const service = url.searchParams.get("service");
       return ok([...domains].filter(([, script]) => !service || script === service)
         .map(([hostname, script]) => ({ id: `local-${hostname}`, hostname, service: script, zone_id: "zone-local" })));
@@ -967,9 +979,10 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
         .toEqual({ output_json: JSON.stringify({ compensation: "not_required" }) });
       const row = await env.FACTORY.prepare("SELECT error FROM installs WHERE install_id=?").bind(f.install).first<{ error: string }>();
       expect(row!.error).toContain("Existing DNS records block Custom Domain attach");
-      // validate keeps the Workflows default retry config (5 retries, 10 s exponential), so the
-      // install stays running for about 310 s in production before this state is reached.
-      expect(s.configs.get("validate")).toEqual({});
+      // A DNS conflict is deterministic: validate runs once and the install settles at once.
+      expect(s.attempts.get("validate")).toBe(1);
+      expect(s.failures.get("validate")).toBeInstanceOf(NonRetryableError);
+      expect(s.configs.get("validate")).toEqual({ retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "60 seconds" });
     });
 
     it("lets the owner retry that failed upgrade once the foreign record is gone", async () => {
@@ -986,6 +999,107 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       await runInstall({ ...f, params: { ...f.params, install_id: retryId! } });
       expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(retryId).first()).toEqual({ status: "ready" });
       expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.params.revision_id });
+    });
+  });
+
+  // FUS-345: a deterministic validate failure must settle at once. Cloudflare Workflows retries a
+  // step that throws a plain Error, and the harness runs the configured retries without waiting.
+  describe("validate fails fast", () => {
+    type Fixture = Awaited<ReturnType<typeof fixture>>;
+    const validateReceipt = (installId: string) => env.FACTORY.prepare("SELECT status,output_json FROM install_receipts WHERE install_id=? AND step='validate'")
+      .bind(installId).first<{ status: string; output_json: string }>();
+    const compensationRows = (f: Fixture) => env.FACTORY.prepare("SELECT COUNT(*) AS n FROM installs WHERE brand_id=? AND kind='rollback'").bind(f.brand).first<{ n: number }>();
+
+    const deterministic: Array<[string, (f: Fixture) => Promise<void> | void, string]> = [
+      ["revision not found", (f) => { f.params.revision_id = "missing-revision"; }, "Revision missing-revision not found"],
+      // A sealed template version and form payload_version are immutable in D1, so those checks cannot be reached here.
+      ["revision config overriding tenant defaults", async (f) => { await env.FACTORY.prepare("UPDATE brand_revisions SET config_json='{\"aid\":\"1\"}' WHERE revision_id=?").bind(f.revision).run(); }, "Revision cannot override tenant-owned runtime defaults"],
+      ["form artifact r2 key missing", async (f) => { await env.FACTORY.prepare("UPDATE form_artifacts SET r2_key='' WHERE form_artifact_id=?").bind(f.artifact).run(); }, "Form artifact is missing"],
+      ["unparsable amount buckets setting", (f) => { (f.bindings as unknown as Record<string, string>).DEFAULT_AMOUNT_BUCKETS = "["; }, "JSON"],
+      ["zone not found", (f) => { f.settings.zoneName = "other.example"; }, "Zone not found for domain"],
+      ["zone not active", (f) => { f.settings.zoneStatus = "pending"; }, "is not active (status=pending)"],
+      ["DNS conflict", (f) => { f.settings.foreignDns.push({ type: "AAAA", name: `${f.id}.example` }); }, "Existing DNS records block Custom Domain attach"],
+      ["Cloudflare 401", (f) => { f.settings.zoneHttp.push(401); }, "HTTP 401"],
+      ["Cloudflare 403", (f) => { f.settings.zoneHttp.push(403); }, "HTTP 403"],
+      ["Core 401", (f) => { f.settings.stateHttp.push(401); }, "Core lifecycle request failed (401)"],
+    ];
+
+    it.each(deterministic)("runs validate once and ends failed on %s", async (_name, arrange, text) => {
+      const f = await fixture();
+      await arrange(f);
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.failures.get("validate")).toBeInstanceOf(NonRetryableError);
+      expect((s.failures.get("validate") as Error).message).toContain(text);
+      expect(s.attempts.get("validate")).toBe(1);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
+      expect(JSON.parse((await validateReceipt(f.install))!.output_json).error).toContain(text);
+      expect(f.compensation).toHaveLength(0);
+      expect(await compensationRows(f)).toEqual({ n: 0 });
+      expect(await env.FACTORY.prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step='rollback'").bind(f.install).first())
+        .toEqual({ output_json: JSON.stringify({ compensation: "not_required" }) });
+      const row = await env.FACTORY.prepare("SELECT error FROM installs WHERE install_id=?").bind(f.install).first<{ error: string }>();
+      expect(row!.error).toBe(`Error: ${(s.failures.get("validate") as Error).message}`);
+      expect(row!.error).toContain(text);
+    });
+
+    it("keeps an upgrade live on its old revision when validate fails fast", async () => {
+      const f = await fixture(true, true, false);
+      const next = `upgrade-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?,?,2,?,?,'{}','owner',?)")
+        .bind(next, f.brand, f.version, f.artifact, now).run();
+      await env.FACTORY.prepare("UPDATE installs SET kind='upgrade',from_revision_id=?,to_revision_id=? WHERE install_id=?").bind(f.revision, next, f.install).run();
+      f.params.revision_id = next;
+      f.settings.zoneHttp.push(403);
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.attempts.get("validate")).toBe(1);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      expect(f.compensation).toHaveLength(0);
+    });
+
+    it.each([
+      ["Cloudflare 502 on the zone lookup", (f: Fixture) => { f.settings.zoneHttp.push(502); }],
+      ["Cloudflare 429 on the zone lookup", (f: Fixture) => { f.settings.zoneHttp.push(429); }],
+      ["Core 503 on runtime-state", (f: Fixture) => { f.settings.stateHttp.push(503); }],
+      ["Core 429 on runtime-state", (f: Fixture) => { f.settings.stateHttp.push(429); }],
+      ["Workers Domains list 500", (f: Fixture) => {
+        f.settings.foreignDns.push({ type: "A", name: `www.${f.id}.example` });
+        f.domains.set(`www.${f.id}.example`, `brand-${f.brand}`);
+        f.settings.domainsHttp.push(500);
+      }],
+    ])("retries a transient failure (%s) and reaches READY", async (_name, arrange) => {
+      const f = await fixture();
+      arrange(f);
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.attempts.get("validate")).toBe(2);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await validateReceipt(f.install)).toMatchObject({ status: "ok" });
+    });
+
+    it("gives up after the configured retries on a persistent transient failure, with a plain Error", async () => {
+      const f = await fixture();
+      f.settings.zoneHttp.push(502, 502, 502, 502, 502);
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.failures.get("validate")).not.toBeInstanceOf(NonRetryableError);
+      expect(s.attempts.get("validate")).toBe(4);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(JSON.parse((await validateReceipt(f.install))!.output_json).error).toContain("HTTP 502");
+    });
+
+    it("stores no failed receipt for an attempt that a retry then fixes", async () => {
+      const f = await fixture();
+      f.settings.zoneHttp.push(500);
+      const s = steps();
+      let receiptDuringRetry: unknown = "unset";
+      s.hooks.retry = async () => { receiptDuringRetry = await validateReceipt(f.install); };
+      await runInstall(f, s);
+      expect(receiptDuringRetry).toBeNull();
+      expect(await validateReceipt(f.install)).toMatchObject({ status: "ok" });
     });
   });
 

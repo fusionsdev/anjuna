@@ -1,12 +1,13 @@
-import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import { ANALYTICS_FORWARD_PATHS } from "@anjuna/contracts";
 import {
-  attachCustomDomain, assetContentType, blockingDnsRecords, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
+  CfError, attachCustomDomain, assetContentType, blockingDnsRecords, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
 import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt } from "../receipt.js";
-import { CoreLifecycleClient } from "../core-lifecycle-client.js";
+import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
 import type { Env } from "../env.js";
 
@@ -38,6 +39,27 @@ interface TemplateVersionRow {
   status: string;
 }
 
+// Transient validate failures (5xx, 408, 429, network, D1) retry 3 times after 5, 10 and 20 s, instead of
+// the Workflows default of 5 retries over 310 s. Deterministic failures skip every retry: see failFast.
+const VALIDATE_RETRY_CONFIG = {
+  retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+  timeout: "60 seconds",
+} satisfies WorkflowStepConfig;
+
+/**
+ * Turns a failure that the same input always repeats into a NonRetryableError, so the step settles at
+ * once: unparsable JSON, a zone that is absent or inactive, Cloudflare or Core 4xx other than 408 and 429.
+ * Everything else is rethrown unchanged and keeps the step retries. The message is never altered.
+ */
+async function failFast<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    const deterministic = err instanceof SyntaxError || (err instanceof Error && err.name === "ZodError") || ((err instanceof CfError || err instanceof CoreLifecycleError) && err.deterministic);
+    throw deterministic ? new NonRetryableError((err as Error).message) : err;
+  }
+}
+
 interface FormArtifactRow {
   r2_key: string;
   payload_version: string | null;
@@ -60,39 +82,42 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
     const terminal = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
     if (terminal?.status === "ready" || terminal?.status === "rolled_back") return;
     let mutationStarted = false;
+    let validated = false;
 
     try {
       await step.do("claim_install", () => setInstallStatus(db, install_id, "running", undefined, brand_id));
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      const { zone_id, domain, hostnames: cachedHostnames, name, account, previous_revision_id, initial_runtime } = await step.do("validate", async () => {
-        return withReceipt(db, install_id, "validate", async () => {
+      // The receipt wraps the step, as for smoke: a receipt written inside the callback would store the first
+      // failure and make every retry rethrow it. It is written once, after the step succeeds or gives up.
+      const { zone_id, domain, hostnames: cachedHostnames, name, account, previous_revision_id, initial_runtime } = await withReceipt(db, install_id, "validate", () => step.do("validate", VALIDATE_RETRY_CONFIG, async () => {
+        return failFast(async () => {
           const brand = await db
             .prepare("SELECT brand_id, name, account, domain, keyword_default, current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
             .first<BrandRow>();
-          if (!brand) throw new Error(`Brand ${brand_id} not found`);
-          if (brand.account !== this.env.CORE_ACCOUNT) throw new Error("Brand does not belong to configured factory account");
-          if (!this.env.CORE_SERVICE_NAME) throw new Error("Core service binding name is missing");
+          if (!brand) throw new NonRetryableError(`Brand ${brand_id} not found`);
+          if (brand.account !== this.env.CORE_ACCOUNT) throw new NonRetryableError("Brand does not belong to configured factory account");
+          if (!this.env.CORE_SERVICE_NAME) throw new NonRetryableError("Core service binding name is missing");
 
           const revision = await db
             .prepare("SELECT brand_id, template_version_id, form_artifact_id, config_json, worker_version_id FROM brand_revisions WHERE revision_id = ?")
             .bind(revision_id)
             .first<RevisionRow>();
-          if (!revision) throw new Error(`Revision ${revision_id} not found`);
-          if (revision.brand_id !== brand_id) throw new Error("Revision does not belong to brand");
+          if (!revision) throw new NonRetryableError(`Revision ${revision_id} not found`);
+          if (revision.brand_id !== brand_id) throw new NonRetryableError("Revision does not belong to brand");
 
           const tv = await db
             .prepare("SELECT status FROM template_versions WHERE template_version_id = ?")
             .bind(revision.template_version_id)
             .first<{ status: string }>();
-          if (!tv) throw new Error("Template version not found");
-          if (tv.status !== "sealed") throw new Error("Template version is not sealed");
+          if (!tv) throw new NonRetryableError("Template version not found");
+          if (tv.status !== "sealed") throw new NonRetryableError("Template version is not sealed");
 
           const artifact = await db
             .prepare("SELECT r2_key, payload_version, bundle_form_version FROM form_artifacts WHERE form_artifact_id = ?")
             .bind(revision.form_artifact_id)
             .first<FormArtifactRow>();
-          if (!artifact?.r2_key) throw new Error("Form artifact is missing");
+          if (!artifact?.r2_key) throw new NonRetryableError("Form artifact is missing");
           const config = JSON.parse(revision.config_json) as Record<string, unknown>;
           const tenant = {
             account: brand.account,
@@ -105,20 +130,25 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           };
           const runtimeState = await new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN)
             .runtimeState({ brand_id, account: brand.account });
-          validateInstallInputs({
-            brand_id,
-            revision: { ...revision, template_status: tv.status, config },
-            artifact: { present: true, payload_version: artifact.payload_version, bundle_form_version: artifact.bundle_form_version },
-            tenant,
-            runtime_state: runtimeState,
-          });
+          try {
+            validateInstallInputs({
+              brand_id,
+              revision: { ...revision, template_status: tv.status, config },
+              artifact: { present: true, payload_version: artifact.payload_version, bundle_form_version: artifact.bundle_form_version },
+              tenant,
+              runtime_state: runtimeState,
+            });
+          } catch (invalid) {
+            // Every check is a pure function of rows and Core state already read.
+            throw new NonRetryableError((invalid as Error).message);
+          }
 
           const zone = await getZone(CF_API_TOKEN, brand.domain);
           const hostnames = brandHostnames(brand.domain, zone.name);
           const conflicts = await blockingDnsRecords(CF_API_TOKEN, CF_ACCOUNT_ID, zone.id, `brand-${brand_id}`, hostnames);
           if (conflicts.length > 0) {
             const names = conflicts.map((r) => `${r.type} ${r.name}`).join(", ");
-            throw new Error(`Existing DNS records block Custom Domain attach: ${names}`);
+            throw new NonRetryableError(`Existing DNS records block Custom Domain attach: ${names}`);
           }
 
           return {
@@ -131,9 +161,10 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             initial_runtime: deriveAuthoritativeRuntime(brand_id, tenant, artifact),
           };
         });
-      });
+      }));
       // A Workflow replaying an install started before per-zone hostnames has a cached
       // validate output without them; those installs attached apex plus www, so keep that pair.
+      validated = true;
       const hostnames = cachedHostnames ?? [domain, `www.${domain}`];
 
       // ── Step 2: Save rollback record ───────────────────────────────────────
@@ -356,7 +387,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
 
       await step.do("finish_install", () => setInstallStatus(db, install_id, "ready", undefined, brand_id));
     } catch (err) {
-      const errorMessage = String(err);
+      // validate failures read "Error: <message>" in the panel as before they became non-retryable.
+      const errorMessage = !validated && err instanceof Error && err.name === "NonRetryableError" ? `Error: ${err.message}` : String(err);
       if (errorMessage.includes("lifecycle mutation in progress")) {
         await rejectQueuedInstall(db, install_id, brand_id, errorMessage);
         throw err;
