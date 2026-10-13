@@ -1,19 +1,15 @@
-import { LeadsRpc, SUBMIT_CONTEXT_HEADERS, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse } from "@anjuna/contracts";
+import {
+  ANALYTICS_FORWARD_PATHS, AnalyticsForwardRequest, LeadsRpc, SUBMIT_CONTEXT_HEADERS,
+  type AnalyticsKind as ContractAnalyticsKind, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
+} from "@anjuna/contracts";
 
 export type CoreResult<M extends LeadsRpcMethod> = { status: number; data: LeadsRpcResponse<M> };
 export interface SubmitContext { gpc?: "0" | "1"; consent_brand?: string }
 type RpcMethods = { [M in LeadsRpcMethod]: (body: LeadsRpcRequest<M>, context?: SubmitContext) => Promise<CoreResult<M>> };
 
-export type AnalyticsKind = "posthog" | "sentry" | "telemetry" | "errors";
-export interface AnalyticsRequest {
-  brand_id: string;
-  hostname: string;
-  kind: AnalyticsKind;
-  /** Relative suffix below the public proxy path, e.g. /i/v0/. Never an arbitrary URL. */
-  path: string;
-  content_type: string;
-  body: string;
-}
+export type AnalyticsKind = ContractAnalyticsKind;
+/** The analytics-forward envelope; the contracts package owns its shape and limits. */
+export type AnalyticsRequest = AnalyticsForwardRequest;
 
 export interface CoreClient extends RpcMethods {
   forwardAnalytics(request: AnalyticsRequest): Promise<void>;
@@ -47,7 +43,7 @@ export interface TransportOptions {
   credential: string;
   origin?: string;
   timeoutMs?: number;
-  /** ADR-0004 has no shared endpoint contract yet; endpoint choices are explicit integration config. */
+  /** Overrides the contract's core path (ANALYTICS_FORWARD_PATHS) for a kind. */
   analyticsPaths?: Partial<Record<AnalyticsKind, string>>;
 }
 
@@ -98,9 +94,9 @@ abstract class TransportCoreClient implements CoreClient {
   brandSettings: RpcMethods["brandSettings"] = (body) => this.call("brandSettings", body);
 
   async forwardAnalytics(body: AnalyticsRequest): Promise<void> {
-    const path = this.options.analyticsPaths?.[body.kind];
-    if (!path) throw new Error("Analytics forwarding endpoint is not configured");
-    await this.request(path, body, async (response) => {
+    const validated = AnalyticsForwardRequest.parse(body);
+    const path = this.options.analyticsPaths?.[body.kind] ?? ANALYTICS_FORWARD_PATHS[body.kind];
+    await this.request(path, validated, async (response) => {
       await response.body?.cancel();
       if (!response.ok) throw new CoreError(response.status);
     });

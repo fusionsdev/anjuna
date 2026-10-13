@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FormLeadPayload } from "@anjuna/contracts";
+import { ANALYTICS_FORWARD_PATHS, ANALYTICS_KINDS, ANALYTICS_LIMITS, FormLeadPayload } from "@anjuna/contracts";
 import { HttpsCoreClient, ServiceBindingCoreClient, CoreError, CoreUnavailable, type CoreClient } from "../src/index.js";
 import leadFixture from "../../contracts/fixtures/form/lead.lite_v1.json";
 
@@ -74,6 +74,28 @@ describe.each(["HTTPS", "Service Binding"])("%s core transport", (kind) => {
     expect(request.url).toBe("https://core.aduplift.ai/forward/events");
     expect(request.headers.get("authorization")).toBe("Bearer test-account-credential");
     expect(await request.json()).toEqual(body);
+  });
+});
+
+describe.each(ANALYTICS_KINDS)("analytics forward of %s", (kind) => {
+  const body = { brand_id: "brand-a", hostname: "brand-a.example", kind, path: "/", content_type: "application/json", body: "{}" };
+  it.each(["HTTPS", "Service Binding"])("posts the envelope to the contract path over %s with no path option", async (transport) => {
+    const send = vi.fn(async (_request: Request) => new Response(null, { status: 204 }));
+    const options = { credential: "test-account-credential" };
+    const core: CoreClient = transport === "HTTPS" ? new HttpsCoreClient(options, send) : new ServiceBindingCoreClient({ fetch: send }, options);
+    await core.forwardAnalytics(body);
+    const request = send.mock.calls[0]![0];
+    expect(request.url).toBe(`https://core.aduplift.ai${ANALYTICS_FORWARD_PATHS[kind]}`);
+    expect(request.headers.get("authorization")).toBe("Bearer test-account-credential");
+    expect(await request.json()).toEqual(body);
+  });
+  it("rejects an envelope that breaks the contract before sending, and a core error status after", async () => {
+    const send = vi.fn(async (_request: Request) => new Response(null, { status: 503 }));
+    const core = new HttpsCoreClient({ credential: "test" }, send);
+    await expect(core.forwardAnalytics({ ...body, path: "/../x" })).rejects.toThrow();
+    await expect(core.forwardAnalytics({ ...body, body: "a".repeat(ANALYTICS_LIMITS[kind] + 1) })).rejects.toThrow();
+    expect(send).not.toHaveBeenCalled();
+    await expect(core.forwardAnalytics(body)).rejects.toMatchObject({ status: 503 });
   });
 });
 
