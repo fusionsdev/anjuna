@@ -108,7 +108,7 @@ describe("mounted lifecycle UI with API responses", () => {
     await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
     const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
     const before = reads();
-    fireEvent.click(screen.getByRole("button", { name: "เริ่ม Upgrade-all" }));
+    fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)" }));
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
   });
 
@@ -310,7 +310,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(panel).queryByRole("button", { name: rotateName })).toBeNull();
     expect(within(panel).queryByRole("heading", { name: rollbackName })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /Rollback/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /เริ่ม Upgrade-all/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /เริ่มอัปเกรดทุกแบรนด์/ })).toBeNull();
   });
 
   it("labels every control in the config panel as Thai (English)", async () => {
