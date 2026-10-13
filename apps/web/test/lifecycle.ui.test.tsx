@@ -53,6 +53,14 @@ const saveAbName = "บันทึก A/B (Save A/B)";
 const flowGateSection = "เกตของโฟลว์ (Flow gate)";
 const closeName = "ปิด (Close)";
 const rotateName = "หมุนโทเคน (Rotate token)";
+// The component clears its drawer, install and pending-operation state in the effect that runs when
+// a brand is selected, and that effect also requests the checklist. A click made before that request
+// lands is overwritten by the reset, so wait for the request before the first click.
+const brandSelected = () => waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-a/checklist")).toBe(true));
+const openRuntimeConfig = async () => {
+  await brandSelected();
+  fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+};
 const section = (panel: HTMLElement, heading: string | RegExp) => within(within(panel).getByRole("heading", { name: heading }).closest("section")!);
 
 beforeEach(() => {
@@ -108,7 +116,7 @@ describe("mounted lifecycle UI with API responses", () => {
     await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
     const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
     const before = reads();
-    fireEvent.click(screen.getByRole("button", { name: "เริ่ม Upgrade-all" }));
+    fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)" }));
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
   });
 
@@ -132,6 +140,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(select, { target: { value: "tv-1" } });
     fireEvent.click(screen.getByRole("button", { name: createDraftName }));
+    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: installName }));
     expect((await screen.findAllByText("new-install", { selector: "code" })).length).toBeGreaterThan(0);
     expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ name: "New Brand", domain: "new-brand.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
@@ -269,7 +278,7 @@ describe("mounted lifecycle UI with API responses", () => {
   it("loads API rows and opens working runtime pause, keyword, buckets, A/B and gate controls", async () => {
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeDefined();
-    fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+    await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
     fireEvent.click(await within(panel).findByRole("button", { name: pauseName }));
     expect(within(panel).getByRole("button", { name: /Rollback/ })).toBeDefined();
@@ -300,7 +309,7 @@ describe("mounted lifecycle UI with API responses", () => {
 
   it("keeps employee runtime controls accessible with owner-only controls hidden", async () => {
     render(<BrandLifecycle me={employee} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+    await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("textbox");
     expect(within(panel).queryByRole("button", { name: pauseName })).toBeNull();
@@ -310,14 +319,14 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(panel).queryByRole("button", { name: rotateName })).toBeNull();
     expect(within(panel).queryByRole("heading", { name: rollbackName })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /Rollback/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /เริ่ม Upgrade-all/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /เริ่มอัปเกรดทุกแบรนด์/ })).toBeNull();
   });
 
   it("labels every control in the config panel as Thai (English)", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
     routes.set("PATCH /api/brands/brand-a", () => json({ brand: config, issued_postback_token: "tok_0123456789abcdef" }));
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+    await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("button", { name: pauseName });
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
@@ -413,6 +422,7 @@ describe("mounted lifecycle UI with API responses", () => {
     });
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByText("Smoke check failed")).toBeDefined();
+    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: installName }));
     fireEvent.click(await screen.findByRole("button", { name: retryName }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/installs/failed-1/retry")).toBe(true));
@@ -430,6 +440,7 @@ describe("mounted lifecycle UI with API responses", () => {
       return json({ install_id: failed.install_id, brand_id: "brand-a", status: "running" }, 201);
     });
     render(<BrandLifecycle me={employee} />);
+    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: installName }));
     expect(await screen.findByText("failed-1", { selector: "code" })).toBeDefined();
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Factory Worker binding is missing");
@@ -505,6 +516,7 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   });
   detail({ ...failed, install_id: "recovery-1", revision_id: null, status: "rolled_back", runtime_sync_status: "ready", receipts: [{ step: "receipt", status: "ready" }] });
   render(<BrandLifecycle me={owner} />);
+  await brandSelected();
   fireEvent.click(await screen.findByRole("button", { name: recoverName }));
   await waitFor(() => expect(requests.filter((r) => r.path === "/api/brands/brand-a/recover")).toHaveLength(1));
   await screen.findByText("recovery-1");
