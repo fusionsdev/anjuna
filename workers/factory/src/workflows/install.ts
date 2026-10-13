@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { ANALYTICS_FORWARD_PATHS } from "@anjuna/contracts";
 import {
-  apexDnsRecords, attachCustomDomain, assetContentType, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
+  attachCustomDomain, assetContentType, blockingDnsRecords, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
@@ -115,7 +115,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
 
           const zone = await getZone(CF_API_TOKEN, brand.domain);
           const hostnames = brandHostnames(brand.domain, zone.name);
-          const conflicts = await apexDnsRecords(CF_API_TOKEN, zone.id, hostnames);
+          const conflicts = await blockingDnsRecords(CF_API_TOKEN, CF_ACCOUNT_ID, zone.id, `brand-${brand_id}`, hostnames);
           if (conflicts.length > 0) {
             const names = conflicts.map((r) => `${r.type} ${r.name}`).join(", ");
             throw new Error(`Existing DNS records block Custom Domain attach: ${names}`);
