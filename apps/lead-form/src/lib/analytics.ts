@@ -1,19 +1,11 @@
-import { installPostHogStub } from "./posthog-stub";
+// The slim, no-external build of posthog-js: event capture only. Its extensions (session replay,
+// surveys, toolbar, heatmaps, web vitals, dead clicks, exception autocapture) are not registered
+// and it never loads an external script. Vite bundles it into the form's own assets.
+import posthog, { type PostHogConfig } from "posthog-js/dist/module.slim.no-external.js";
 
-// PostHog typed analytics gateway - the stub (lib/posthog-stub.ts) is installed on init and loads
-// the SDK through the brand's first-party proxy path; init is called from main.tsx. Only allowlisted events and properties are ever transmitted.
+// PostHog typed analytics gateway - the SDK is bundled into the form and talks only to the brand's
+// first-party proxy path; init is called from main.tsx. Only allowlisted events and properties are ever transmitted.
 // Never call posthog.identify() for loan applicants.
-
-declare global {
-  interface Window {
-    posthog?: {
-      init(key: string, opts: Record<string, unknown>): void;
-      capture(event: string, props?: Record<string, unknown>): void;
-      register(props: Record<string, unknown>): void;
-      opt_out_capturing(): void;
-    };
-  }
-}
 
 const ALLOWED_EVENTS = new Set([
   "landing_viewed",
@@ -76,35 +68,59 @@ let _initialized = false;
 export const POSTHOG_PLACEHOLDER_KEY = "placeholder";
 
 /**
+ * posthog-js options. The brand Worker's proxy accepts POST of plain JSON only, so everything that
+ * would GET, compress, or fetch code or config from outside the form bundle is off.
+ */
+export function posthogConfig(proxyPath: string): Partial<PostHogConfig> {
+  return {
+    api_host: proxyPath,
+    disable_compression: true,
+    // The page-hide flush of a batched queue goes out as base64 form data (`data=...`), even with
+    // disable_beacon set. Sending each event on its own as it is captured keeps every body JSON.
+    request_batching: false,
+    disable_beacon: true,
+    // No remote config (GET <proxy>/array/<key>/config) and no /flags request.
+    advanced_disable_flags: true,
+    advanced_disable_feature_flags: true,
+    advanced_disable_feature_flags_on_first_load: true,
+    advanced_disable_toolbar_metrics: true,
+    disable_external_dependency_loading: true,
+    disable_session_recording: true,
+    disable_surveys: true,
+    disable_surveys_automatic_display: true,
+    disable_product_tours: true,
+    disable_conversations: true,
+    disable_web_experiments: true,
+    capture_heatmaps: false,
+    capture_dead_clicks: false,
+    capture_exceptions: false,
+    capture_performance: false,
+    autocapture: false,
+    rageclick: false,
+    capture_pageview: false,
+    capture_pageleave: false,
+    persistence: "sessionStorage",
+    // Explicit: never inherit a future default that would create person profiles for applicants.
+    person_profiles: "identified_only",
+  };
+}
+
+/**
  * Start PostHog only when the brand Worker provided a proxy path (runtime config). No proxy
  * path = PostHog stays off, so nothing ever goes straight to a third-party origin.
  */
 export function initPostHog(proxyPath: string | undefined) {
   if (!proxyPath) return;
   if (typeof window === "undefined") return;
-  if (!window.posthog) installPostHogStub(proxyPath);
-  if (!window.posthog) return;
   _initialized = true;
-  window.posthog.init(POSTHOG_PLACEHOLDER_KEY, {
-    api_host: proxyPath,
-    disable_compression: true,
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    disable_session_recording: true,
-    disable_surveys: true,
-    persistence: "sessionStorage",
-    // Explicit: the CDN bundle is unpinned, so never inherit a future default
-    // that would create person profiles for applicants.
-    person_profiles: "identified_only",
-  });
+  posthog.init(POSTHOG_PLACEHOLDER_KEY, posthogConfig(proxyPath));
 }
 
 export function registerSessionContext(
   sessionId: string,
   trackingParams: Record<string, string>
 ) {
-  if (!_initialized || typeof window === "undefined" || !window.posthog) return;
+  if (!_initialized || typeof window === "undefined") return;
   const safe: Record<string, unknown> = {
     anonymous_session_id: sessionId,
     domain: window.location.hostname,
@@ -114,7 +130,7 @@ export function registerSessionContext(
   for (const k of fwd) {
     if (trackingParams[k]) safe[k] = trackingParams[k];
   }
-  window.posthog.register(safe);
+  posthog.register(safe);
 }
 
 function stripUnsafe(props: Record<string, unknown>): Record<string, unknown> {
@@ -140,8 +156,8 @@ export function trackEvent(event: string, props: Record<string, unknown> = {}) {
     if (import.meta.env.DEV) console.warn(`[analytics] blocked event: "${event}"`);
     return;
   }
-  if (typeof window === "undefined" || !window.posthog) return;
-  window.posthog.capture(event, stripUnsafe(props));
+  if (typeof window === "undefined") return;
+  posthog.capture(event, stripUnsafe(props));
 }
 
 // Dedup guard — form_started fires at most once per page load.
