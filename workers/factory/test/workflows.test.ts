@@ -667,6 +667,72 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     });
   });
 
+  // A redeploy is an upgrade-kind install onto a copy of the current revision: same template version,
+  // same form artifact, revision + 1. The Workflow treats it as an upgrade because the brand already has a revision.
+  describe("redeploy of a live brand", () => {
+    type Fixture = Awaited<ReturnType<typeof fixture>>;
+    async function startRedeploy(f: Fixture) {
+      const next = `redeploy-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) SELECT ?,brand_id,revision + 1,template_version_id,form_artifact_id,config_json,'owner',? FROM brand_revisions WHERE revision_id=?")
+        .bind(next, now, f.revision).run();
+      await env.FACTORY.prepare("UPDATE installs SET kind='upgrade',from_revision_id=?,to_revision_id=? WHERE install_id=?").bind(f.revision, next, f.install).run();
+      f.params.revision_id = next;
+      return next;
+    }
+    const revisionRow = (id: string) => env.FACTORY.prepare("SELECT revision,template_version_id,form_artifact_id,worker_version_id FROM brand_revisions WHERE revision_id=?").bind(id).first();
+    const stepsOf = async (installId: string) => (await env.FACTORY.prepare("SELECT step FROM install_receipts WHERE install_id=? AND status='ok' ORDER BY id").bind(installId).all<{ step: string }>()).results.map((row) => row.step);
+
+    it("reaches READY at the same template version and artifact on a new revision, uploading the runtime again", async () => {
+      const f = await fixture(true, false, false);
+      const next = await startRedeploy(f);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: next });
+      expect(await revisionRow(next)).toEqual({ revision: 2, template_version_id: f.version, form_artifact_id: f.artifact, worker_version_id: "worker-local" });
+      expect(await revisionRow(f.revision)).toMatchObject({ revision: 1, template_version_id: f.version, form_artifact_id: f.artifact, worker_version_id: "worker-old" });
+      expect(f.uploads).toHaveLength(1);
+      expect(f.uploads[0]!.bindings).toContainEqual({ type: "plain_text", name: "BRAND_ID", text: f.brand });
+      expect(f.network.mock.calls.some(([url]) => String(url).endsWith(`/scripts/brand-${f.brand}/assets-upload-session`))).toBe(true);
+      // An upgrade syncs the existing runtime from the old revision; only a first install provisions.
+      expect(f.applied).toHaveLength(1);
+      expect(f.applied[0]).toMatchObject({ expected_revision_id: f.revision, target_revision_id: next });
+      expect(await stepsOf(f.install)).toEqual(["validate", "save_rollback", "render", "upload_assets", "upload_script", "deploy", "attach_domains", "smoke", "sync_runtime", "receipt"]);
+      expect(f.compensation).toHaveLength(0);
+    });
+
+    it("keeps a paused brand paused: the smoke expects the 503 pause page and core keeps paused", async () => {
+      const f = await fixture(true);
+      const next = await startRedeploy(f);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await env.FACTORY.prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step='smoke' AND status='ok'").bind(f.install).first())
+        .toEqual({ output_json: JSON.stringify({ apex_status: 503, www_status: 301 }) });
+      expect(f.runtime()).toMatchObject({ paused: true, applied_revision_id: next });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: next });
+    });
+
+    it("rolls back to the previous Worker version when the smoke fails and leaves the brand live on the old revision", async () => {
+      const f = await fixture(true, false, false);
+      const next = await startRedeploy(f);
+      f.settings.smokeFails = true;
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(f.compensation).toHaveLength(1);
+      expect(f.compensation[0]).toMatchObject({ original_install_id: f.install, brand_id: f.brand, to_revision_id: f.revision });
+      expect(await f.brandRow()).toEqual({ status: "installing", current_revision_id: f.revision });
+      expect(f.applied).toHaveLength(0);
+
+      await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(f.compensation[0]!), steps().step);
+      const redeployed = f.network.mock.calls.filter(([url, init]) => String(url).endsWith(`/scripts/brand-${f.brand}/deployments`) && init?.method === "POST");
+      expect(redeployed).toHaveLength(1);
+      expect(JSON.parse(String(redeployed[0]![1]!.body))).toEqual({ strategy: "percentage", versions: [{ version_id: "worker-old", percentage: 100 }] });
+      expect(await f.installRow()).toEqual({ status: "rolled_back" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      expect(f.runtime()).toMatchObject({ applied_revision_id: f.revision, paused: false });
+      expect(await revisionRow(next)).toMatchObject({ template_version_id: f.version, form_artifact_id: f.artifact });
+    });
+  });
+
   const recover = (f: Awaited<ReturnType<typeof fixture>>, role = "owner") => factory.fetch(new Request("https://factory/recover", {
     method: "POST", body: JSON.stringify({ brand_id: f.brand, started_by: "owner-1", started_role: role }),
   }), f.bindings);
