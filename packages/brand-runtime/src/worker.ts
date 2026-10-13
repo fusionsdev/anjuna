@@ -129,6 +129,14 @@ function proxyRoute(path: string, settings: BrandSettings): { kind: AnalyticsKin
   return null;
 }
 
+// posthog-js retries every response that is not 200 and not 4xx (retry-queue.js), so an empty 204 would
+// send each PostHog event twice. PostHog's capture endpoint answers 200 with {"status":1}; the proxy does too.
+// The answer is static: it never carries anything from core or PostHog.
+function analyticsAccepted(kind: AnalyticsKind): Response {
+  if (kind === "posthog") return new Response('{"status":1}', { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+}
+
 async function handle(request: Request, config: BrandWorkerConfig, settings: BrandSettings): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -168,10 +176,10 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
         brand_id: settings.brand_id, hostname: settings.hostname, kind: proxy.kind, path: proxy.suffix,
         content_type: request.headers.get("content-type") ?? "text/plain", body,
       }), config.coreTimeoutMs);
-      return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+      return analyticsAccepted(proxy.kind);
     } catch (error) {
-      // Core's per brand limit: drop like an accepted event. A success status makes neither SDK retry.
-      if (error instanceof CoreError && error.status === 429) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+      // Core's per brand limit: drop like an accepted event. A success answer makes neither SDK retry.
+      if (error instanceof CoreError && error.status === 429) return analyticsAccepted(proxy.kind);
       return json({ error: error instanceof PayloadTooLarge ? "payload_too_large" : "unavailable" }, error instanceof PayloadTooLarge ? 413 : 503);
     }
   }
