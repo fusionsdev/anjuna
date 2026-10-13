@@ -4,14 +4,19 @@ export interface CoreLifecycleBinding {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
+/** `deterministic`: a 4xx other than 408 and 429, or a bad token, so a retry cannot succeed. */
+export class CoreLifecycleError extends Error {
+  constructor(message: string, readonly deterministic = false) { super(message); }
+}
+
 function boundedError(status: number): Error {
-  return new Error(`Core lifecycle request failed (${status})`);
+  return new CoreLifecycleError(`Core lifecycle request failed (${status})`, status >= 400 && status < 500 && status !== 408 && status !== 429);
 }
 
 /** Authenticated client for the private FactoryLifecycleService entrypoint. */
 export class CoreLifecycleClient {
   constructor(private readonly binding: CoreLifecycleBinding, private readonly token: string, private readonly timeoutMs = 3000) {
-    if (token.length === 0 || /[\r\n]/.test(token)) throw new Error("CORE_TOKEN is empty or contains a newline");
+    if (token.length === 0 || /[\r\n]/.test(token)) throw new CoreLifecycleError("CORE_TOKEN is empty or contains a newline", true);
   }
 
   async applyRuntime(request: ApplyRuntimeRequest): Promise<ApplyRuntimeResponse> {
