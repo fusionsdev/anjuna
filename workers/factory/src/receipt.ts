@@ -259,6 +259,29 @@ export async function saveReceipt(
     .run();
 }
 
+const ENGINE_PREFIX = "NonRetryableError: ";
+
+/**
+ * Cloudflare Workflows hands a step's NonRetryableError to the Workflow code as Error("NonRetryableError: <message>"):
+ * the engine's own checks read `message.startsWith("NonRetryableError")`. Returns the message the step threw.
+ * An error that still carries its own name (inside the step callback) has a message that is already clean.
+ */
+export function stepErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  return err.name !== "NonRetryableError" && err.message.startsWith(ENGINE_PREFIX) ? err.message.slice(ENGINE_PREFIX.length) : err.message;
+}
+
+/** The text String(err) gave before validate failures became non-retryable: "Error: <message>" without the engine prefix. */
+export function stepErrorText(err: unknown): string {
+  return err instanceof Error ? `${err.name === "NonRetryableError" ? "Error" : err.name}: ${stepErrorMessage(err)}` : String(err);
+}
+
+/** A stored failure message without the "Error: " that legacy rows carry or the engine prefix that older smoke receipts carry. */
+export function storedErrorMessage(stored: string): string {
+  const message = stored.startsWith("Error: ") ? stored.slice("Error: ".length) : stored;
+  return message.startsWith(ENGINE_PREFIX) ? message.slice(ENGINE_PREFIX.length) : message;
+}
+
 /**
  * Run `work` with idempotency via install_receipts.
  *
@@ -276,16 +299,13 @@ export async function withReceipt<T extends Record<string, unknown>>(
   // A failed receipt means this install already broke. A new attempt must use a new install_id.
   // Legacy rows stored `String(err)` (already "Error: "-prefixed); strip one prefix so the
   // re-thrown message does not surface as "Error: Error: ...".
-  if (existing?.status === "failed") {
-    const stored = String(existing.output?.error ?? "step previously failed");
-    throw new Error(stored.startsWith("Error: ") ? stored.slice("Error: ".length) : stored);
-  }
+  if (existing?.status === "failed") throw new Error(storedErrorMessage(String(existing.output?.error ?? "step previously failed")));
 
   let result: T;
   try {
     result = await work();
   } catch (err) {
-    await saveReceipt(db, installId, step, "failed", { error: err instanceof Error ? err.message : String(err) });
+    await saveReceipt(db, installId, step, "failed", { error: stepErrorMessage(err) });
     throw err;
   }
   await saveReceipt(db, installId, step, "ok", result);

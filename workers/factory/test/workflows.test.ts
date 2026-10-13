@@ -53,6 +53,15 @@ async function queueInstallRetry(db: D1Database, sourceId: string): Promise<stri
   return retryId;
 }
 
+// The Workflows engine runs a step callback across an RPC boundary. An error whose name is not a built-in one
+// comes back to the Workflow code with name "Error" and the message "<name>: <message>"; the engine itself
+// tests for `message.startsWith("NonRetryableError")` (miniflare workflows binding.worker.js, lines 13639 and 14956).
+const BUILT_IN_ERROR_NAMES = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError", "AggregateError"]);
+function engineRethrow(err: unknown): unknown {
+  if (!(err instanceof Error) || BUILT_IN_ERROR_NAMES.has(err.name)) return err;
+  return new Error(`${err.name}: ${err.message}`);
+}
+
 // Runs production run() methods against local D1/R2. Every network request is
 // intercepted, and the strict core wire schema is checked at the boundary.
 function steps() {
@@ -77,7 +86,7 @@ function steps() {
           attempts.set(name, attempt + 1);
           try { const value = await work({ attempt: attempt + 1 }); cache.set(name, value); return value; }
           catch (err) {
-            if (err instanceof NonRetryableError || attempt >= (config.retries?.limit ?? 0)) { failures.set(name, err); throw err; }
+            if (err instanceof NonRetryableError || attempt >= (config.retries?.limit ?? 0)) { failures.set(name, err); throw engineRethrow(err); }
             await hooks.retry(name);
           }
         }
@@ -1164,6 +1173,117 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       await runInstall(f, s);
       expect(receiptDuringRetry).toBeNull();
       expect(await validateReceipt(f.install)).toMatchObject({ status: "ok" });
+    });
+  });
+
+  // FUS-345: the engine hands a step's NonRetryableError to the Workflow code as Error("NonRetryableError: <message>").
+  // The panel and the receipts keep the text they had before validate failures became non-retryable.
+  describe("engine error text", () => {
+    type Fixture = Awaited<ReturnType<typeof fixture>>;
+    const receiptError = async (installId: string, step: string) => JSON.parse((await env.FACTORY.prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step=?")
+      .bind(installId, step).first<{ output_json: string }>())!.output_json).error as string;
+    const installError = async (installId: string) => (await env.FACTORY.prepare("SELECT error FROM installs WHERE install_id=?").bind(installId).first<{ error: string }>())!.error;
+    async function startUpgrade(f: Fixture) {
+      const next = `upgrade-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?,?,2,?,?,'{}','owner',?)")
+        .bind(next, f.brand, f.version, f.artifact, now).run();
+      await env.FACTORY.prepare("UPDATE installs SET kind='upgrade',from_revision_id=?,to_revision_id=? WHERE install_id=?").bind(f.revision, next, f.install).run();
+      f.params.revision_id = next;
+    }
+    const zoneMessage = (f: Fixture) => `Zone not found for domain ${f.id}.example (tried: ${f.id}.example)`;
+
+    it("models the engine: a NonRetryableError reaches the Workflow code as Error('NonRetryableError: <message>')", async () => {
+      const s = steps();
+      const thrown = await s.step.do("probe", async () => { throw new NonRetryableError("boom"); }).catch((e: unknown) => e) as Error;
+      expect(thrown.name).toBe("Error");
+      expect(thrown.message).toBe("NonRetryableError: boom");
+      expect(thrown).not.toBeInstanceOf(NonRetryableError);
+    });
+
+    it("keeps the prefix out of installs.error and the receipt for a validate failure on a first install", async () => {
+      const f = await fixture();
+      f.settings.zoneName = "other.example";
+      await runInstall(f);
+      expect(await installError(f.install)).toBe(`Error: ${zoneMessage(f)}`);
+      expect(await receiptError(f.install, "validate")).toBe(zoneMessage(f));
+    });
+
+    it("keeps the prefix out of installs.error and the receipt for a validate failure on an upgrade", async () => {
+      const f = await fixture(true, false, false);
+      await startUpgrade(f);
+      f.settings.zoneName = "other.example";
+      await runInstall(f);
+      expect(await installError(f.install)).toBe(`Error: ${zoneMessage(f)}`);
+      expect(await receiptError(f.install, "validate")).toBe(zoneMessage(f));
+    });
+
+    it("keeps the prefix out of installs.error and the receipt for a smoke NonRetryableError", async () => {
+      const f = await fixture();
+      f.settings.www.push(new Response(null, { status: 301, headers: { Location: "https://wrong.example/" } }));
+      await runInstall(f);
+      expect(await installError(f.install)).toBe("Error: Smoke: www redirect does not target the apex");
+      expect(await receiptError(f.install, "smoke")).toBe("Smoke: www redirect does not target the apex");
+    });
+
+    it("keeps the text clean when a retry install fails the same way again", async () => {
+      const f = await fixture();
+      f.settings.zoneName = "other.example";
+      await runInstall(f);
+      const retryId = await queueInstallRetry(env.FACTORY, f.install);
+      expect(retryId).not.toBeNull();
+      await runInstall({ ...f, params: { ...f.params, install_id: retryId! } });
+      expect(await installError(retryId!)).toBe(`Error: ${zoneMessage(f)}`);
+      expect(await receiptError(retryId!, "validate")).toBe(zoneMessage(f));
+    });
+
+    it("keeps the text clean when a retry install fails the smoke again", async () => {
+      const f = await fixture();
+      f.settings.www.push(new Response(null, { status: 301, headers: { Location: "https://wrong.example/" } }));
+      await runInstall(f);
+      await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(f.compensation[0]!), steps().step);
+      const retryId = `retry-${f.install}`;
+      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,to_revision_id,status,started_by,started_at) VALUES (?,?,'install',?,'queued','owner',?)")
+        .bind(retryId, f.brand, f.revision, now).run();
+      f.settings.www.push(new Response(null, { status: 301, headers: { Location: "https://wrong.example/" } }));
+      await runInstall({ ...f, params: { ...f.params, install_id: retryId } });
+      expect(await installError(retryId)).toBe("Error: Smoke: www redirect does not target the apex");
+      expect(await receiptError(retryId, "smoke")).toBe("Smoke: www redirect does not target the apex");
+    });
+
+    it("never double-prefixes a stored failed receipt when the same install runs again", async () => {
+      const f = await fixture();
+      f.settings.zoneName = "other.example";
+      await runInstall(f);
+      await runInstall(f);
+      await runInstall(f);
+      expect(await installError(f.install)).toBe(`Error: ${zoneMessage(f)}`);
+      expect(await receiptError(f.install, "validate")).toBe(zoneMessage(f));
+    });
+
+    it("reads a stored smoke receipt that an older release saved with the engine prefix without repeating it", async () => {
+      const f = await fixture();
+      f.settings.www.push(new Response(null, { status: 301, headers: { Location: "https://wrong.example/" } }));
+      await runInstall(f);
+      await env.FACTORY.prepare("UPDATE install_receipts SET output_json=? WHERE install_id=? AND step='smoke'")
+        .bind(JSON.stringify({ error: "NonRetryableError: Smoke: www redirect does not target the apex" }), f.install).run();
+      await env.FACTORY.prepare("UPDATE installs SET status='running', error=NULL WHERE install_id=?").bind(f.install).run();
+      await runInstall(f);
+      expect(await installError(f.install)).toBe("Error: Smoke: www redirect does not target the apex");
+    });
+
+    it("still rejects a queued install as lifecycle-blocked when the engine prefixes that message", async () => {
+      const f = await fixture();
+      const s = steps();
+      const real = s.step.do.bind(s.step) as (...args: unknown[]) => Promise<unknown>;
+      (s.step as unknown as { do: unknown }).do = (name: string, ...rest: unknown[]) => name === "claim_install"
+        ? Promise.reject(engineRethrow(new NonRetryableError("Brand already has a lifecycle mutation in progress")))
+        : real(name, ...rest);
+      await expect(runInstall(f, s)).rejects.toThrow("Brand already has a lifecycle mutation in progress");
+      expect(JSON.parse(await installError(f.install))).toMatchObject({
+        error: "Error: Brand already has a lifecycle mutation in progress",
+        actionable: expect.stringContaining("retry with a new install_id"),
+      });
+      expect(await receiptError(f.install, "validate")).toBe("Error: Brand already has a lifecycle mutation in progress");
     });
   });
 
