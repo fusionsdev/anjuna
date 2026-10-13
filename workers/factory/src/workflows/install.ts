@@ -6,7 +6,7 @@ import {
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt, getReceipt, saveReceipt } from "../receipt.js";
+import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt, getReceipt, saveReceipt, stepErrorText, storedErrorMessage } from "../receipt.js";
 import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
 import type { Env } from "../env.js";
@@ -73,7 +73,7 @@ async function validateWithReceipt<T extends Record<string, unknown>>(
   if (existing?.status === "ok") return existing.output as T;
   if (existing?.status === "failed") {
     const stored = String(existing.output?.error ?? "step previously failed");
-    throw new NonRetryableError(stored.startsWith("Error: ") ? stored.slice("Error: ".length) : stored);
+    throw new NonRetryableError(storedErrorMessage(stored));
   }
   let result: T;
   try {
@@ -110,7 +110,6 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
     const terminal = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
     if (terminal?.status === "ready" || terminal?.status === "rolled_back") return;
     let mutationStarted = false;
-    let validated = false;
 
     try {
       await step.do("claim_install", () => setInstallStatus(db, install_id, "running", undefined, brand_id));
@@ -192,7 +191,6 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
       // A Workflow replaying an install started before per-zone hostnames has a cached
       // validate output without them; those installs attached apex plus www, so keep that pair.
-      validated = true;
       const hostnames = cachedHostnames ?? [domain, `www.${domain}`];
 
       // ── Step 2: Save rollback record ───────────────────────────────────────
@@ -415,8 +413,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
 
       await step.do("finish_install", () => setInstallStatus(db, install_id, "ready", undefined, brand_id));
     } catch (err) {
-      // validate failures read "Error: <message>" in the panel as before they became non-retryable.
-      const errorMessage = !validated && err instanceof Error && err.name === "NonRetryableError" ? `Error: ${err.message}` : String(err);
+      // The engine prefixes a NonRetryableError message with its name: the panel keeps reading "Error: <message>".
+      const errorMessage = stepErrorText(err);
       if (errorMessage.includes("lifecycle mutation in progress")) {
         await rejectQueuedInstall(db, install_id, brand_id, errorMessage);
         throw err;
