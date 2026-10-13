@@ -146,7 +146,7 @@ describe("BrandLifecycle SSR", () => {
       me={{ id: "owner", email: "owner@example.test", role: "owner" }}
       brand={{ brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "draft", current_revision_id: "rev-1", runtime_sync_status: "ready", bundle_form_version: "form@bundle-1", payload_version: "2026-01" }}
       checklist={{ drain_route: { brand_id: "brand-a", item: "drain_route", actor_id: "owner", verified_at: "2026-01-01T00:00:00Z" } }}
-      leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
+      leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRedeploy={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
     />);
     expect(html).toContain("lead_id");
     expect(html).toContain("หลักฐาน:");
@@ -156,7 +156,7 @@ describe("BrandLifecycle SSR", () => {
   const detailHtml = (versions: { bundle_form_version: string | null; payload_version: string | null }, status: "draft" | "live" = "draft") => renderToStaticMarkup(<LifecycleDetail
     me={{ id: "employee", email: "employee@example.test", role: "employee" }}
     brand={{ brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status, current_revision_id: null, runtime_sync_status: "queued", ...versions }}
-    checklist={{}} leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
+    checklist={{}} leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRedeploy={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
   />);
   const installButton = (html: string) => html.match(/<button[^>]*>ติดตั้ง \(Install\)<\/button>/)?.[0];
   const note = "ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว";
@@ -188,7 +188,7 @@ describe("BrandLifecycle SSR", () => {
      me={{ id: role, email: `${role}@example.test`, role }}
      brand={{ brand_id: "b", account: "a", hostnames: ["brand.example"], status: "installing", current_revision_id: null, bundle_form_version: null, payload_version: null, runtime_sync_status: "failed" }}
      install={{ install_id: "i", brand_id: "b", revision_id: null, status: "failed", runtime_sync_status: "failed", receipts: [], recovery_required: true }}
-     checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}}
+     checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}}
    />);
    expect(html.includes("กู้คืน (Recover, Owner)")).toBe(role === "owner");
    expect(html).not.toContain(">ลองใหม่ (Retry)<");

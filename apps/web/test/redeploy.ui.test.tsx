@@ -1,0 +1,106 @@
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LifecycleBrandSummary, type InstallWithReceipts } from "@anjuna/contracts";
+import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
+
+const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
+const employee = { ...owner, id: "employee", role: "employee" as const };
+const redeployName = "ติดตั้งใหม่ (Redeploy)";
+const liveBrand = LifecycleBrandSummary.parse({
+  brand_id: "brand-a", account: "test-account", hostnames: ["renderable.test", "www.renderable.test"],
+  status: "live", current_revision_id: "rev-1", runtime_sync_status: "ready",
+  bundle_form_version: "form@abcdef1", payload_version: "2026-01",
+});
+const running: InstallWithReceipts = {
+  install_id: "redeploy-ins", brand_id: "brand-a", revision_id: "rev-2", status: "running",
+  runtime_sync_status: "running", receipts: [{ step: "validate", status: "ready" }, { step: "render", status: "running" }],
+};
+
+type Handler = (init?: RequestInit) => Response | Promise<Response>;
+let routes: Map<string, Handler>;
+let requests: Array<{ method: string; path: string }>;
+let confirm: ReturnType<typeof vi.fn>;
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const showBrand = (overrides: Partial<LifecycleBrandSummary>, installs: unknown[] = []) => {
+  routes.set("GET /api/lifecycle/brands", () => json({ brands: [{ ...liveBrand, ...overrides }] }));
+  routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
+};
+// Selecting a brand runs an effect that resets state and requests the checklist; a click made before
+// that request lands is overwritten by the reset. Mirrors brandSelected() in lifecycle.ui.test.tsx.
+const brandSelected = () => waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-a/checklist")).toBe(true));
+const redeployPosts = () => requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-a/redeploy");
+
+beforeEach(() => {
+  requests = [];
+  confirm = vi.fn(() => true);
+  vi.stubGlobal("confirm", confirm);
+  routes = new Map<string, Handler>([
+    ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
+    ["GET /api/templates/sealed", () => json({ templates: [] })],
+    ["GET /api/brands", () => json({ brands: [], generated_at: "2026-10-06T00:00:00Z" })],
+    ["GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: [] })],
+    ["GET /api/installs/redeploy-ins", () => json(running)],
+    ["POST /api/brands/brand-a/redeploy", () => json({ install_id: "redeploy-ins", brand_id: "brand-a", status: "running" }, 201)],
+  ]);
+  showBrand({});
+  vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    requests.push({ method, path: input });
+    const handler = routes.get(`${method} ${input}`);
+    if (!handler) throw new Error(`Unexpected test HTTP request: ${method} ${input}`);
+    return handler(init);
+  }));
+});
+
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+describe("Redeploy button in the brand detail", () => {
+  it("is offered to an Owner for a live brand", async () => {
+    render(<BrandLifecycle me={owner} />);
+    expect(await screen.findByRole("button", { name: redeployName })).toBeTruthy();
+  });
+
+  it("is not offered to an Employee", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+  });
+
+  it.each(["draft", "failed", "installing", "paused"] as const)("is not offered to an Owner for a %s brand", async (status) => {
+    showBrand({ status } as Partial<LifecycleBrandSummary>);
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+  });
+
+  it("is hidden while an install of the brand is running", async () => {
+    showBrand({}, [{ install_id: "redeploy-ins", status: "running", error: null }]);
+    render(<BrandLifecycle me={owner} />);
+    await screen.findAllByText("redeploy-ins", { selector: "code" });
+    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+  });
+
+  it("asks for confirmation and sends nothing when the Owner declines", async () => {
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    await brandSelected();
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(String(confirm.mock.calls[0]![0])).toContain("Redeploy");
+    expect(redeployPosts()).toHaveLength(0);
+  });
+
+  it("posts the redeploy once after confirmation and shows the new install with its receipts", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await brandSelected();
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(redeployPosts()).toHaveLength(1);
+    expect(await screen.findByText("render")).toBeTruthy();
+    expect(screen.getByText("validate")).toBeTruthy();
+    expect(requests.some((r) => r.path === "/api/installs/redeploy-ins")).toBe(true);
+    // The run is active, so no second redeploy can be started from the screen.
+    await waitFor(() => expect(screen.queryByRole("button", { name: redeployName })).toBeNull());
+  });
+});
