@@ -4,6 +4,7 @@ import {
   ANALYTICS_KINDS,
   ANALYTICS_LIMITS,
   AnalyticsForwardRequest,
+  RpcError,
   type AnalyticsForwardRequest as AnalyticsForwardRequestT,
 } from "../src/index.js";
 import { fixture } from "./helpers.js";
@@ -16,6 +17,13 @@ describe("analytics forward table", () => {
     expect([...ANALYTICS_KINDS]).toEqual(kinds);
     for (const kind of kinds) expect(ANALYTICS_FORWARD_PATHS[kind]).toBe(`/analytics/${kind}`);
     expect(ANALYTICS_LIMITS).toEqual({ posthog: 256 * 1024, sentry: 1024 * 1024, telemetry: 64 * 1024, errors: 64 * 1024 });
+  });
+});
+
+describe("rate limited answer", () => {
+  it("is an RpcError, so core and the brand Worker share one error shape", () => {
+    expect(RpcError.parse({ error: "rate_limited" })).toEqual({ error: "rate_limited" });
+    expect(RpcError.safeParse({ error: "rate_limited", retry_after: 60 }).success).toBe(false);
   });
 });
 

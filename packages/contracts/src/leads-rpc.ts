@@ -192,7 +192,7 @@ export const SUBMIT_CONTEXT_HEADERS = { gpc: "sec-gpc", consent_brand: "x-consen
 
 /** Non-2xx RPC body. `forbidden_brand` = brand_id outside the caller's account (CO-2). */
 export const RpcError = z.strictObject({
-  error: z.enum(["unauthorized", "forbidden_brand", "not_found", "invalid", "internal"]),
+  error: z.enum(["unauthorized", "forbidden_brand", "not_found", "invalid", "rate_limited", "internal"]),
 });
 export type RpcError = z.infer<typeof RpcError>;
 

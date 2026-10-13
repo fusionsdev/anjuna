@@ -30,14 +30,45 @@ class InvalidPayload extends Error {}
 const accepted = () => new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
 const rejected = (status: 400 | 413) => json({ error: "invalid" }, status);
 
-const warned = new Set<AnalyticsKind>();
-/** One line per kind per isolate: a dropped kind is visible in logs without a line per event. */
+const warned = new Set<string>();
+/** One line per message and kind per isolate: a dropped kind is visible in logs without a line per event. */
+function warnOnce(msg: string, kind: AnalyticsKind): void {
+  if (warned.has(`${msg}:${kind}`)) return;
+  warned.add(`${msg}:${kind}`);
+  console.warn(JSON.stringify({ msg, kind }));
+}
 function notConfigured(kind: AnalyticsKind): Response {
-  if (!warned.has(kind)) {
-    warned.add(kind);
-    console.warn(JSON.stringify({ msg: "analytics_not_configured", kind }));
-  }
+  warnOnce("analytics_not_configured", kind);
   return accepted();
+}
+
+/**
+ * Ceiling per brand and kind in `period` seconds. The rate limit bindings in the three core wrangler
+ * configs declare the same numbers (a test keeps them equal); `namespace_id` is any integer unique in
+ * the account. V1 allowed 3000 telemetry events an hour per IP (50 a minute), but core never sees the
+ * visitor IP, so these cap a whole brand. All four sit far above today's volume (V1 took about 1,000
+ * leads in total) and bound what a flood can write or spend.
+ * - telemetry 600: one finished application emits about 32 events, so 600 a minute is 18 applications
+ *   a minute on one brand; a flood adds at most 600 small D1 rows a minute.
+ * - errors 30: one row per failed submit, so 30 a minute is a core outage burst, not normal traffic.
+ * - posthog 300: each request is a billed PostHog event, kept below telemetry because quota costs money.
+ * - sentry 60: Sentry's quota is the smallest and errors are rare; 60 envelopes a minute is 1 a second.
+ */
+export const ANALYTICS_RATE_LIMITS = {
+  posthog: { binding: "POSTHOG_LIMITER", namespace_id: "4101", limit: 300, period: 60 },
+  sentry: { binding: "SENTRY_LIMITER", namespace_id: "4102", limit: 60, period: 60 },
+  telemetry: { binding: "TELEMETRY_LIMITER", namespace_id: "4103", limit: 600, period: 60 },
+  errors: { binding: "ERRORS_LIMITER", namespace_id: "4104", limit: 30, period: 60 },
+} as const satisfies Record<AnalyticsKind, { binding: string; namespace_id: string; limit: number; period: 10 | 60 }>;
+
+/** Fails open: an absent or failing binding must not stop analytics, which is best effort. */
+async function withinLimit(kind: AnalyticsKind, brandId: string, env: Env): Promise<boolean> {
+  const limiter = env[ANALYTICS_RATE_LIMITS[kind].binding];
+  if (!limiter) { warnOnce("analytics_rate_limit_not_configured", kind); return true; }
+  try {
+    // Core never sees the visitor IP, so one flood throttles one brand's one kind and nothing else.
+    return (await limiter.limit({ key: `${kind}:${brandId}` })).success;
+  } catch { return true; }
 }
 
 // Same cleaning as V1: control characters out, whitespace collapsed, capped.
@@ -206,6 +237,8 @@ function handler(kind: AnalyticsKind): RpcHandler {
       if (!await ownsBrand(env, account, envelope.brand_id)) return json({ error: "forbidden_brand" }, 403);
       const brand = await getRuntime(env, envelope.brand_id);
       if (!brand || !ownsHostname(brand, envelope.hostname)) return json({ error: "forbidden_brand" }, 403);
+      // After authentication, parsing and ownership; before any D1 write or outbound call.
+      if (!await withinLimit(kind, envelope.brand_id, env)) return json({ error: "rate_limited" }, 429);
       switch (kind) {
         case "telemetry": return await telemetry(envelope, env);
         case "errors": return await errors(envelope, env);

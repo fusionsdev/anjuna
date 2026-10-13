@@ -16,7 +16,7 @@
  *   3. Commit and push — CI will deploy on the next release tag.
  */
 import { execSync } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { TenantConfig } from "@anjuna/tenants/schema";
 import { buildSeedStatements, renderSql, validateSeedUsers } from "../../apps/web/src/server/seed";
@@ -190,6 +190,9 @@ import("node:fs").then(({ unlinkSync }) => { try { unlinkSync(seedFile); } catch
 // 5. Generate wrangler deploy configs
 console.log("\nGenerating wrangler deploy configs…");
 
+// A new tenant gets the analytics rate limit bindings of the template config (full-line comments only).
+const { ratelimits } = JSON.parse(readFileSync(join(process.cwd(), "workers/core/wrangler.jsonc"), "utf8").replace(/^\s*\/\/.*$/gm, "")) as { ratelimits: unknown };
+
 const coreDeployConfig = {
   $schema: "../../node_modules/wrangler/config-schema.json",
   name: "anjuna-core",
@@ -205,6 +208,7 @@ const coreDeployConfig = {
     { binding: "LEADS", database_name: `${prefix}-leads`, database_id: leadsId, migrations_dir: "../../packages/leads-db/migrations" },
     { binding: "FACTORY", database_name: `${prefix}-factory`, database_id: factoryId, migrations_dir: "../../packages/factory-db/migrations" },
   ],
+  ratelimits,
 };
 
 const webDeployConfig = {

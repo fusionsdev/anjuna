@@ -37,6 +37,10 @@ export async function createHarness(options: {
   bindings?: Record<string, string>;
   /** Stub for requests core makes to other hosts. Without it any outbound request throws. */
   outbound?: (request: Request) => Response | Promise<Response>;
+  /** Rate limit bindings backed by test/limiter.ts: a deterministic stand-in with no clock. */
+  limiters?: Record<string, { limit: number; fail?: boolean }>;
+  /** Real Workers Rate Limiting bindings from Miniflare. Windows follow the wall clock. */
+  ratelimits?: Record<string, { namespace_id: string; simple: { limit: number; period: 10 | 60 } }>;
 } = {}) {
   const [production, testWorker, leadsMigrations, factoryMigrations] = await Promise.all([
     bundle("src/index.ts"), bundle("test/worker.ts"),
@@ -49,6 +53,9 @@ export async function createHarness(options: {
     d1Databases: { LEADS: "core-test-leads", FACTORY: "core-test-factory" },
     bindings: { DRAIN_TOKEN, HANDOFF_KEY, LIFECYCLE_ACCOUNT: "account-a", ...options.listmonk, ...options.bindings },
     outboundService: options.outbound ?? (() => { throw new Error("External requests forbidden in core tests"); }),
+    ...(options.ratelimits ? { ratelimits: options.ratelimits } : {}),
+    ...(options.limiters ? { serviceBindings: Object.fromEntries(Object.entries(options.limiters).map(([name, props]) =>
+      [name, { name: "limiter", entrypoint: "Limiter", props: { name, ...props } }])) } : {}),
   };
   const mf = new Miniflare(convertV4MiniflareOptions({
     cf: false,
@@ -56,6 +63,9 @@ export async function createHarness(options: {
       { ...common, name: "production", script: production },
       { ...common, name: "test-core", script: testWorker },
       { ...common, name: "no-drain-token", script: production, bindings: {} },
+      ...(options.limiters ? [{
+        name: "limiter", modules: true, compatibilityDate: "2026-08-01", script: await bundle("test/limiter.ts"),
+      }] : []),
       ...(options.brand ? [{
         name: "brand", modules: true, compatibilityDate: "2026-08-01",
         compatibilityFlags: ["global_fetch_strictly_public"],
@@ -84,11 +94,12 @@ export async function createHarness(options: {
   for (const migration of leadsMigrations) await db.batch(migration.queries.map((query) => db.prepare(query)));
   for (const migration of factoryMigrations) await factory.batch(migration.queries.map((query) => factory.prepare(query)));
   const core = await mf.getWorker("production");
+  const limiter = options.limiters ? await mf.getWorker("limiter") : null;
   const panel = await mf.getWorker("panel");
   let hiddenOrphan = false;
 
   return {
-    mf, db, factory, core,
+    mf, db, factory, core, limiter,
     async reset() {
       if (hiddenOrphan) {
         await db.batch([db.prepare("DROP VIEW leads"), db.prepare("ALTER TABLE fixture_leads RENAME TO leads")]);

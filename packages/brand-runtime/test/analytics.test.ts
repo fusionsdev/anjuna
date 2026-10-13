@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ANALYTICS_LIMITS } from "../src/index.js";
+import { ANALYTICS_LIMITS, CoreError, HttpsCoreClient, createBrandWorker } from "../src/index.js";
 import { setup } from "./helpers.js";
 
 describe("ADR-0004 forwarding", () => {
@@ -40,6 +40,21 @@ describe("ADR-0004 forwarding", () => {
     } });
     expect((await get("/_t/i/v0/", { method: "POST", body: stream })).status).toBe(413);
     expect(core.analytics).toHaveLength(0);
+  });
+  it.each(["/_t", "/_e", "/api/telemetry", "/api/errors"])("drops %s with an empty 204 when core rate limits it, so SDKs do not retry", async (path) => {
+    const { get, core } = setup();
+    core.failure = new CoreError(429);
+    const response = await get(path, { method: "POST", body: "{}" });
+    expect([response.status, await response.text()]).toEqual([204, ""]);
+    expect([...response.headers.keys()]).toEqual(["cache-control"]);
+  });
+  it("maps a 429 from the real transport the same way, and any other core status to 503", async () => {
+    for (const [status, expected] of [[429, 204], [500, 503], [403, 503], [401, 503]] as const) {
+      const core = new HttpsCoreClient({ credential: "test" }, async () => Response.json({ error: "rate_limited" }, { status }));
+      const worker = createBrandWorker({ ...setup().config, core });
+      const response = await worker.fetch(new Request("https://brand-a.example/api/telemetry", { method: "POST", body: "{}" }));
+      expect(response.status).toBe(expected);
+    }
   });
   it("requires uncompressed payloads and masks core failure", async () => {
     const { get, core } = setup();

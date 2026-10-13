@@ -21,4 +21,9 @@ export interface Env {
   /** Ingest origin for the project. Defaults to the PostHog US cloud, as V1 did. */
   POSTHOG_HOST?: string;
   SENTRY_DSN?: string;
+  /** Workers Rate Limiting bindings, one per analytics kind (ANALYTICS_RATE_LIMITS). Without them core does not limit. */
+  POSTHOG_LIMITER?: RateLimit;
+  SENTRY_LIMITER?: RateLimit;
+  TELEMETRY_LIMITER?: RateLimit;
+  ERRORS_LIMITER?: RateLimit;
 }

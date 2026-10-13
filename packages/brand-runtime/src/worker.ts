@@ -170,6 +170,8 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
       }), config.coreTimeoutMs);
       return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
     } catch (error) {
+      // Core's per brand limit: drop like an accepted event. A success status makes neither SDK retry.
+      if (error instanceof CoreError && error.status === 429) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
       return json({ error: error instanceof PayloadTooLarge ? "payload_too_large" : "unavailable" }, error instanceof PayloadTooLarge ? 413 : 503);
     }
   }
