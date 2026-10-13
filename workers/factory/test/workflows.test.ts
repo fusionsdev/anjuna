@@ -116,6 +116,8 @@ async function fixture(live = false, subdomain = false, paused = true) {
   const applied: Array<ReturnType<typeof ApplyRuntimeRequest.parse>> = [];
   const settings = { smokeFails: false, uploadFails: false, dispatchFails: false, coreFails: false, stateMode: "ok" as "ok" | "fail" | "absent",
     zoneName: subdomain ? "sub.example" : domain,
+    // Zone records that no Custom Domain of this brand explains (a hand-made A or CNAME).
+    foreignDns: [] as Array<{ type: string; name: string }>,
     apex: [] as Array<Response | Error>, www: [] as Array<Response | Error> };
   const core = { async fetch(request: Request) {
     const input = await request.json() as Record<string, unknown>;
@@ -141,9 +143,10 @@ async function fixture(live = false, subdomain = false, paused = true) {
   } };
   const compensation: RollbackParams[] = [];
   const uploads: Array<{ bindings: Array<Record<string, unknown>>; assets?: { jwt: string; config?: Record<string, unknown> } }> = [];
-  // Custom Domains attached to the brand script, keyed by hostname so a www hostname left
-  // behind by an older install is distinguishable from the bare brand domain.
-  const domains = new Set<string>(live ? [domain] : []);
+  // Custom Domains attached in the account: hostname -> script. An installed brand holds the
+  // hostnames it serves (apex plus www on its own zone, the bare subdomain otherwise), and a www
+  // hostname left behind by an older install stays distinguishable from the bare brand domain.
+  const domains = new Map<string, string>((live ? (subdomain ? [domain] : [domain, `www.${domain}`]) : []).map((hostname) => [hostname, `brand-${brand}`]));
   const network = vi.fn(async (input: string | Request | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
     const ok = (result: unknown) => Response.json({ success: true, result });
@@ -162,7 +165,13 @@ async function fixture(live = false, subdomain = false, paused = true) {
       const queried = url.searchParams.get("name");
       return queried === settings.zoneName ? ok([{ id: "zone-local", status: "active", name: queried ?? "" }]) : ok([]);
     }
-    if (url.pathname.endsWith("/dns_records")) return ok([]);
+    // Cloudflare creates the DNS record of every attached Custom Domain itself, so the zone of an
+    // installed brand holds one AAAA record per hostname it serves.
+    if (url.pathname.endsWith("/dns_records")) {
+      const name = url.searchParams.get("name") ?? "";
+      const own = domains.has(name) ? [{ id: `dns-${name}`, type: "AAAA", name }] : [];
+      return ok([...own, ...settings.foreignDns.filter((record) => record.name === name).map((record) => ({ id: `dns-foreign-${record.type}-${name}`, ...record }))]);
+    }
     if (url.pathname.endsWith(`/scripts/brand-${brand}/assets-upload-session`)) return ok({ jwt: "local-session", buckets: [] });
     if (url.pathname.endsWith(`/scripts/brand-${brand}`)) {
       if (settings.uploadFails) throw new Error("upload failed locally");
@@ -176,11 +185,13 @@ async function fixture(live = false, subdomain = false, paused = true) {
     }
     if (url.pathname.endsWith("/workers/domains")) {
       if (init?.method === "PUT") {
-        const { hostname } = JSON.parse(String(init.body)) as { hostname: string };
-        domains.add(hostname);
-        return ok({ id: `local-${hostname}`, hostname });
+        const { hostname, service } = JSON.parse(String(init.body)) as { hostname: string; service: string };
+        domains.set(hostname, service);
+        return ok({ id: `local-${hostname}`, hostname, service });
       }
-      return ok([...domains].map((hostname) => ({ id: `local-${hostname}`, hostname })));
+      const service = url.searchParams.get("service");
+      return ok([...domains].filter(([, script]) => !service || script === service)
+        .map(([hostname, script]) => ({ id: `local-${hostname}`, hostname, service: script, zone_id: "zone-local" })));
     }
     const domainId = /\/workers\/domains\/(.+)$/.exec(url.pathname);
     if (domainId && init?.method === "DELETE") {
@@ -200,7 +211,7 @@ async function fixture(live = false, subdomain = false, paused = true) {
     } },
   } as unknown as Env;
   const params: InstallParams = { install_id: install, brand_id: brand, revision_id: revision };
-  return { id, brand, revision, install, template, version, artifact, bindings, params, applied, compensation, settings, uploads, network,
+  return { id, brand, revision, install, template, version, artifact, bindings, params, applied, compensation, settings, uploads, network, domains,
     runtime: () => runtime, brandRow: () => db.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id=?").bind(brand).first(),
     installRow: () => db.prepare("SELECT status FROM installs WHERE install_id=?").bind(install).first(),
   };
@@ -730,6 +741,139 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
       expect(f.runtime()).toMatchObject({ applied_revision_id: f.revision, paused: false });
       expect(await revisionRow(next)).toMatchObject({ template_version_id: f.version, form_artifact_id: f.artifact });
+    });
+  });
+
+  // Cloudflare creates the DNS record of an attached Custom Domain itself, so the DNS preflight
+  // must tell the brand's own record from a foreign one on first installs and on upgrades alike.
+  describe("DNS preflight in validate", () => {
+    type Fixture = Awaited<ReturnType<typeof fixture>>;
+    async function startUpgrade(f: Fixture) {
+      const next = `upgrade-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?,?,2,?,?,'{}','owner',?)")
+        .bind(next, f.brand, f.version, f.artifact, now).run();
+      await env.FACTORY.prepare("UPDATE installs SET kind='upgrade',from_revision_id=?,to_revision_id=? WHERE install_id=?").bind(f.revision, next, f.install).run();
+      f.params.revision_id = next;
+      return next;
+    }
+    const validateReceipt = (installId: string) => env.FACTORY.prepare("SELECT status,output_json FROM install_receipts WHERE install_id=? AND step='validate'")
+      .bind(installId).first<{ status: string; output_json: string }>();
+    const compensationRows = (f: Fixture) => env.FACTORY.prepare("SELECT COUNT(*) AS n FROM installs WHERE brand_id=? AND kind='rollback'").bind(f.brand).first<{ n: number }>();
+
+    it("passes validate and reaches READY on an upgrade of an apex brand whose own apex and www records are in the zone", async () => {
+      const f = await fixture(true, false, false);
+      const next = await startUpgrade(f);
+      expect([...f.domains.keys()]).toEqual([`${f.id}.example`, `www.${f.id}.example`]);
+      await runInstall(f);
+      expect(await validateReceipt(f.install)).toMatchObject({ status: "ok" });
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: next });
+      expect(f.compensation).toHaveLength(0);
+    });
+
+    it("passes validate on an upgrade of a subdomain brand whose own record is in the zone", async () => {
+      const f = await fixture(true, true, false);
+      const next = await startUpgrade(f);
+      expect([...f.domains.keys()]).toEqual([`${f.id}.sub.example`]);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: next });
+    });
+
+    it("asks the account Custom Domains list for the brand script before it trusts a record", async () => {
+      const f = await fixture(true, true, false);
+      await startUpgrade(f);
+      await runInstall(f);
+      const listed = f.network.mock.calls.map(([url, init]) => ({ url: new URL(String(url)), method: init?.method ?? "GET" }))
+        .filter(({ url, method }) => url.pathname.endsWith("/workers/domains") && method === "GET");
+      expect(listed).toHaveLength(1);
+      expect(listed[0]!.url.searchParams.get("service")).toBe(`brand-${f.brand}`);
+      expect(listed[0]!.url.searchParams.get("zone_id")).toBe("zone-local");
+    });
+
+    it("does not list Custom Domains when the zone has no record on the brand hostnames", async () => {
+      const f = await fixture();
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(f.network.mock.calls.some(([url, init]) => String(url).endsWith("/workers/domains") && (init?.method ?? "GET") === "GET")).toBe(false);
+    });
+
+    it("still blocks a first install on a foreign record, with the same message", async () => {
+      const f = await fixture();
+      f.settings.foreignDns.push({ type: "A", name: `${f.id}.example` });
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await validateReceipt(f.install)).toEqual({ status: "failed", output_json: JSON.stringify({ error: `Existing DNS records block Custom Domain attach: A ${f.id}.example` }) });
+      expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
+      expect(f.compensation).toHaveLength(0);
+    });
+
+    it("blocks a foreign record on www even when the apex record is the brand's own", async () => {
+      const f = await fixture(true, false, false);
+      await startUpgrade(f);
+      f.domains.delete(`www.${f.id}.example`);
+      f.settings.foreignDns.push({ type: "A", name: `www.${f.id}.example` });
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(JSON.parse((await validateReceipt(f.install))!.output_json)).toEqual({ error: `Existing DNS records block Custom Domain attach: A www.${f.id}.example` });
+    });
+
+    it("blocks an upgrade whose domain was detached and then got a foreign record", async () => {
+      const f = await fixture(true, true, false);
+      await startUpgrade(f);
+      f.domains.clear();
+      f.settings.foreignDns.push({ type: "A", name: `${f.id}.sub.example` });
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(JSON.parse((await validateReceipt(f.install))!.output_json)).toEqual({ error: `Existing DNS records block Custom Domain attach: A ${f.id}.sub.example` });
+    });
+
+    it("blocks an upgrade whose hostname is attached to another script", async () => {
+      const f = await fixture(true, true, false);
+      await startUpgrade(f);
+      f.domains.set(`${f.id}.sub.example`, "brand-someone-else");
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(JSON.parse((await validateReceipt(f.install))!.output_json)).toEqual({ error: `Existing DNS records block Custom Domain attach: AAAA ${f.id}.sub.example` });
+    });
+
+    // Bug 2 of FUS-345: a validate failure on an upgrade has mutated nothing.
+    it("ends a validate failure on an upgrade failed, with the brand live on its old revision and nothing to roll back", async () => {
+      const f = await fixture(true, true, false);
+      await startUpgrade(f);
+      f.settings.foreignDns.push({ type: "A", name: `${f.id}.sub.example` });
+      f.domains.clear();
+      const s = steps();
+      await runInstall(f, s);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      expect(f.compensation).toHaveLength(0);
+      expect(await compensationRows(f)).toEqual({ n: 0 });
+      expect(f.uploads).toHaveLength(0);
+      expect(f.applied).toHaveLength(0);
+      expect(await env.FACTORY.prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step='rollback'").bind(f.install).first())
+        .toEqual({ output_json: JSON.stringify({ compensation: "not_required" }) });
+      const row = await env.FACTORY.prepare("SELECT error FROM installs WHERE install_id=?").bind(f.install).first<{ error: string }>();
+      expect(row!.error).toContain("Existing DNS records block Custom Domain attach");
+      // validate keeps the Workflows default retry config (5 retries, 10 s exponential), so the
+      // install stays running for about 310 s in production before this state is reached.
+      expect(s.configs.get("validate")).toEqual({});
+    });
+
+    it("lets the owner retry that failed upgrade once the foreign record is gone", async () => {
+      const f = await fixture(true, true, false);
+      await startUpgrade(f);
+      f.settings.foreignDns.push({ type: "A", name: `${f.id}.sub.example` });
+      f.domains.clear();
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      const retryId = await queueInstallRetry(env.FACTORY, f.install);
+      expect(retryId).not.toBeNull();
+      f.settings.foreignDns.length = 0;
+      f.domains.set(`${f.id}.sub.example`, `brand-${f.brand}`);
+      await runInstall({ ...f, params: { ...f.params, install_id: retryId! } });
+      expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(retryId).first()).toEqual({ status: "ready" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.params.revision_id });
     });
   });
 
