@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { brandHostnames, detachCustomDomain, getZone, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
+import { blockingDnsRecords, brandHostnames, detachCustomDomain, getZone, listCustomDomains, publicApexDnsRecords, uploadAssetBucket } from "../src/cf-api";
 
 describe("brandHostnames", () => {
   it("serves the apex and its www for a brand on its own zone", () => {
@@ -120,5 +120,111 @@ describe("Cloudflare response handling", () => {
   it.each(["", "<html>bad response</html>"])("keeps asset upload parse failures informative: %s", async (body) => {
     await expect(uploadAssetBucket("test-token", "account", [], async () => new Response(body, { status: 502 })))
       .rejects.toThrow("Asset upload failed: 502");
+  });
+});
+
+describe("blockingDnsRecords", () => {
+  type Domain = { id: string; hostname: string; service?: string };
+  type Dns = { id: string; type: string; name: string };
+
+  /** Routes the zone DNS API, the account Workers Domains API and public DNS (DoH) like Cloudflare does. */
+  function api(options: { dns?: Dns[]; domains?: Domain[]; dnsAuthFails?: boolean; domainsFail?: boolean; doh?: Array<{ name: string; type: number }> }) {
+    const urls: string[] = [];
+    const fetcher = async (input: string) => {
+      urls.push(input);
+      const url = new URL(input);
+      if (url.hostname === "cloudflare-dns.com") {
+        const name = url.searchParams.get("name")!;
+        const code = { A: 1, AAAA: 28, CNAME: 5 }[url.searchParams.get("type")!];
+        const answers = (options.doh ?? []).filter((a) => a.name === name && a.type === code).map((a) => ({ name: `${a.name}.`, type: a.type }));
+        return Response.json({ Status: 0, ...(answers.length ? { Answer: answers } : {}) });
+      }
+      if (url.pathname.endsWith("/dns_records")) {
+        if (options.dnsAuthFails) return Response.json({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }, { status: 403 });
+        const name = url.searchParams.get("name");
+        return Response.json({ success: true, result: (options.dns ?? []).filter((r) => r.name === name) });
+      }
+      if (url.pathname.endsWith("/workers/domains")) {
+        if (options.domainsFail) return Response.json({ success: false, errors: [{ code: 10001, message: "boom" }] }, { status: 500 });
+        // Cloudflare applies the service filter itself.
+        const service = url.searchParams.get("service");
+        return Response.json({ success: true, result: (options.domains ?? []).filter((d) => !service || d.service === service) });
+      }
+      throw new Error(`unexpected request ${input}`);
+    };
+    return { fetcher, domainCalls: () => urls.filter((u) => u.includes("/workers/domains")) };
+  }
+  const run = (hostnames: string[], a: ReturnType<typeof api>) => blockingDnsRecords("t", "acct", "zone-1", "brand-x", hostnames, a.fetcher);
+  const own = (hostname: string): Domain => ({ id: `dom-${hostname}`, hostname, service: "brand-x" });
+  const aaaa = (name: string): Dns => ({ id: `dns-${name}`, type: "AAAA", name });
+  /** The domains list answers with `entries` whatever the filter says; everything else is `api`. */
+  const withDomains = (a: ReturnType<typeof api>, entries: Domain[]) => async (input: string) =>
+    new URL(input).pathname.endsWith("/workers/domains") ? Response.json({ success: true, result: entries }) : a.fetcher(input);
+
+  it("returns nothing and never lists Custom Domains when the zone has no record", async () => {
+    const a = api({});
+    await expect(run(["brand.example.com"], a)).resolves.toEqual([]);
+    expect(a.domainCalls()).toEqual([]);
+  });
+
+  it("accepts the record of a hostname attached to the brand script", async () => {
+    const a = api({ dns: [aaaa("brand.example.com")], domains: [own("brand.example.com")] });
+    await expect(run(["brand.example.com"], a)).resolves.toEqual([]);
+    expect(a.domainCalls()).toEqual(["https://api.cloudflare.com/client/v4/accounts/acct/workers/domains?zone_id=zone-1&service=brand-x"]);
+  });
+
+  it("blocks a record on a hostname that has no Custom Domain", async () => {
+    const a = api({ dns: [{ id: "r1", type: "A", name: "brand.example.com" }] });
+    await expect(run(["brand.example.com"], a)).resolves.toEqual([{ id: "r1", type: "A", name: "brand.example.com" }]);
+  });
+
+  it("blocks a record on a hostname attached to a different script", async () => {
+    const a = api({ dns: [aaaa("brand.example.com")], domains: [{ id: "d1", hostname: "brand.example.com", service: "brand-y" }] });
+    await expect(run(["brand.example.com"], a)).resolves.toEqual([aaaa("brand.example.com")]);
+  });
+
+  it("blocks when the list returns another script's entry despite the service filter", async () => {
+    const a = api({ dns: [aaaa("brand.example.com")] });
+    const leaky = withDomains(a, [{ id: "d1", hostname: "brand.example.com", service: "brand-y" }]);
+    await expect(blockingDnsRecords("t", "acct", "zone-1", "brand-x", ["brand.example.com"], leaky)).resolves.toEqual([aaaa("brand.example.com")]);
+  });
+
+  it("judges each hostname on its own: own apex passes, foreign www blocks", async () => {
+    const a = api({ dns: [aaaa("brand.com"), { id: "r2", type: "CNAME", name: "www.brand.com" }], domains: [own("brand.com")] });
+    await expect(run(["brand.com", "www.brand.com"], a)).resolves.toEqual([{ id: "r2", type: "CNAME", name: "www.brand.com" }]);
+  });
+
+  it("matches the attached hostname case-insensitively and ignores a trailing dot", async () => {
+    const a = api({ dns: [aaaa("brand.example.com")], domains: [{ id: "d1", hostname: "Brand.Example.com.", service: "brand-x" }] });
+    await expect(run(["brand.example.com"], a)).resolves.toEqual([]);
+  });
+
+  it("keeps an entry the filtered list returns without a service field", async () => {
+    const a = api({ dns: [aaaa("brand.example.com")] });
+    const bare = withDomains(a, [{ id: "d1", hostname: "brand.example.com" }]);
+    await expect(blockingDnsRecords("t", "acct", "zone-1", "brand-x", ["brand.example.com"], bare)).resolves.toEqual([]);
+  });
+
+  it("fails closed when the Custom Domains list cannot be read", async () => {
+    const a = api({ dns: [aaaa("brand.example.com")], domainsFail: true });
+    await expect(run(["brand.example.com"], a)).rejects.toThrow("CF API GET /accounts/acct/workers/domains");
+  });
+
+  describe("public DNS fallback (zone DNS API answers 10000)", () => {
+    it("accepts the public record of a hostname attached to the brand script", async () => {
+      const a = api({ dnsAuthFails: true, doh: [{ name: "brand.example.com", type: 28 }], domains: [own("brand.example.com")] });
+      await expect(run(["brand.example.com"], a)).resolves.toEqual([]);
+      expect(a.domainCalls()).toHaveLength(1);
+    });
+
+    it("blocks the public record of a hostname with no Custom Domain of this brand", async () => {
+      const a = api({ dnsAuthFails: true, doh: [{ name: "brand.example.com", type: 1 }] });
+      await expect(run(["brand.example.com"], a)).resolves.toEqual([{ id: "public-dns", type: "A", name: "brand.example.com" }]);
+    });
+
+    it("blocks a public record on a hostname attached to a different script", async () => {
+      const a = api({ dnsAuthFails: true, doh: [{ name: "brand.example.com", type: 28 }], domains: [{ id: "d1", hostname: "brand.example.com", service: "brand-y" }] });
+      await expect(run(["brand.example.com"], a)).resolves.toEqual([{ id: "public-dns", type: "AAAA", name: "brand.example.com" }]);
+    });
   });
 });

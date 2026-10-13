@@ -147,6 +147,25 @@ export async function apexDnsRecords(token: string, zoneId: string, hostnames: s
   return found;
 }
 
+/**
+ * A, AAAA and CNAME records on the brand hostnames that do not belong to the brand's own Custom Domains.
+ * Cloudflare creates the DNS record of an attached Custom Domain itself, so a record on a hostname that
+ * the account's Workers Domains list shows attached to `scriptName` is the brand's own and does not
+ * block. A hostname attached to another script, or not attached at all, keeps blocking. The list is
+ * read only when the zone holds a record, and a failed read throws instead of letting records through.
+ */
+export async function blockingDnsRecords(
+  token: string, accountId: string, zoneId: string, scriptName: string, hostnames: string[], fetcher?: CfFetch,
+): Promise<DnsRecord[]> {
+  const records = await apexDnsRecords(token, zoneId, hostnames, fetcher);
+  if (records.length === 0) return [];
+  // The list is filtered by service on Cloudflare's side; an entry that names another service is still refused.
+  const own = new Set((await listCustomDomains(token, accountId, zoneId, scriptName, fetcher))
+    .filter((domain) => domain.service === undefined || domain.service === scriptName)
+    .map((domain) => domain.hostname.toLowerCase().replace(/\.$/, "")));
+  return records.filter((record) => !own.has(record.name));
+}
+
 export interface AssetsSession {
   /** Upload JWT for the buckets, or the completion JWT when nothing needs uploading. */
   jwt: string;
