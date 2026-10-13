@@ -25,7 +25,12 @@ Push a `v*` tag. The `lead-form` workflow builds, scans, runs browser acceptance
 
 To add the ZIP for a tag released before this change, run the `lead-form` workflow by hand from that tag
 (Run workflow, "Use workflow from" the tag). The loose files are skipped as already published and only the
-ZIP is written. The job stops with an error if `forms/form-<sha7>` already holds different bytes.
+ZIP is written.
+
+The ZIP is written only when R2 answers "The specified key does not exist." The job stops with an error, writes
+nothing, and prints the lookup output when the key holds different bytes or when the lookup fails for any other
+reason (timeout, 5xx, auth). After a write it reads the object back and fails unless the SHA-256 matches.
+Re-run the job after a lookup failure.
 
 ## 2. Read the ZIP hash
 

@@ -228,20 +228,37 @@ jobs:
           echo "published $PREFIX"
 
       # Separate from the loose files so a tag published before the ZIP existed can be re-run to get one.
-      - name: Upload the factory ZIP (refuses to overwrite a different ZIP)
+      # Writes only after wrangler reported "The specified key does not exist." (scripts/r2-lookup.mjs).
+      # A timeout, 5xx, auth failure or failed download is an error, never "absent".
+      - name: Upload the factory ZIP (only after a confirmed not-found, never over different bytes)
         run: |
           set -euo pipefail
-          if npx --yes wrangler@4 r2 object get "$R2_BUCKET/$ZIP_KEY" --remote --file "$RUNNER_TEMP/existing.zip" >/dev/null 2>&1; then
-            if cmp -s "$RUNNER_TEMP/existing.zip" "$RUNNER_TEMP/form.zip"; then
-              echo "$ZIP_KEY already published with the same bytes"
-            else
-              echo "::error::$ZIP_KEY exists with DIFFERENT bytes; refusing to overwrite"; exit 1
-            fi
-          else
-            npx --yes wrangler@4 r2 object put "$R2_BUCKET/$ZIP_KEY" --remote \
-              --file "$RUNNER_TEMP/form.zip" --content-type "application/zip" --cache-control "no-store"
-            echo "published $ZIP_KEY"
-          fi
+          rm -f "$RUNNER_TEMP/existing.zip" "$RUNNER_TEMP/readback.zip"
+          set +e
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET/$ZIP_KEY" --remote --file "$RUNNER_TEMP/existing.zip" > "$RUNNER_TEMP/lookup.log" 2>&1
+          lookup_exit=$?
+          set -e
+          verdict="$(node apps/lead-form/scripts/r2-lookup.mjs --exit "$lookup_exit" --log "$RUNNER_TEMP/lookup.log" --existing "$RUNNER_TEMP/existing.zip" --local "$RUNNER_TEMP/form.zip")"
+          echo "$ZIP_KEY lookup: $verdict (wrangler exit $lookup_exit)"
+          case "$verdict" in
+            same)
+              echo "$ZIP_KEY already published with the same bytes" ;;
+            different)
+              cat "$RUNNER_TEMP/lookup.log"
+              echo "::error::$ZIP_KEY exists with DIFFERENT bytes; refusing to overwrite"; exit 1 ;;
+            missing)
+              npx --yes wrangler@4 r2 object put "$R2_BUCKET/$ZIP_KEY" --remote \
+                --file "$RUNNER_TEMP/form.zip" --content-type "application/zip" --cache-control "no-store"
+              npx --yes wrangler@4 r2 object get "$R2_BUCKET/$ZIP_KEY" --remote --file "$RUNNER_TEMP/readback.zip" > "$RUNNER_TEMP/readback.log" 2>&1 \
+                || { cat "$RUNNER_TEMP/readback.log"; echo "::error::could not read $ZIP_KEY back after the upload"; exit 1; }
+              readback_sha256="$(sha256sum "$RUNNER_TEMP/readback.zip" | cut -d' ' -f1)"
+              [ "$readback_sha256" = "$ZIP_SHA256" ] \
+                || { echo "::error::$ZIP_KEY read back as $readback_sha256, expected $ZIP_SHA256"; exit 1; }
+              echo "published $ZIP_KEY and verified its SHA-256" ;;
+            *)
+              cat "$RUNNER_TEMP/lookup.log"
+              echo "::error::lookup of $ZIP_KEY failed (not a confirmed not-found); nothing was written"; exit 1 ;;
+          esac
 
       - name: Print what the owner registers
         run: |
