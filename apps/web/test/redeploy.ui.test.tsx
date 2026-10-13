@@ -27,9 +27,6 @@ const showBrand = (overrides: Partial<LifecycleBrandSummary>, installs: unknown[
   routes.set("GET /api/lifecycle/brands", () => json({ brands: [{ ...liveBrand, ...overrides }] }));
   routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
 };
-// Selecting a brand runs an effect that resets state and requests the checklist; a click made before
-// that request lands is overwritten by the reset. Mirrors brandSelected() in lifecycle.ui.test.tsx.
-const brandSelected = () => waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-a/checklist")).toBe(true));
 const redeployPosts = () => requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-a/redeploy");
 
 beforeEach(() => {
@@ -85,7 +82,6 @@ describe("Redeploy button in the brand detail", () => {
   it("asks for confirmation and sends nothing when the Owner declines", async () => {
     confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(String(confirm.mock.calls[0]![0])).toContain("Redeploy");
@@ -94,7 +90,6 @@ describe("Redeploy button in the brand detail", () => {
 
   it("posts the redeploy once after confirmation and shows the new install with its receipts", async () => {
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
     expect(confirm).toHaveBeenCalledTimes(1);
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
@@ -154,7 +149,6 @@ describe("Redeploy with the latest form in the brand detail", () => {
   it("names the target form version and the current one in the confirm text, and sends nothing when declined", async () => {
     confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: latestName }));
     expect(confirm).toHaveBeenCalledTimes(1);
     const text = String(confirm.mock.calls[0]![0]);
@@ -166,7 +160,6 @@ describe("Redeploy with the latest form in the brand detail", () => {
 
   it("posts the chosen artifact once after confirmation and shows the new install", async () => {
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: latestName }));
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(redeployPosts()).toHaveLength(1);
@@ -176,7 +169,6 @@ describe("Redeploy with the latest form in the brand detail", () => {
 
   it("the plain Redeploy button still keeps the current form", async () => {
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(bodies).toEqual([{}]);

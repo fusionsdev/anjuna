@@ -1,5 +1,5 @@
 import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { ConfigPanel } from "./ConfigPanel";
@@ -98,7 +98,10 @@ export function BrandLifecycle({ me }: { me: Me }) {
     }
   }, [selectedId]);
   const selected = useMemo(() => brands.find((b) => b.brand_id === selectedId), [brands, selectedId]);
-  useEffect(() => {
+  // A layout effect: the per-brand reset must run in the commit that first shows the brand's controls, before
+  // any click can reach them. A passive effect runs after that commit, so a quick click on Runtime config,
+  // Install or Redeploy was overwritten by the reset.
+  useLayoutEffect(() => {
     let active = true;
     operationGeneration.current += 1;
     setState(undefined);
