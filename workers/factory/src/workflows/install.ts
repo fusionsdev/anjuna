@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { ANALYTICS_FORWARD_PATHS } from "@anjuna/contracts";
 import {
   apexDnsRecords, attachCustomDomain, assetContentType, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
   getZone, uploadScript,
@@ -246,6 +247,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
                 { type: "plain_text", name: "HOSTNAME", text: domain },
                 { type: "json", name: "BRAND_CONFIG", json: { ...assembleBrandConfig(config, initial_runtime, domain), brand_id, brand: name } },
                 { type: "service", name: "CORE", service: this.env.CORE_SERVICE_NAME },
+                // Core endpoints for PostHog, Sentry, telemetry and errors (ADR-0004); the runtime defaults to the same table.
+                { type: "plain_text", name: "CORE_ANALYTICS_PATHS", text: JSON.stringify(ANALYTICS_FORWARD_PATHS) },
               ],
               compatibility_date: "2026-08-01",
               compatibility_flags: ["global_fetch_strictly_public"],

@@ -2,7 +2,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { env, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { ApplyRuntimeRequest, type RuntimeStateResponse } from "@anjuna/contracts";
+import { ANALYTICS_FORWARD_PATHS, ApplyRuntimeRequest, type RuntimeStateResponse } from "@anjuna/contracts";
 import { InstallBrandWorkflow, type InstallParams } from "../src/workflows/install";
 import { RollbackBrandWorkflow, type RollbackParams } from "../src/workflows/rollback";
 import factory from "../src/index";
@@ -360,6 +360,19 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(f.applied[1]!.hostnames).toEqual([`${f.id}.sub.example`]);
     expect(await f.installRow()).toEqual({ status: "rolled_back" });
     expect(await f.brandRow()).toEqual({ status: "failed", current_revision_id: null });
+  });
+
+  it.each([["a first install", false], ["an upgrade of a live brand", true]])("binds the contract's analytics forward paths on %s", async (_name, live) => {
+    const f = await fixture(live);
+    await runInstall(f);
+    expect(await f.installRow()).toEqual({ status: "ready" });
+    const analytics = f.uploads[0]!.bindings.filter((binding) => binding.name === "CORE_ANALYTICS_PATHS");
+    expect(analytics).toEqual([{ type: "plain_text", name: "CORE_ANALYTICS_PATHS", text: JSON.stringify(ANALYTICS_FORWARD_PATHS) }]);
+    expect(JSON.parse(analytics[0]!.text as string)).toEqual({
+      posthog: "/analytics/posthog", sentry: "/analytics/sentry", telemetry: "/analytics/telemetry", errors: "/analytics/errors",
+    });
+    // The paths are the only analytics binding: the real PostHog key and Sentry DSN never leave core.
+    expect(JSON.stringify(f.uploads[0]!.bindings)).not.toMatch(/phc_|dsn|posthog_key|sentry_dsn/i);
   });
 
   it("provisions before deploy, uses tenant defaults and marks READY only after core verification", async () => {
