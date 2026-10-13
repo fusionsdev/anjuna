@@ -295,7 +295,7 @@ function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runti
   const state = runtime.get(row.brand_id);
   return LifecycleBrandSummary.parse({
     brand_id: row.brand_id, name: typeof row.name === "string" && row.name ? row.name : undefined, account: row.account,
-    hostnames: state?.hostnames ?? [row.domain, `www.${row.domain}`], status: row.status,
+    hostnames: state?.hostnames ?? (String(row.domain).split(".").length === 2 ? [row.domain, `www.${row.domain}`] : [row.domain]), status: row.status,
     current_revision_id: row.current_revision_id,
     bundle_form_version: state?.bundle_form_version ?? row.bundle_form_version ?? null,
     payload_version: row.payload_version ?? null,

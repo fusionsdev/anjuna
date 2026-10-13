@@ -62,7 +62,7 @@ export function App() {
               setMe(null);
             }}
           >
-            ออกจากระบบ
+            ออกจากระบบ (Sign out)
           </button>
         </div>
       </aside>

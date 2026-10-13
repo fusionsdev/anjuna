@@ -195,6 +195,19 @@ describe("truthful lifecycle BFF", () => {
     expect(JSON.parse(revision!.config_json)).toEqual({ keyword_default: "Quick Loan" });
   });
 
+  it("lists only the bare hostname for a draft on a subdomain, since install attaches www only at the zone apex", async () => {
+    const hostnamesOf = async (domain: string) => {
+      const created = await post(employee, "/api/brands/drafts", { domain, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+      const { brand } = await created.json() as { brand: { brand_id: string } };
+      const rows = (await (await call("/api/lifecycle/brands", { cookie: employee })).json() as { brands: unknown[] }).brands.map((row) => LifecycleBrandSummary.parse(row));
+      return rows.find((row) => row.brand_id === brand.brand_id)!.hostnames;
+    };
+    expect(await hostnamesOf("apex-two-labels.test")).toEqual(["apex-two-labels.test", "www.apex-two-labels.test"]);
+    expect(await hostnamesOf("demo06.aduplift.ai")).toEqual(["demo06.aduplift.ai"]);
+    expect(await hostnamesOf("sub.demo06.aduplift.ai")).toEqual(["sub.demo06.aduplift.ai"]);
+    expect(await hostnamesOf("example.co.uk")).toEqual(["example.co.uk"]);
+  });
+
   it("returns renderable lifecycle rows and normalizes a lowercase draft keyword", async () => {
     const response = await post(employee, "/api/brands/drafts", { domain: "renderable.test", keyword_default: "quick loan", template_version_id: "tv-1" });
     const { brand } = await response.json() as { brand: { brand_id: string } };
