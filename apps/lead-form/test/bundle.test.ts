@@ -61,6 +61,13 @@ describe("built bundle", () => {
     expect(js).not.toMatch(/gtag|googletagmanager|AW-\d+/);
   });
 
+  it("bundles posthog-js: no SDK script is requested from the proxy path or any other origin", () => {
+    expect(js).not.toContain("static/array");
+    expect(js).toContain("disable_external_dependency_loading");
+    expect(js).toContain("advanced_disable_flags");
+    expect(html).not.toMatch(/array\.js|posthog/i);
+  });
+
   it("renders the keyword slot and reads the runtime config", () => {
     expect(js).toContain("data-kw");
     expect(js).toContain('getElementById("cfg")');

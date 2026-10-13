@@ -51,6 +51,10 @@ export const ALLOWED_DOMAINS = new Set([
   "docs.sentry.io", // Sentry SDK warning text
   "domain.com", // email placeholder copy ("name@domain.com")
   "placeholder.invalid", // Sentry placeholder DSN host (RFC 2606 reserved TLD)
+  // Literals inside posthog-js, never requested with the form's configuration.
+  "posthog.com", "app.posthog.com", "i.posthog.com", "us.i.posthog.com", "us.posthog.com",
+  "sentry.io", "yandex.com", "bing.com", "yahoo.com", "duckduckgo.com",
+  "herokuapp.com", "vercel.app", "netlify.app", "app.hypefactors.com",
 ]);
 const DOMAIN_RE = /(?<![A-Za-z0-9_.$-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|ai|co|us|app|dev|loans|finance|money|credit|cash|vet)(?![A-Za-z0-9_$-])/gi;
 const TEXT_EXT = /\.(?:js|mjs|css|html|json|txt|map|svg)$/i;
