@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { handleAdminRequest } from "./admin/index.js";
+import { analyticsRoutes } from "./analytics.js";
 import { authenticateAccount } from "./auth.js";
 import { handleScheduled } from "./cron.js";
 import { handleConversionsAck, handleConversionsPending } from "./conversions.js";
@@ -30,8 +31,9 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       if (pathname === "/api/conversions/ack" && request.method === "POST") {
         return handleConversionsAck(request, env);
       }
-      const rpc = pathname.startsWith("/rpc/") && request.method === "POST"
-        ? rpcRoutes.get(pathname) : undefined;
+      // Brand Worker calls: /rpc/* and /analytics/*, both behind the per-account credential.
+      const rpc = request.method !== "POST" ? undefined
+        : pathname.startsWith("/rpc/") ? rpcRoutes.get(pathname) : analyticsRoutes.get(pathname);
       if (rpc) {
         const account = await authenticateAccount(request, env);
         return account === null ? unauthorized() : rpc(request, env, account);

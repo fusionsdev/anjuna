@@ -33,6 +33,10 @@ async function bundle(entry: string): Promise<string> {
 export async function createHarness(options: {
   brand?: boolean;
   listmonk?: Partial<Record<"LISTMONK_URL" | "LISTMONK_USER" | "LISTMONK_TOKEN" | "LISTMONK_LIST_MAP", string>>;
+  /** Extra secrets and vars for the production Worker. */
+  bindings?: Record<string, string>;
+  /** Stub for requests core makes to other hosts. Without it any outbound request throws. */
+  outbound?: (request: Request) => Response | Promise<Response>;
 } = {}) {
   const [production, testWorker, leadsMigrations, factoryMigrations] = await Promise.all([
     bundle("src/index.ts"), bundle("test/worker.ts"),
@@ -43,8 +47,8 @@ export async function createHarness(options: {
     modules: true, compatibilityDate: "2026-08-01",
     compatibilityFlags: ["global_fetch_strictly_public"],
     d1Databases: { LEADS: "core-test-leads", FACTORY: "core-test-factory" },
-    bindings: { DRAIN_TOKEN, HANDOFF_KEY, LIFECYCLE_ACCOUNT: "account-a", ...options.listmonk },
-    outboundService: () => { throw new Error("External requests forbidden in core tests"); },
+    bindings: { DRAIN_TOKEN, HANDOFF_KEY, LIFECYCLE_ACCOUNT: "account-a", ...options.listmonk, ...options.bindings },
+    outboundService: options.outbound ?? (() => { throw new Error("External requests forbidden in core tests"); }),
   };
   const mf = new Miniflare(convertV4MiniflareOptions({
     cf: false,
@@ -90,7 +94,7 @@ export async function createHarness(options: {
         await db.batch([db.prepare("DROP VIEW leads"), db.prepare("ALTER TABLE fixture_leads RENAME TO leads")]);
         hiddenOrphan = false;
       }
-      await db.batch(["continuations", "mailing_outbox", "consent_evidence", "click_sessions", "zip_lookup", "conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials"]
+      await db.batch(["continuations", "mailing_outbox", "consent_evidence", "click_sessions", "zip_lookup", "conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials", "traffic_events", "client_errors"]
         .map((table) => db.prepare(`DELETE FROM ${table}`)));
       await factory.prepare("DELETE FROM audit_log").run();
     },
@@ -147,7 +151,8 @@ export async function createHarness(options: {
     async request(path: string, init: RequestInit = {}) {
       const response = await core.fetch(`https://core.aduplift.ai${path}`, init as Parameters<typeof core.fetch>[1]);
       // Always drain the local HTTP transport, including tests that only inspect status.
-      return new Response(await response.arrayBuffer(), {
+      const bytes = await response.arrayBuffer();
+      return new Response(response.status === 204 ? null : bytes, {
         status: response.status, headers: Object.fromEntries(response.headers),
       });
     },

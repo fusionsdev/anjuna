@@ -27,5 +27,7 @@
   ]
   // Optional secrets for the mailing cron (it skips until all are set): LISTMONK_URL, LISTMONK_USER, LISTMONK_TOKEN,
   // LISTMONK_LIST_MAP (JSON {"<brand_id>": <list id>}).
+  // Optional secrets for the analytics forward (ADR-0004): POSTHOG_KEY (+ POSTHOG_HOST, default https://us.i.posthog.com), SENTRY_DSN.
+  // Without them core accepts and drops that kind with a 204 and logs analytics_not_configured once per isolate.
   // Required secret: DRAIN_TOKEN. Per-account and per-brand tokens are stored as D1 hashes.
 }
