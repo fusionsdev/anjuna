@@ -196,6 +196,42 @@ async function rollback(request: Request, env: Env, ctx: AdminRequestContext, br
   return dispatch(env, ctx, installId, brandId, "/rollback", { install_id: installId, brand_id: brandId, to_revision_id: target, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }
 
+// A live brand re-installs at its current template version and form artifact. It is an upgrade-kind
+// install (from_revision_id set, so smoke, sync_runtime and compensation all apply) onto a copy of the
+// current revision, which lets the existing Workflow upload the current runtime bundle again.
+async function redeploy(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
+  const brand = await env.FACTORY.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ status: string; current_revision_id: string | null }>();
+  if (!brand) return json(404, { error: "not_found", resource: "brand" });
+  if (brand.status !== "live" || !brand.current_revision_id) return json(409, { error: "conflict", message: "Only live brands can be redeployed" });
+  const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
+  const revisionId = `${brandId}_redeploy_${installId}`;
+  const now = new Date().toISOString();
+  // One batch: the revision is admitted only when no lifecycle operation is active, and the install only when
+  // that revision exists, so a refused request leaves neither row and a double click claims one install.
+  const [revisionClaim, installClaim] = await env.FACTORY.batch([
+    env.FACTORY.prepare(`INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at)
+      SELECT ?1,?2,(SELECT MAX(revision) + 1 FROM brand_revisions WHERE brand_id = ?2),r.template_version_id,r.form_artifact_id,r.config_json,?3,?4
+      FROM brands b JOIN brand_revisions r ON r.revision_id = b.current_revision_id
+      WHERE b.brand_id = ?2 AND b.status = 'live'
+      AND NOT EXISTS (
+        SELECT 1 FROM installs
+        WHERE brand_id = ?2 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running')
+      )`).bind(revisionId, brandId, ctx.actor_id, now),
+    env.FACTORY.prepare(`INSERT INTO installs
+      (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at)
+      SELECT ?1,?2,'upgrade','queued',b.current_revision_id,?3,?4,?5,?6
+      FROM brands b WHERE b.brand_id = ?2 AND EXISTS (SELECT 1 FROM brand_revisions WHERE revision_id = ?3)`)
+      .bind(installId, brandId, revisionId, ctx.actor_id, ctx.actor_role, now),
+  ]);
+  if (revisionClaim!.meta.changes !== 1 || installClaim!.meta.changes !== 1) {
+    const active = await activeLifecycleOperation(env.FACTORY, brandId);
+    if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
+    return json(409, { error: "lifecycle_operation_active", message: "Lifecycle operation claim was not admitted" });
+  }
+  await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId });
+  return dispatch(env, ctx, installId, brandId, "/install", { install_id: installId, brand_id: brandId, revision_id: revisionId, started_by: ctx.actor_id, started_role: ctx.actor_role });
+}
+
 async function recover(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   if (!env.FACTORY_WORKER) return json(502, { error: "factory_dispatch_failed" });
   try {
@@ -356,7 +392,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
       ? json(502, { error: "core_list_failed", code: result.core_error.code, message: result.core_error.message })
       : json(404, { error: "not_found", resource: "brand" });
   }
-  m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|recover|checklist)$/);
+  m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|recover|redeploy|checklist)$/);
   if (m && method === "POST") {
     const brandId = decodePathSegment(m[1]!);
     if (brandId === null) return json(400, { error: "invalid_brand_id" });
@@ -364,8 +400,9 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
       const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
       return checklist(request, env, ctx, brandId);
     }
-    const g = authorizePanel(m[2] === "install" ? "installBrand" : m[2] === "recover" ? "recoverBrand" : "rollbackBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    const g = authorizePanel(m[2] === "install" ? "installBrand" : m[2] === "recover" ? "recoverBrand" : m[2] === "redeploy" ? "redeployBrand" : "rollbackBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     if (m[2] === "recover") return recover(env, ctx, brandId);
+    if (m[2] === "redeploy") return redeploy(env, ctx, brandId);
     return m[2] === "install" ? startInstall(request, env, ctx, brandId) : rollback(request, env, ctx, brandId);
   }
   m = path.match(/^\/api\/installs\/([^/]+)\/retry$/);

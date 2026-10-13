@@ -21,6 +21,8 @@ export const PANEL_ROLE_TABLE = {
   /** Plan: "Upgrade all brands" is owner only. */
   upgradeAll: "owner",
   recoverBrand: "owner",
+  /** Redeploy re-uploads the runtime of a live brand: Owner-only, like Rollback. */
+  redeployBrand: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 
