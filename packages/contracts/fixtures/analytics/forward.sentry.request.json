@@ -1,0 +1,8 @@
+{
+  "brand_id": "brand-a",
+  "hostname": "brand-a.example",
+  "kind": "sentry",
+  "path": "/",
+  "content_type": "text/plain;charset=UTF-8",
+  "body": "{\"event_id\":\"9ec79c33ec9942ab8353589fcb2e04dc\",\"dsn\":\"https://public@placeholder.invalid/0\",\"sent_at\":\"2026-10-13T00:00:00.000Z\"}\n{\"type\":\"event\"}\n{\"message\":\"submit failed\"}"
+}
