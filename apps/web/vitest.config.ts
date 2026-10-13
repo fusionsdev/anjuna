@@ -28,7 +28,7 @@ export default defineConfig(async () => {
           test: { name: "build", environment: "node", include: ["test/**/*.node.test.ts", "test/**/*.node.test.tsx"], testTimeout: 120_000 },
         },
         {
-          test: { name: "ui", environment: "jsdom", include: ["test/**/*.ui.test.tsx"] },
+          test: { name: "ui", environment: "jsdom", include: ["test/**/*.ui.test.tsx"], setupFiles: ["test/ui-setup.ts"] },
         },
       ],
     },

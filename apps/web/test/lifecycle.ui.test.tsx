@@ -53,12 +53,7 @@ const saveAbName = "บันทึก A/B (Save A/B)";
 const flowGateSection = "เกตของโฟลว์ (Flow gate)";
 const closeName = "ปิด (Close)";
 const rotateName = "หมุนโทเคน (Rotate token)";
-// The component clears its drawer, install and pending-operation state in the effect that runs when
-// a brand is selected, and that effect also requests the checklist. A click made before that request
-// lands is overwritten by the reset, so wait for the request before the first click.
-const brandSelected = () => waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-a/checklist")).toBe(true));
 const openRuntimeConfig = async () => {
-  await brandSelected();
   fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
 };
 const section = (panel: HTMLElement, heading: string | RegExp) => within(within(panel).getByRole("heading", { name: heading }).closest("section")!);
@@ -140,7 +135,6 @@ describe("mounted lifecycle UI with API responses", () => {
     expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(select, { target: { value: "tv-1" } });
     fireEvent.click(screen.getByRole("button", { name: createDraftName }));
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: installName }));
     expect((await screen.findAllByText("new-install", { selector: "code" })).length).toBeGreaterThan(0);
     expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ name: "New Brand", domain: "new-brand.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
@@ -422,7 +416,6 @@ describe("mounted lifecycle UI with API responses", () => {
     });
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByText("Smoke check failed")).toBeDefined();
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: installName }));
     fireEvent.click(await screen.findByRole("button", { name: retryName }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/installs/failed-1/retry")).toBe(true));
@@ -440,7 +433,6 @@ describe("mounted lifecycle UI with API responses", () => {
       return json({ install_id: failed.install_id, brand_id: "brand-a", status: "running" }, 201);
     });
     render(<BrandLifecycle me={employee} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: installName }));
     expect(await screen.findByText("failed-1", { selector: "code" })).toBeDefined();
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Factory Worker binding is missing");
@@ -506,6 +498,29 @@ describe("mounted lifecycle UI with API responses", () => {
   });
 });
 
+describe("a click right after a brand is selected", () => {
+  // No wait for the checklist request: the controls of a newly selected brand must keep what the first click does.
+  it("keeps the Runtime config drawer opened by an immediate click", async () => {
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+    expect(await screen.findByRole("complementary", { name: configLabel })).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole("complementary", { name: configLabel })).toBeTruthy();
+  });
+
+  it("keeps the install started by an immediate Install click", async () => {
+    runtimeAvailable = false;
+    lifecycleRows = [{ ...brand, status: "draft", runtime_sync_status: "queued" }];
+    routes.set("POST /api/brands/brand-a/install", () => json({ install_id: "new-install" }, 201));
+    detail({ ...failed, install_id: "new-install", status: "running", runtime_sync_status: "running" });
+    render(<BrandLifecycle me={employee} />);
+    fireEvent.click(await screen.findByRole("button", { name: installName }));
+    expect((await screen.findAllByText("new-install", { selector: "code" })).length).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getAllByText("new-install", { selector: "code" }).length).toBeGreaterThan(0);
+  });
+});
+
 it("Owner recovers a retained lock from the panel and sees completion receipts", async () => {
   lifecycleRows = [{ ...brand, status: "installing", current_revision_id: null, runtime_sync_status: "failed" }];
   history([{ install_id: failed.install_id, status: "failed", error: "Compensation failed" }]);
@@ -516,7 +531,6 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   });
   detail({ ...failed, install_id: "recovery-1", revision_id: null, status: "rolled_back", runtime_sync_status: "ready", receipts: [{ step: "receipt", status: "ready" }] });
   render(<BrandLifecycle me={owner} />);
-  await brandSelected();
   fireEvent.click(await screen.findByRole("button", { name: recoverName }));
   await waitFor(() => expect(requests.filter((r) => r.path === "/api/brands/brand-a/recover")).toHaveLength(1));
   await screen.findByText("recovery-1");

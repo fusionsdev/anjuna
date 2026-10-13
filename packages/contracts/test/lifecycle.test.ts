@@ -184,6 +184,13 @@ describe("lifecycle wire contracts", () => {
     }).success).toBe(false);
   });
 
+  it("accepts the four install operations and rejects any other", () => {
+    const base = { install_id: ids.install_id, brand_id: ids.brand_id, revision_id: ids.revision_id, status: "ready", runtime_sync_status: "ready", receipts: [] };
+    for (const operation of ["install", "rollback", "upgrade", "redeploy"]) expect(InstallWithReceipts.safeParse({ ...base, operation }).success).toBe(true);
+    expect(InstallWithReceipts.safeParse(base).success).toBe(true);
+    expect(InstallWithReceipts.safeParse({ ...base, operation: "recover" }).success).toBe(false);
+  });
+
   it("rejects equal upgrade versions and non-Owner upgrade initiators", () => {
     const command = {
       from_template_version_id: "template-v1",

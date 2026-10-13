@@ -1,5 +1,5 @@
-import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BRAND_NAME_PATTERN, BrandName, type SealedTemplateVersion, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type InstallOperation, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { ConfigPanel } from "./ConfigPanel";
@@ -24,6 +24,11 @@ const checklistItems: Array<{ item: ChecklistItemName; label: string }> = [
 const statusLabel: Record<string, string> = {
   draft: "ฉบับร่าง (draft)", queued: "รอคิว (queued)", running: "กำลังทำงาน (running)", ready: "พร้อมใช้งาน (ready)",
   failed: "ล้มเหลว (failed)", rolled_back: "ย้อนกลับแล้ว (rolled-back)", detached: "ถอดออกแล้ว (detached)", unmanaged: "ไม่ได้จัดการ (unmanaged)", sync_error: "ซิงก์ผิดพลาด (sync_error)",
+};
+
+// A redeploy is stored as an upgrade row; the server tells the two apart in `operation`.
+const operationLabel: Record<InstallOperation, string> = {
+  install: "ติดตั้ง (Install)", rollback: "ย้อนกลับ (Rollback)", upgrade: "อัปเกรดทุกแบรนด์ (Upgrade-all)", redeploy: "ติดตั้งใหม่ (Redeploy)",
 };
 
 const coreListLabel: Record<CoreListErrorCode, string> = {
@@ -98,7 +103,10 @@ export function BrandLifecycle({ me }: { me: Me }) {
     }
   }, [selectedId]);
   const selected = useMemo(() => brands.find((b) => b.brand_id === selectedId), [brands, selectedId]);
-  useEffect(() => {
+  // A layout effect: the per-brand reset must run in the commit that first shows the brand's controls, before
+  // any click can reach them. A passive effect runs after that commit, so a quick click on Runtime config,
+  // Install or Redeploy was overwritten by the reset.
+  useLayoutEffect(() => {
     let active = true;
     operationGeneration.current += 1;
     setState(undefined);
@@ -249,15 +257,19 @@ export function BrandLifecycle({ me }: { me: Me }) {
     if (!selected) return;
     await dispatchOperation(() => api.rollbackLifecycle(selected.brand_id));
   }
+  // Pause lives in core and the factory brand stays live, so a paused brand can be redeployed; it stays paused.
+  function pausedNote() {
+    return runtimeBrands.find((brand) => brand.brand_id === selectedId)?.status === "paused" ? "\n\nแบรนด์นี้ยังคงหยุดชั่วคราว (The brand stays paused.)" : "";
+  }
   async function redeploy() {
     if (!selected) return;
-    if (!window.confirm("ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน? (Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.)")) return;
+    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน? (Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.)${pausedNote()}`)) return;
     await dispatchOperation(() => api.redeploy(selected.brand_id));
   }
   async function redeployLatest() {
     const target = selected?.newer_form;
     if (!selected || !target) return;
-    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}? (Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.)`)) return;
+    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}? (Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.)${pausedNote()}`)) return;
     await dispatchOperation(() => api.redeploy(selected.brand_id, target.form_artifact_id));
   }
   async function startInstall() {
@@ -323,7 +335,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   return <section className="card lifecycle-detail"><div className="row split"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={`pill ${brand.status}`}>{statusLabel[brand.status] ?? brand.status}</span></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
     {isManaged && <div className="form-inline">{actions.install && <button className="primary" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.retry && <button onClick={onRetry}>ลองใหม่ (Retry)</button>}{actions.recover && me.role === "owner" && <button className="danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
-    {install && <div className="section"><h3>ผลการทำงานและข้อผิดพลาด (Receipts / Errors)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code></p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p>{install.receipts.map((receipt) => <div className="receipt" key={receipt.step}><span>{receipt.step}</span><span className={`pill ${receipt.status}`}>{receipt.status}</span>{receipt.error && <span className="error">{receipt.error}</span>}</div>)}</div>}
+    {install && <div className="section"><h3>ผลการทำงานและข้อผิดพลาด (Receipts / Errors)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p>{install.receipts.map((receipt) => <div className="receipt" key={receipt.step}><span>{receipt.step}</span><span className={`pill ${receipt.status}`}>{receipt.status}</span>{receipt.error && <span className="error">{receipt.error}</span>}</div>)}</div>}
     <div className="section"><h3>รายการตรวจ (Checklist)</h3>{checklistItems.map(({ item, label }) => {
       const evidence = checklist[item];
       const isSold = item === "test_sold";

@@ -14,6 +14,7 @@ import {
   type AdminRequestContext,
   type CoreListError,
   type CoreListErrorCode,
+  type InstallOperation,
 } from "@anjuna/contracts";
 import { z } from "zod";
 import type { Env } from "./env.js";
@@ -201,6 +202,15 @@ async function rollback(request: Request, env: Env, ctx: AdminRequestContext, br
   }
   await audit(env.FACTORY, ctx, "install.start", "install", installId, { brand_id: brandId, kind: "rollback", to_revision_id: target });
   return dispatch(env, ctx, installId, brandId, "/rollback", { install_id: installId, brand_id: brandId, to_revision_id: target, started_by: ctx.actor_id, started_role: ctx.actor_role });
+}
+
+// installs.kind has no redeploy value, so a redeploy is an 'upgrade' row. It is told apart by its revision id,
+// `<brand_id>_redeploy_<install_id>`, which the redeploy route writes. A retry copies to_revision_id, so a retried
+// redeploy keeps the id; the redeploy.start audit row would not survive that, because a retry audits install.start.
+// Only an upgrade row counts: a later install of the redeployed revision is kind 'install'.
+export function installOperation(kind: string, brandId: string, toRevisionId: string | null): InstallOperation {
+  if (kind === "upgrade" && toRevisionId?.startsWith(`${brandId}_redeploy_`)) return "redeploy";
+  return kind === "rollback" || kind === "upgrade" ? kind : "install";
 }
 
 // A live brand re-installs at its current template version and form artifact. It is an upgrade-kind
@@ -462,8 +472,8 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
-    const { results } = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at,finished_at,error FROM installs WHERE brand_id=?1 ORDER BY started_at DESC LIMIT 50").bind(brandId).all();
-    return json(200, { brand_id: brandId, installs: results });
+    const { results } = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at,finished_at,error FROM installs WHERE brand_id=?1 ORDER BY started_at DESC LIMIT 50").bind(brandId).all<{ kind: string; to_revision_id: string | null }>();
+    return json(200, { brand_id: brandId, installs: results.map((row) => ({ ...row, operation: installOperation(row.kind, brandId, row.to_revision_id) })) });
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/checklist$/);
   if (m && method === "GET") {
@@ -476,17 +486,17 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     // SQLite may evaluate both sides of AND. CASE keeps plain-text errors out of json_extract.
-    const row = await env.FACTORY.prepare(`SELECT i.install_id,i.brand_id,i.to_revision_id,i.status,
+    const row = await env.FACTORY.prepare(`SELECT i.install_id,i.brand_id,i.kind,i.to_revision_id,i.status,
       (CASE WHEN json_valid(i.error) THEN COALESCE(json_extract(i.error,'$.recovery_required')=1,0) ELSE 0 END
        OR CASE WHEN json_valid(i.rollback_record_json) THEN json_extract(i.rollback_record_json,'$.recovery_of') IS NOT NULL ELSE 0 END) AS recovery_required
-      FROM installs i WHERE i.install_id=?1`).bind(m[1]).first<{ install_id: string; brand_id: string; to_revision_id: string | null; status: string; recovery_required: number }>();
+      FROM installs i WHERE i.install_id=?1`).bind(m[1]).first<{ install_id: string; brand_id: string; kind: string; to_revision_id: string | null; status: string; recovery_required: number }>();
     if (!row) return json(404, { error: "not_found", resource: "install" });
     const { results } = await env.FACTORY.prepare("SELECT step,status,output_json FROM install_receipts WHERE install_id=?1 ORDER BY id").bind(m[1]).all<{ step: string; status: string; output_json: string | null }>();
     const status = (value: string): "queued" | "running" | "ready" | "failed" => value === "ok" ? "ready" : value === "skipped" ? "queued" : value === "failed" ? "failed" : value === "running" ? "running" : "queued";
     const receipts = results.map((r) => { const output = r.output_json ? JSON.parse(r.output_json) as Record<string, unknown> : undefined; return { step: r.step, status: status(r.status), ...(typeof output?.error === "string" ? { error: output.error } : {}) }; });
     const runtime_sync_status = receipts.some((r) => r.status === "failed") || row.status === "failed" ? "failed" : receipts.some((r) => r.status === "running") || row.status === "running" ? "running" : row.status === "ready" || row.status === "rolled_back" ? "ready" : "queued";
     const installStatus = ["queued", "running", "ready", "failed", "rolled_back"].includes(row.status) ? row.status : "queued";
-    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, status: installStatus, runtime_sync_status, receipts, recovery_required: row.recovery_required === 1 });
+    return json(200, { install_id: row.install_id, brand_id: row.brand_id, revision_id: row.to_revision_id, operation: installOperation(row.kind, row.brand_id, row.to_revision_id), status: installStatus, runtime_sync_status, receipts, recovery_required: row.recovery_required === 1 });
   }
   if (path === "/api/upgrade-all/latest" && method === "GET") {
     const g = authorizePanel("upgradeAll", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);

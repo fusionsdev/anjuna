@@ -27,9 +27,6 @@ const showBrand = (overrides: Partial<LifecycleBrandSummary>, installs: unknown[
   routes.set("GET /api/lifecycle/brands", () => json({ brands: [{ ...liveBrand, ...overrides }] }));
   routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
 };
-// Selecting a brand runs an effect that resets state and requests the checklist; a click made before
-// that request lands is overwritten by the reset. Mirrors brandSelected() in lifecycle.ui.test.tsx.
-const brandSelected = () => waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-a/checklist")).toBe(true));
 const redeployPosts = () => requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-a/redeploy");
 
 beforeEach(() => {
@@ -85,7 +82,6 @@ describe("Redeploy button in the brand detail", () => {
   it("asks for confirmation and sends nothing when the Owner declines", async () => {
     confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(String(confirm.mock.calls[0]![0])).toContain("Redeploy");
@@ -94,7 +90,6 @@ describe("Redeploy button in the brand detail", () => {
 
   it("posts the redeploy once after confirmation and shows the new install with its receipts", async () => {
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
     expect(confirm).toHaveBeenCalledTimes(1);
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
@@ -154,7 +149,6 @@ describe("Redeploy with the latest form in the brand detail", () => {
   it("names the target form version and the current one in the confirm text, and sends nothing when declined", async () => {
     confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: latestName }));
     expect(confirm).toHaveBeenCalledTimes(1);
     const text = String(confirm.mock.calls[0]![0]);
@@ -166,7 +160,6 @@ describe("Redeploy with the latest form in the brand detail", () => {
 
   it("posts the chosen artifact once after confirmation and shows the new install", async () => {
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: latestName }));
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(redeployPosts()).toHaveLength(1);
@@ -176,9 +169,102 @@ describe("Redeploy with the latest form in the brand detail", () => {
 
   it("the plain Redeploy button still keeps the current form", async () => {
     render(<BrandLifecycle me={owner} />);
-    await brandSelected();
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(bodies).toEqual([{}]);
+  });
+});
+
+describe("the operation label in the receipts panel", () => {
+  // The first line under the Receipts / Errors heading, not the install ID line that tracks a pending operation.
+  const receiptsLine = async () => (await screen.findByRole("heading", { name: /Receipts/ })).parentElement!.querySelector("p")!;
+  it.each([
+    ["install", "ติดตั้ง (Install)"],
+    ["rollback", "ย้อนกลับ (Rollback)"],
+    ["upgrade", "อัปเกรดทุกแบรนด์ (Upgrade-all)"],
+    ["redeploy", "ติดตั้งใหม่ (Redeploy)"],
+  ] as const)("shows %s as %s next to the install ID", async (operation, label) => {
+    showBrand({}, [{ install_id: "redeploy-ins", status: "ready", error: null, operation }]);
+    routes.set("GET /api/installs/redeploy-ins", () => json({ ...running, status: "ready", runtime_sync_status: "ready", operation }));
+    render(<BrandLifecycle me={owner} />);
+    expect((await receiptsLine()).textContent).toBe(`รหัสติดตั้ง (Install ID): redeploy-ins · ${label}`);
+  });
+
+  it("shows no label for an install the server did not label", async () => {
+    showBrand({}, [{ install_id: "redeploy-ins", status: "ready", error: null }]);
+    routes.set("GET /api/installs/redeploy-ins", () => json({ ...running, status: "ready", runtime_sync_status: "ready" }));
+    render(<BrandLifecycle me={owner} />);
+    expect((await receiptsLine()).textContent).toBe("รหัสติดตั้ง (Install ID): redeploy-ins");
+  });
+});
+
+describe("Redeploy of a brand that core reports as paused", () => {
+  // Pause lives in core. The factory brand stays live, so the lifecycle row says live and only the runtime row says paused.
+  const pausedInCore = () => routes.set("GET /api/brands", () => json({ brands: [{
+    brand_id: "brand-a", hostnames: ["renderable.test"], status: "paused", flow_gate_mode: "param", ab_config: null,
+    form_version: "form@abcdef1", stats_7d: { leads: 0, sold: 0, pending: 0 },
+  }], generated_at: "2026-10-06T00:00:00Z" }));
+  const stays = "ยังคงหยุดชั่วคราว (The brand stays paused.)";
+  let bodies: unknown[];
+  beforeEach(() => {
+    bodies = [];
+    showBrand({ newer_form: newerForm });
+    pausedInCore();
+    routes.set("POST /api/brands/brand-a/redeploy", (init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return json({ install_id: "redeploy-ins", brand_id: "brand-a", status: "running" }, 201);
+    });
+  });
+
+  it("offers both buttons to an Owner", async () => {
+    render(<BrandLifecycle me={owner} />);
+    expect(await screen.findByRole("button", { name: redeployName })).toBeTruthy();
+    expect(screen.getByRole("button", { name: latestName })).toBeTruthy();
+    expect(await screen.findByText("สถานะ runtime: paused")).toBeTruthy();
+  });
+
+  it("offers neither to an Employee", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it.each(["draft", "failed", "installing"] as const)("still offers neither for a %s brand", async (status) => {
+    showBrand({ status, newer_form: newerForm } as Partial<LifecycleBrandSummary>);
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("heading", { name: /renderable.test/ });
+    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+  });
+
+  it("says in the Redeploy confirm text that the brand stays paused", async () => {
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect(String(confirm.mock.calls[0]![0])).toContain(stays);
+  });
+
+  it("says in the Redeploy with latest form confirm text that the brand stays paused", async () => {
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: latestName }));
+    expect(String(confirm.mock.calls[0]![0])).toContain(stays);
+  });
+
+  it("does not say it for a brand that is not paused", async () => {
+    routes.set("GET /api/brands", () => json({ brands: [], generated_at: "2026-10-06T00:00:00Z" }));
+    confirm.mockReturnValue(false);
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect(String(confirm.mock.calls[0]![0])).not.toContain("paused");
+  });
+
+  it("posts the redeploy for a paused brand", async () => {
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
+    expect(redeployPosts()).toHaveLength(1);
     expect(bodies).toEqual([{}]);
   });
 });
