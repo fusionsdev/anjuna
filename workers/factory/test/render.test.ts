@@ -1,5 +1,9 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { assertCleanBrandBytes, renderBrand, unzip, zip } from "../src/render";
+// The form release script is pure (no node imports) so the same code runs here; this test proves its
+// ZIP is what the install Workflow reads, without a mirror that could drift.
+import { formZipEntries, storeZip } from "../../../apps/lead-form/scripts/zip-store.mjs";
+import { assertCleanBrandBytes, readZipFromR2, renderBrand, unzip, zip } from "../src/render";
 import { apexDnsRecords, assetContentType, attachCustomDomain, createAssetsSession, deployScript, detachCustomDomain, listCustomDomains, publicApexDnsRecords, uploadAssetBucket, uploadScript } from "../src/cf-api";
 import { CoreLifecycleClient } from "../src/core-lifecycle-client";
 
@@ -139,6 +143,53 @@ describe("renderBrand", () => {
     expect(() => assertCleanBrandBytes(new Map([
       ["/assets/anjuna.css", makeFile(".clean { color: red }")],
     ]), "harbor-brand")).toThrow();
+  });
+});
+
+describe("form ZIP built by apps/lead-form/scripts/form-zip.mjs", () => {
+  // Dist-relative paths exactly as vite writes them with base "/_f/".
+  const dist = new Map<string, Uint8Array>([
+    ["index.html", makeFile('<html><script type="module" src="/_f/assets/index-abc123.js"></script><link rel="stylesheet" href="/_f/assets/style-xyz789.css"></html>')],
+    ["assets/index-abc123.js", makeFile('console.log("form")')],
+    ["assets/style-xyz789.css", makeFile(".form { color: red }")],
+  ]);
+  const key = "forms/form-abc1234";
+
+  it("is read by readZipFromR2 under the /_f/ paths renderBrand expects", async () => {
+    await env.ARTIFACTS.put(key, storeZip(formZipEntries(dist)));
+    const form = await readZipFromR2(env.ARTIFACTS, key);
+    expect([...form.keys()].sort()).toEqual(["/_f/assets/index-abc123.js", "/_f/assets/style-xyz789.css", "/_f/index.html"]);
+    expect(DEC.decode(form.get("/_f/assets/index-abc123.js")!)).toBe('console.log("form")');
+  });
+
+  it("renders: chunks get opaque names, index.html points at them, the form is served at /_f/", async () => {
+    await env.ARTIFACTS.put(key, storeZip(formZipEntries(dist)));
+    const form = await readZipFromR2(env.ARTIFACTS, key);
+    const { files, saltPrefix } = await renderBrand(makeSite(), form, "brand-1", "rev-1");
+    const paths = [...files.keys()];
+    const formPaths = paths.filter((p) => p.startsWith("/_f/"));
+    expect(formPaths).toHaveLength(3);
+    expect(formPaths).toContain("/_f/index.html");
+    expect(formPaths.filter((p) => p.startsWith(`/_f/assets/${saltPrefix}_`) && p.endsWith(".js"))).toHaveLength(1);
+    expect(formPaths.filter((p) => p.startsWith(`/_f/assets/${saltPrefix}_`) && p.endsWith(".css"))).toHaveLength(1);
+    const html = DEC.decode(files.get("/_f/index.html")!);
+    expect(html).not.toContain("index-abc123");
+    expect(html).not.toContain("style-xyz789");
+    for (const path of paths.filter((p) => p.startsWith("/_f/assets/"))) expect(html).toContain(path.split("/").pop()!);
+  });
+
+  it("reads back the same entries and bytes as the factory's own zip()", async () => {
+    const entries = formZipEntries(dist);
+    const viaScript = unzip(storeZip(entries));
+    const viaFactory = unzip(zip(new Map(entries.map((entry) => [entry.path, entry.bytes]))));
+    const text = (files: Map<string, Uint8Array>) => [...files].map(([path, bytes]) => [path, DEC.decode(bytes)]).sort(([a], [b]) => String(a).localeCompare(String(b)));
+    expect(text(viaScript)).toEqual(text(viaFactory));
+  });
+
+  it("without the leading slash the chunks would not be renamed (why every entry starts with /_f/)", async () => {
+    const flat = unzip(storeZip([{ path: "_f/assets/index-abc123.js", bytes: makeFile("x") }, { path: "_f/index.html", bytes: makeFile("<p></p>") }]));
+    const { files } = await renderBrand(makeSite(), flat, "brand-1", "rev-1");
+    expect(files.has("_f/assets/index-abc123.js")).toBe(true);
   });
 });
 

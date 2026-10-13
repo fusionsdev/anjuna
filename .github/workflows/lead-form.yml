@@ -2,6 +2,11 @@
 # in R2 as an immutable `form@<sha>/` prefix with a SHA-256 manifest. Brand Workers (T7/T10)
 # copy from that prefix; nothing here deploys a Worker.
 #
+# The same release also writes one ZIP at `forms/form-<sha7>`, the key the factory install Workflow
+# reads (workers/factory/src/render.ts readZipFromR2). It is built from the manifest-verified dist,
+# its SHA-256 is printed in the job log and step summary, and the owner registers it with
+# POST /api/form-artifacts (docs/runbooks/form-artifact-release.md). Nothing here writes to D1.
+#
 # Required configuration (names only; values live in GitHub, never in git):
 #   secrets.CLOUDFLARE_API_TOKEN   scoped token with R2:Edit on the artifacts bucket (O2)
 #   secrets.CLOUDFLARE_ACCOUNT_ID  account that owns the bucket
@@ -123,6 +128,8 @@ jobs:
       R2_BUCKET: ${{ vars.R2_ARTIFACTS_BUCKET }}
       PREFIX: form@${{ github.sha }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Require the r2-artifacts environment settings
         run: |
           set -euo pipefail
@@ -154,6 +161,30 @@ jobs:
             }
             console.log("verified", m.files.length, "files, bundle_sha256", m.bundle_sha256);
           '
+
+      - name: Derive the form artifact identity (same convention as the registered form-0e113de row)
+        run: |
+          set -euo pipefail
+          sha7="${GITHUB_SHA:0:7}"
+          # The payload version is what the form sends as form_version; core accepts only its own FORM_VERSION.
+          payload_version="$(sed -n 's/^  formVersion: "\([^"]*\)",$/\1/p' apps/lead-form/src/App.tsx)"
+          [ -n "$payload_version" ] || { echo "::error::formVersion not found in apps/lead-form/src/App.tsx"; exit 1; }
+          {
+            echo "FORM_ARTIFACT_ID=form-$sha7"
+            echo "ZIP_KEY=forms/form-$sha7"
+            echo "BUNDLE_FORM_VERSION=form@$sha7"
+            echo "PAYLOAD_VERSION=$payload_version"
+          } >> "$GITHUB_ENV"
+
+      - name: Pack the verified dist into the factory ZIP (deterministic, sorted, stored, fixed timestamps)
+        run: |
+          set -euo pipefail
+          node apps/lead-form/scripts/form-zip.mjs dist --out "$RUNNER_TEMP/form.zip" | tee "$RUNNER_TEMP/form-zip.json"
+          zip_sha256="$(sha256sum "$RUNNER_TEMP/form.zip" | cut -d' ' -f1)"
+          [ "$zip_sha256" = "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).sha256' "$RUNNER_TEMP/form-zip.json")" ] \
+            || { echo "::error::ZIP SHA-256 differs between the script and sha256sum"; exit 1; }
+          echo "ZIP_SHA256=$zip_sha256" >> "$GITHUB_ENV"
+          echo "$ZIP_KEY sha256 $zip_sha256"
 
       - name: Skip if this version is already published (form@sha is immutable)
         id: exists
@@ -195,3 +226,52 @@ jobs:
           npx --yes wrangler@4 r2 object put "$R2_BUCKET/$PREFIX/manifest.json" --remote \
             --file manifest.json --content-type "application/json" --cache-control "no-store"
           echo "published $PREFIX"
+
+      # Separate from the loose files so a tag published before the ZIP existed can be re-run to get one.
+      # Writes only after wrangler reported "The specified key does not exist." (scripts/r2-lookup.mjs).
+      # A timeout, 5xx, auth failure or failed download is an error, never "absent".
+      - name: Upload the factory ZIP (only after a confirmed not-found, never over different bytes)
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/existing.zip" "$RUNNER_TEMP/readback.zip"
+          set +e
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET/$ZIP_KEY" --remote --file "$RUNNER_TEMP/existing.zip" > "$RUNNER_TEMP/lookup.log" 2>&1
+          lookup_exit=$?
+          set -e
+          verdict="$(node apps/lead-form/scripts/r2-lookup.mjs --exit "$lookup_exit" --log "$RUNNER_TEMP/lookup.log" --existing "$RUNNER_TEMP/existing.zip" --local "$RUNNER_TEMP/form.zip")"
+          echo "$ZIP_KEY lookup: $verdict (wrangler exit $lookup_exit)"
+          case "$verdict" in
+            same)
+              echo "$ZIP_KEY already published with the same bytes" ;;
+            different)
+              cat "$RUNNER_TEMP/lookup.log"
+              echo "::error::$ZIP_KEY exists with DIFFERENT bytes; refusing to overwrite"; exit 1 ;;
+            missing)
+              npx --yes wrangler@4 r2 object put "$R2_BUCKET/$ZIP_KEY" --remote \
+                --file "$RUNNER_TEMP/form.zip" --content-type "application/zip" --cache-control "no-store"
+              npx --yes wrangler@4 r2 object get "$R2_BUCKET/$ZIP_KEY" --remote --file "$RUNNER_TEMP/readback.zip" > "$RUNNER_TEMP/readback.log" 2>&1 \
+                || { cat "$RUNNER_TEMP/readback.log"; echo "::error::could not read $ZIP_KEY back after the upload"; exit 1; }
+              readback_sha256="$(sha256sum "$RUNNER_TEMP/readback.zip" | cut -d' ' -f1)"
+              [ "$readback_sha256" = "$ZIP_SHA256" ] \
+                || { echo "::error::$ZIP_KEY read back as $readback_sha256, expected $ZIP_SHA256"; exit 1; }
+              echo "published $ZIP_KEY and verified its SHA-256" ;;
+            *)
+              cat "$RUNNER_TEMP/lookup.log"
+              echo "::error::lookup of $ZIP_KEY failed (not a confirmed not-found); nothing was written"; exit 1 ;;
+          esac
+
+      - name: Print what the owner registers
+        run: |
+          set -euo pipefail
+          {
+            echo "### Form artifact $FORM_ARTIFACT_ID"
+            echo
+            echo "- R2 key: \`$ZIP_KEY\`"
+            echo "- ZIP SHA-256: \`$ZIP_SHA256\`"
+            echo
+            echo "Owner request, \`POST /api/form-artifacts\` (set \`template_version_id\` to a sealed template version):"
+            echo
+            echo '```json'
+            echo "{\"form_artifact_id\":\"$FORM_ARTIFACT_ID\",\"template_version_id\":\"<sealed template version id>\",\"git_sha\":\"$GITHUB_SHA\",\"bundle_form_version\":\"$BUNDLE_FORM_VERSION\",\"payload_version\":\"$PAYLOAD_VERSION\",\"manifest_sha256\":\"$ZIP_SHA256\"}"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

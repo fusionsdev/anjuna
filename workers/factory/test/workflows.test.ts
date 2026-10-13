@@ -8,12 +8,13 @@ import { RollbackBrandWorkflow, type RollbackParams } from "../src/workflows/rol
 import factory from "../src/index";
 import { setInstallStatus } from "../src/receipt";
 import { UpgradeAllWorkflow, type UpgradeAllParams } from "../src/workflows/upgrade-all";
-import { zip } from "../src/render";
+import { unzip, zip } from "../src/render";
 import type { Env } from "../src/env";
 
 beforeAll(() => applyD1Migrations(env.FACTORY, env.MIGRATIONS));
 afterEach(() => vi.unstubAllGlobals());
 const now = "2026-10-06T00:00:00.000Z";
+const DEC = new TextDecoder();
 
 // Mirror of apps/web/src/server/retry-install.ts#queueInstallRetry. The factory test
 // must not reach across package boundaries into the web Worker's server code, so the D1
@@ -741,6 +742,117 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
       expect(f.runtime()).toMatchObject({ applied_revision_id: f.revision, paused: false });
       expect(await revisionRow(next)).toMatchObject({ template_version_id: f.version, form_artifact_id: f.artifact });
+    });
+
+    // A newer registered release: its own ZIP, payload 2026-01, bundle form@new.
+    async function addNewForm(f: Fixture) {
+      const artifact = `form-new-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,created_at,payload_version,bundle_form_version) VALUES (?,?,?,?,?,'2026-01','form@new')")
+        .bind(artifact, `new${f.id}`, `${f.id}/form-new.zip`, f.id, new Date(Date.parse(now) + 1000).toISOString()).run();
+      const enc = new TextEncoder();
+      await env.ARTIFACTS.put(`${f.id}/form-new.zip`, zip(new Map([
+        ["/_f/index.html", enc.encode('<p>Form v2</p><script src="/_f/assets/index-v2.js"></script>')],
+        ["/_f/assets/index-v2.js", enc.encode("console.log('form v2')")],
+      ])));
+      return artifact;
+    }
+    async function startFormRedeploy(f: Fixture, artifact: string) {
+      const next = await startRedeploy(f);
+      await env.FACTORY.prepare("UPDATE brand_revisions SET form_artifact_id=? WHERE revision_id=?").bind(artifact, next).run();
+      return next;
+    }
+    const renderedFiles = async (f: Fixture, revision: string) => unzip(new Uint8Array(await (await env.ARTIFACTS.get(`renders/${f.brand}/${revision}.zip`))!.arrayBuffer()));
+    const brandConfig = (f: Fixture) => (f.uploads[0]!.bindings.find((binding) => binding.name === "BRAND_CONFIG") as { json: Record<string, unknown> }).json;
+
+    it("moves a live brand to a newer form: renders the new ZIP, ships its version in the Worker config and syncs core", async () => {
+      const f = await fixture(true, false, false);
+      const artifact = await addNewForm(f);
+      const next = await startFormRedeploy(f, artifact);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: next });
+      expect(await revisionRow(next)).toEqual({ revision: 2, template_version_id: f.version, form_artifact_id: artifact, worker_version_id: "worker-local" });
+      // The rendered assets come from the new ZIP, not the old one.
+      const rendered = await renderedFiles(f, next);
+      expect(DEC.decode(rendered.get("/_f/index.html")!)).toContain("Form v2");
+      expect(rendered.has("/_f/assets/index-v2.js")).toBe(false);
+      expect([...rendered.keys()].filter((path) => /^\/_f\/assets\/[0-9a-f]{8}_[0-9a-f]{16}\.js$/.test(path))).toHaveLength(1);
+      expect(brandConfig(f)).toMatchObject({ form_version: "form@new" });
+      // Core: the runtime sync carries the new bundle identity, and the lead payload version is untouched.
+      expect(f.applied).toHaveLength(1);
+      expect(f.applied[0]).toMatchObject({ expected_revision_id: f.revision, target_revision_id: next, initial_runtime: { form_version: "form@new" } });
+      expect(f.runtime()).toMatchObject({ applied_revision_id: next, bundle_form_version: "form@new" });
+      expect(await stepsOf(f.install)).toEqual(["validate", "save_rollback", "render", "upload_assets", "upload_script", "deploy", "attach_domains", "smoke", "sync_runtime", "receipt"]);
+      expect(f.compensation).toHaveLength(0);
+    });
+
+    it("the same redeploy without a new artifact keeps the old form version in the Worker config and core", async () => {
+      const f = await fixture(true, false, false);
+      await addNewForm(f);
+      await startRedeploy(f);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(brandConfig(f)).toMatchObject({ form_version: "form@old" });
+      expect(f.runtime()).toMatchObject({ bundle_form_version: "form@old" });
+    });
+
+    it("fails before changing anything when the new form's ZIP is missing, leaving the old form live", async () => {
+      const f = await fixture(true, false, false);
+      const artifact = await addNewForm(f);
+      await env.ARTIFACTS.delete(`${f.id}/form-new.zip`);
+      const next = await startFormRedeploy(f, artifact);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(f.uploads).toHaveLength(0);
+      expect(f.applied).toHaveLength(0);
+      expect(f.runtime()).toMatchObject({ applied_revision_id: f.revision, bundle_form_version: "form@old" });
+      expect(await revisionRow(next)).toMatchObject({ worker_version_id: null });
+    });
+
+    it("rolls a failed smoke back to the old Worker version and the old form version", async () => {
+      const f = await fixture(true, false, false);
+      const artifact = await addNewForm(f);
+      const next = await startFormRedeploy(f, artifact);
+      f.settings.smokeFails = true;
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(f.compensation).toHaveLength(1);
+      expect(f.compensation[0]).toMatchObject({ original_install_id: f.install, to_revision_id: f.revision });
+      // Core was not synced to the new form: the sync step comes after the smoke test.
+      expect(f.applied).toHaveLength(0);
+      expect(f.runtime()).toMatchObject({ bundle_form_version: "form@old" });
+
+      await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(f.compensation[0]!), steps().step);
+      const redeployed = f.network.mock.calls.filter(([url, init]) => String(url).endsWith(`/scripts/brand-${f.brand}/deployments`) && init?.method === "POST");
+      expect(JSON.parse(String(redeployed[0]![1]!.body))).toEqual({ strategy: "percentage", versions: [{ version_id: "worker-old", percentage: 100 }] });
+      expect(await f.installRow()).toEqual({ status: "rolled_back" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      expect(f.runtime()).toMatchObject({ applied_revision_id: f.revision, bundle_form_version: "form@old" });
+      expect(f.applied.at(-1)).toMatchObject({ target_revision_id: f.revision, bundle_form_version: "form@old" });
+      expect(await revisionRow(f.revision)).toMatchObject({ form_artifact_id: f.artifact });
+    });
+
+    it("a manual rollback after a successful form change returns to the previous revision, its Worker version and its form version", async () => {
+      const f = await fixture(true, false, false);
+      const artifact = await addNewForm(f);
+      const next = await startFormRedeploy(f, artifact);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(f.runtime()).toMatchObject({ applied_revision_id: next, bundle_form_version: "form@new" });
+
+      const rollbackId = `rollback-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at) VALUES (?,?,'rollback','queued',?,?,'owner','owner',?)")
+        .bind(rollbackId, f.brand, next, f.revision, now).run();
+      await RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow,
+        event({ install_id: rollbackId, brand_id: f.brand, to_revision_id: f.revision }), steps().step);
+      const deployments = f.network.mock.calls.filter(([url, init]) => String(url).endsWith(`/scripts/brand-${f.brand}/deployments`) && init?.method === "POST");
+      expect(JSON.parse(String(deployments.at(-1)![1]!.body))).toEqual({ strategy: "percentage", versions: [{ version_id: "worker-old", percentage: 100 }] });
+      expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(rollbackId).first()).toEqual({ status: "rolled_back" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      expect(f.runtime()).toMatchObject({ applied_revision_id: f.revision, bundle_form_version: "form@old" });
+      // The form change stays on its own revision; the old revision still names the old artifact.
+      expect(await revisionRow(f.revision)).toMatchObject({ form_artifact_id: f.artifact });
+      expect(await revisionRow(next)).toMatchObject({ form_artifact_id: artifact });
     });
   });
 
