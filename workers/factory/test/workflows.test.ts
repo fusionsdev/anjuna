@@ -64,7 +64,7 @@ function steps() {
   const attempts = new Map<string, number>();
   const failures = new Map<string, unknown>();
   const step = {
-    async do(name: string, configOrWork: WorkflowStepConfig | (() => Promise<unknown>), callback?: () => Promise<unknown>) {
+    async do(name: string, configOrWork: WorkflowStepConfig | ((ctx?: { attempt: number }) => Promise<unknown>), callback?: (ctx: { attempt: number }) => Promise<unknown>) {
       const config = typeof configOrWork === "function" ? {} : configOrWork;
       const work = typeof configOrWork === "function" ? configOrWork : callback!;
       configs.set(name, config);
@@ -75,7 +75,7 @@ function steps() {
       try {
         for (let attempt = 0; ; attempt++) {
           attempts.set(name, attempt + 1);
-          try { const value = await work(); cache.set(name, value); return value; }
+          try { const value = await work({ attempt: attempt + 1 }); cache.set(name, value); return value; }
           catch (err) {
             if (err instanceof NonRetryableError || attempt >= (config.retries?.limit ?? 0)) { failures.set(name, err); throw err; }
             await hooks.retry(name);
@@ -1089,6 +1089,70 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       expect(s.attempts.get("validate")).toBe(4);
       expect(await f.installRow()).toEqual({ status: "failed" });
       expect(JSON.parse((await validateReceipt(f.install))!.output_json).error).toContain("HTTP 502");
+    });
+
+    // Receipt D1 I/O belongs to the retried step: one transient D1 error on it must not fail the install.
+    function failReceiptD1Once(f: Fixture, kind: "read" | "write") {
+      const real = f.bindings.FACTORY;
+      const pattern = kind === "read" ? /^SELECT status, output_json FROM install_receipts/ : /^INSERT INTO install_receipts/;
+      let armed = true;
+      const prepare = (sql: string) => {
+        const statement = real.prepare(sql);
+        if (!armed || !pattern.test(sql)) return statement;
+        return new Proxy(statement, { get: (target, prop) => prop === "bind"
+          ? (...args: unknown[]) => {
+            const bound = target.bind(...args);
+            if (!(args.includes("validate") && (kind === "read" || args.includes("ok")))) return bound;
+            armed = false;
+            return new Proxy(bound, { get: (b, p) => (p === "first" || p === "run")
+              ? async () => { throw new Error("D1_ERROR: transient receipt I/O failure"); }
+              : Reflect.get(b, p, b) });
+          }
+          : Reflect.get(target, prop, target) });
+      };
+      (f.bindings as unknown as { FACTORY: unknown }).FACTORY = new Proxy(real, { get: (t, p) => p === "prepare" ? prepare : Reflect.get(t, p, t) });
+      return () => armed;
+    }
+    const okReceipts = (f: Fixture) => env.FACTORY.prepare("SELECT COUNT(*) AS n FROM install_receipts WHERE install_id=? AND step='validate' AND status='ok'")
+      .bind(f.install).first<{ n: number }>();
+    const allValidateReceipts = (f: Fixture) => env.FACTORY.prepare("SELECT COUNT(*) AS n FROM install_receipts WHERE install_id=? AND step='validate'")
+      .bind(f.install).first<{ n: number }>();
+
+    it.each(["read", "write"] as const)("retries a transient D1 failure on the validate receipt %s and reaches READY with one ok receipt", async (kind) => {
+      const f = await fixture();
+      const armed = failReceiptD1Once(f, kind);
+      const s = steps();
+      await runInstall(f, s);
+      expect(armed()).toBe(false);
+      expect(s.attempts.get("validate")).toBe(2);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await okReceipts(f)).toEqual({ n: 1 });
+      expect(await allValidateReceipts(f)).toEqual({ n: 1 });
+    });
+
+    it("writes exactly one failed receipt, after one run, for a deterministic failure", async () => {
+      const f = await fixture();
+      f.settings.zoneName = "other.example";
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.attempts.get("validate")).toBe(1);
+      expect(await allValidateReceipts(f)).toEqual({ n: 1 });
+      expect((await validateReceipt(f.install))!.status).toBe("failed");
+    });
+
+    it("re-runs validate when the owner retries a failed install", async () => {
+      const f = await fixture();
+      f.settings.zoneName = "other.example";
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      const retryId = await queueInstallRetry(env.FACTORY, f.install);
+      expect(retryId).not.toBeNull();
+      f.settings.zoneName = `${f.id}.example`;
+      const s = steps();
+      await runInstall({ ...f, params: { ...f.params, install_id: retryId! } }, s);
+      expect(s.attempts.get("validate")).toBe(1);
+      expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(retryId).first()).toEqual({ status: "ready" });
+      expect(await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM install_receipts WHERE install_id=? AND step='validate' AND status='ok'").bind(retryId).first()).toEqual({ n: 1 });
     });
 
     it("stores no failed receipt for an attempt that a retry then fixes", async () => {

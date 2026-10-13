@@ -6,7 +6,7 @@ import {
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt } from "../receipt.js";
+import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt, getReceipt, saveReceipt } from "../receipt.js";
 import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
 import type { Env } from "../env.js";
@@ -60,6 +60,34 @@ async function failFast<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * withReceipt for the validate step, run inside step.do so its D1 reads and writes are retried with the step.
+ * An ok receipt short-circuits. A failed receipt is saved only when no retry is left (a NonRetryableError or
+ * the last attempt), because withReceipt rethrows a stored failure and would defeat every retry. Receipt
+ * contents match withReceipt: `{ error: message }` on failure, the step output on success.
+ */
+async function validateWithReceipt<T extends Record<string, unknown>>(
+  db: D1Database, installId: string, attempt: number, work: () => Promise<T>,
+): Promise<T> {
+  const existing = await getReceipt(db, installId, "validate");
+  if (existing?.status === "ok") return existing.output as T;
+  if (existing?.status === "failed") {
+    const stored = String(existing.output?.error ?? "step previously failed");
+    throw new NonRetryableError(stored.startsWith("Error: ") ? stored.slice("Error: ".length) : stored);
+  }
+  let result: T;
+  try {
+    result = await work();
+  } catch (err) {
+    if (err instanceof NonRetryableError || attempt > VALIDATE_RETRY_CONFIG.retries.limit) {
+      await saveReceipt(db, installId, "validate", "failed", { error: err instanceof Error ? err.message : String(err) });
+    }
+    throw err;
+  }
+  await saveReceipt(db, installId, "validate", "ok", result);
+  return result;
+}
+
 interface FormArtifactRow {
   r2_key: string;
   payload_version: string | null;
@@ -87,10 +115,10 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
     try {
       await step.do("claim_install", () => setInstallStatus(db, install_id, "running", undefined, brand_id));
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      // The receipt wraps the step, as for smoke: a receipt written inside the callback would store the first
-      // failure and make every retry rethrow it. It is written once, after the step succeeds or gives up.
-      const { zone_id, domain, hostnames: cachedHostnames, name, account, previous_revision_id, initial_runtime } = await withReceipt(db, install_id, "validate", () => step.do("validate", VALIDATE_RETRY_CONFIG, async () => {
-        return failFast(async () => {
+      // Receipt reads and writes sit inside the retried step, so a transient D1 error retries the step instead
+      // of failing the install. A failed receipt is stored only on the final attempt: see validateWithReceipt.
+      const { zone_id, domain, hostnames: cachedHostnames, name, account, previous_revision_id, initial_runtime } = await step.do("validate", VALIDATE_RETRY_CONFIG, async (ctx) => {
+        return validateWithReceipt(db, install_id, ctx.attempt, () => failFast(async () => {
           const brand = await db
             .prepare("SELECT brand_id, name, account, domain, keyword_default, current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
@@ -160,8 +188,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             previous_revision_id: brand.current_revision_id,
             initial_runtime: deriveAuthoritativeRuntime(brand_id, tenant, artifact),
           };
-        });
-      }));
+        }));
+      });
       // A Workflow replaying an install started before per-zone hostnames has a cached
       // validate output without them; those installs attached apex plus www, so keep that pair.
       validated = true;
