@@ -7,7 +7,8 @@ import { InstallBrandWorkflow, type InstallParams } from "../src/workflows/insta
 import { RollbackBrandWorkflow, type RollbackParams } from "../src/workflows/rollback";
 import factory from "../src/index";
 import { setInstallStatus } from "../src/receipt";
-import { UpgradeAllWorkflow, type UpgradeAllParams } from "../src/workflows/upgrade-all";
+import { UpgradeAllWorkflow, upgradeInstallId, type UpgradeAllParams } from "../src/workflows/upgrade-all";
+import { REMOTE_STEP_RETRY_CONFIG } from "../src/step-receipt";
 import { unzip, zip } from "../src/render";
 import type { Env } from "../src/env";
 
@@ -1712,6 +1713,257 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
           expect(await f.installRow()).toEqual({ status: "rolled_back" });
           expect(await lockedBrand(f)).toBe(true);
           expect(await audits(f, "install.compensation_succeeded")).toBe(1);
+        });
+      });
+    });
+
+    describe("the upgrade-all Workflow", () => {
+      const control = { failCreate: new Map<string, number>(), loseResponse: new Map<string, number>(), autoReady: true };
+      const rejections = async (installId: string) => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='install.rejected' AND entity_id=?").bind(installId).first<{ n: number }>())!.n;
+      const statusOf = async (installId: string) => (await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(installId).first<{ status: string }>())?.status;
+      async function addBrand(f: Fixture, name: string) {
+        const brand = `${name}-${f.id}`;
+        await env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES (?,?,'test',?,'live',?,'owner',?,?)").bind(brand, brand, `${brand}.example`, `rev-${brand}`, now, now).run();
+        await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,worker_version_id,created_by,created_at) VALUES (?,?,1,?,?,'{}','worker-old','owner',?)").bind(`rev-${brand}`, brand, f.version, f.artifact, now).run();
+        return brand;
+      }
+      // A live canary brand plus two more, a target template version, and an install Workflow that behaves like the engine:
+      // an id can be created once, get() of an id never created throws, and the canary reaches READY as soon as its instance exists.
+      async function prepare(keepFixtureInstall = false) {
+        control.failCreate.clear(); control.loseResponse.clear(); control.autoReady = true;
+        const f = await fixture(true, false, false);
+        if (!keepFixtureInstall) await env.FACTORY.prepare("DELETE FROM installs WHERE install_id=?").bind(f.install).run();
+        const second = await addBrand(f, "second");
+        const third = await addBrand(f, "third");
+        const target = `target-${f.id}`;
+        await env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_at,created_by,created_at) VALUES (?,?,2,?,?,'sealed',?,'owner',?)").bind(target, f.template, target, `${f.id}/site.zip`, now, now).run();
+        const created = new Map<string, InstallParams>();
+        const createCalls: string[] = [];
+        f.bindings.INSTALL_WORKFLOW = {
+          async create({ id, params }: { id: string; params: InstallParams }) {
+            createCalls.push(params.brand_id);
+            const failures = control.failCreate.get(params.brand_id) ?? 0;
+            if (failures > 0) { control.failCreate.set(params.brand_id, failures - 1); throw new Error("workflow service unavailable"); }
+            if (created.has(id)) throw new Error("instance.already_exists");
+            created.set(id, params);
+            if (params.brand_id === f.brand && control.autoReady) {
+              await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?").bind(id).run();
+              await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?,'sync_runtime','ok','{}',?)").bind(id, now).run();
+            }
+            const lost = control.loseResponse.get(params.brand_id) ?? 0;
+            if (lost > 0) { control.loseResponse.set(params.brand_id, lost - 1); throw new Error("network connection lost"); }
+            return { id };
+          },
+          async get(id: string) {
+            if (!created.has(id)) throw new Error("instance.not_found");
+            return { id };
+          },
+        } as unknown as Workflow;
+        const params: UpgradeAllParams = { from_template_version_id: f.version, to_template_version_id: target, form_artifact_id: f.artifact, canary_brand_id: f.brand, started_by: "owner", started_role: "owner" };
+        const run = (s = steps()) => UpgradeAllWorkflow.prototype.run.call({ env: f.bindings } as unknown as UpgradeAllWorkflow, event(params), s.step);
+        const installOf = (brand: string) => upgradeInstallId(f.version, target, f.artifact, brand, "owner", "owner", f.brand);
+        return { f, second, third, created, createCalls, run, installOf, control };
+      }
+      type Prepared = Awaited<ReturnType<typeof prepare>>;
+      const everyInstall = (p: Prepared) => [p.f.brand, p.second, p.third];
+      const limit = REMOTE_STEP_RETRY_CONFIG.retries.limit;
+
+      it("starts one instance per brand on the plain path", async () => {
+        const p = await prepare();
+        const s = steps();
+        await p.run(s);
+        expect(p.createCalls.sort()).toEqual(everyInstall(p).sort());
+        expect(p.created.size).toBe(3);
+        expect(s.configs.get("canary_install")?.retries?.limit).toBe(limit);
+        expect(s.configs.get("bulk_installs")?.retries?.limit).toBe(limit);
+        expect(s.configs.get("canary_status_0")?.retries?.limit).toBeGreaterThan(0);
+      });
+
+      describe("canary_install", () => {
+        it("retries a failed dispatch without rejecting the install, and starts its instance once", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.f.brand, 1);
+          const canary = await p.installOf(p.f.brand);
+          const s = steps();
+          s.hooks.retry = async () => {
+            // Between the attempts the install is claimed (running) and has no instance yet.
+            expect(await statusOf(canary)).toBe("running");
+            expect(p.created.size).toBe(0);
+          };
+          await p.run(s);
+          expect(s.attempts.get("canary_install")).toBe(2);
+          expect(p.createCalls.filter((b) => b === p.f.brand)).toHaveLength(2);
+          expect(p.created.size).toBe(3);
+          expect(await statusOf(await p.installOf(p.f.brand))).toBe("ready");
+          expect(await rejections(await p.installOf(p.f.brand))).toBe(0);
+        });
+
+        it("retries a transient D1 error while claiming the install, and starts its instance once", async () => {
+          const p = await prepare();
+          failD1(p.f, /^UPDATE installs SET status = 'running'/);
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("canary_install")).toBe(2);
+          expect(p.createCalls.filter((b) => b === p.f.brand)).toHaveLength(1);
+          expect(p.created.size).toBe(3);
+          expect(await rejections(await p.installOf(p.f.brand))).toBe(0);
+        });
+
+        it("counts a dispatch whose answer was lost as started: no second create, no rejection", async () => {
+          const p = await prepare();
+          p.control.loseResponse.set(p.f.brand, 1);
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("canary_install")).toBe(1);
+          expect(p.createCalls.filter((b) => b === p.f.brand)).toHaveLength(1);
+          expect(await statusOf(await p.installOf(p.f.brand))).toBe("ready");
+          expect(await rejections(await p.installOf(p.f.brand))).toBe(0);
+        });
+
+        it("run again after it dispatched: finds the running install and its instance, and neither creates nor rejects", async () => {
+          const p = await prepare();
+          p.control.autoReady = false;
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("Canary install did not reach READY");
+          const canary = await p.installOf(p.f.brand);
+          expect(await statusOf(canary)).toBe("running");
+          expect(p.createCalls).toEqual([p.f.brand]);
+          await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?").bind(canary).run();
+          await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?,'sync_runtime','ok','{}',?)").bind(canary, now).run();
+          for (const name of [...s.cache.keys()].filter((key) => key === "canary_install" || key.startsWith("canary_status_"))) s.cache.delete(name);
+          await p.run(s);
+          expect(p.createCalls.filter((b) => b === p.f.brand)).toHaveLength(1);
+          expect(await statusOf(canary)).toBe("ready");
+          expect(await rejections(canary)).toBe(0);
+        });
+
+        it("gives up on a persistent dispatch failure after its configured retries: the install is rejected, the brand lock is freed and the command fails", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.f.brand, Infinity);
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("workflow service unavailable");
+          expect(s.attempts.get("canary_install")).toBe(limit + 1);
+          const canary = await p.installOf(p.f.brand);
+          expect(await statusOf(canary)).toBe("failed");
+          expect(await rejections(canary)).toBe(1);
+          expect(await p.f.brandRow()).toEqual({ status: "live", current_revision_id: p.f.revision });
+          expect(p.created.size).toBe(0);
+          expect(p.createCalls).toHaveLength(limit + 1);
+        });
+
+        it("settles at once when another lifecycle operation holds the brand: the install is rejected and no instance starts", async () => {
+          const p = await prepare(true);
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("Brand already has a lifecycle mutation in progress");
+          expect(s.attempts.get("canary_install")).toBe(1);
+          expect(s.failures.get("canary_install")).toBeInstanceOf(NonRetryableError);
+          const canary = await p.installOf(p.f.brand);
+          expect(await statusOf(canary)).toBe("failed");
+          expect(await rejections(canary)).toBe(1);
+          expect(p.createCalls).toHaveLength(0);
+          expect(await statusOf(p.f.install)).toBe("queued");
+        });
+      });
+
+      describe("canary_status", () => {
+        it("retries a transient D1 error in the poll: the command completes and no install starts twice", async () => {
+          const p = await prepare();
+          failD1(p.f, /^SELECT status FROM install_receipts WHERE install_id = \? AND step = 'sync_runtime'/);
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("canary_status_0")).toBe(2);
+          expect(p.createCalls.sort()).toEqual(everyInstall(p).sort());
+          expect(await rejections(await p.installOf(p.f.brand))).toBe(0);
+        });
+
+        it("fails the command only when the poll keeps failing, and still starts nothing twice", async () => {
+          const p = await prepare();
+          failD1(p.f, /^SELECT status FROM install_receipts WHERE install_id = \? AND step = 'sync_runtime'/, Infinity);
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("D1_ERROR");
+          expect(s.attempts.get("canary_status_0")).toBe(limit + 1);
+          expect(p.createCalls).toEqual([p.f.brand]);
+        });
+      });
+
+      describe("bulk_installs", () => {
+        it("retries one brand's failed dispatch and does not start the others again", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.second, 1);
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("bulk_installs")).toBe(2);
+          expect(p.createCalls.filter((b) => b === p.second)).toHaveLength(2);
+          expect(p.createCalls.filter((b) => b === p.third)).toHaveLength(1);
+          expect(p.created.size).toBe(3);
+          for (const brand of [p.second, p.third]) {
+            expect(await statusOf(await p.installOf(brand))).toBe("running");
+            expect(await rejections(await p.installOf(brand))).toBe(0);
+          }
+        });
+
+        it("counts a dispatch whose answer was lost as started: no second create, no rejection", async () => {
+          const p = await prepare();
+          p.control.loseResponse.set(p.second, 1);
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("bulk_installs")).toBe(1);
+          expect(p.createCalls.filter((b) => b === p.second)).toHaveLength(1);
+          expect(await statusOf(await p.installOf(p.second))).toBe("running");
+          expect(await rejections(await p.installOf(p.second))).toBe(0);
+        });
+
+        it("retries a transient D1 error in the loop, still starts the other brand at once, and starts every instance once", async () => {
+          const p = await prepare();
+          failD1(p.f, /current_revision_id, \?, 0, 'queued'/);
+          const s = steps();
+          let startedBeforeRetry = -1;
+          s.hooks.retry = async (name) => { if (name === "bulk_installs") startedBeforeRetry = p.createCalls.filter((b) => b === p.third).length; };
+          await p.run(s);
+          expect(s.attempts.get("bulk_installs")).toBe(2);
+          expect(startedBeforeRetry).toBe(1);
+          expect(p.createCalls.filter((b) => b === p.second)).toHaveLength(1);
+          expect(p.createCalls.filter((b) => b === p.third)).toHaveLength(1);
+          for (const brand of [p.second, p.third]) expect(await statusOf(await p.installOf(brand))).toBe("running");
+        });
+
+        it("gives up on one brand's persistent failure after its configured retries: that install is rejected and the others still start", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.second, Infinity);
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("bulk_installs")).toBe(limit + 1);
+          expect(p.createCalls.filter((b) => b === p.second)).toHaveLength(limit + 1);
+          expect(p.createCalls.filter((b) => b === p.third)).toHaveLength(1);
+          expect(await statusOf(await p.installOf(p.second))).toBe("failed");
+          expect(await rejections(await p.installOf(p.second))).toBe(1);
+          expect(await statusOf(await p.installOf(p.third))).toBe("running");
+        });
+
+        it("rejects a brand that another lifecycle operation holds at once, and starts the others", async () => {
+          const p = await prepare();
+          await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'install','running','owner',?)").bind(`other-${p.f.id}`, p.second, "2020-01-01T00:00:00.000Z").run();
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("bulk_installs")).toBe(1);
+          expect(p.createCalls).not.toContain(p.second);
+          expect(await statusOf(await p.installOf(p.second))).toBe("failed");
+          expect(await statusOf(await p.installOf(p.third))).toBe("running");
+          expect(await statusOf(`other-${p.f.id}`)).toBe("running");
+        });
+
+        it("run again after it dispatched: starts nothing and rejects nothing", async () => {
+          const p = await prepare();
+          const s = steps();
+          await p.run(s);
+          s.cache.delete("bulk_installs");
+          const calls = p.createCalls.length;
+          await p.run(s);
+          expect(p.createCalls).toHaveLength(calls);
+          for (const brand of [p.second, p.third]) {
+            expect(await statusOf(await p.installOf(brand))).toBe("running");
+            expect(await rejections(await p.installOf(brand))).toBe(0);
+          }
         });
       });
     });
