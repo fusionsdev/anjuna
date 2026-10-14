@@ -67,12 +67,20 @@ export function stepReceipt<T extends Record<string, unknown>>(
   return receiptInRetriedStep(db, installId, step, config.retries.limit, ctx.attempt, () => failFast(work));
 }
 
-/** True when the Workflow instance exists: an earlier attempt of the step that dispatches it created it. A duplicate create throws instead of starting a second instance. */
-export async function instanceDispatched(workflow: Workflow, instanceId: string): Promise<boolean> {
+export type InstanceState = "present" | "absent" | "unknown";
+
+/**
+ * Whether the Workflow instance exists: an earlier attempt of the step that dispatches it may have created it. A duplicate create
+ * throws instead of starting a second instance. Only the engine's not-found answer means "absent": `get` of a missing instance
+ * throws an error whose message carries `instance.not_found` ("instance.not_found" from the local binding, miniflare
+ * workflows/binding.worker.js:15091-15096; "(instance.not_found) Instance does not exist" from the engine, :14717-14721 and :1373-1374).
+ * Any other failure (service unavailable, timeout) says nothing about the instance, so it is "unknown", never "absent".
+ */
+export async function instanceState(workflow: Workflow, instanceId: string): Promise<InstanceState> {
   try {
     await workflow.get(instanceId);
-    return true;
-  } catch {
-    return false;
+    return "present";
+  } catch (err) {
+    return err instanceof Error && err.message.includes("instance.not_found") ? "absent" : "unknown";
   }
 }

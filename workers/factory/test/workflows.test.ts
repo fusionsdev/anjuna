@@ -1718,7 +1718,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     });
 
     describe("the upgrade-all Workflow", () => {
-      const control = { failCreate: new Map<string, number>(), loseResponse: new Map<string, number>(), autoReady: true };
+      const control = { failCreate: new Map<string, number>(), loseResponse: new Map<string, number>(), autoReady: true, lookupFailures: 0 };
       const rejections = async (installId: string) => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='install.rejected' AND entity_id=?").bind(installId).first<{ n: number }>())!.n;
       const statusOf = async (installId: string) => (await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(installId).first<{ status: string }>())?.status;
       async function addBrand(f: Fixture, name: string) {
@@ -1730,7 +1730,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       // A live canary brand plus two more, a target template version, and an install Workflow that behaves like the engine:
       // an id can be created once, get() of an id never created throws, and the canary reaches READY as soon as its instance exists.
       async function prepare(keepFixtureInstall = false) {
-        control.failCreate.clear(); control.loseResponse.clear(); control.autoReady = true;
+        control.failCreate.clear(); control.loseResponse.clear(); control.autoReady = true; control.lookupFailures = 0;
         const f = await fixture(true, false, false);
         if (!keepFixtureInstall) await env.FACTORY.prepare("DELETE FROM installs WHERE install_id=?").bind(f.install).run();
         const second = await addBrand(f, "second");
@@ -1755,6 +1755,8 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
             return { id };
           },
           async get(id: string) {
+            // A lookup that fails without an answer: the instance may or may not exist. Only "instance.not_found" means it does not.
+            if (control.lookupFailures > 0) { control.lookupFailures--; throw new Error("workflow service unavailable"); }
             if (!created.has(id)) throw new Error("instance.not_found");
             return { id };
           },
@@ -1835,6 +1837,48 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
           expect(p.createCalls.filter((b) => b === p.f.brand)).toHaveLength(1);
           expect(await statusOf(canary)).toBe("ready");
           expect(await rejections(canary)).toBe(0);
+        });
+
+        it("never rejects an install whose Workflow state is unknown: it stays running, the brand lock is kept, no second create happens and the command fails with a clear error", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.f.brand, Infinity);
+          p.control.lookupFailures = Infinity;
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("could not be looked up");
+          expect(s.attempts.get("canary_install")).toBe(limit + 1);
+          const canary = await p.installOf(p.f.brand);
+          expect(await statusOf(canary)).toBe("running");
+          expect(await rejections(canary)).toBe(0);
+          expect(await p.f.brandRow()).toMatchObject({ status: "installing" });
+          expect(p.createCalls).toEqual([p.f.brand]);
+        });
+
+        it("keeps a running install that exists when the lookup fails on the last attempt: no create, no rejection", async () => {
+          const p = await prepare();
+          p.control.autoReady = false;
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("Canary install did not reach READY");
+          const canary = await p.installOf(p.f.brand);
+          for (const name of [...s.cache.keys()].filter((key) => key === "canary_install")) s.cache.delete(name);
+          p.control.lookupFailures = Infinity;
+          await expect(p.run(s)).rejects.toThrow("could not be looked up");
+          expect(s.attempts.get("canary_install")).toBe(limit + 1);
+          expect(await statusOf(canary)).toBe("running");
+          expect(await rejections(canary)).toBe(0);
+          expect(await p.f.brandRow()).toMatchObject({ status: "installing" });
+          expect(p.createCalls).toEqual([p.f.brand]);
+        });
+
+        it("retries an unknown lookup and creates the missing instance once the lookup answers not found", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.f.brand, 1);
+          p.control.lookupFailures = 1;
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("canary_install")).toBe(2);
+          expect(p.createCalls.filter((b) => b === p.f.brand)).toHaveLength(2);
+          expect(p.created.size).toBe(3);
+          expect(await rejections(await p.installOf(p.f.brand))).toBe(0);
         });
 
         it("gives up on a persistent dispatch failure after its configured retries: the install is rejected, the brand lock is freed and the command fails", async () => {
@@ -1925,6 +1969,37 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
           expect(p.createCalls.filter((b) => b === p.second)).toHaveLength(1);
           expect(p.createCalls.filter((b) => b === p.third)).toHaveLength(1);
           for (const brand of [p.second, p.third]) expect(await statusOf(await p.installOf(brand))).toBe("running");
+        });
+
+        it("never rejects an install whose Workflow state is unknown, on the last attempt either: both stay running, the locks are kept, nothing is created again", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.second, Infinity);
+          p.control.lookupFailures = Infinity;
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("could not be looked up");
+          expect(s.attempts.get("bulk_installs")).toBe(limit + 1);
+          for (const brand of [p.second, p.third]) {
+            expect(await statusOf(await p.installOf(brand))).toBe("running");
+            expect(await rejections(await p.installOf(brand))).toBe(0);
+            expect(await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id=?").bind(brand).first()).toEqual({ status: "installing" });
+            expect(p.createCalls.filter((b) => b === brand)).toHaveLength(1);
+          }
+        });
+
+        it("retries an unknown lookup for one brand, creates its missing instance and skips the other brand's running install", async () => {
+          const p = await prepare();
+          p.control.failCreate.set(p.second, 1);
+          p.control.lookupFailures = 1;
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("bulk_installs")).toBe(2);
+          expect(p.createCalls.filter((b) => b === p.second)).toHaveLength(2);
+          expect(p.createCalls.filter((b) => b === p.third)).toHaveLength(1);
+          expect(p.created.size).toBe(3);
+          for (const brand of [p.second, p.third]) {
+            expect(await statusOf(await p.installOf(brand))).toBe("running");
+            expect(await rejections(await p.installOf(brand))).toBe(0);
+          }
         });
 
         it("gives up on one brand's persistent failure after its configured retries: that install is rejected and the others still start", async () => {
@@ -2212,6 +2287,23 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     await runInstall(f);
     expect((await recover(f)).status).toBe(409);
     expect(f.compensation).toHaveLength(1);
+  });
+
+  it("leaves a recovery that its Workflow already claimed running when the dispatch answer is lost and the lookup fails", async () => {
+    const f = await fixture();
+    await failCompensation(f);
+    (f.bindings as unknown as { ROLLBACK_WORKFLOW: unknown }).ROLLBACK_WORKFLOW = {
+      async create({ params }: { params: RollbackParams }) {
+        await env.FACTORY.prepare("UPDATE installs SET status='running' WHERE install_id=?").bind(params.install_id).run();
+        throw new Error("network connection lost");
+      },
+      async get() { throw new Error("workflow service unavailable"); },
+    };
+    const response = await recover(f);
+    expect(response.status).toBe(502);
+    const { install_id } = await response.json() as { install_id: string };
+    expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(install_id).first()).toEqual({ status: "running" });
+    expect(await f.brandRow()).toMatchObject({ status: "installing" });
   });
 
   it("retains the lock when recovery fails and permits a fresh Owner attempt", async () => {

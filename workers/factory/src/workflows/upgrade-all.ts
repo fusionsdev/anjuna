@@ -2,7 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
 import { rejectQueuedInstall, setInstallStatus } from "../receipt.js";
-import { REMOTE_STEP_RETRY_CONFIG, instanceDispatched } from "../step-receipt.js";
+import { REMOTE_STEP_RETRY_CONFIG, instanceState } from "../step-receipt.js";
 
 export interface UpgradeAllParams {
   from_template_version_id: string;
@@ -106,20 +106,27 @@ export function canarySleepStepName(iteration: number): string {
  * Starts the install Workflow instance of one upgrade install row (canary or bulk). Safe to run again after any earlier attempt:
  * the instance id is the install id, so a create for an id that exists throws instead of starting a second instance.
  *   - Not queued or running (ready, failed, rolled back): nothing to do.
- *   - Running and its instance exists: an earlier attempt dispatched it. Nothing to do.
- *   - Running without an instance: an earlier attempt claimed the install and failed before or during create. Create it.
+ *   - Running and its instance is present: an earlier attempt dispatched it. Skipped.
+ *   - Running and its instance is confirmed absent: an earlier attempt claimed the install and failed before or during create. Create it.
  *   - Queued: claim it, then create the instance.
  * A create that throws but left the instance behind (the answer was lost) counts as started. Any other failure goes back to the
- * caller to retry, except a brand held by another lifecycle operation, which is rejected at once, and the last attempt, which is
- * rejected too. A rejected install is never one whose instance exists. Returns the error when the install was rejected.
+ * caller to retry. An install is rejected only when its instance is confirmed absent and no retry is left, or when another lifecycle
+ * operation holds the brand (nothing was claimed or created then). When the lookup itself fails the state is unknown: the instance may
+ * be running, so the install row and the brand lock stay as they are and the step throws, on the last attempt too. Rejecting would mark
+ * a running install failed and free its brand while its Workflow goes on. Returns the error when the install was rejected.
  */
 async function startUpgradeInstall(env: Env, install: { install_id: string; brand_id: string; revision_id: string }, attempt: number): Promise<Error | undefined> {
   const { FACTORY: db, INSTALL_WORKFLOW: workflow } = env;
   const { install_id, brand_id, revision_id } = install;
+  const unknown = () => new Error(`Workflow instance ${install_id} could not be looked up, so the install was left as it is (its brand stays locked)`);
   const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
   if (existing?.status !== "queued" && existing?.status !== "running") return undefined;
   let claimed = existing.status === "running";
-  if (claimed && await instanceDispatched(workflow, install_id)) return undefined;
+  if (claimed) {
+    const state = await instanceState(workflow, install_id);
+    if (state === "present") return undefined;
+    if (state === "unknown") throw unknown();
+  }
   try {
     if (!claimed) {
       await setInstallStatus(db, install_id, "running", undefined, brand_id);
@@ -127,9 +134,14 @@ async function startUpgradeInstall(env: Env, install: { install_id: string; bran
     }
     await workflow.create({ id: install_id, params: { install_id, brand_id, revision_id } });
   } catch (error) {
-    if (await instanceDispatched(workflow, install_id)) return undefined;
-    const held = error instanceof Error && error.message.includes("lifecycle mutation in progress");
-    if (!held && attempt <= REMOTE_STEP_RETRY_CONFIG.retries.limit) throw error;
+    if (!claimed && error instanceof Error && error.message.includes("lifecycle mutation in progress")) {
+      await rejectQueuedInstall(db, install_id, brand_id, String(error), false);
+      return error;
+    }
+    const state = await instanceState(workflow, install_id);
+    if (state === "present") return undefined;
+    if (state === "unknown") throw unknown();
+    if (attempt <= REMOTE_STEP_RETRY_CONFIG.retries.limit) throw error;
     await rejectQueuedInstall(db, install_id, brand_id, String(error), claimed);
     return error instanceof Error ? error : new Error(String(error));
   }

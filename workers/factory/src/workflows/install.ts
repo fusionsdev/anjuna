@@ -9,7 +9,7 @@ import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js
 import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, stepErrorText } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import {
-  LOCAL_STEP_RETRY_CONFIG, REMOTE_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, failFast, instanceDispatched, receiptInRetriedStep, stepReceipt,
+  LOCAL_STEP_RETRY_CONFIG, REMOTE_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, failFast, instanceState, receiptInRetriedStep, stepReceipt,
 } from "../step-receipt.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
 import type { Env } from "../env.js";
@@ -425,8 +425,11 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               params: { install_id: compensationId, original_install_id: install_id, brand_id, to_revision_id: rollback?.previous_revision_id ?? null },
             });
           } catch (compensationError) {
-            if (await instanceDispatched(this.env.ROLLBACK_WORKFLOW, compensationId)) return { compensation_install_id: compensationId, triggered_rollback: "workflow_started" };
+            if (await instanceState(this.env.ROLLBACK_WORKFLOW, compensationId) === "present") return { compensation_install_id: compensationId, triggered_rollback: "workflow_started" };
             if (ctx.attempt <= REMOTE_STEP_RETRY_CONFIG.retries.limit) throw compensationError;
+            // Last attempt, and the instance is absent or its lookup failed. The rows are marked failed with recovery evidence, which keeps the
+            // brand lock and gives the Owner a Recover path. An instance that exists anyway cannot mutate the brand while the rows say failed: its
+            // claim refuses a finished compensation row, and one that had already claimed ends in finish_rollback, which overwrites these rows.
             const evidence = {
               original_install_id: install_id,
               compensation_install_id: compensationId,
