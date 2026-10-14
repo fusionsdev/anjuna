@@ -6,9 +6,10 @@ import {
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt, getReceipt, saveReceipt, stepErrorText, storedErrorMessage } from "../receipt.js";
+import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt, getReceipt, saveReceipt, stepErrorMessage, stepErrorText, storedErrorMessage } from "../receipt.js";
 import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
+import type { InstallStep } from "@anjuna/factory-db";
 import type { Env } from "../env.js";
 
 export interface InstallParams {
@@ -61,15 +62,15 @@ async function failFast<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
- * withReceipt for the validate step, run inside step.do so its D1 reads and writes are retried with the step.
- * An ok receipt short-circuits. A failed receipt is saved only when no retry is left (a NonRetryableError or
- * the last attempt), because withReceipt rethrows a stored failure and would defeat every retry. Receipt
- * contents match withReceipt: `{ error: message }` on failure, the step output on success.
+ * withReceipt for a step with its own retry config (validate, smoke), run inside step.do so its D1 reads and
+ * writes are retried with the step. An ok receipt short-circuits. A failed receipt is saved only when no retry
+ * is left (a NonRetryableError or the last attempt), because withReceipt rethrows a stored failure and would
+ * defeat every retry. Receipt contents match withReceipt: `{ error: message }` on failure, the step output on success.
  */
-async function validateWithReceipt<T extends Record<string, unknown>>(
-  db: D1Database, installId: string, attempt: number, work: () => Promise<T>,
+async function receiptInRetriedStep<T extends Record<string, unknown>>(
+  db: D1Database, installId: string, step: InstallStep, retryLimit: number, attempt: number, work: () => Promise<T>,
 ): Promise<T> {
-  const existing = await getReceipt(db, installId, "validate");
+  const existing = await getReceipt(db, installId, step);
   if (existing?.status === "ok") return existing.output as T;
   if (existing?.status === "failed") {
     const stored = String(existing.output?.error ?? "step previously failed");
@@ -79,12 +80,12 @@ async function validateWithReceipt<T extends Record<string, unknown>>(
   try {
     result = await work();
   } catch (err) {
-    if (err instanceof NonRetryableError || attempt > VALIDATE_RETRY_CONFIG.retries.limit) {
-      await saveReceipt(db, installId, "validate", "failed", { error: err instanceof Error ? err.message : String(err) });
+    if (err instanceof NonRetryableError || attempt > retryLimit) {
+      await saveReceipt(db, installId, step, "failed", { error: stepErrorMessage(err) });
     }
     throw err;
   }
-  await saveReceipt(db, installId, "validate", "ok", result);
+  await saveReceipt(db, installId, step, "ok", result);
   return result;
 }
 
@@ -115,9 +116,9 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       await step.do("claim_install", () => setInstallStatus(db, install_id, "running", undefined, brand_id));
       // ── Step 1: Validate ───────────────────────────────────────────────────
       // Receipt reads and writes sit inside the retried step, so a transient D1 error retries the step instead
-      // of failing the install. A failed receipt is stored only on the final attempt: see validateWithReceipt.
+      // of failing the install. A failed receipt is stored only on the final attempt: see receiptInRetriedStep.
       const { zone_id, domain, hostnames: cachedHostnames, name, account, previous_revision_id, initial_runtime } = await step.do("validate", VALIDATE_RETRY_CONFIG, async (ctx) => {
-        return validateWithReceipt(db, install_id, ctx.attempt, () => failFast(async () => {
+        return receiptInRetriedStep(db, install_id, "validate", VALIDATE_RETRY_CONFIG.retries.limit, ctx.attempt, () => failFast(async () => {
           const brand = await db
             .prepare("SELECT brand_id, name, account, domain, keyword_default, current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
@@ -366,21 +367,22 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
 
       // ── Step 8: Smoke test ─────────────────────────────────────────────────
-      // Persist only the final outcome. A failed receipt inside the callback would
-      // short-circuit every Workflow retry instead of re-fetching the hostnames.
+      // The receipt read and write run inside the retried step, so a transient D1 error retries the step
+      // instead of failing the install. A failed receipt is stored only on the final attempt: a failed
+      // receipt inside the callback would short-circuit every Workflow retry instead of re-fetching the hostnames.
       // An upgrade can target a brand the operator paused: it serves the 503 pause page and
       // stays paused, so smoke expects that page. Core is read on every attempt, inside the
       // step, so a pause toggled during the retry window is seen and the cached step result
       // stays the single replayed outcome. A failed read throws and retries; it never
       // downgrades to a guess. An absent runtime has no pause flag and is smoked as live.
-      await withReceipt(db, install_id, "smoke", () =>
-        step.do("smoke", SMOKE_RETRY_CONFIG, async () => {
+      await step.do("smoke", SMOKE_RETRY_CONFIG, async (ctx) => {
+        return receiptInRetriedStep(db, install_id, "smoke", SMOKE_RETRY_CONFIG.retries.limit, ctx.attempt, async () => {
           const state = previous_revision_id
             ? await new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN).runtimeState({ brand_id, account })
             : null;
           return smokeBrand(hostnames, { paused: state?.state === "applied" && state.paused });
-        }),
-      );
+        });
+      });
 
       if (previous_revision_id) {
         await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {

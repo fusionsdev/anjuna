@@ -272,6 +272,28 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
   });
 
+  // Receipt D1 I/O belongs to the retried step: one transient D1 error on it must not fail the install.
+  function failReceiptD1Once(f: Awaited<ReturnType<typeof fixture>>, step: "validate" | "smoke", kind: "read" | "write") {
+    const real = f.bindings.FACTORY;
+    const pattern = kind === "read" ? /^SELECT status, output_json FROM install_receipts/ : /^INSERT INTO install_receipts/;
+    let armed = true;
+    const prepare = (sql: string) => {
+      const statement = real.prepare(sql);
+      if (!armed || !pattern.test(sql)) return statement;
+      return new Proxy(statement, { get: (target, prop) => prop === "bind"
+        ? (...args: unknown[]) => {
+          const bound = target.bind(...args);
+          if (!(args.includes(step) && (kind === "read" || args.includes("ok")))) return bound;
+          armed = false;
+          return new Proxy(bound, { get: (b, p) => (p === "first" || p === "run")
+            ? async () => { throw new Error("D1_ERROR: transient receipt I/O failure"); }
+            : Reflect.get(b, p, b) });
+        }
+        : Reflect.get(target, prop, target) });
+    };
+    (f.bindings as unknown as { FACTORY: unknown }).FACTORY = new Proxy(real, { get: (t, p) => p === "prepare" ? prepare : Reflect.get(t, p, t) });
+    return () => armed;
+  }
   const smokeCalls = (f: Awaited<ReturnType<typeof fixture>>) => f.network.mock.calls.filter(([url]) => String(url).endsWith(".example/"));
   const smokeReceipt = (f: Awaited<ReturnType<typeof fixture>>) => env.FACTORY.prepare(
     "SELECT status,output_json FROM install_receipts WHERE install_id=? AND step='smoke'",
@@ -334,6 +356,49 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(smokeCalls(f)).toHaveLength(2);
     expect(await f.installRow()).toEqual({ status: "failed" });
     expect(f.compensation).toHaveLength(1);
+  });
+
+  const smokeReceiptCount = (f: Awaited<ReturnType<typeof fixture>>, status: "ok" | "failed") => env.FACTORY.prepare(
+    "SELECT COUNT(*) AS n FROM install_receipts WHERE install_id=? AND step='smoke' AND status=?",
+  ).bind(f.install, status).first<{ n: number }>();
+
+  it.each(["read", "write"] as const)("retries a transient D1 failure on the smoke receipt %s and reaches READY with one ok receipt and no compensation", async (kind) => {
+    const f = await fixture();
+    const armed = failReceiptD1Once(f, "smoke", kind);
+    const s = steps();
+    await runInstall(f, s);
+    expect(armed()).toBe(false);
+    expect(s.attempts.get("smoke")).toBe(2);
+    expect(await f.installRow()).toEqual({ status: "ready" });
+    expect(await smokeReceiptCount(f, "ok")).toEqual({ n: 1 });
+    expect(await smokeReceiptCount(f, "failed")).toEqual({ n: 0 });
+    expect(f.compensation).toHaveLength(0);
+  });
+
+  it("writes one failed smoke receipt with clean text and dispatches compensation for a NonRetryableError", async () => {
+    const f = await fixture();
+    f.settings.www.push(new Response("Not Found", { status: 404, headers: { server: "cloudflare" } }));
+    const s = steps();
+    await runInstall(f, s);
+    expect(s.attempts.get("smoke")).toBe(1);
+    expect(await smokeReceiptCount(f, "failed")).toEqual({ n: 1 });
+    expect(await smokeReceiptCount(f, "ok")).toEqual({ n: 0 });
+    const error = JSON.parse((await smokeReceipt(f))!.output_json).error as string;
+    expect(error).toContain("www returned 404");
+    expect(error).not.toContain("NonRetryableError");
+    expect(await f.installRow()).toEqual({ status: "failed" });
+    expect(f.compensation).toHaveLength(1);
+  });
+
+  it("writes one ok smoke receipt and no failed one when a retried 52x then passes", async () => {
+    const f = await fixture();
+    f.settings.apex.push(new Response("error code: 1016", { status: 530 }));
+    const s = steps();
+    await runInstall(f, s);
+    expect(s.attempts.get("smoke")).toBe(2);
+    expect(await smokeReceiptCount(f, "ok")).toEqual({ n: 1 });
+    expect(await smokeReceiptCount(f, "failed")).toEqual({ n: 0 });
+    expect(f.compensation).toHaveLength(0);
   });
 
   it("uploads the brand Worker with run_worker_first and an ASSETS binding (BR-1)", async () => {
@@ -1100,28 +1165,6 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       expect(JSON.parse((await validateReceipt(f.install))!.output_json).error).toContain("HTTP 502");
     });
 
-    // Receipt D1 I/O belongs to the retried step: one transient D1 error on it must not fail the install.
-    function failReceiptD1Once(f: Fixture, kind: "read" | "write") {
-      const real = f.bindings.FACTORY;
-      const pattern = kind === "read" ? /^SELECT status, output_json FROM install_receipts/ : /^INSERT INTO install_receipts/;
-      let armed = true;
-      const prepare = (sql: string) => {
-        const statement = real.prepare(sql);
-        if (!armed || !pattern.test(sql)) return statement;
-        return new Proxy(statement, { get: (target, prop) => prop === "bind"
-          ? (...args: unknown[]) => {
-            const bound = target.bind(...args);
-            if (!(args.includes("validate") && (kind === "read" || args.includes("ok")))) return bound;
-            armed = false;
-            return new Proxy(bound, { get: (b, p) => (p === "first" || p === "run")
-              ? async () => { throw new Error("D1_ERROR: transient receipt I/O failure"); }
-              : Reflect.get(b, p, b) });
-          }
-          : Reflect.get(target, prop, target) });
-      };
-      (f.bindings as unknown as { FACTORY: unknown }).FACTORY = new Proxy(real, { get: (t, p) => p === "prepare" ? prepare : Reflect.get(t, p, t) });
-      return () => armed;
-    }
     const okReceipts = (f: Fixture) => env.FACTORY.prepare("SELECT COUNT(*) AS n FROM install_receipts WHERE install_id=? AND step='validate' AND status='ok'")
       .bind(f.install).first<{ n: number }>();
     const allValidateReceipts = (f: Fixture) => env.FACTORY.prepare("SELECT COUNT(*) AS n FROM install_receipts WHERE install_id=? AND step='validate'")
@@ -1129,7 +1172,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
 
     it.each(["read", "write"] as const)("retries a transient D1 failure on the validate receipt %s and reaches READY with one ok receipt", async (kind) => {
       const f = await fixture();
-      const armed = failReceiptD1Once(f, kind);
+      const armed = failReceiptD1Once(f, "validate", kind);
       const s = steps();
       await runInstall(f, s);
       expect(armed()).toBe(false);
