@@ -256,18 +256,21 @@ describe("posthog proxy", () => {
     upstreamDown = true;
     await expectError(await forward(configured, "posthog"), 502, "internal");
   });
-  it("uses POSTHOG_HOST when it is an https origin, and treats any other value as not configured", async () => {
+  // One Miniflare per host costs about 6 s idle. A single test building all four needed 24 s of its 30 s budget, so each host is its own test.
+  it.each([
+    ["https://eu.i.posthog.com", "https://eu.i.posthog.com/e/"],
+    ["http://eu.i.posthog.com", null],
+    ["https://user@eu.i.posthog.com", null],
+    ["not a url", null],
+  ] as const)("uses POSTHOG_HOST when it is an https origin, and treats any other value as not configured: %s", async (host, expected) => {
     const stub = async (request: Request) => { upstream.push({ url: request.url, method: request.method, headers: {}, body: await request.text() }); return new Response(null, { status: 200 }); };
-    for (const [host, expected] of [["https://eu.i.posthog.com", "https://eu.i.posthog.com/e/"], ["http://eu.i.posthog.com", null], ["https://user@eu.i.posthog.com", null], ["not a url", null]] as const) {
-      const custom = await createHarness({ bindings: { POSTHOG_KEY: REAL_KEY, POSTHOG_HOST: host }, outbound: stub });
-      try {
-        await custom.seedAccount();
-        await custom.seedBrand();
-        expect((await forward(custom, "posthog")).status).toBe(204);
-      } finally { await custom.mf.dispose(); }
-      expect(upstream.map((call) => call.url)).toEqual(expected ? [expected] : []);
-      upstream.length = 0;
-    }
+    const custom = await createHarness({ bindings: { POSTHOG_KEY: REAL_KEY, POSTHOG_HOST: host }, outbound: stub });
+    try {
+      await custom.seedAccount();
+      await custom.seedBrand();
+      expect((await forward(custom, "posthog")).status).toBe(204);
+    } finally { await custom.mf.dispose(); }
+    expect(upstream.map((call) => call.url)).toEqual(expected ? [expected] : []);
   });
   it("accepts and drops the event when no key is configured", async () => {
     const response = await forward(open, "posthog");
