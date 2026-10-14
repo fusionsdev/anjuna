@@ -219,10 +219,10 @@ export async function uploadAssetBucket(
   });
   const text = await res.text();
   let json: { success?: boolean; errors?: { code: number; message: string }[]; result?: { jwt?: string } };
-  try { json = JSON.parse(text); } catch { throw new Error(`Asset upload failed: ${res.status} ${text.slice(0, 200)}`); }
+  try { json = JSON.parse(text); } catch { throw new CfError(`Asset upload failed: ${res.status} ${text.slice(0, 200)}`, deterministicStatus(res.status)); }
   if (!res.ok || json.success === false) {
     const msg = json.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") ?? text.slice(0, 200);
-    throw new Error(`Asset upload failed: ${res.status} ${msg}`);
+    throw new CfError(`Asset upload failed: ${res.status} ${msg}`, deterministicStatus(res.status));
   }
   return json.result?.jwt;
 }
