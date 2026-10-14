@@ -1439,6 +1439,64 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
         expect(await receiptOutput(f, step)).toMatchObject({ state: "noop" });
       });
     });
+
+    describe("compensation dispatch", () => {
+      const evidence = async (f: Fixture) => { try { return JSON.parse(await installError(f)); } catch { return null; } };
+
+      it("retries a transient dispatch failure and records no recovery evidence", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        f.settings.dispatchFailures = 1;
+        const s = steps();
+        await runInstall(f, s);
+        expect(s.attempts.get("rollback")).toBe(2);
+        expect(f.compensation).toHaveLength(1);
+        expect(await receipts(f, "rollback", "ok")).toBe(1);
+        expect(await receipts(f, "rollback", "failed")).toBe(0);
+        expect(await evidence(f)).toBeNull();
+        expect(await f.brandRow()).toMatchObject({ status: "installing" });
+      });
+
+      it("does not dispatch twice when the dispatch worked but its ok receipt could not be written", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        const armed = failReceiptD1Once(f, "rollback", "write");
+        const s = steps();
+        await runInstall(f, s);
+        expect(armed()).toBe(false);
+        expect(s.attempts.get("rollback")).toBe(2);
+        expect(f.compensation).toHaveLength(1);
+        expect(await receipts(f, "rollback", "ok")).toBe(1);
+        expect(await receiptOutput(f, "rollback")).toEqual({ compensation_install_id: `compensate-${f.install}`, triggered_rollback: "workflow_started" });
+        expect(await evidence(f)).toBeNull();
+        expect(await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM installs WHERE brand_id=? AND kind='rollback'").bind(f.brand).first()).toEqual({ n: 1 });
+      });
+
+      it("records the recovery evidence once, after the last attempt", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        f.settings.dispatchFails = true;
+        const s = steps();
+        s.hooks.retry = async () => { expect(await evidence(f)).toBeNull(); };
+        await expect(runInstall(f, s)).rejects.toThrow("compensation dispatch unavailable");
+        expect(s.attempts.get("rollback")).toBe(s.configs.get("rollback")!.retries!.limit! + 1);
+        expect(await evidence(f)).toMatchObject({ recovery_required: true, original_install_id: f.install });
+        expect(await receipts(f, "rollback", "failed")).toBe(1);
+        expect(await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='install.compensation_failed' AND entity_id=?").bind(f.install).first()).toEqual({ n: 1 });
+      });
+
+      it("settles at once on a rollback record that cannot be parsed", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        const s = steps();
+        s.hooks.before = async (name) => { if (name === "rollback") await env.FACTORY.prepare("UPDATE installs SET rollback_record_json='{' WHERE install_id=?").bind(f.install).run(); };
+        await expect(runInstall(f, s)).rejects.toThrow();
+        expect(s.attempts.get("rollback")).toBe(1);
+        expect(s.failures.get("rollback")).toBeInstanceOf(NonRetryableError);
+        expect(await receipts(f, "rollback", "failed")).toBe(1);
+        expect(f.compensation).toHaveLength(0);
+      });
+    });
   });
 
   // FUS-345: the engine hands a step's NonRetryableError to the Workflow code as Error("NonRetryableError: <message>").

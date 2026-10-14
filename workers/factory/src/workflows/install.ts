@@ -6,7 +6,7 @@ import {
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt, getReceipt, saveReceipt, stepErrorMessage, stepErrorText, storedErrorMessage } from "../receipt.js";
+import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, getReceipt, saveReceipt, stepErrorMessage, stepErrorText, storedErrorMessage } from "../receipt.js";
 import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
 import type { InstallStep } from "@anjuna/factory-db";
@@ -68,7 +68,7 @@ async function failFast<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
- * withReceipt for a step with its own retry config (validate, smoke), run inside step.do so its D1 reads and
+ * withReceipt for a step with its own retry config (every install step), run inside step.do so its D1 reads and
  * writes are retried with the step. An ok receipt short-circuits. A failed receipt is saved only when no retry
  * is left (a NonRetryableError or the last attempt), because withReceipt rethrows a stored failure and would
  * defeat every retry. Receipt contents match withReceipt: `{ error: message }` on failure, the step output on success.
@@ -108,6 +108,16 @@ async function settleOnFailure<T>(work: () => Promise<T> | T): Promise<T> {
     return await work();
   } catch (err) {
     throw err instanceof NonRetryableError ? err : new NonRetryableError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** True when the compensation Workflow instance exists: an earlier attempt of the rollback step dispatched it. */
+async function compensationDispatched(workflow: Workflow, compensationId: string): Promise<boolean> {
+  try {
+    await workflow.get(compensationId);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -460,8 +470,11 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       await setInstallStatus(db, install_id, "failed", errorMessage, brand_id, { retainBrandLock: mutationStarted });
 
       // ── Automatic rollback on failure ──────────────────────────────────────
-      await step.do("rollback", async () => {
-        return withReceipt(db, install_id, "rollback", async () => {
+      // The compensation install row is INSERT OR IGNORE and its Workflow instance id is the compensation install id, so a repeated
+      // dispatch is the one re-run here that cannot simply run again: a retry after a dispatch that worked, but whose ok receipt write
+      // failed, finds the instance and stops there. The recovery evidence is written only when no retry is left.
+      await step.do("rollback", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "rollback", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const install = await db
             .prepare("SELECT rollback_record_json FROM installs WHERE install_id = ?")
             .bind(install_id)
@@ -482,6 +495,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               params: { install_id: compensationId, original_install_id: install_id, brand_id, to_revision_id: rollback?.previous_revision_id ?? null },
             });
           } catch (compensationError) {
+            if (await compensationDispatched(this.env.ROLLBACK_WORKFLOW, compensationId)) return { compensation_install_id: compensationId, triggered_rollback: "workflow_started" };
+            if (ctx.attempt <= REMOTE_STEP_RETRY_CONFIG.retries.limit) throw compensationError;
             const evidence = {
               original_install_id: install_id,
               compensation_install_id: compensationId,
