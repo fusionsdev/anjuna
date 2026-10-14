@@ -27,8 +27,8 @@ To add the ZIP for a tag released before this change, run the `lead-form` workfl
 (Run workflow, "Use workflow from" the tag). The loose files are skipped as already published and only the
 ZIP is written.
 
-The ZIP is written only when R2 answers "The specified key does not exist." The job stops with an error, writes
-nothing, and prints the lookup output when the key holds different bytes or when the lookup fails for any other
+The loose files and the ZIP are each written only when R2 answers "The specified key does not exist." The job stops with an error, writes
+nothing, and prints the lookup output when the manifest or ZIP key holds different bytes or when the lookup fails for any other
 reason (timeout, 5xx, auth). After a write it reads the object back and fails unless the SHA-256 matches.
 Re-run the job after a lookup failure.
 

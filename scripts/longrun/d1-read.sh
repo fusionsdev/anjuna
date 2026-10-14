@@ -19,5 +19,23 @@ for c in email phone first_name last_name address street dob ssn user_agent; do
 done
 [[ "$lower" =~ (select|,)[[:space:]]*\*|\.\* ]] && die "SELECT * may return PII columns"
 
-CLOUDFLARE_ACCOUNT_ID=${ANJUNA_CF_ACCOUNT:-6cb8500c35210800451bd9a535482850} \
-  bunx wrangler d1 execute "$db" --remote --json --command "$norm"
+# wrangler 4.124.0 reads and refreshes the OAuth token file with no lock (wrangler-dist/cli.js, writeFileSync in the
+# file storage write()), so a call can send no valid token and get "Authentication error [code: 10000]" once.
+# The statement is a single SELECT, so one retry after a short delay is safe. Any other failure is returned as is.
+out=$(mktemp) err=$(mktemp)
+trap 'rm -f "$out" "$err"' EXIT
+run() {
+  CLOUDFLARE_ACCOUNT_ID=${ANJUNA_CF_ACCOUNT:-6cb8500c35210800451bd9a535482850} \
+    bunx wrangler d1 execute "$db" --remote --json --command "$norm" >"$out" 2>"$err"
+}
+rc=0
+run || rc=$?
+if [[ $rc -ne 0 ]] && grep -q 'code: 10000' "$out" "$err"; then
+  echo "d1-read: auth error 10000, retrying once in ${D1_READ_RETRY_DELAY:-3}s" >&2
+  sleep "${D1_READ_RETRY_DELAY:-3}"
+  rc=0
+  run || rc=$?
+fi
+cat "$out"
+cat "$err" >&2
+exit "$rc"
