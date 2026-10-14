@@ -186,18 +186,31 @@ jobs:
           echo "ZIP_SHA256=$zip_sha256" >> "$GITHUB_ENV"
           echo "$ZIP_KEY sha256 $zip_sha256"
 
+      # Writes the loose files only after wrangler reported "The specified key does not exist." (scripts/r2-lookup.mjs).
+      # A timeout, 5xx, auth failure or failed download stops the job; it is never read as "absent".
       - name: Skip if this version is already published (form@sha is immutable)
         id: exists
         run: |
-          if npx --yes wrangler@4 r2 object get "$R2_BUCKET/$PREFIX/manifest.json" --remote --file "$RUNNER_TEMP/existing.json" >/dev/null 2>&1; then
-            if cmp -s "$RUNNER_TEMP/existing.json" dist/manifest.json; then
-              echo "published=true" >> "$GITHUB_OUTPUT"; echo "$PREFIX already published with the same manifest"
-            else
-              echo "::error::$PREFIX exists with a DIFFERENT manifest; refusing to overwrite"; exit 1
-            fi
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/existing.json"
+          set +e
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET/$PREFIX/manifest.json" --remote --file "$RUNNER_TEMP/existing.json" > "$RUNNER_TEMP/manifest-lookup.log" 2>&1
+          lookup_exit=$?
+          set -e
+          verdict="$(node apps/lead-form/scripts/r2-lookup.mjs --exit "$lookup_exit" --log "$RUNNER_TEMP/manifest-lookup.log" --existing "$RUNNER_TEMP/existing.json" --local dist/manifest.json)"
+          echo "$PREFIX/manifest.json lookup: $verdict (wrangler exit $lookup_exit)"
+          case "$verdict" in
+            same)
+              echo "published=true" >> "$GITHUB_OUTPUT"; echo "$PREFIX already published with the same manifest" ;;
+            different)
+              cat "$RUNNER_TEMP/manifest-lookup.log"
+              echo "::error::$PREFIX exists with a DIFFERENT manifest; refusing to overwrite"; exit 1 ;;
+            missing)
+              echo "published=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              cat "$RUNNER_TEMP/manifest-lookup.log"
+              echo "::error::lookup of $PREFIX/manifest.json failed (not a confirmed not-found); nothing was written"; exit 1 ;;
+          esac
 
       - name: Upload to R2 (files first, manifest last)
         if: steps.exists.outputs.published != 'true'
