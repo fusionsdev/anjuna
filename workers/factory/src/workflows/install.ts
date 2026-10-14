@@ -1,15 +1,17 @@
-import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { ANALYTICS_FORWARD_PATHS } from "@anjuna/contracts";
 import {
-  CfError, attachCustomDomain, assetContentType, blockingDnsRecords, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
+  attachCustomDomain, assetContentType, blockingDnsRecords, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, getReceipt, saveReceipt, stepErrorMessage, stepErrorText, storedErrorMessage } from "../receipt.js";
-import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
+import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, stepErrorText } from "../receipt.js";
+import { CoreLifecycleClient } from "../core-lifecycle-client.js";
+import {
+  LOCAL_STEP_RETRY_CONFIG, REMOTE_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, failFast, instanceState, receiptInRetriedStep, stepReceipt,
+} from "../step-receipt.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
-import type { InstallStep } from "@anjuna/factory-db";
 import type { Env } from "../env.js";
 
 export interface InstallParams {
@@ -40,84 +42,12 @@ interface TemplateVersionRow {
   status: string;
 }
 
-// Transient validate failures (5xx, 408, 429, network, D1) retry 3 times after 5, 10 and 20 s, instead of
-// the Workflows default of 5 retries over 310 s. Deterministic failures skip every retry: see failFast.
-const VALIDATE_RETRY_CONFIG = {
-  retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
-  timeout: "60 seconds",
-} satisfies WorkflowStepConfig;
-
-// Steps that only touch D1 and R2 retry a transient failure 3 times after 5, 10 and 20 s, like validate.
-const LOCAL_STEP_RETRY_CONFIG = { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } } satisfies WorkflowStepConfig;
-// Steps that call Cloudflare or Core keep the Workflows default of 5 retries after 10, 20, 40, 80 and 160 s, written out
-// because receiptInRetriedStep must know which attempt is the last. Every call they make is safe to repeat: see each step.
-const REMOTE_STEP_RETRY_CONFIG = { retries: { limit: 5, delay: "10 seconds", backoff: "exponential" } } satisfies WorkflowStepConfig;
-
-/**
- * Turns a failure that the same input always repeats into a NonRetryableError, so the step settles at
- * once: unparsable JSON, a zone that is absent or inactive, Cloudflare or Core 4xx other than 408 and 429.
- * Everything else is rethrown unchanged and keeps the step retries. The message is never altered.
- */
-async function failFast<T>(work: () => Promise<T>): Promise<T> {
-  try {
-    return await work();
-  } catch (err) {
-    const deterministic = err instanceof SyntaxError || (err instanceof Error && err.name === "ZodError") || ((err instanceof CfError || err instanceof CoreLifecycleError) && err.deterministic);
-    throw deterministic ? new NonRetryableError((err as Error).message) : err;
-  }
-}
-
-/**
- * withReceipt for a step with its own retry config (every install step), run inside step.do so its D1 reads and
- * writes are retried with the step. An ok receipt short-circuits. A failed receipt is saved only when no retry
- * is left (a NonRetryableError or the last attempt), because withReceipt rethrows a stored failure and would
- * defeat every retry. Receipt contents match withReceipt: `{ error: message }` on failure, the step output on success.
- */
-async function receiptInRetriedStep<T extends Record<string, unknown>>(
-  db: D1Database, installId: string, step: InstallStep, retryLimit: number, attempt: number, work: () => Promise<T>,
-): Promise<T> {
-  const existing = await getReceipt(db, installId, step);
-  if (existing?.status === "ok") return existing.output as T;
-  if (existing?.status === "failed") {
-    const stored = String(existing.output?.error ?? "step previously failed");
-    throw new NonRetryableError(storedErrorMessage(stored));
-  }
-  let result: T;
-  try {
-    result = await work();
-  } catch (err) {
-    if (err instanceof NonRetryableError || attempt > retryLimit) {
-      await saveReceipt(db, installId, step, "failed", { error: stepErrorMessage(err) });
-    }
-    throw err;
-  }
-  await saveReceipt(db, installId, step, "ok", result);
-  return result;
-}
-
-/** receiptInRetriedStep with the step's retry config and failFast: the receipt rule every install step except validate and smoke shares. */
-function stepReceipt<T extends Record<string, unknown>>(
-  db: D1Database, installId: string, step: InstallStep, config: { retries: { limit: number } }, ctx: { attempt: number }, work: () => Promise<T>,
-): Promise<T> {
-  return receiptInRetriedStep(db, installId, step, config.retries.limit, ctx.attempt, () => failFast(work));
-}
-
 /** A computation on rows and bytes already read: the same input fails the same way, so any failure settles the step at once. */
 async function settleOnFailure<T>(work: () => Promise<T> | T): Promise<T> {
   try {
     return await work();
   } catch (err) {
     throw err instanceof NonRetryableError ? err : new NonRetryableError(err instanceof Error ? err.message : String(err));
-  }
-}
-
-/** True when the compensation Workflow instance exists: an earlier attempt of the rollback step dispatched it. */
-async function compensationDispatched(workflow: Workflow, compensationId: string): Promise<boolean> {
-  try {
-    await workflow.get(compensationId);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -495,8 +425,11 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               params: { install_id: compensationId, original_install_id: install_id, brand_id, to_revision_id: rollback?.previous_revision_id ?? null },
             });
           } catch (compensationError) {
-            if (await compensationDispatched(this.env.ROLLBACK_WORKFLOW, compensationId)) return { compensation_install_id: compensationId, triggered_rollback: "workflow_started" };
+            if (await instanceState(this.env.ROLLBACK_WORKFLOW, compensationId) === "present") return { compensation_install_id: compensationId, triggered_rollback: "workflow_started" };
             if (ctx.attempt <= REMOTE_STEP_RETRY_CONFIG.retries.limit) throw compensationError;
+            // Last attempt, and the instance is absent or its lookup failed. The rows are marked failed with recovery evidence, which keeps the
+            // brand lock and gives the Owner a Recover path. An instance that exists anyway cannot mutate the brand while the rows say failed: its
+            // claim refuses a finished compensation row, and one that had already claimed ends in finish_rollback, which overwrites these rows.
             const evidence = {
               original_install_id: install_id,
               compensation_install_id: compensationId,

@@ -1,6 +1,8 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
 import { rejectQueuedInstall, setInstallStatus } from "../receipt.js";
+import { REMOTE_STEP_RETRY_CONFIG, instanceState } from "../step-receipt.js";
 
 export interface UpgradeAllParams {
   from_template_version_id: string;
@@ -100,6 +102,52 @@ export function canarySleepStepName(iteration: number): string {
   return `wait_canary_${iteration}`;
 }
 
+/**
+ * Starts the install Workflow instance of one upgrade install row (canary or bulk). Safe to run again after any earlier attempt:
+ * the instance id is the install id, so a create for an id that exists throws instead of starting a second instance.
+ *   - Not queued or running (ready, failed, rolled back): nothing to do.
+ *   - Running and its instance is present: an earlier attempt dispatched it. Skipped.
+ *   - Running and its instance is confirmed absent: an earlier attempt claimed the install and failed before or during create. Create it.
+ *   - Queued: claim it, then create the instance.
+ * A create that throws but left the instance behind (the answer was lost) counts as started. Any other failure goes back to the
+ * caller to retry. An install is rejected only when its instance is confirmed absent and no retry is left, or when another lifecycle
+ * operation holds the brand (nothing was claimed or created then). When the lookup itself fails the state is unknown: the instance may
+ * be running, so the install row and the brand lock stay as they are and the step throws, on the last attempt too. Rejecting would mark
+ * a running install failed and free its brand while its Workflow goes on. Returns the error when the install was rejected.
+ */
+async function startUpgradeInstall(env: Env, install: { install_id: string; brand_id: string; revision_id: string }, attempt: number): Promise<Error | undefined> {
+  const { FACTORY: db, INSTALL_WORKFLOW: workflow } = env;
+  const { install_id, brand_id, revision_id } = install;
+  const unknown = () => new Error(`Workflow instance ${install_id} could not be looked up, so the install was left as it is (its brand stays locked)`);
+  const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
+  if (existing?.status !== "queued" && existing?.status !== "running") return undefined;
+  let claimed = existing.status === "running";
+  if (claimed) {
+    const state = await instanceState(workflow, install_id);
+    if (state === "present") return undefined;
+    if (state === "unknown") throw unknown();
+  }
+  try {
+    if (!claimed) {
+      await setInstallStatus(db, install_id, "running", undefined, brand_id);
+      claimed = true;
+    }
+    await workflow.create({ id: install_id, params: { install_id, brand_id, revision_id } });
+  } catch (error) {
+    if (!claimed && error instanceof Error && error.message.includes("lifecycle mutation in progress")) {
+      await rejectQueuedInstall(db, install_id, brand_id, String(error), false);
+      return error;
+    }
+    const state = await instanceState(workflow, install_id);
+    if (state === "present") return undefined;
+    if (state === "unknown") throw unknown();
+    if (attempt <= REMOTE_STEP_RETRY_CONFIG.retries.limit) throw error;
+    await rejectQueuedInstall(db, install_id, brand_id, String(error), claimed);
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  return undefined;
+}
+
 export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams> {
   async run(event: WorkflowEvent<UpgradeAllParams>, step: WorkflowStep): Promise<void> {
     const params = event.payload;
@@ -146,29 +194,24 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
     });
 
     const canaryInstallId = await upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, params.canary_brand_id, params.started_by, params.started_role, params.canary_brand_id);
-    await step.do("canary_install", async () => {
+    // Retry config equals the engine default, written out so the last attempt is known. A retry or a re-run neither starts a second
+    // instance nor rejects one that is running: see startUpgradeInstall. The install row is INSERT OR IGNORE with a deterministic id.
+    await step.do("canary_install", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
       const revision_id = revision_map[params.canary_brand_id];
       if (!revision_id) throw new Error("Canary revision was not created");
       await db.prepare(
          `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
          SELECT ?, ?, 'upgrade', current_revision_id, ?, 1, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
       ).bind(canaryInstallId, params.canary_brand_id, revision_id, params.started_by, params.started_role, now, params.canary_brand_id).run();
-      const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(canaryInstallId).first<{ status: string }>();
-      if (existing?.status !== "queued") return;
-      let claimed = false;
-      try {
-        await setInstallStatus(db, canaryInstallId, "running", undefined, params.canary_brand_id);
-        claimed = true;
-        await this.env.INSTALL_WORKFLOW.create({ id: canaryInstallId, params: { install_id: canaryInstallId, brand_id: params.canary_brand_id, revision_id } });
-      } catch (error) {
-        await rejectQueuedInstall(db, canaryInstallId, params.canary_brand_id, String(error), claimed);
-        throw error;
-      }
+      // A rejected canary is already recorded as failed with its evidence; another attempt would only find it settled.
+      const rejected = await startUpgradeInstall(this.env, { install_id: canaryInstallId, brand_id: params.canary_brand_id, revision_id }, ctx.attempt);
+      if (rejected) throw new NonRetryableError(rejected.message);
     });
     let ready = false;
     for (let i = 0; i < 60; i++) {
       await step.sleep(canarySleepStepName(i), "10 seconds");
-      const evidence = await step.do(`canary_status_${i}`, async () => {
+      // Only reads: a retry cannot start anything. The config equals the engine default.
+      const evidence = await step.do(`canary_status_${i}`, REMOTE_STEP_RETRY_CONFIG, async () => {
         const status = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(canaryInstallId).first<{ status: string }>();
         const core = await db.prepare("SELECT status FROM install_receipts WHERE install_id = ? AND step = 'sync_runtime'").bind(canaryInstallId).first<{ status: string }>();
         return { install: status?.status ?? "missing", core: core?.status === "ok" ? "ready" : core?.status ?? "pending" };
@@ -178,27 +221,27 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
     }
     if (!ready) throw new Error("Canary install did not reach READY");
 
-    await step.do("bulk_installs", async () => {
+    // A brand whose dispatch can still succeed does not hold the others back: the loop goes on, then the step retries and finds
+    // the dispatched ones running with their instances. A brand that is held by another operation, or still fails on the last
+    // attempt, is rejected alone, as before, and the step finishes.
+    await step.do("bulk_installs", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
       const remaining = brand_ids.filter((brand_id) => brand_id !== params.canary_brand_id);
+      let retry: unknown;
       for (const brand_id of remaining) {
         const revision_id = revision_map[brand_id];
         if (!revision_id) continue;
         const install_id = await upgradeInstallId(params.from_template_version_id, params.to_template_version_id, params.form_artifact_id, brand_id, params.started_by, params.started_role, params.canary_brand_id);
-        await db.prepare(
-          `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
-           SELECT ?, ?, 'upgrade', current_revision_id, ?, 0, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
-        ).bind(install_id, brand_id, revision_id, params.started_by, params.started_role, new Date().toISOString(), brand_id).run();
-        const existing = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(install_id).first<{ status: string }>();
-        if (existing?.status !== "queued") continue;
-        let claimed = false;
         try {
-          await setInstallStatus(db, install_id, "running", undefined, brand_id);
-          claimed = true;
-          await this.env.INSTALL_WORKFLOW.create({ id: install_id, params: { install_id, brand_id, revision_id } });
+          await db.prepare(
+            `INSERT OR IGNORE INTO installs (install_id, brand_id, kind, from_revision_id, to_revision_id, is_canary, status, started_by, started_role, started_at)
+             SELECT ?, ?, 'upgrade', current_revision_id, ?, 0, 'queued', ?, ?, ? FROM brands WHERE brand_id = ?`,
+          ).bind(install_id, brand_id, revision_id, params.started_by, params.started_role, new Date().toISOString(), brand_id).run();
+          await startUpgradeInstall(this.env, { install_id, brand_id, revision_id }, ctx.attempt);
         } catch (error) {
-          await rejectQueuedInstall(db, install_id, brand_id, String(error), claimed);
+          retry ??= error;
         }
       }
+      if (retry !== undefined) throw retry;
       return { started: remaining.length };
     });
   }

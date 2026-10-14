@@ -1,8 +1,10 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { attachCustomDomain, deployScript, detachCustomDomain, listCustomDomains } from "../cf-api.js";
-import { compensationFailureEvidence, rollbackFailureEvidence, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../receipt.js";
+import { NonRetryableError } from "cloudflare:workflows";
+import { compensationFailureEvidence, rollbackFailureEvidence, setInstallStatus, shouldRetainBrandLockOnFailure, stepErrorText } from "../receipt.js";
 import { rollbackTargetBelongsToBrand } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
+import { REMOTE_STEP_RETRY_CONFIG, LOCAL_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, stepReceipt } from "../step-receipt.js";
 import type { Env } from "../env.js";
 
 export interface RollbackParams {
@@ -49,14 +51,19 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
       : {}));
 
     try {
+      // Every receipt step below follows the install Workflow's rule (stepReceipt): the receipt read and write sit inside the retried
+      // step, the ok receipt comes last, and a failed one is stored only for a NonRetryableError or the last attempt. A failure that the
+      // same input always repeats (Cloudflare or Core 4xx other than 408 and 429, a row that is missing) settles at once; the rest
+      // retries. Re-running a step after its work succeeded but its ok receipt write failed is safe, with the cost noted on each step.
       // ── Step 1: Validate ───────────────────────────────────────────────────
-      const { zone_id, domain, hostnames: cachedHostnames, account, current_revision_id } = await step.do("validate", async () => {
-        return withReceipt(db, install_id, "validate", async () => {
+      // Re-run: reads the brand row and looks the zone up again.
+      const { zone_id, domain, hostnames: cachedHostnames, account, current_revision_id } = await step.do("validate", VALIDATE_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "validate", VALIDATE_RETRY_CONFIG, ctx, async () => {
           const brand = await db
             .prepare("SELECT domain, account, current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
             .first<BrandRow>();
-          if (!brand) throw new Error(`Brand ${brand_id} not found`);
+          if (!brand) throw new NonRetryableError(`Brand ${brand_id} not found`);
 
           const { getZone, brandHostnames } = await import("../cf-api.js");
           const zone = await getZone(CF_API_TOKEN, brand.domain);
@@ -74,8 +81,10 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
       if (!to_revision_id) {
         mutationStarted = true;
         // ── First-install rollback: detach domains ─────────────────────────
-        await step.do("attach_domains", async () => {
-          return withReceipt(db, install_id, "attach_domains", async () => {
+        // Re-run: lists what is still attached and detaches only that, so a domain is never deleted twice. After a pass that
+        // succeeded the list is empty, and the receipt then counts only the detaches of the pass that wrote it.
+        await step.do("attach_domains", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+          return stepReceipt(db, install_id, "attach_domains", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
             // Find any domain records we may have attached and remove them.
             const existing = await listCustomDomains(CF_API_TOKEN, CF_ACCOUNT_ID, zone_id, `brand-${brand_id}`);
             await Promise.all(
@@ -88,7 +97,8 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           });
         });
 
-        await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
+        // Re-run: Core answers a repeated install_id with a noop and changes nothing (workers/core/src/lifecycle.ts, applyRuntime).
+        await step.do("sync_runtime", REMOTE_STEP_RETRY_CONFIG, async (ctx) => stepReceipt(db, install_id, "sync_runtime", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
           const current = await client.runtimeState({ brand_id, account });
           if (current.state === "absent") return { state: "absent", paused: false };
@@ -103,8 +113,9 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           return result;
         }));
 
-        await step.do("receipt", async () => {
-          return withReceipt(db, install_id, "receipt", async () => {
+        // Re-run: sets the same brand columns again; only updated_at moves.
+        await step.do("receipt", LOCAL_STEP_RETRY_CONFIG, async (ctx) => {
+          return stepReceipt(db, install_id, "receipt", LOCAL_STEP_RETRY_CONFIG, ctx, async () => {
             if (!original_install_id) await db
               .prepare("UPDATE brands SET status = 'failed', current_revision_id = NULL, updated_at = ? WHERE brand_id = ?")
               .bind(new Date().toISOString(), brand_id)
@@ -115,17 +126,19 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
       } else {
         mutationStarted = true;
         // ── Standard rollback: redeploy previous version ───────────────────
-        const { worker_version_id, bundle_form_version } = await step.do("deploy", async () => {
-          return withReceipt(db, install_id, "deploy", async () => {
+        // Re-run: POSTs the same older Worker version at 100% again. The version already serves all traffic, so only the
+        // deployment history gains one entry.
+        const { worker_version_id, bundle_form_version } = await step.do("deploy", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+          return stepReceipt(db, install_id, "deploy", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
             const revision = await db
               .prepare("SELECT brand_id, worker_version_id FROM brand_revisions WHERE revision_id = ?")
               .bind(to_revision_id)
               .first<RevisionRow>();
-            if (!revision || !rollbackTargetBelongsToBrand(revision, brand_id)) throw new Error(`Revision ${to_revision_id} is not a deployed revision for this brand`);
+            if (!revision || !rollbackTargetBelongsToBrand(revision, brand_id)) throw new NonRetryableError(`Revision ${to_revision_id} is not a deployed revision for this brand`);
 
             const artifact = await db.prepare("SELECT f.bundle_form_version FROM form_artifacts f JOIN brand_revisions r ON r.form_artifact_id = f.form_artifact_id WHERE r.revision_id = ?")
               .bind(to_revision_id).first<{ bundle_form_version: string | null }>();
-            if (!artifact?.bundle_form_version) throw new Error("Rollback bundle identity is missing");
+            if (!artifact?.bundle_form_version) throw new NonRetryableError("Rollback bundle identity is missing");
             const scriptName = `brand-${brand_id}`;
             mutationStarted = true;
             await deployScript(CF_API_TOKEN, CF_ACCOUNT_ID, scriptName, revision.worker_version_id!);
@@ -133,10 +146,13 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           });
         });
 
-        await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
+        // Re-run: Core answers a repeated install_id with a noop and changes nothing (workers/core/src/lifecycle.ts, applyRuntime).
+        // The expected revision is read again, but Core checks the install_id first, so a revision that moved is not a conflict.
+        await step.do("sync_runtime", REMOTE_STEP_RETRY_CONFIG, async (ctx) => stepReceipt(db, install_id, "sync_runtime", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
           const current = await client.runtimeState({ brand_id, account });
-          if (current.state !== "applied") throw new Error("Core runtime is missing during rollback");
+          // A pure function of the Core state just read: another attempt reads the same.
+          if (current.state !== "applied") throw new NonRetryableError("Core runtime is missing during rollback");
           mutationStarted = true;
           const result = await client.applyRuntime({
             install_id, brand_id, account, hostnames,
@@ -149,8 +165,9 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         }));
 
         // Ensure Custom Domains still point to this script (they survive version deploys, but re-attach in case).
-        await step.do("attach_domains", async () => {
-          return withReceipt(db, install_id, "attach_domains", async () => {
+        // Re-run: the Workers Domains PUT attaches a hostname to the same script again, as this step already does on hostnames that are attached.
+        await step.do("attach_domains", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+          return stepReceipt(db, install_id, "attach_domains", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
             const scriptName = `brand-${brand_id}`;
             mutationStarted = true;
             const attached = await Promise.all(
@@ -163,8 +180,9 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
           });
         });
 
-        await step.do("receipt", async () => {
-          return withReceipt(db, install_id, "receipt", async () => {
+        // Re-run: sets the same brand columns again; only updated_at moves.
+        await step.do("receipt", LOCAL_STEP_RETRY_CONFIG, async (ctx) => {
+          return stepReceipt(db, install_id, "receipt", LOCAL_STEP_RETRY_CONFIG, ctx, async () => {
             if (!original_install_id) await db
               .prepare("UPDATE brands SET status = 'live', current_revision_id = ?, updated_at = ? WHERE brand_id = ?")
               .bind(to_revision_id, new Date().toISOString(), brand_id)
@@ -174,9 +192,15 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         });
       }
 
-      await step.do("finish_rollback", async () => {
+      // Re-run of a compensation: its batch is one transaction, so an original install that is already rolled back means an earlier attempt
+      // committed and only its answer was lost. Running the batch again would add a second audit row and, if another install took the freed
+      // brand in the meantime, overwrite that install's lock. A manual rollback re-runs two plain UPDATEs to the same values and has no such marker.
+      // The step config equals the engine default; it is written out so the retries are explicit.
+      await step.do("finish_rollback", REMOTE_STEP_RETRY_CONFIG, async () => {
         if (!original_install_id) await setInstallStatus(db, install_id, "rolled_back", undefined, brand_id, { preserveBrandStatus: !to_revision_id });
         if (original_install_id) {
+          const finished = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(original_install_id).first<{ status: string }>();
+          if (finished?.status === "rolled_back") return;
           const evidence = {
             original_install_id,
             compensation_install_id: install_id,
@@ -200,7 +224,8 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
         }
       });
     } catch (err) {
-      const message = String(err);
+      // The engine prefixes a NonRetryableError message with its name: the stored text keeps reading "Error: <message>".
+      const message = stepErrorText(err);
       await setInstallStatus(db, install_id, "failed", message, brand_id, {
         retainBrandLock: shouldRetainBrandLockOnFailure(mutationStarted, original_install_id),
       });
