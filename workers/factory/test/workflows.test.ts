@@ -128,12 +128,15 @@ async function fixture(live = false, subdomain = false, paused = true) {
     bundle_form_version: "form@old", credential_account_match: true,
   } : { state: "absent", brand_id: brand, account: "test", credential_account_match: true };
   const applied: Array<ReturnType<typeof ApplyRuntimeRequest.parse>> = [];
+  const counters = { applyEffects: 0 };
   const settings = { smokeFails: false, uploadFails: false, dispatchFails: false, coreFails: false, stateMode: "ok" as "ok" | "fail" | "absent",
     zoneName: subdomain ? "sub.example" : domain,
     // Zone records that no Custom Domain of this brand explains (a hand-made A or CNAME).
     foreignDns: [] as Array<{ type: string; name: string }>,
     // HTTP statuses answered, one per call, before the zone, Workers Domains list and Core runtime-state calls succeed.
     zoneHttp: [] as number[], domainsHttp: [] as number[], stateHttp: [] as number[], zoneStatus: "active",
+    // HTTP statuses Core answers, one per runtime apply, before it accepts one; and how many compensation dispatches fail first.
+    applyHttp: [] as number[], dispatchFailures: 0,
     apex: [] as Array<Response | Error>, www: [] as Array<Response | Error> };
   const core = { async fetch(request: Request) {
     const input = await request.json() as Record<string, unknown>;
@@ -146,9 +149,16 @@ async function fixture(live = false, subdomain = false, paused = true) {
     }
     const parsed = ApplyRuntimeRequest.parse(input);
     if (settings.coreFails) return new Response("core unavailable", { status: 503 });
+    const refused = settings.applyHttp.shift();
+    if (refused) return new Response("core refused", { status: refused });
     applied.push(parsed);
+    // The same install_id again is a replay: core answers noop and changes nothing (workers/core/src/lifecycle.ts, applyRuntime).
+    if (runtime.state === "applied" && runtime.last_lifecycle_install_id === parsed.install_id) {
+      return Response.json({ state: "noop", install_id: parsed.install_id, applied_revision_id: runtime.applied_revision_id, paused: runtime.paused });
+    }
     const current = runtime.state === "applied" ? runtime.applied_revision_id : null;
     if (current !== parsed.expected_revision_id) return new Response("stale", { status: 409 });
+    counters.applyEffects++;
     runtime = {
       state: "applied", brand_id: brand, account: "test",
       applied_revision_id: parsed.target_revision_id, last_lifecycle_install_id: parsed.install_id,
@@ -160,6 +170,7 @@ async function fixture(live = false, subdomain = false, paused = true) {
     return Response.json({ state: parsed.target_revision_id ? "applied" : "detached", install_id: parsed.install_id, applied_revision_id: parsed.target_revision_id, paused: runtime.paused });
   } };
   const compensation: RollbackParams[] = [];
+  const dispatched = new Set<string>();
   const uploads: Array<{ bindings: Array<Record<string, unknown>>; assets?: { jwt: string; config?: Record<string, unknown> } }> = [];
   // Custom Domains attached in the account: hostname -> script. An installed brand holds the
   // hostnames it serves (apex plus www on its own zone, the bare subdomain otherwise), and a www
@@ -227,13 +238,21 @@ async function fixture(live = false, subdomain = false, paused = true) {
     ...env, CORE_LIFECYCLE: core, CORE_TOKEN: "local-token", CORE_ACCOUNT: "test", CORE_SERVICE_NAME: "tenant-core",
     CORE_DOMAIN: "core.example", DEFAULT_FORM_ROUTE: "/apply", DEFAULT_AMOUNT_BUCKETS: "[100,200,500]",
     LEADSGATE_AID: "17244", LEADSGATE_PREPOP_BASE: "https://prepop.example/apply",
-    ROLLBACK_WORKFLOW: { async create({ params }: { params: RollbackParams }) {
-      if (settings.dispatchFails) throw new Error("compensation dispatch unavailable");
-      compensation.push(params); return { id: params.install_id };
-    } },
+    // Like the engine: an instance id can be created once, and get() of an id that was never created throws.
+    ROLLBACK_WORKFLOW: {
+      async create({ params }: { params: RollbackParams }) {
+        if (settings.dispatchFails || settings.dispatchFailures-- > 0) throw new Error("compensation dispatch unavailable");
+        if (dispatched.has(params.install_id)) throw new Error("instance.already_exists");
+        dispatched.add(params.install_id); compensation.push(params); return { id: params.install_id };
+      },
+      async get(id: string) {
+        if (!dispatched.has(id)) throw new Error("instance.not_found");
+        return { id };
+      },
+    },
   } as unknown as Env;
   const params: InstallParams = { install_id: install, brand_id: brand, revision_id: revision };
-  return { id, brand, revision, install, template, version, artifact, bindings, params, applied, compensation, settings, uploads, network, domains,
+  return { id, brand, revision, install, template, version, artifact, bindings, params, applied, counters, compensation, settings, uploads, network, domains,
     runtime: () => runtime, brandRow: () => db.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id=?").bind(brand).first(),
     installRow: () => db.prepare("SELECT status FROM installs WHERE install_id=?").bind(install).first(),
   };
@@ -273,7 +292,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
   });
 
   // Receipt D1 I/O belongs to the retried step: one transient D1 error on it must not fail the install.
-  function failReceiptD1Once(f: Awaited<ReturnType<typeof fixture>>, step: "validate" | "smoke", kind: "read" | "write") {
+  function failReceiptD1Once(f: Awaited<ReturnType<typeof fixture>>, step: string, kind: "read" | "write") {
     const real = f.bindings.FACTORY;
     const pattern = kind === "read" ? /^SELECT status, output_json FROM install_receipts/ : /^INSERT INTO install_receipts/;
     let armed = true;
@@ -1216,6 +1235,267 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       await runInstall(f, s);
       expect(receiptDuringRetry).toBeNull();
       expect(await validateReceipt(f.install)).toMatchObject({ status: "ok" });
+    });
+  });
+
+  // FUS-345: every install step keeps its Workflow retries. A failed receipt is written only when no retry is left, so a transient
+  // failure is retried for real, a failure that the same input always repeats settles at once, and a step whose work succeeded but
+  // whose ok receipt could not be written runs again without repeating a mutation that is not idempotent.
+  describe("install steps keep their retries", () => {
+    type Fixture = Awaited<ReturnType<typeof fixture>>;
+    type Match = (url: URL, init?: RequestInit) => boolean;
+    const urlOf = (input: string | Request | URL) => new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+    const cf = {
+      session: ((url) => url.pathname.endsWith("/assets-upload-session")) as Match,
+      script: ((url, init) => init?.method === "PUT" && /\/workers\/scripts\/brand-[^/]+$/.test(url.pathname)) as Match,
+      deployments: ((url, init) => init?.method === "GET" && url.pathname.endsWith("/deployments")) as Match,
+      domain: ((url, init) => init?.method === "PUT" && url.pathname.endsWith("/workers/domains")) as Match,
+    };
+    const callsTo = (f: Fixture, match: Match) => f.network.mock.calls.filter(([input, init]) => match(urlOf(input), init)).length;
+    const receipts = async (f: Fixture, step: string, status: "ok" | "failed") => (await env.FACTORY
+      .prepare("SELECT COUNT(*) AS n FROM install_receipts WHERE install_id=? AND step=? AND status=?").bind(f.install, step, status).first<{ n: number }>())!.n;
+    const receiptOutput = async (f: Fixture, step: string) => JSON.parse((await env.FACTORY
+      .prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step=?").bind(f.install, step).first<{ output_json: string }>())!.output_json) as Record<string, unknown>;
+    const installError = async (f: Fixture) => (await env.FACTORY.prepare("SELECT error FROM installs WHERE install_id=?").bind(f.install).first<{ error: string }>())!.error;
+    async function startUpgrade(f: Fixture) {
+      const next = `upgrade-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?,?,2,?,?,'{}','owner',?)")
+        .bind(next, f.brand, f.version, f.artifact, now).run();
+      await env.FACTORY.prepare("UPDATE installs SET kind='upgrade',from_revision_id=?,to_revision_id=? WHERE install_id=?").bind(f.revision, next, f.install).run();
+      f.params.revision_id = next;
+      return next;
+    }
+
+    // A Cloudflare API answer with `status` for the first `times` requests that `match`.
+    function failCloudflare(f: Fixture, match: Match, status: number, times = 1) {
+      const real = f.network;
+      let left = times;
+      vi.stubGlobal("fetch", async (input: string | Request | URL, init?: RequestInit) => {
+        if (left > 0 && match(urlOf(input), init)) {
+          left--;
+          return Response.json({ success: false, errors: [{ code: 9999, message: "injected failure" }] }, { status });
+        }
+        return real(input, init);
+      });
+    }
+    // A D1 error on the first `times` statements whose SQL matches.
+    function failD1(f: Fixture, sql: RegExp, times = 1) {
+      const real = f.bindings.FACTORY;
+      let left = times;
+      const prepare = (text: string) => {
+        const statement = real.prepare(text);
+        if (left <= 0 || !sql.test(text)) return statement;
+        return new Proxy(statement, { get: (target, prop) => prop === "bind"
+          ? (...args: unknown[]) => new Proxy(target.bind(...args), { get: (bound, p) => (p === "first" || p === "run" || p === "all") && left > 0
+            ? async () => { left--; throw new Error("D1_ERROR: injected failure"); }
+            : Reflect.get(bound, p, bound) })
+          : Reflect.get(target, prop, target) });
+      };
+      (f.bindings as unknown as { FACTORY: unknown }).FACTORY = new Proxy(real, { get: (t, p) => p === "prepare" ? prepare : Reflect.get(t, p, t) });
+    }
+    // An R2 error on the first `times` writes of a render.
+    function failRenderWrite(f: Fixture, times = 1) {
+      const real = f.bindings.ARTIFACTS;
+      let left = times;
+      (f.bindings as unknown as { ARTIFACTS: unknown }).ARTIFACTS = new Proxy(real, { get: (t, p) => {
+        const member = Reflect.get(t, p, t) as unknown;
+        if (typeof member !== "function") return member;
+        if (p !== "put") return member.bind(t);
+        return async (key: string, ...rest: unknown[]) => {
+          if (left > 0 && key.startsWith("renders/")) { left--; throw new Error("R2 internal error"); }
+          return (member as (...args: unknown[]) => Promise<unknown>).call(t, key, ...rest);
+        };
+      } });
+    }
+
+    const transient: Array<[step: string, live: boolean, arrange: (f: Fixture) => void]> = [
+      ["save_rollback", false, (f) => failD1(f, /^UPDATE installs SET rollback_record_json/)],
+      ["render", false, (f) => failRenderWrite(f)],
+      ["upload_assets", false, (f) => failCloudflare(f, cf.session, 502)],
+      ["upload_script", false, (f) => failCloudflare(f, cf.script, 500)],
+      ["provision_runtime", false, (f) => { f.settings.applyHttp.push(503); }],
+      ["deploy", false, (f) => failCloudflare(f, cf.deployments, 502)],
+      ["attach_domains", false, (f) => failCloudflare(f, cf.domain, 429)],
+      ["sync_runtime", true, (f) => { f.settings.applyHttp.push(503); }],
+      ["receipt", false, (f) => failD1(f, /^UPDATE brands SET status = 'live'/)],
+    ];
+    async function prepared(live: boolean, arrange: (f: Fixture) => void | Promise<void>) {
+      const f = await fixture(live, false, false);
+      if (live) await startUpgrade(f);
+      await arrange(f);
+      return f;
+    }
+
+    it.each(transient)("retries a transient failure in %s and reaches READY with one ok receipt, no failed one and no compensation", async (step, live, arrange) => {
+      const f = await prepared(live, arrange);
+      const s = steps();
+      let receiptDuringRetry: unknown = "unset";
+      s.hooks.retry = async (name) => { if (name === step) receiptDuringRetry = await receipts(f, step, "failed"); };
+      await runInstall(f, s);
+      expect(s.attempts.get(step)).toBe(2);
+      expect(receiptDuringRetry).toBe(0);
+      expect(s.configs.get(step)?.retries?.limit).toBeGreaterThan(0);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await receipts(f, step, "ok")).toBe(1);
+      expect(await receipts(f, step, "failed")).toBe(0);
+      expect(f.compensation).toHaveLength(0);
+      expect((await f.brandRow() as { status: string }).status).toBe("live");
+    });
+
+    const deterministic: Array<[step: string, live: boolean, arrange: (f: Fixture) => void | Promise<void>, text: string, compensates: boolean]> = [
+      ["render", false, async (f) => { await env.ARTIFACTS.delete(`${f.id}/site.zip`); }, "R2 object not found", false],
+      ["upload_assets", false, (f) => failCloudflare(f, cf.session, 403, Infinity), "HTTP 403", true],
+      ["upload_script", false, (f) => failCloudflare(f, cf.script, 400, Infinity), "HTTP 400", true],
+      ["provision_runtime", false, (f) => { f.settings.applyHttp.push(403); }, "Core lifecycle request failed (403)", true],
+      ["deploy", false, (f) => failCloudflare(f, cf.deployments, 403, Infinity), "HTTP 403", true],
+      ["attach_domains", false, (f) => failCloudflare(f, cf.domain, 400, Infinity), "HTTP 400", true],
+      ["sync_runtime", true, (f) => { f.settings.applyHttp.push(409); }, "Core lifecycle request failed (409)", true],
+    ];
+    it.each(deterministic)("settles at once on a deterministic failure in %s: one failed receipt, no retry, compensation as before", async (step, live, arrange, text, compensates) => {
+      const f = await prepared(live, arrange);
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.attempts.get(step)).toBe(1);
+      expect(s.failures.get(step)).toBeInstanceOf(NonRetryableError);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(await receipts(f, step, "failed")).toBe(1);
+      expect(await receipts(f, step, "ok")).toBe(0);
+      const message = (await receiptOutput(f, step)).error as string;
+      expect(message).toContain(text);
+      expect(message).not.toContain("NonRetryableError");
+      expect(await installError(f)).toBe(`Error: ${message}`);
+      expect(f.compensation).toHaveLength(compensates ? 1 : 0);
+      if (!compensates) expect(await receiptOutput(f, "rollback")).toEqual({ compensation: "not_required" });
+    });
+
+    it.each([
+      ["upload_script", (f: Fixture) => failCloudflare(f, cf.script, 502, Infinity), true],
+      ["save_rollback", (f: Fixture) => failD1(f, /^UPDATE installs SET rollback_record_json/, Infinity), false],
+    ] as const)("gives up on a persistent transient failure in %s after its configured retries, with one failed receipt", async (step, arrange, compensates) => {
+      const f = await prepared(false, arrange);
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.attempts.get(step)).toBe(s.configs.get(step)!.retries!.limit! + 1);
+      expect(s.failures.get(step)).not.toBeInstanceOf(NonRetryableError);
+      expect(await receipts(f, step, "failed")).toBe(1);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(f.compensation).toHaveLength(compensates ? 1 : 0);
+    });
+
+    it("keeps compensation after a retried upload_script when the smoke then fails", async () => {
+      const f = await prepared(false, (g) => { failCloudflare(g, cf.script, 500); g.settings.smokeFails = true; });
+      const s = steps();
+      await runInstall(f, s);
+      expect(s.attempts.get("upload_script")).toBe(2);
+      expect(await f.installRow()).toEqual({ status: "failed" });
+      expect(f.compensation).toHaveLength(1);
+      expect(await f.brandRow()).toMatchObject({ status: "installing" });
+    });
+
+    describe("a failed ok receipt write after the work succeeded", () => {
+      async function run(step: string, live: boolean) {
+        const f = await prepared(live, () => {});
+        const armed = failReceiptD1Once(f, step, "write");
+        const s = steps();
+        await runInstall(f, s);
+        expect(armed()).toBe(false);
+        expect(s.attempts.get(step)).toBe(2);
+        expect(await f.installRow()).toEqual({ status: "ready" });
+        expect(await receipts(f, step, "ok")).toBe(1);
+        expect(await receipts(f, step, "failed")).toBe(0);
+        expect(f.compensation).toHaveLength(0);
+        return f;
+      }
+
+      it.each(["save_rollback", "render", "receipt"])("re-runs %s, which only writes D1 rows and one R2 key with the same value", async (step) => {
+        const f = await run(step, false);
+        expect(await env.FACTORY.prepare("SELECT rollback_record_json FROM installs WHERE install_id=?").bind(f.install).first()).toEqual({ rollback_record_json: '{"previous_revision_id":null}' });
+        expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      });
+      it("re-runs upload_assets: Cloudflare takes assets by content hash, so a second session uploads nothing new", async () => {
+        const f = await run("upload_assets", false);
+        expect(callsTo(f, cf.session)).toBe(2);
+      });
+      it("re-runs upload_script, which puts the same script again: one more Worker version with identical content", async () => {
+        const f = await run("upload_script", false);
+        expect(f.uploads).toHaveLength(2);
+        expect(f.uploads[1]).toEqual(f.uploads[0]);
+      });
+      it("re-runs deploy, which only reads the latest deployment and sets the version id again", async () => {
+        const f = await run("deploy", false);
+        expect(callsTo(f, cf.deployments)).toBe(2);
+        expect(await env.FACTORY.prepare("SELECT worker_version_id FROM brand_revisions WHERE revision_id=?").bind(f.revision).first()).toEqual({ worker_version_id: "worker-local" });
+      });
+      it("re-runs attach_domains, which puts the same hostnames on the same script again", async () => {
+        const f = await run("attach_domains", false);
+        expect(callsTo(f, cf.domain)).toBe(4);
+        expect([...f.domains]).toEqual([[f.settings.zoneName, `brand-${f.brand}`], [`www.${f.settings.zoneName}`, `brand-${f.brand}`]]);
+      });
+      it.each([["provision_runtime", false], ["sync_runtime", true]] as const)("re-runs %s: Core replays the same install_id as a noop and changes nothing", async (step, live) => {
+        const f = await run(step, live);
+        expect(f.applied).toHaveLength(2);
+        expect(f.counters.applyEffects).toBe(1);
+        expect(f.runtime()).toMatchObject({ applied_revision_id: f.params.revision_id, last_lifecycle_install_id: f.install });
+        expect(await receiptOutput(f, step)).toMatchObject({ state: "noop" });
+      });
+    });
+
+    describe("compensation dispatch", () => {
+      const evidence = async (f: Fixture) => { try { return JSON.parse(await installError(f)); } catch { return null; } };
+
+      it("retries a transient dispatch failure and records no recovery evidence", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        f.settings.dispatchFailures = 1;
+        const s = steps();
+        await runInstall(f, s);
+        expect(s.attempts.get("rollback")).toBe(2);
+        expect(f.compensation).toHaveLength(1);
+        expect(await receipts(f, "rollback", "ok")).toBe(1);
+        expect(await receipts(f, "rollback", "failed")).toBe(0);
+        expect(await evidence(f)).toBeNull();
+        expect(await f.brandRow()).toMatchObject({ status: "installing" });
+      });
+
+      it("does not dispatch twice when the dispatch worked but its ok receipt could not be written", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        const armed = failReceiptD1Once(f, "rollback", "write");
+        const s = steps();
+        await runInstall(f, s);
+        expect(armed()).toBe(false);
+        expect(s.attempts.get("rollback")).toBe(2);
+        expect(f.compensation).toHaveLength(1);
+        expect(await receipts(f, "rollback", "ok")).toBe(1);
+        expect(await receiptOutput(f, "rollback")).toEqual({ compensation_install_id: `compensate-${f.install}`, triggered_rollback: "workflow_started" });
+        expect(await evidence(f)).toBeNull();
+        expect(await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM installs WHERE brand_id=? AND kind='rollback'").bind(f.brand).first()).toEqual({ n: 1 });
+      });
+
+      it("records the recovery evidence once, after the last attempt", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        f.settings.dispatchFails = true;
+        const s = steps();
+        s.hooks.retry = async () => { expect(await evidence(f)).toBeNull(); };
+        await expect(runInstall(f, s)).rejects.toThrow("compensation dispatch unavailable");
+        expect(s.attempts.get("rollback")).toBe(s.configs.get("rollback")!.retries!.limit! + 1);
+        expect(await evidence(f)).toMatchObject({ recovery_required: true, original_install_id: f.install });
+        expect(await receipts(f, "rollback", "failed")).toBe(1);
+        expect(await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action='install.compensation_failed' AND entity_id=?").bind(f.install).first()).toEqual({ n: 1 });
+      });
+
+      it("settles at once on a rollback record that cannot be parsed", async () => {
+        const f = await fixture();
+        f.settings.smokeFails = true;
+        const s = steps();
+        s.hooks.before = async (name) => { if (name === "rollback") await env.FACTORY.prepare("UPDATE installs SET rollback_record_json='{' WHERE install_id=?").bind(f.install).run(); };
+        await expect(runInstall(f, s)).rejects.toThrow();
+        expect(s.attempts.get("rollback")).toBe(1);
+        expect(s.failures.get("rollback")).toBeInstanceOf(NonRetryableError);
+        expect(await receipts(f, "rollback", "failed")).toBe(1);
+        expect(f.compensation).toHaveLength(0);
+      });
     });
   });
 

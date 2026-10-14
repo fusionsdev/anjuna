@@ -6,7 +6,7 @@ import {
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
-import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, withReceipt, getReceipt, saveReceipt, stepErrorMessage, stepErrorText, storedErrorMessage } from "../receipt.js";
+import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, getReceipt, saveReceipt, stepErrorMessage, stepErrorText, storedErrorMessage } from "../receipt.js";
 import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
 import { SMOKE_RETRY_CONFIG, smokeBrand } from "../smoke.js";
 import type { InstallStep } from "@anjuna/factory-db";
@@ -47,6 +47,12 @@ const VALIDATE_RETRY_CONFIG = {
   timeout: "60 seconds",
 } satisfies WorkflowStepConfig;
 
+// Steps that only touch D1 and R2 retry a transient failure 3 times after 5, 10 and 20 s, like validate.
+const LOCAL_STEP_RETRY_CONFIG = { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" } } satisfies WorkflowStepConfig;
+// Steps that call Cloudflare or Core keep the Workflows default of 5 retries after 10, 20, 40, 80 and 160 s, written out
+// because receiptInRetriedStep must know which attempt is the last. Every call they make is safe to repeat: see each step.
+const REMOTE_STEP_RETRY_CONFIG = { retries: { limit: 5, delay: "10 seconds", backoff: "exponential" } } satisfies WorkflowStepConfig;
+
 /**
  * Turns a failure that the same input always repeats into a NonRetryableError, so the step settles at
  * once: unparsable JSON, a zone that is absent or inactive, Cloudflare or Core 4xx other than 408 and 429.
@@ -62,7 +68,7 @@ async function failFast<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
- * withReceipt for a step with its own retry config (validate, smoke), run inside step.do so its D1 reads and
+ * withReceipt for a step with its own retry config (every install step), run inside step.do so its D1 reads and
  * writes are retried with the step. An ok receipt short-circuits. A failed receipt is saved only when no retry
  * is left (a NonRetryableError or the last attempt), because withReceipt rethrows a stored failure and would
  * defeat every retry. Receipt contents match withReceipt: `{ error: message }` on failure, the step output on success.
@@ -89,6 +95,32 @@ async function receiptInRetriedStep<T extends Record<string, unknown>>(
   return result;
 }
 
+/** receiptInRetriedStep with the step's retry config and failFast: the receipt rule every install step except validate and smoke shares. */
+function stepReceipt<T extends Record<string, unknown>>(
+  db: D1Database, installId: string, step: InstallStep, config: { retries: { limit: number } }, ctx: { attempt: number }, work: () => Promise<T>,
+): Promise<T> {
+  return receiptInRetriedStep(db, installId, step, config.retries.limit, ctx.attempt, () => failFast(work));
+}
+
+/** A computation on rows and bytes already read: the same input fails the same way, so any failure settles the step at once. */
+async function settleOnFailure<T>(work: () => Promise<T> | T): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    throw err instanceof NonRetryableError ? err : new NonRetryableError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** True when the compensation Workflow instance exists: an earlier attempt of the rollback step dispatched it. */
+async function compensationDispatched(workflow: Workflow, compensationId: string): Promise<boolean> {
+  try {
+    await workflow.get(compensationId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface FormArtifactRow {
   r2_key: string;
   payload_version: string | null;
@@ -98,7 +130,7 @@ interface FormArtifactRow {
 /**
  * FA-1: Install a brand onto Cloudflare.
  *
- * Steps (each wrapped in withReceipt for idempotency):
+ * Steps (each records a receipt for idempotency, with the retry rule of receiptInRetriedStep):
  *   validate → save_rollback → render → upload_assets → upload_script →
  *   deploy → attach_domains → smoke → receipt
  *
@@ -195,8 +227,12 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       const hostnames = cachedHostnames ?? [domain, `www.${domain}`];
 
       // ── Step 2: Save rollback record ───────────────────────────────────────
-      await step.do("save_rollback", async () => {
-        return withReceipt(db, install_id, "save_rollback", async () => {
+      // Steps 2 to 9 and sync_runtime share validate's receipt rule (receiptInRetriedStep, see stepReceipt): the failed
+      // receipt waits for the last attempt, and a deterministic failure settles at once. Re-running one after its work
+      // succeeded but its ok receipt write failed is safe, with the cost noted on each step.
+      // Re-run: reads the brand's current revision and writes the same rollback record again.
+      await step.do("save_rollback", LOCAL_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "save_rollback", LOCAL_STEP_RETRY_CONFIG, ctx, async () => {
           const brand = await db
             .prepare("SELECT current_revision_id FROM brands WHERE brand_id = ?")
             .bind(brand_id)
@@ -211,13 +247,14 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
 
       // ── Step 3: Render ─────────────────────────────────────────────────────
-      const { render_r2_key } = await step.do("render", async () => {
-        return withReceipt(db, install_id, "render", async () => {
+      // Re-run: renders the same bytes (the salt is derived from the brand and revision) over the same R2 key.
+      const { render_r2_key } = await step.do("render", LOCAL_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "render", LOCAL_STEP_RETRY_CONFIG, ctx, async () => {
           const revision = await db
             .prepare("SELECT template_version_id, form_artifact_id FROM brand_revisions WHERE revision_id = ?")
             .bind(revision_id)
             .first<RevisionRow>();
-          if (!revision) throw new Error(`Revision ${revision_id} not found`);
+          if (!revision) throw new NonRetryableError(`Revision ${revision_id} not found`);
 
           const [tv, fa] = await Promise.all([
             db.prepare("SELECT r2_key FROM template_versions WHERE template_version_id = ?")
@@ -225,14 +262,14 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             db.prepare("SELECT r2_key FROM form_artifacts WHERE form_artifact_id = ?")
               .bind(revision.form_artifact_id).first<FormArtifactRow>(),
           ]);
-          if (!tv || !fa) throw new Error("Template version or form artifact R2 key missing");
+          if (!tv || !fa) throw new NonRetryableError("Template version or form artifact R2 key missing");
 
           const [templateFiles, formFiles] = await Promise.all([
             readZipFromR2(ARTIFACTS, tv.r2_key),
             readZipFromR2(ARTIFACTS, fa.r2_key),
           ]);
 
-          const { files } = await renderBrand(templateFiles, formFiles, brand_id, revision_id);
+          const { files } = await settleOnFailure(() => renderBrand(templateFiles, formFiles, brand_id, revision_id));
           const key = await writeRenderToR2(ARTIFACTS, brand_id, revision_id, files);
           return { render_r2_key: key };
         });
@@ -241,12 +278,14 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       // ── Step 4: Upload assets ──────────────────────────────────────────────
       // Re-evaluated on replay even when the following step returns cached output.
       mutationStarted = true;
-      const { assets_jwt } = await step.do("upload_assets", async () => {
-        return withReceipt(db, install_id, "upload_assets", async () => {
+      // Re-run: Cloudflare keeps assets by content hash, so a new session asks only for the files it still lacks.
+      const { assets_jwt } = await step.do("upload_assets", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "upload_assets", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const renderObj = await ARTIFACTS.get(render_r2_key);
-          if (!renderObj) throw new Error(`Render artifact not found: ${render_r2_key}`);
+          if (!renderObj) throw new NonRetryableError(`Render artifact not found: ${render_r2_key}`);
 
-          const files = unzip(new Uint8Array(await renderObj.arrayBuffer()));
+          const renderBytes = new Uint8Array(await renderObj.arrayBuffer());
+          const files = await settleOnFailure(() => unzip(renderBytes));
           const scriptName = `brand-${brand_id}`;
           const manifest: AssetManifest = {};
           const byHash = new Map<string, { base64: string; contentType: string }>();
@@ -266,7 +305,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           for (const bucket of session.buckets) {
             const jwt = await uploadAssetBucket(session.jwt, CF_ACCOUNT_ID, bucket.map((hash) => {
               const file = byHash.get(hash);
-              if (!file) throw new Error(`Asset session asked for an unknown hash ${hash}`);
+              if (!file) throw new NonRetryableError(`Asset session asked for an unknown hash ${hash}`);
               return { hash, ...file };
             }));
             if (jwt) completion = jwt;
@@ -278,19 +317,20 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
 
       // ── Step 5: Upload script ──────────────────────────────────────────────
-      const { script_etag } = await step.do("upload_script", async () => {
-        return withReceipt(db, install_id, "upload_script", async () => {
+      // Re-run: a second PUT of the same script creates one more Worker version with the same content and deploys it.
+      const { script_etag } = await step.do("upload_script", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "upload_script", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const revision = await db
             .prepare("SELECT config_json FROM brand_revisions WHERE revision_id = ?")
             .bind(revision_id)
             .first<{ config_json: string }>();
-          if (!revision) throw new Error(`Revision ${revision_id} not found`);
+          if (!revision) throw new NonRetryableError(`Revision ${revision_id} not found`);
 
           const config = JSON.parse(revision.config_json) as Record<string, unknown>;
           const scriptName = `brand-${brand_id}`;
 
           const scriptObj = await ARTIFACTS.get("runtime/brand-runtime.js");
-          if (!scriptObj) throw new Error("Brand runtime bundle not found in ARTIFACTS (key: runtime/brand-runtime.js)");
+          if (!scriptObj) throw new NonRetryableError("Brand runtime bundle not found in ARTIFACTS (key: runtime/brand-runtime.js)");
           const scriptBody = await scriptObj.text();
 
           mutationStarted = true;
@@ -319,7 +359,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       void script_etag; // referenced for completeness; version id comes from deploy step
 
       if (!previous_revision_id) {
-        await step.do("provision_runtime", async () => withReceipt(db, install_id, "provision_runtime", async () => {
+        // Re-run: Core answers a repeated install_id with a noop and changes nothing (workers/core/src/lifecycle.ts, applyRuntime).
+        await step.do("provision_runtime", REMOTE_STEP_RETRY_CONFIG, async (ctx) => stepReceipt(db, install_id, "provision_runtime", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
           mutationStarted = true;
           const result = await client.applyRuntime({
@@ -334,8 +375,9 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       }
 
       // ── Step 6: Deploy ─────────────────────────────────────────────────────
-      const { worker_version_id } = await step.do("deploy", async () => {
-        return withReceipt(db, install_id, "deploy", async () => {
+      // Re-run: reads the script's latest deployment and sets the revision's version id again.
+      const { worker_version_id } = await step.do("deploy", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "deploy", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const scriptName = `brand-${brand_id}`;
           mutationStarted = true;
           const deployment = await deployScript(CF_API_TOKEN, CF_ACCOUNT_ID, scriptName);
@@ -352,8 +394,10 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
 
       // ── Step 7: Attach Custom Domains ──────────────────────────────────────
-      await step.do("attach_domains", async () => {
-        return withReceipt(db, install_id, "attach_domains", async () => {
+      // Re-run: the Workers Domains PUT attaches a hostname to the same script again. A rollback and an upgrade of a
+      // live brand already repeat it on hostnames that are attached, and their receipts end ok.
+      await step.do("attach_domains", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "attach_domains", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const scriptName = `brand-${brand_id}`;
           mutationStarted = true;
           const attached = await Promise.all(
@@ -385,7 +429,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
 
       if (previous_revision_id) {
-        await step.do("sync_runtime", async () => withReceipt(db, install_id, "sync_runtime", async () => {
+        // Re-run: Core answers a repeated install_id with a noop and changes nothing (workers/core/src/lifecycle.ts, applyRuntime).
+        await step.do("sync_runtime", REMOTE_STEP_RETRY_CONFIG, async (ctx) => stepReceipt(db, install_id, "sync_runtime", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
           mutationStarted = true;
           const result = await client.applyRuntime({
@@ -399,8 +444,9 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       }
 
       // ── Step 9: Receipt ────────────────────────────────────────────────────
-      await step.do("receipt", async () => {
-        return withReceipt(db, install_id, "receipt", async () => {
+      // Re-run: sets the same brand and install columns again; only installed_at moves.
+      await step.do("receipt", LOCAL_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "receipt", LOCAL_STEP_RETRY_CONFIG, ctx, async () => {
           await db
             .prepare("UPDATE brands SET status = 'live', current_revision_id = ?, updated_at = ? WHERE brand_id = ?")
             .bind(revision_id, new Date().toISOString(), brand_id)
@@ -424,8 +470,11 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       await setInstallStatus(db, install_id, "failed", errorMessage, brand_id, { retainBrandLock: mutationStarted });
 
       // ── Automatic rollback on failure ──────────────────────────────────────
-      await step.do("rollback", async () => {
-        return withReceipt(db, install_id, "rollback", async () => {
+      // The compensation install row is INSERT OR IGNORE and its Workflow instance id is the compensation install id, so a repeated
+      // dispatch is the one re-run here that cannot simply run again: a retry after a dispatch that worked, but whose ok receipt write
+      // failed, finds the instance and stops there. The recovery evidence is written only when no retry is left.
+      await step.do("rollback", REMOTE_STEP_RETRY_CONFIG, async (ctx) => {
+        return stepReceipt(db, install_id, "rollback", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
           const install = await db
             .prepare("SELECT rollback_record_json FROM installs WHERE install_id = ?")
             .bind(install_id)
@@ -446,6 +495,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
               params: { install_id: compensationId, original_install_id: install_id, brand_id, to_revision_id: rollback?.previous_revision_id ?? null },
             });
           } catch (compensationError) {
+            if (await compensationDispatched(this.env.ROLLBACK_WORKFLOW, compensationId)) return { compensation_install_id: compensationId, triggered_rollback: "workflow_started" };
+            if (ctx.attempt <= REMOTE_STEP_RETRY_CONFIG.retries.limit) throw compensationError;
             const evidence = {
               original_install_id: install_id,
               compensation_install_id: compensationId,

@@ -1,3 +1,4 @@
+import { NonRetryableError } from "cloudflare:workflows";
 import { unzipSync, zipSync } from "fflate";
 
 export type FileMap = Map<string, Uint8Array>;
@@ -121,12 +122,14 @@ function escapeRegExp(value: string): string {
 
 /**
  * Read a ZIP from R2, return the FileMap.
- * Throws if the key does not exist.
+ * Throws a NonRetryableError if the key does not exist or holds no readable ZIP: the same key fails the same way.
+ * An R2 read that fails keeps its own error, which a Workflow step retries.
  */
 export async function readZipFromR2(bucket: R2Bucket, key: string): Promise<FileMap> {
   const obj = await bucket.get(key);
-  if (!obj) throw new Error(`R2 object not found: ${key}`);
-  return unzip(new Uint8Array(await obj.arrayBuffer()));
+  if (!obj) throw new NonRetryableError(`R2 object not found: ${key}`);
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  try { return unzip(bytes); } catch (err) { throw new NonRetryableError(err instanceof Error ? err.message : String(err)); }
 }
 
 /**
