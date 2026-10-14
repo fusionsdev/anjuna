@@ -1497,6 +1497,224 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
         expect(f.compensation).toHaveLength(0);
       });
     });
+
+    // FUS-345: rollback.ts and upgrade-all.ts follow the install pattern. The rollback Workflow reuses the install Workflow's
+    // receipt rule, retry configs and fail-fast classes; upgrade-all has no receipts but dispatches installs with deterministic ids.
+    describe("the rollback Workflow", () => {
+      const deployPost: Match = (url, init) => init?.method === "POST" && url.pathname.endsWith("/deployments");
+      const deleted: Match = (url, init) => init?.method === "DELETE" && url.pathname.includes("/workers/domains/");
+      const lockedBrand = async (f: Fixture) => (await f.brandRow() as { status: string }).status === "installing";
+      const rollbackRun = (f: Fixture, payload: RollbackParams, s = steps()) =>
+        RollbackBrandWorkflow.prototype.run.call({ env: f.bindings } as unknown as RollbackBrandWorkflow, event(payload), s.step);
+      // A manual rollback of a live brand: onto its own revision ("revision") or, as after a first install, to no revision ("first").
+      async function manual(to: "revision" | "first", arrange: (f: Fixture) => void | Promise<void> = () => {}) {
+        const f = await fixture(true, false, false);
+        await env.FACTORY.prepare("UPDATE installs SET kind='rollback' WHERE install_id=?").bind(f.install).run();
+        await arrange(f);
+        const payload: RollbackParams = { install_id: f.install, brand_id: f.brand, to_revision_id: to === "revision" ? f.revision : null };
+        return { f, payload };
+      }
+
+      const transientRollback: Array<[step: string, to: "revision" | "first", arrange: (f: Fixture) => void]> = [
+        ["validate", "revision", (f) => { f.settings.zoneHttp.push(502); }],
+        ["deploy", "revision", (f) => failCloudflare(f, deployPost, 502)],
+        ["sync_runtime", "revision", (f) => { f.settings.applyHttp.push(503); }],
+        ["attach_domains", "revision", (f) => failCloudflare(f, cf.domain, 429)],
+        ["receipt", "revision", (f) => failD1(f, /^UPDATE brands SET status = 'live'/)],
+        ["attach_domains", "first", (f) => { f.settings.domainsHttp.push(502); }],
+        ["sync_runtime", "first", (f) => { f.settings.applyHttp.push(503); }],
+        ["receipt", "first", (f) => failD1(f, /^UPDATE brands SET status = 'failed'/)],
+      ];
+      it.each(transientRollback)("retries a transient failure in %s (%s) and finishes with one ok receipt, no failed one and no recovery evidence", async (step, to, arrange) => {
+        const { f, payload } = await manual(to, arrange);
+        const s = steps();
+        let receiptDuringRetry: unknown = "unset";
+        s.hooks.retry = async (name) => { if (name === step) receiptDuringRetry = await receipts(f, step, "failed"); };
+        await rollbackRun(f, payload, s);
+        expect(s.attempts.get(step)).toBe(2);
+        expect(receiptDuringRetry).toBe(0);
+        expect(s.configs.get(step)?.retries?.limit).toBeGreaterThan(0);
+        expect(await f.installRow()).toEqual({ status: "rolled_back" });
+        expect(await receipts(f, step, "ok")).toBe(1);
+        expect(await receipts(f, step, "failed")).toBe(0);
+        expect(await installError(f)).toBeNull();
+        expect(await lockedBrand(f)).toBe(false);
+        expect(await f.brandRow()).toEqual(to === "revision" ? { status: "live", current_revision_id: f.revision } : { status: "failed", current_revision_id: null });
+      });
+
+      const deterministicRollback: Array<[step: string, to: "revision" | "first", arrange: (f: Fixture) => void | Promise<void>, text: string]> = [
+        ["validate", "revision", (f) => { f.settings.zoneName = "other.example"; }, "Zone not found for domain"],
+        ["validate", "revision", (f) => { f.settings.zoneHttp.push(403); }, "HTTP 403"],
+        ["deploy", "revision", (f) => failCloudflare(f, deployPost, 403, Infinity), "HTTP 403"],
+        ["deploy", "revision", async (f) => { await env.FACTORY.prepare("UPDATE brand_revisions SET worker_version_id=NULL WHERE revision_id=?").bind(f.revision).run(); }, "is not a deployed revision"],
+        ["sync_runtime", "revision", (f) => { f.settings.applyHttp.push(409); }, "Core lifecycle request failed (409)"],
+        ["attach_domains", "revision", (f) => failCloudflare(f, cf.domain, 400, Infinity), "HTTP 400"],
+        ["attach_domains", "first", (f) => { f.settings.domainsHttp.push(403); }, "HTTP 403"],
+        ["sync_runtime", "first", (f) => { f.settings.applyHttp.push(409); }, "Core lifecycle request failed (409)"],
+      ];
+      it.each(deterministicRollback)("settles at once on a deterministic failure in %s (%s): one failed receipt, no retry, clean text (%#)", async (step, to, arrange, text) => {
+        const { f, payload } = await manual(to, arrange);
+        const s = steps();
+        await expect(rollbackRun(f, payload, s)).rejects.toThrow(text);
+        expect(s.attempts.get(step)).toBe(1);
+        expect(s.failures.get(step)).toBeInstanceOf(NonRetryableError);
+        expect(await receipts(f, step, "failed")).toBe(1);
+        expect(await receipts(f, step, "ok")).toBe(0);
+        const message = (await receiptOutput(f, step)).error as string;
+        expect(message).toContain(text);
+        expect(message).not.toContain("NonRetryableError");
+        expect(await f.installRow()).toEqual({ status: "failed" });
+        const stored = await installError(f);
+        expect(stored).not.toContain("NonRetryableError");
+        // A validate failure has mutated nothing and frees the brand. Any later step keeps the lock and records the evidence for Owner recovery.
+        if (step === "validate") {
+          expect(stored).toBe(`Error: ${message}`);
+          expect(await lockedBrand(f)).toBe(false);
+        } else {
+          expect(JSON.parse(stored)).toMatchObject({ recovery_required: true, original_install_id: f.install, error: `Error: ${message}` });
+          expect(await lockedBrand(f)).toBe(true);
+        }
+      });
+
+      it.each(["deploy", "sync_runtime", "attach_domains"])("gives up on a persistent transient failure in %s after its configured retries, keeping the lock for Owner recovery", async (step) => {
+        const { f, payload } = await manual("revision", (g) => {
+          if (step === "deploy") failCloudflare(g, deployPost, 502, Infinity);
+          if (step === "sync_runtime") g.settings.coreFails = true;
+          if (step === "attach_domains") failCloudflare(g, cf.domain, 502, Infinity);
+        });
+        const s = steps();
+        await expect(rollbackRun(f, payload, s)).rejects.toThrow();
+        expect(s.attempts.get(step)).toBe(s.configs.get(step)!.retries!.limit! + 1);
+        expect(s.failures.get(step)).not.toBeInstanceOf(NonRetryableError);
+        expect(await receipts(f, step, "failed")).toBe(1);
+        expect(JSON.parse(await installError(f))).toMatchObject({ recovery_required: true, audit_action: "rollback.failed_lock_retained" });
+        expect(await lockedBrand(f)).toBe(true);
+        // The retained lock is what recovery needs: an Owner recovers the brand once the cause is gone.
+        f.settings.coreFails = false;
+        vi.stubGlobal("fetch", f.network);
+        expect((await recover(f)).status).toBe(201);
+        await rollbackRun(f, f.compensation[0]!);
+        expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      });
+
+      describe("a failed ok receipt write after the work succeeded", () => {
+        async function again(step: string, to: "revision" | "first") {
+          const { f, payload } = await manual(to);
+          const armed = failReceiptD1Once(f, step, "write");
+          const s = steps();
+          await rollbackRun(f, payload, s);
+          expect(armed()).toBe(false);
+          expect(s.attempts.get(step)).toBe(2);
+          expect(await f.installRow()).toEqual({ status: "rolled_back" });
+          expect(await receipts(f, step, "ok")).toBe(1);
+          expect(await receipts(f, step, "failed")).toBe(0);
+          expect(await installError(f)).toBeNull();
+          return f;
+        }
+        it("re-runs validate, which only reads the brand and the zone", async () => {
+          const f = await again("validate", "revision");
+          expect(f.network.mock.calls.filter(([input]) => urlOf(input).pathname.endsWith("/zones")).length).toBe(2);
+        });
+        it("re-runs deploy, which sets the same older Worker version live again: the traffic does not change", async () => {
+          const f = await again("deploy", "revision");
+          const posts = f.network.mock.calls.filter(([input, init]) => deployPost(urlOf(input), init));
+          expect(posts).toHaveLength(2);
+          expect(posts[1]![1]!.body).toBe(posts[0]![1]!.body);
+          expect(String(posts[0]![1]!.body)).toContain("worker-old");
+        });
+        it.each(["revision", "first"] as const)("re-runs sync_runtime (%s): Core replays the same install_id as a noop and changes nothing", async (to) => {
+          const f = await again("sync_runtime", to);
+          expect(f.applied).toHaveLength(2);
+          expect(f.counters.applyEffects).toBe(1);
+          expect(f.runtime()).toMatchObject({ applied_revision_id: to === "revision" ? f.revision : null, last_lifecycle_install_id: f.install, paused: to === "first" });
+        });
+        it("re-runs attach_domains, which puts the same hostnames on the same script again", async () => {
+          const f = await again("attach_domains", "revision");
+          expect(callsTo(f, cf.domain)).toBe(4);
+          expect([...f.domains]).toEqual([[f.settings.zoneName, `brand-${f.brand}`], [`www.${f.settings.zoneName}`, `brand-${f.brand}`]]);
+        });
+        it("re-runs the detach: it lists what is still attached, so no domain is deleted twice (the receipt then counts only the second pass)", async () => {
+          const f = await again("attach_domains", "first");
+          expect(callsTo(f, deleted)).toBe(2);
+          expect(f.domains.size).toBe(0);
+          expect(await receiptOutput(f, "attach_domains")).toEqual({ detached: 0 });
+        });
+        it.each(["revision", "first"] as const)("re-runs receipt (%s), which sets the same brand columns again", async (to) => {
+          const f = await again("receipt", to);
+          expect(await f.brandRow()).toEqual(to === "revision" ? { status: "live", current_revision_id: f.revision } : { status: "failed", current_revision_id: null });
+        });
+      });
+
+      describe("compensation", () => {
+        async function failedUpgrade() {
+          const f = await fixture(true, false, false);
+          const next = `next-${f.id}`;
+          await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?,?,2,?,?,'{}','owner',?)")
+            .bind(next, f.brand, f.version, f.artifact, now).run();
+          f.params.revision_id = next;
+          f.settings.smokeFails = true;
+          await runInstall(f);
+          expect(f.compensation).toHaveLength(1);
+          expect(await f.installRow()).toEqual({ status: "failed" });
+          f.settings.smokeFails = false;
+          return f;
+        }
+        const audits = async (f: Fixture, action: string) => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action=? AND entity_id=?").bind(action, f.install).first<{ n: number }>())!.n;
+
+        it("retries a transient failure and finishes the original install as rolled back, with no recovery evidence", async () => {
+          const f = await failedUpgrade();
+          f.settings.applyHttp.push(503);
+          const s = steps();
+          await rollbackRun(f, f.compensation[0]!, s);
+          expect(s.attempts.get("sync_runtime")).toBe(2);
+          expect(await f.installRow()).toEqual({ status: "rolled_back" });
+          expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+          expect(await installError(f)).toBeNull();
+          expect(await audits(f, "install.compensation_succeeded")).toBe(1);
+          expect(await audits(f, "install.compensation_failed")).toBe(0);
+          expect(f.compensation).toHaveLength(1);
+        });
+
+        it("fails the original install with recovery evidence once, after the last attempt", async () => {
+          const f = await failedUpgrade();
+          f.settings.coreFails = true;
+          const s = steps();
+          s.hooks.retry = async () => { expect(await installError(f)).not.toContain("recovery_required"); };
+          await expect(rollbackRun(f, f.compensation[0]!, s)).rejects.toThrow("Core lifecycle request failed (503)");
+          expect(s.attempts.get("sync_runtime")).toBe(s.configs.get("sync_runtime")!.retries!.limit! + 1);
+          expect(JSON.parse(await installError(f))).toMatchObject({ recovery_required: true, original_install_id: f.install, compensation_install_id: f.compensation[0]!.install_id });
+          expect(await audits(f, "install.compensation_failed")).toBe(1);
+          expect(await lockedBrand(f)).toBe(true);
+        });
+
+        it("does not finish twice when the batch committed but its result was lost: the next lifecycle operation keeps its lock", async () => {
+          const f = await failedUpgrade();
+          const real = f.bindings.FACTORY;
+          let lost = true;
+          (f.bindings as unknown as { FACTORY: unknown }).FACTORY = new Proxy(real, { get: (t, p) => {
+            if (p === "batch") return async (statements: D1PreparedStatement[]) => {
+              const result = await t.batch(statements);
+              if (lost && statements.length === 4) {
+                lost = false;
+                // The brand is free after the commit, so a new install may take it before the engine retries.
+                await t.prepare("UPDATE brands SET status='installing' WHERE brand_id=?").bind(f.brand).run();
+                throw new Error("D1_ERROR: result lost");
+              }
+              return result;
+            };
+            const member = Reflect.get(t, p, t) as unknown;
+            return typeof member === "function" ? member.bind(t) : member;
+          } });
+          const s = steps();
+          await rollbackRun(f, f.compensation[0]!, s);
+          expect(lost).toBe(false);
+          expect(s.attempts.get("finish_rollback")).toBe(2);
+          expect(await f.installRow()).toEqual({ status: "rolled_back" });
+          expect(await lockedBrand(f)).toBe(true);
+          expect(await audits(f, "install.compensation_succeeded")).toBe(1);
+        });
+      });
+    });
   });
 
   // FUS-345: the engine hands a step's NonRetryableError to the Workflow code as Error("NonRetryableError: <message>").
