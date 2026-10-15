@@ -25,7 +25,8 @@ const KEY = process.env.TEMPLATE_MCP_KEY;
 const OWNER_SECRET = process.env.OWNER_SECRET;
 const SEALED_BY = process.env.SEALED_BY;
 const CREATED_BY = process.env.CREATED_BY || SEALED_BY || "upgrade-test";
-const SEAL = process.argv.includes("--seal");
+const SEAL_EXISTING = process.argv.indexOf("--seal-existing");
+const SEAL = process.argv.includes("--seal") || SEAL_EXISTING >= 0;
 const TEMPLATE_ID = "upgrade-test";
 
 function fail(message) {
@@ -151,6 +152,19 @@ async function call(tool, args) {
 // ── Flow ─────────────────────────────────────────────────────────────────────────
 await rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "upgrade-test-templates", version: "1.0.0" } });
 await rpc("notifications/initialized", {}, true);
+
+// --seal-existing <idA> <idB>: seal two already certified versions without importing again.
+if (SEAL_EXISTING >= 0) {
+  const existing = { a: process.argv[SEAL_EXISTING + 1], b: process.argv[SEAL_EXISTING + 2] };
+  if (!existing.a || !existing.b) fail("--seal-existing needs two template_version_ids (A then B).");
+  for (const key of ["a", "b"]) {
+    const r = await call("seal_template_version", { template_version_id: existing[key], owner_secret: OWNER_SECRET, sealed_by: SEALED_BY });
+    console.log(`seal ${key.toUpperCase()} ${existing[key]}: ${r.pass ? `sealed at ${r.sealed_at}` : `FAILED ${JSON.stringify(r).slice(0, 300)}`}`);
+    if (!r.pass) process.exit(1);
+  }
+  console.log(`Upgrade from ${existing.a} to ${existing.b}.`);
+  process.exit(0);
+}
 
 const ids = {};
 for (const key of ["a", "b"]) {
