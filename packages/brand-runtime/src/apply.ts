@@ -14,7 +14,8 @@ export const APPLY_HTML = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex,nofollow" />
   <meta name="referrer" content="no-referrer" />
-  <link rel="preconnect" href="https://apikeep.com" crossorigin>
+  <!-- apikeep.com serves classic (no-CORS) scripts, so its preconnect has no crossorigin; moneyfor.com is called with CORS fetches. -->
+  <link rel="preconnect" href="https://apikeep.com">
   <link rel="dns-prefetch" href="https://apikeep.com">
   <link rel="preconnect" href="https://moneyfor.com" crossorigin>
   <title>Complete Your Application</title>

@@ -64,7 +64,7 @@ describe("application initialization in the browser (no external script loaded)"
   it("preconnects to apikeep.com and moneyfor.com in the head", async () => {
     const { html } = await application({});
     const head = html.slice(0, html.indexOf("</head>"));
-    expect(head).toContain('<link rel="preconnect" href="https://apikeep.com" crossorigin>');
+    expect(head).toContain('<link rel="preconnect" href="https://apikeep.com">');
     expect(head).toContain('<link rel="dns-prefetch" href="https://apikeep.com">');
     expect(head).toContain('<link rel="preconnect" href="https://moneyfor.com" crossorigin>');
   });
