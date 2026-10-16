@@ -23,12 +23,29 @@ const reject = (status: number, error: string, headers: Record<string, string> =
   }),
 });
 
-/** Bearer API key -> builder identity (SHA-256 hash lookup in the factory D1), then the per-key rate limit. */
+const KEY_PATTERN = /^\S{16,256}$/;
+
+/**
+ * The builder key from the request headers, first match wins:
+ * `Authorization: Bearer <key>`, `Authorization: <key>`, `X-API-Key`, `Api-Key`.
+ * Never read from the URL, which would leak into logs and referrers.
+ */
+export function extractApiKey(headers: Headers): string | null {
+  const authorization = headers.get("authorization")?.trim() ?? "";
+  const candidates = [/^Bearer\s+(.*)$/i.exec(authorization)?.[1] ?? authorization, headers.get("x-api-key"), headers.get("api-key")];
+  for (const candidate of candidates) {
+    const value = candidate?.trim();
+    if (value && KEY_PATTERN.test(value)) return value;
+  }
+  return null;
+}
+
+/** API key (see extractApiKey) -> builder identity (SHA-256 hash lookup in the factory D1), then the per-key rate limit. */
 export async function authenticate(request: Request, env: Env, now = Date.now()): Promise<AuthResult> {
-  const match = /^Bearer\s+(\S{16,256})$/i.exec(request.headers.get("authorization") ?? "");
+  const apiKey = extractApiKey(request.headers);
   const challenge = { "www-authenticate": 'Bearer realm="anjuna-template-mcp"' };
-  if (!match) return reject(401, "missing_or_malformed_api_key", challenge);
-  const hash = await sha256Hex(match[1]!);
+  if (!apiKey) return reject(401, "missing_or_malformed_api_key", challenge);
+  const hash = await sha256Hex(apiKey);
   const row = await env.FACTORY.prepare("SELECT key_id, label, revoked_at FROM builder_keys WHERE key_hash = ?1")
     .bind(hash)
     .first<{ key_id: string; label: string; revoked_at: string | null }>();

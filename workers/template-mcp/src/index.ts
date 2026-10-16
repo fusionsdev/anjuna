@@ -13,7 +13,12 @@ export class TemplateMcp extends McpAgent<Env> {
   }
 }
 
-const mcp = TemplateMcp.serve("/mcp", { transport: "streamable-http" });
+/** The agents SDK default allow-list plus the key headers some clients send instead of Authorization. */
+const corsOptions = { headers: "Content-Type, Accept, Authorization, X-API-Key, Api-Key, mcp-session-id, mcp-protocol-version" };
+
+const mcp = TemplateMcp.serve("/mcp", { transport: "streamable-http", corsOptions });
+/** Legacy SSE transport: GET /sse opens the stream, POST /sse/message?sessionId=... carries requests. */
+const sse = TemplateMcp.serveSSE("/sse", { corsOptions });
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -22,10 +27,11 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (pathname === "/health") return json({ ok: true });
-    if (pathname !== "/mcp") return json({ error: "not_found" }, 404);
-    if (request.method === "OPTIONS") return mcp.fetch(request, env, ctx);
+    const handler = pathname === "/mcp" ? mcp : pathname === "/sse" || pathname === "/sse/message" ? sse : null;
+    if (!handler) return json({ error: "not_found" }, 404);
+    if (request.method === "OPTIONS") return handler.fetch(request, env, ctx);
     const auth = await authenticate(request, env);
     if (!auth.ok) return auth.response;
-    return mcp.fetch(request, env, ctx);
+    return handler.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;
