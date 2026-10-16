@@ -1,0 +1,29 @@
+:root{--uc-ink:#1d2430;--uc-soft:#5a6473;--uc-brand:#0b6e7f;--uc-brand-dark:#07505c;--uc-paper:#fbf8f3;--uc-card:#fff;--uc-edge:#e2dccf}
+*{box-sizing:border-box}
+body{margin:0;background:var(--uc-paper);color:var(--uc-ink);font:16px/1.55 Georgia,'Times New Roman',serif}
+.uc-shell{max-width:980px;margin:0 auto;padding:0 20px}
+.uc-top{display:flex;justify-content:space-between;align-items:center;padding:18px 0;border-bottom:3px solid var(--uc-brand)}
+.uc-top a{color:var(--uc-ink);text-decoration:none;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.uc-top span{color:var(--uc-soft);font-size:.9rem}
+.uc-split{display:grid;grid-template-columns:1.2fr 1fr;gap:36px;padding:40px 0}
+.uc-story h1{font-size:clamp(2rem,4.6vw,3.1rem);line-height:1.12;margin:0 0 16px}
+.uc-story h1 span{color:var(--uc-brand)}
+.uc-points{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:10px}
+.uc-points li{padding-left:26px;position:relative}
+.uc-points li:before{content:"";position:absolute;left:0;top:.5em;width:12px;height:12px;background:var(--uc-brand);border-radius:50%}
+.uc-panel{background:var(--uc-card);border:1px solid var(--uc-edge);border-top:6px solid var(--uc-brand);padding:24px;align-self:start}
+.uc-panel h2{margin:0 0 12px;font-size:1.2rem}
+.uc-field{display:block;margin-bottom:14px}
+.uc-field b{display:block;margin-bottom:4px}
+.uc-field select,.uc-field input{width:100%;padding:11px;font:inherit;border:1px solid var(--uc-edge);background:#fff}
+.uc-go{width:100%;padding:13px;border:0;background:var(--uc-brand);color:#fff;font:700 1rem Georgia,serif;cursor:pointer}
+.uc-go:hover{background:var(--uc-brand-dark)}
+.uc-faq{padding:8px 0 32px;border-top:1px solid var(--uc-edge)}
+.uc-faq h2{font-size:1.3rem}
+.uc-faq details{border-bottom:1px solid var(--uc-edge);padding:10px 0}
+.uc-faq summary{cursor:pointer;font-weight:700}
+.uc-legal{border-top:3px solid var(--uc-brand);padding:20px 0 40px;font-size:.85rem;color:var(--uc-soft)}
+.uc-legal ul{list-style:none;display:flex;flex-wrap:wrap;gap:6px 18px;padding:0;margin:0 0 12px}
+.uc-legal a{color:var(--uc-ink)}
+.uc-doc{padding:36px 0;max-width:720px}
+@media(max-width:760px){.uc-split{grid-template-columns:1fr}}
