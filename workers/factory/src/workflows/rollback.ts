@@ -4,7 +4,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { compensationFailureEvidence, rollbackFailureEvidence, setInstallStatus, shouldRetainBrandLockOnFailure, stepErrorText } from "../receipt.js";
 import { rollbackTargetBelongsToBrand } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
-import { REMOTE_STEP_RETRY_CONFIG, LOCAL_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, stepReceipt } from "../step-receipt.js";
+import { REMOTE_STEP_RETRY_CONFIG, LOCAL_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, failFast, stepReceipt } from "../step-receipt.js";
 import type { Env } from "../env.js";
 
 export interface RollbackParams {
@@ -46,9 +46,10 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
     }
     let mutationStarted = false;
 
-    if (terminal?.status !== "rolled_back") await step.do("claim_rollback", () => setInstallStatus(db, install_id, "running", undefined, brand_id, original_install_id
+    // The claim only touches D1. A refusal that the same input repeats (wrong state, not authorized) is a NonRetryableError: failFast.
+    if (terminal?.status !== "rolled_back") await step.do("claim_rollback", LOCAL_STEP_RETRY_CONFIG, () => failFast(() => setInstallStatus(db, install_id, "running", undefined, brand_id, original_install_id
       ? { compensationForInstallId: original_install_id }
-      : {}));
+      : {})));
 
     try {
       // Every receipt step below follows the install Workflow's rule (stepReceipt): the receipt read and write sit inside the retried
@@ -197,7 +198,14 @@ export class RollbackBrandWorkflow extends WorkflowEntrypoint<Env, RollbackParam
       // brand in the meantime, overwrite that install's lock. A manual rollback re-runs two plain UPDATEs to the same values and has no such marker.
       // The step config equals the engine default; it is written out so the retries are explicit.
       await step.do("finish_rollback", REMOTE_STEP_RETRY_CONFIG, async () => {
-        if (!original_install_id) await setInstallStatus(db, install_id, "rolled_back", undefined, brand_id, { preserveBrandStatus: !to_revision_id });
+        if (!original_install_id) {
+          // One transaction: a crash cannot leave the install rolled back with its brand still locked. These are the rows setInstallStatus
+          // wrote for "rolled_back": the install, and the brand as live unless the brand never had a revision to return to.
+          const now = new Date().toISOString();
+          const statements = [db.prepare("UPDATE installs SET status = 'rolled_back', error = NULL, finished_at = ? WHERE install_id = ?").bind(now, install_id)];
+          if (to_revision_id) statements.push(db.prepare("UPDATE brands SET status = 'live', updated_at = ? WHERE brand_id = ?").bind(now, brand_id));
+          await db.batch(statements);
+        }
         if (original_install_id) {
           const finished = await db.prepare("SELECT status FROM installs WHERE install_id = ?").bind(original_install_id).first<{ status: string }>();
           if (finished?.status === "rolled_back") return;

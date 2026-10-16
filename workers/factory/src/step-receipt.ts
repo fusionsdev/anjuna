@@ -2,7 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { WorkflowStepConfig } from "cloudflare:workers";
 import { CfError } from "./cf-api.js";
 import { CoreLifecycleError } from "./core-lifecycle-client.js";
-import { getReceipt, saveReceipt, stepErrorMessage, storedErrorMessage } from "./receipt.js";
+import { DeterministicStepError, getReceipt, saveReceipt, stepErrorMessage, storedErrorMessage } from "./receipt.js";
 import type { InstallStep } from "@anjuna/factory-db";
 
 // Transient validate failures (5xx, 408, 429, network, D1) retry 3 times after 5, 10 and 20 s, instead of
@@ -27,16 +27,16 @@ export async function failFast<T>(work: () => Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (err) {
-    const deterministic = err instanceof SyntaxError || (err instanceof Error && err.name === "ZodError") || ((err instanceof CfError || err instanceof CoreLifecycleError) && err.deterministic);
+    const deterministic = err instanceof SyntaxError || err instanceof DeterministicStepError || (err instanceof Error && err.name === "ZodError") || ((err instanceof CfError || err instanceof CoreLifecycleError) && err.deterministic);
     throw deterministic ? new NonRetryableError((err as Error).message) : err;
   }
 }
 
 /**
- * withReceipt for a step with its own retry config (every install and rollback step), run inside step.do so its D1 reads and
+ * The receipt rule for a step with its own retry config (every install and rollback step), run inside step.do so its D1 reads and
  * writes are retried with the step. An ok receipt short-circuits. A failed receipt is saved only when no retry
- * is left (a NonRetryableError or the last attempt), because withReceipt rethrows a stored failure and would
- * defeat every retry. Receipt contents match withReceipt: `{ error: message }` on failure, the step output on success.
+ * is left (a NonRetryableError or the last attempt), because a stored failed receipt is rethrown as a NonRetryableError and would
+ * defeat every retry. Receipt contents: `{ error: message }` on failure, the step output on success.
  */
 export async function receiptInRetriedStep<T extends Record<string, unknown>>(
   db: D1Database, installId: string, step: InstallStep, retryLimit: number, attempt: number, work: () => Promise<T>,

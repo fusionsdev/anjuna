@@ -2,7 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
 import { rejectQueuedInstall, setInstallStatus } from "../receipt.js";
-import { REMOTE_STEP_RETRY_CONFIG, instanceState } from "../step-receipt.js";
+import { LOCAL_STEP_RETRY_CONFIG, REMOTE_STEP_RETRY_CONFIG, instanceState } from "../step-receipt.js";
 
 export interface UpgradeAllParams {
   from_template_version_id: string;
@@ -154,27 +154,30 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
     const { FACTORY: db } = this.env;
     const now = new Date().toISOString();
 
-    const { brand_ids } = await step.do("collect_upgrade", async () => {
+    const { brand_ids } = await step.do("collect_upgrade", LOCAL_STEP_RETRY_CONFIG, async () => {
       const [fromTemplate, toTemplate, artifact] = await Promise.all([
         db.prepare("SELECT template_id, status FROM template_versions WHERE template_version_id = ?").bind(params.from_template_version_id).first<UpgradeTemplate>(),
         db.prepare("SELECT template_id, status FROM template_versions WHERE template_version_id = ?").bind(params.to_template_version_id).first<UpgradeTemplate>(),
         db.prepare("SELECT r2_key, payload_version, bundle_form_version FROM form_artifacts WHERE form_artifact_id = ?").bind(params.form_artifact_id).first<{ r2_key: string | null; payload_version: string | null; bundle_form_version: string | null }>(),
       ]);
-      if (!fromTemplate || !toTemplate) throw new Error("Upgrade template version not found");
-      validateUpgradeSelection({
+      // Missing rows and an invalid selection answer the same on every attempt: NonRetryableError. A D1 error stays retryable.
+      if (!fromTemplate || !toTemplate) throw new NonRetryableError("Upgrade template version not found");
+      try { validateUpgradeSelection({
         from_template_version_id: params.from_template_version_id,
         to_template_version_id: params.to_template_version_id,
         from_template: fromTemplate,
         to_template: toTemplate,
         artifact: { present: Boolean(artifact?.r2_key), payload_version: artifact?.payload_version ?? null, bundle_form_version: artifact?.bundle_form_version ?? null },
         canary_brand_id: params.canary_brand_id,
-      });
+      }); } catch (err) { throw new NonRetryableError((err as Error).message); }
       const rows = await db.prepare(
         `SELECT b.brand_id, b.status, r.template_version_id AS current_template_version_id
          FROM brands b JOIN brand_revisions r ON b.current_revision_id = r.revision_id
          WHERE b.status = 'live' AND r.template_version_id IN (?, ?)`,
       ).bind(params.from_template_version_id, params.to_template_version_id).all<UpgradeBrandCandidate>();
-      const selection = selectUpgradeBrands(rows.results, params.from_template_version_id, params.to_template_version_id, params.canary_brand_id);
+      let selection: ReturnType<typeof selectUpgradeBrands>;
+      try { selection = selectUpgradeBrands(rows.results, params.from_template_version_id, params.to_template_version_id, params.canary_brand_id); }
+      catch (err) { throw new NonRetryableError((err as Error).message); }
       return { brand_ids: [selection.canary, ...selection.remaining] };
     });
 
