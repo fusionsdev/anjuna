@@ -2,7 +2,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { getReceipt, isQueuedCompensationInstall, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure, withReceipt } from "../src/receipt";
+import { getReceipt, isQueuedCompensationInstall, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure } from "../src/receipt";
 
 beforeAll(async () => {
   await applyD1Migrations(env.FACTORY, env.MIGRATIONS);
@@ -63,73 +63,6 @@ describe("getReceipt / saveReceipt", () => {
     await seedInstall(id);
     await saveReceipt(env.FACTORY, id, "validate", "ok", {});
     await expect(saveReceipt(env.FACTORY, id, "validate", "ok", {})).rejects.toThrow();
-  });
-});
-
-describe("withReceipt idempotency", () => {
-  it("runs work and returns result on first call", async () => {
-    const id = `i-${uniq()}`;
-    await seedInstall(id);
-    let calls = 0;
-    const r = await withReceipt(env.FACTORY, id, "render", async () => { calls++; return { key: "renders/x/y.zip" }; });
-    expect(calls).toBe(1);
-    expect(r).toMatchObject({ key: "renders/x/y.zip" });
-  });
-
-  it("skips work on second call when ok receipt exists", async () => {
-    const id = `i-${uniq()}`;
-    await seedInstall(id);
-    let calls = 0;
-    const work = async () => { calls++; return { result: "done" }; };
-    await withReceipt(env.FACTORY, id, "render", work);
-    const r2 = await withReceipt(env.FACTORY, id, "render", work);
-    expect(calls).toBe(1);
-    expect(r2).toMatchObject({ result: "done" });
-  });
-
-  it("saves failed receipt and re-throws on work error", async () => {
-    const id = `i-${uniq()}`;
-    await seedInstall(id);
-    await expect(
-      withReceipt(env.FACTORY, id, "validate", async () => { throw new Error("zone unavailable"); }),
-    ).rejects.toThrow("zone unavailable");
-    const r = await getReceipt(env.FACTORY, id, "validate");
-    expect(r?.status).toBe("failed");
-    expect(String(r?.output?.error)).toContain("zone unavailable");
-  });
-
-  it("re-throws stored error without calling work on a failed receipt", async () => {
-    const id = `i-${uniq()}`;
-    await seedInstall(id);
-    await expect(
-      withReceipt(env.FACTORY, id, "validate", async () => { throw new Error("dns conflict"); }),
-    ).rejects.toThrow("dns conflict");
-    let called = false;
-    await expect(
-      withReceipt(env.FACTORY, id, "validate", async () => { called = true; return {}; }),
-    ).rejects.toThrow();
-    expect(called).toBe(false);
-  });
-
-  it("stores the bare error message on a failed receipt", async () => {
-    const id = `i-${uniq()}`;
-    await seedInstall(id);
-    await expect(
-      withReceipt(env.FACTORY, id, "validate", async () => { throw new Error("zone unavailable"); }),
-    ).rejects.toThrow("zone unavailable");
-    const r = await getReceipt(env.FACTORY, id, "validate");
-    expect(r?.output?.error).toBe("zone unavailable");
-  });
-
-  it("re-throws a stored failed receipt without doubling the Error prefix", async () => {
-    const id = `i-${uniq()}`;
-    await seedInstall(id);
-    await saveReceipt(env.FACTORY, id, "validate", "failed", { error: "Error: Zone not found for domain demo05.aduplift.ai" });
-    const error = await withReceipt(env.FACTORY, id, "validate", async () => { return {}; }).then(
-      () => { throw new Error("expected the failed receipt to re-throw"); },
-      (e: unknown) => e,
-    );
-    expect(String(error)).toBe("Error: Zone not found for domain demo05.aduplift.ai");
   });
 });
 

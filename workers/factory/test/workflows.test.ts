@@ -1598,6 +1598,59 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
         expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
       });
 
+      it("claim_rollback settles at once when another lifecycle operation holds the brand: one attempt, a NonRetryableError", async () => {
+        const { f, payload } = await manual("revision", async (g) => {
+          await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'install','running','owner','2000-01-01T00:00:00.000Z')").bind(`other-${g.id}`, g.brand).run();
+        });
+        const s = steps();
+        await expect(rollbackRun(f, payload, s)).rejects.toThrow("Brand already has a lifecycle mutation in progress");
+        expect(s.attempts.get("claim_rollback")).toBe(1);
+        expect(s.failures.get("claim_rollback")).toBeInstanceOf(NonRetryableError);
+        expect(s.attempts.has("validate")).toBe(false);
+      });
+
+      it("claim_rollback retries a transient D1 error and then claims the install", async () => {
+        const { f, payload } = await manual("revision", (g) => failD1(g, /^UPDATE installs SET status = 'running'/));
+        const s = steps();
+        await rollbackRun(f, payload, s);
+        expect(s.attempts.get("claim_rollback")).toBe(2);
+        expect(s.configs.get("claim_rollback")?.retries?.limit).toBeGreaterThan(0);
+        expect(await f.installRow()).toEqual({ status: "rolled_back" });
+      });
+
+      it.each(["revision", "first"] as const)("finish_rollback writes the manual rollback rows in one batch (%s), and a failed batch leaves both rows untouched", async (to) => {
+        const { f, payload } = await manual(to);
+        const real = f.bindings.FACTORY;
+        const batches: number[] = [];
+        let failOnce = true;
+        const writes: string[] = [];
+        let finishing = false;
+        (f.bindings as unknown as { FACTORY: unknown }).FACTORY = new Proxy(real, { get: (t, p) => {
+          if (p === "batch") return async (statements: D1PreparedStatement[]) => {
+            if (!finishing) return t.batch(statements);
+            batches.push(statements.length);
+            if (failOnce) { failOnce = false; throw new Error("D1_ERROR: injected failure"); }
+            return t.batch(statements);
+          };
+          if (p === "prepare") return (sql: string) => { if (finishing && /^UPDATE (installs|brands)/.test(sql)) writes.push(sql); return t.prepare(sql); };
+          const member = Reflect.get(t, p, t) as unknown;
+          return typeof member === "function" ? member.bind(t) : member;
+        } });
+        const s = steps();
+        s.hooks.before = async (name) => { finishing = name === "finish_rollback"; };
+        s.hooks.retry = async () => {
+          // After the failed batch the install row has not moved.
+          expect(await f.installRow()).toEqual({ status: "running" });
+        };
+        await rollbackRun(f, payload, s);
+        expect(s.attempts.get("finish_rollback")).toBe(2);
+        expect(batches).toEqual(to === "revision" ? [2, 2] : [1, 1]);
+        // Every UPDATE of the step goes through the batch: none is issued on its own.
+        expect(writes).toHaveLength(batches.reduce((n, c) => n + c, 0));
+        expect(await f.installRow()).toEqual({ status: "rolled_back" });
+        expect(await lockedBrand(f)).toBe(false);
+      });
+
       describe("a failed ok receipt write after the work succeeded", () => {
         async function again(step: string, to: "revision" | "first") {
           const { f, payload } = await manual(to);
@@ -1779,6 +1832,37 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
         expect(s.configs.get("canary_install")?.retries?.limit).toBe(limit);
         expect(s.configs.get("bulk_installs")?.retries?.limit).toBe(limit);
         expect(s.configs.get("canary_status_0")?.retries?.limit).toBeGreaterThan(0);
+      });
+
+      describe("collect_upgrade", () => {
+        it("settles at once when the target version is not sealed: one attempt, a NonRetryableError, nothing created", async () => {
+          const p = await prepare();
+          const target = `target-${p.f.id}`;
+          await env.FACTORY.prepare("DELETE FROM template_versions WHERE template_version_id=?").bind(target).run();
+          await env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES (?,?,2,?,?,'draft','owner',?)").bind(target, p.f.template, target, `${p.f.id}/site.zip`, now).run();
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("Upgrade target template version is not sealed");
+          expect(s.attempts.get("collect_upgrade")).toBe(1);
+          expect(s.failures.get("collect_upgrade")).toBeInstanceOf(NonRetryableError);
+          expect(p.createCalls).toHaveLength(0);
+        });
+        it("settles at once when a template version row is missing", async () => {
+          const p = await prepare();
+          await env.FACTORY.prepare("DELETE FROM template_versions WHERE template_version_id=?").bind(`target-${p.f.id}`).run();
+          const s = steps();
+          await expect(p.run(s)).rejects.toThrow("Upgrade template version not found");
+          expect(s.attempts.get("collect_upgrade")).toBe(1);
+          expect(s.failures.get("collect_upgrade")).toBeInstanceOf(NonRetryableError);
+        });
+        it("retries a transient D1 error and then collects the brands", async () => {
+          const p = await prepare();
+          failD1(p.f, /^SELECT template_id, status FROM template_versions/);
+          const s = steps();
+          await p.run(s);
+          expect(s.attempts.get("collect_upgrade")).toBe(2);
+          expect(s.configs.get("collect_upgrade")?.retries?.limit).toBeGreaterThan(0);
+          expect(p.created.size).toBe(3);
+        });
       });
 
       describe("canary_install", () => {

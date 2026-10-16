@@ -2,7 +2,7 @@
 // Mint a builder API key. Prints the key ONCE and the SQL that stores only its SHA-256 hash.
 //   node scripts/mint-key.mjs "v0 - harbor"
 // Then run the SQL against the factory D1, e.g.:
-//   wrangler d1 execute anjuna-factory --remote --command "<SQL>"
+//   wrangler d1 execute aduplift-factory --remote --command "<SQL>"
 // Revoke:  UPDATE builder_keys SET revoked_at = datetime('now') WHERE key_id = '<key_id>';
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 

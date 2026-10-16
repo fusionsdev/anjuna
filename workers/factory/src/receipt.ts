@@ -283,34 +283,10 @@ export function storedErrorMessage(stored: string): string {
 }
 
 /**
- * Run `work` with idempotency via install_receipts.
- *
- * If an "ok" receipt already exists, returns its stored output without running work.
- * If work throws, saves a "failed" receipt and re-throws.
+ * A refusal that the same input always repeats: the row is in the wrong state or the caller is not authorized. It extends Error and keeps
+ * the name "Error", so stored texts read as before. failFast turns it into a NonRetryableError; D1 and network errors stay plain.
  */
-export async function withReceipt<T extends Record<string, unknown>>(
-  db: D1Database,
-  installId: string,
-  step: InstallStep,
-  work: () => Promise<T>,
-): Promise<T> {
-  const existing = await getReceipt(db, installId, step);
-  if (existing?.status === "ok") return existing.output as T;
-  // A failed receipt means this install already broke. A new attempt must use a new install_id.
-  // Legacy rows stored `String(err)` (already "Error: "-prefixed); strip one prefix so the
-  // re-thrown message does not surface as "Error: Error: ...".
-  if (existing?.status === "failed") throw new Error(storedErrorMessage(String(existing.output?.error ?? "step previously failed")));
-
-  let result: T;
-  try {
-    result = await work();
-  } catch (err) {
-    await saveReceipt(db, installId, step, "failed", { error: stepErrorMessage(err) });
-    throw err;
-  }
-  await saveReceipt(db, installId, step, "ok", result);
-  return result;
-}
+export class DeterministicStepError extends Error {}
 
 /** Mark the install row status and set finished_at. */
 export async function setInstallStatus(
@@ -333,10 +309,10 @@ export async function setInstallStatus(
             || await isAuthorizedRecovery(db, installId, options.compensationForInstallId, brandId)
           : false;
         if (await isQueuedCompensationInstall(db, installId) && !linkedCompensation) {
-          throw new Error("Queued compensation requires its exact original install");
+          throw new DeterministicStepError("Queued compensation requires its exact original install");
         }
         if (options.compensationForInstallId && !linkedCompensation) {
-          throw new Error("Compensation install is not authorized for the original install");
+          throw new DeterministicStepError("Compensation install is not authorized for the original install");
         }
         if (linkedCompensation) {
           const original = await db.prepare(
@@ -345,10 +321,10 @@ export async function setInstallStatus(
           const brand = await db.prepare("SELECT status FROM brands WHERE brand_id = ?")
             .bind(brandId).first<{ status: string }>();
           if (!original || original.brand_id !== brandId || !["failed", "running"].includes(original.status) || brand?.status !== "installing") {
-            throw new Error("Compensation install is not authorized for the retained brand lock");
+            throw new DeterministicStepError("Compensation install is not authorized for the retained brand lock");
           }
           if (install?.status !== "queued") {
-            throw new Error("Compensation install cannot be re-dispatched after it finished");
+            throw new DeterministicStepError("Compensation install cannot be re-dispatched after it finished");
           }
         }
         const active = await db.prepare(
@@ -358,7 +334,7 @@ export async function setInstallStatus(
           .bind(brandId).first<{ status: string }>();
         const decision = lifecycleOperationDecision(brand?.status ?? "missing", active?.install_id ?? null, installId);
         if (decision === "reject" && !(linkedCompensation && active?.install_id === options.compensationForInstallId)) {
-          throw new Error("Brand already has a lifecycle mutation in progress");
+          throw new DeterministicStepError("Brand already has a lifecycle mutation in progress");
         }
         const claimed = await db
           .prepare("UPDATE brands SET status = 'installing', updated_at = ? WHERE brand_id = ? AND status IN ('draft', 'live', 'failed')")
