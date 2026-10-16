@@ -1,6 +1,6 @@
 # Template MCP (`anjuna-template-mcp`)
 
-Remote MCP server (Cloudflare Agents SDK `McpAgent`, streamable HTTP at `https://mcp.aduplift.ai/mcp`).
+Remote MCP server (Cloudflare Agents SDK `McpAgent`). Streamable HTTP at `https://mcp.aduplift.ai/mcp`, legacy SSE at `https://mcp.aduplift.ai/sse`.
 Every brand gets a **unique** design from an AI builder (open-design.ai, v0, Bolt, Lovable, Magic Patterns).
 The builder's AI connects here to learn the contract and to check its template before handing it over.
 Identical sites across brands risk Google Ads bans, so uniqueness is checked too.
@@ -23,7 +23,10 @@ no `#cfg` element, every internal link/asset resolves. The constants are tested 
 
 ## Auth and limits
 
-- `Authorization: Bearer <key>`. Keys are per builder, stored only as SHA-256 hashes in the factory D1 (`builder_keys`),
+- The builder key is read from the first of these headers that holds a valid key (16-256 characters, no spaces):
+  `Authorization: Bearer <key>`, `Authorization: <key>`, `X-API-Key: <key>`, `Api-Key: <key>`.
+  A key in the URL query string is never accepted. A 401 carries `WWW-Authenticate: Bearer realm="anjuna-template-mcp"`.
+  Keys are per builder, stored only as SHA-256 hashes in the factory D1 (`builder_keys`),
   revocable with `revoked_at`. Mint one with `node scripts/mint-key.mjs "<label>"` (prints the key once plus the `INSERT`).
   Revoke: `UPDATE builder_keys SET revoked_at = datetime('now') WHERE key_id = '...'`.
 - Rate limit per key: `RATE_LIMIT_PER_MINUTE` requests (default 60), fixed window in `builder_key_usage`; `429` + `Retry-After`.
@@ -31,6 +34,18 @@ no `#cfg` element, every internal link/asset resolves. The constants are tested 
   symlinks and special files, encrypted entries, duplicate entries, ZIP64.
 - URLs: `https` + public hostnames only, 3 redirects, size-capped, 150 requests when crawling a live site.
 - `check_github_repo` reads the repo tarball (symlinks skipped). Optional secret `GITHUB_TOKEN` (read-only) for private repos.
+
+## Transports and bolt.new
+
+- `/mcp`: streamable HTTP.
+- `/sse`: legacy SSE. `GET /sse` opens the event stream, the stream announces `/sse/message?sessionId=...` for client requests.
+  Both paths use the same key check, rate limit and CORS allow-list (`Authorization`, `X-API-Key`, `Api-Key`).
+
+bolt.new custom MCP connector:
+
+1. URL: `https://mcp.aduplift.ai/mcp`.
+2. Transport type: HTTP. For SSE, use `https://mcp.aduplift.ai/sse`.
+3. Auth: API key, value = the builder key.
 
 ## Similarity
 

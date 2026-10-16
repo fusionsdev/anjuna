@@ -38,6 +38,39 @@ describe("authentication", () => {
     expect(await res.json()).toEqual({ error: "invalid_api_key" });
   });
 
+  it.each([
+    ["Authorization: Bearer <key>", { authorization: `Bearer ${KEY}` }],
+    ["Authorization: <key>", { authorization: KEY }],
+    ["X-API-Key", { "x-api-key": KEY }],
+    ["Api-Key", { "api-key": KEY }],
+  ])("accepts the key from %s", async (_name, headers) => {
+    const init = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "1" } } };
+    expect((await rpc(headers, init)).status).toBe(200);
+  });
+
+  it("rejects a key in the query string", async () => {
+    const res = await SELF.fetch(`${BASE}/mcp?api_key=${KEY}&key=${KEY}&apikey=${KEY}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toBe('Bearer realm="anjuna-template-mcp"');
+  });
+
+  it("rejects a revoked key sent in X-API-Key", async () => {
+    await env.FACTORY.prepare("UPDATE builder_keys SET revoked_at = '2026-10-02T01:00:00.000Z' WHERE key_id = 'bk_test'").run();
+    expect((await rpc({ "x-api-key": KEY })).status).toBe(401);
+  });
+
+  it("allows X-API-Key and Api-Key in CORS preflight on /mcp and /sse", async () => {
+    for (const path of ["/mcp", "/sse"]) {
+      const res = await SELF.fetch(`${BASE}${path}`, { method: "OPTIONS", headers: { origin: "https://bolt.new", "access-control-request-method": "POST" } });
+      const allowed = (res.headers.get("access-control-allow-headers") ?? "").toLowerCase();
+      for (const name of ["authorization", "x-api-key", "api-key"]) expect(allowed).toContain(name);
+    }
+  });
+
   it("stores only the SHA-256 hash and records last use", async () => {
     await rpc({ authorization: `Bearer ${KEY}` });
     const row = await env.FACTORY.prepare("SELECT key_hash, last_used_at FROM builder_keys WHERE key_id = 'bk_test'").first<{ key_hash: string; last_used_at: string }>();
@@ -49,6 +82,30 @@ describe("authentication", () => {
   it("serves /health unauthenticated and 404s other paths", async () => {
     expect(await (await SELF.fetch(`${BASE}/health`)).json()).toEqual({ ok: true });
     expect((await SELF.fetch(`${BASE}/other`)).status).toBe(404);
+  });
+});
+
+describe("legacy SSE transport", () => {
+  it("rejects /sse and /sse/message without a key", async () => {
+    const get = await SELF.fetch(`${BASE}/sse`);
+    expect(get.status).toBe(401);
+    expect(get.headers.get("www-authenticate")).toBe('Bearer realm="anjuna-template-mcp"');
+    expect((await SELF.fetch(`${BASE}/sse/message?sessionId=x`, { method: "POST", body: "{}" })).status).toBe(401);
+    expect((await SELF.fetch(`${BASE}/sse?x-api-key=${KEY}`)).status).toBe(401);
+  });
+
+  it.each([
+    ["Authorization: Bearer <key>", { authorization: `Bearer ${KEY}` }],
+    ["X-API-Key", { "x-api-key": KEY }],
+  ])("opens an event stream with %s", async (_name, headers) => {
+    const res = await SELF.fetch(`${BASE}/sse`, { headers });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const reader = res.body!.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    expect(first).toContain("event: endpoint");
+    expect(first).toContain("/sse/message?sessionId=");
+    await reader.cancel();
   });
 });
 
