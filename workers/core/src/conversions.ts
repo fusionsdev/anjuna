@@ -8,6 +8,10 @@ import {
 import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
 import { json } from "./http.js";
+// True when none of the four click ids carries a value. Such a row can never upload to Google Ads.
+const NO_CLICK_ID = `COALESCE(gclid, '') = '' AND COALESCE(gbraid, '') = '' AND COALESCE(wbraid, '') = '' AND COALESCE(msclkid, '') = ''`;
+const HAS_CLICK_ID = `(COALESCE(gclid, '') != '' OR COALESCE(gbraid, '') != '' OR COALESCE(wbraid, '') != '' OR COALESCE(msclkid, '') != '')`;
+
 export async function handleConversionsPending(request: Request, env: Env): Promise<Response> {
 
   if (!await drainAuthorized(request, env)) return json({ status: "invalid", message: "Unauthorized" }, 401);
@@ -28,6 +32,8 @@ export async function handleConversionsPending(request: Request, env: Env): Prom
       FROM conversion_uploads cu
       LEFT JOIN leads l ON l.lead_id = cu.lead_id
       WHERE cu.status = 'pending' AND (cu.next_attempt_at IS NULL OR cu.next_attempt_at <= ?1)
+        AND (COALESCE(cu.gclid, '') != '' OR COALESCE(cu.gbraid, '') != ''
+             OR COALESCE(cu.wbraid, '') != '' OR COALESCE(cu.msclkid, '') != '')
       ORDER BY cu.created_at ASC
       LIMIT ?2
     `).bind(nowIso, limit).all<PendingConversion>();
@@ -38,13 +44,23 @@ export async function handleConversionsPending(request: Request, env: Env): Prom
   // statement, so overlapping drains can't grab the same row. Eligible = due 'pending' OR a
   // 'processing' row whose lease went stale (a crashed drain).
   //
-  // Two statements in one atomic batch so a row whose drain keeps crashing BEFORE it can ack
-  // (audit H-01/H-05 crash path) is still bounded: statement 1 parks stale rows that already
-  // exhausted their attempts into the DLQ ('dead'); statement 2 claims the rest and counts each
+  // The claim is one atomic batch (no-click park, stale-exhausted park, claim) so a row whose drain keeps crashing BEFORE it can ack
+  // (audit H-01/H-05 crash path) is still bounded: the second statement parks stale rows that already
+  // exhausted their attempts into the DLQ ('dead'); the third claims the rest and counts each
   // stale reclaim as one attempt (a fresh 'pending' claim is NOT counted — that attempt is
   // counted at ack). Together this guarantees "bounded reclaims, then DLQ" even across crashes.
   const staleIso = new Date(nowMs - CONV_LEASE_STALE_MS).toISOString();
+  // Statement 0 parks rows with no click id (FUS-341): they can never upload, so they must not
+  // reach the drain, fail, and age into 'dead' after retries. Covers due 'pending' rows and stale
+  // 'processing' rows (claimed before this fix), since the claim below no longer picks them up.
   const batchResults = await env.LEADS.batch([
+    env.LEADS.prepare(`
+      UPDATE conversion_uploads
+      SET status = 'dead', last_error = 'no click id', updated_at = ?1
+      WHERE ${NO_CLICK_ID}
+        AND ((status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?1))
+          OR (status = 'processing' AND (updated_at IS NULL OR updated_at <= ?2)))
+    `).bind(nowIso, staleIso),
     env.LEADS.prepare(`
       UPDATE conversion_uploads
       SET status = 'dead',
@@ -59,8 +75,9 @@ export async function handleConversionsPending(request: Request, env: Env): Prom
           updated_at = ?1
       WHERE lead_id IN (
         SELECT lead_id FROM conversion_uploads
-        WHERE (status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?1))
-           OR (status = 'processing' AND (updated_at IS NULL OR updated_at <= ?2) AND attempts < ?3)
+        WHERE ${HAS_CLICK_ID}
+          AND ((status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?1))
+            OR (status = 'processing' AND (updated_at IS NULL OR updated_at <= ?2) AND attempts < ?3))
         ORDER BY created_at ASC
         LIMIT ?4
       )
@@ -68,7 +85,7 @@ export async function handleConversionsPending(request: Request, env: Env): Prom
     `).bind(nowIso, staleIso, CONV_MAX_ATTEMPTS, limit),
   ]);
 
-  const results = ((batchResults[1] as unknown as { results?: PendingConversion[] }).results) ?? [];
+  const results = ((batchResults[2] as unknown as { results?: PendingConversion[] }).results) ?? [];
 
   // Decorate the claimed rows with the brand that produced them. This is a SECOND read rather
   // than a join because SQLite's UPDATE ... RETURNING can only return columns of the table it
