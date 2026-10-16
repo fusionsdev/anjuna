@@ -22,7 +22,7 @@ describe("skeleton and authentication", () => {
 
   it.each([
     ["aduplift", "workers/core/wrangler.deploy.aduplift.jsonc", "6cb8500c35210800451bd9a535482850", "core.aduplift.ai"],
-    ["maimax", "workers/core/wrangler.deploy.maimax.jsonc", "c1a44deffd54a8ce35cb9e68abeb7b11", "core.maimax.fit"],
+    ["maimax", "workers/core/wrangler.deploy.maimax.jsonc", "c1a44deffd54a8ce35cb9e68abeb7b11", "core.maimax.com"],
   ])("pins the %s deployment lifecycle account", (_tenant, file, accountId, domain) => {
     const text = readFileSync(join(ROOT, file), "utf8");
     const config = JSON.parse(text.replace(/^\s*\/\/.*$/gm, ""));

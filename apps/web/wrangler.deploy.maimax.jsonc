@@ -12,7 +12,7 @@
   "preview_urls": false,
   "routes": [
     {
-      "pattern": "app.maimax.fit",
+      "pattern": "app.maimax.com",
       "custom_domain": true
     }
   ],
@@ -55,7 +55,7 @@
   "vars": {
     "ACCESS_TEAM_DOMAIN": "snowy-forest-7b45.cloudflareaccess.com",
     "ACCESS_AUD": "792df5aed44413b8808173bad3c4ec805dfc993fe790aa808d0d82af639f74d2",
-    "BETTER_AUTH_URL": "https://app.maimax.fit",
+    "BETTER_AUTH_URL": "https://app.maimax.com",
     "MOCK_CORE": "0",
     "DEFAULT_ACCOUNT": "maimax",
     "DEFAULT_AID": "17244",

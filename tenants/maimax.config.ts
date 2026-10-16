@@ -10,9 +10,9 @@ const config: TenantConfig = {
   // maimax Cloudflare account ID.
   accountId: "c1a44deffd54a8ce35cb9e68abeb7b11",
   // Owner-provided hostname of the maimax core Worker.
-  coreDomain: "core.maimax.fit",
+  coreDomain: "core.maimax.com",
   // Owner-provided hostname of the maimax control panel Worker.
-  appDomain: "app.maimax.fit",
+  appDomain: "app.maimax.com",
   // LeadsGate affiliate ID for the maimax account.
   leadsGateAid: "17244",
   prepopBase: "/apply",
@@ -22,7 +22,7 @@ const config: TenantConfig = {
     amountBuckets: [350, 500, 750, 1000, 1500, 1750, 2000, 3000, 3250, 4500, 5000],
     payloadVersion: "2026-01",
   },
-  // maimax drain VPS (143.14.147.127) — /opt/drain/drain.mjs polls core.maimax.fit.
+  // maimax drain VPS (143.14.147.127) — /opt/drain/drain.mjs polls core.maimax.com.
   drainUrl: "http://143.14.147.127",
   // maimax listmonk base URL; undefined until a listmonk instance exists.
   listmonkUrl: undefined,
@@ -35,7 +35,7 @@ const config: TenantConfig = {
     coreToken: "MAIMAX_CORE_TOKEN",
   },
   // maimax owner login email used by bootstrap seeding.
-  ownerEmail: "owner@maimax.fit",
+  ownerEmail: "owner@maimax.com",
   d1: {
     leads:   "e22ee9b3-1c94-4c97-ad3a-fca721910bc8",
     factory: "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
