@@ -60,4 +60,48 @@ describe("unmodified V1 drain.mjs against Miniflare core", () => {
     expect(await h.queue(rows[2]!.lead_id)).toMatchObject({ status: "pending", attempts: 0 });
     expect(await (await h.ack(body.results)).text()).toBe('{"status":"accepted","acked":0}');
   });
+
+  describe("rows with no click id (FUS-341)", () => {
+    const seed = async (id: string, ids: Record<string, string | null>, created: string) => {
+      await h.seedLead(id, id.replace(/-/g, ""));
+      await h.seedConversion(id, { gclid: null, gbraid: null, wbraid: null, msclkid: null, ...ids, created_at: created });
+    };
+    const leadIds = (body: { conversions: Array<{ lead_id: string }> }) => body.conversions.map((c) => c.lead_id).sort();
+
+    it("never claims a no-click pending row and parks it as dead with last_error 'no click id'", async () => {
+      await seed("noclick-null", {}, "2026-01-01T00:00:00.000Z");
+      await seed("noclick-empty", { gclid: "", gbraid: "", wbraid: "", msclkid: "" }, "2026-01-01T00:00:01.000Z");
+      const body = await (await h.pending()).json() as { conversions: Array<{ lead_id: string }> };
+      expect(body.conversions).toEqual([]);
+      for (const id of ["noclick-null", "noclick-empty"]) {
+        expect(await h.queue(id)).toMatchObject({ status: "dead", last_error: "no click id", attempts: 0 });
+      }
+    });
+
+    it.each(["gclid", "gbraid", "wbraid", "msclkid"])("still claims a row whose only click id is %s", async (field) => {
+      await seed("has-click", { [field]: "click-1" }, "2026-01-01T00:00:00.000Z");
+      await seed("noclick", {}, "2026-01-01T00:00:01.000Z");
+      const body = await (await h.pending()).json() as { conversions: Array<{ lead_id: string }> };
+      expect(leadIds(body)).toEqual(["has-click"]);
+      expect(await h.queue("has-click")).toMatchObject({ status: "processing" });
+      expect(await h.queue("noclick")).toMatchObject({ status: "dead", last_error: "no click id" });
+    });
+
+    it("parks a stale processing no-click row instead of reclaiming it", async () => {
+      await seed("stale-noclick", {}, "2026-01-01T00:00:00.000Z");
+      await h.db.prepare("UPDATE conversion_uploads SET status = 'processing', updated_at = '2026-01-01T00:00:00.000Z'").run();
+      const body = await (await h.pending()).json() as { conversions: unknown[] };
+      expect(body.conversions).toEqual([]);
+      expect(await h.queue("stale-noclick")).toMatchObject({ status: "dead", last_error: "no click id" });
+    });
+
+    it("peek=1 excludes no-click rows and does not mutate them", async () => {
+      await seed("has-click", { gclid: "click-1" }, "2026-01-01T00:00:00.000Z");
+      await seed("noclick", {}, "2026-01-01T00:00:01.000Z");
+      const body = await (await h.pending("?limit=100&peek=1")).json() as { conversions: Array<{ lead_id: string }> };
+      expect(leadIds(body)).toEqual(["has-click"]);
+      expect(await h.queue("noclick")).toMatchObject({ status: "pending", last_error: null });
+      expect(await h.queue("has-click")).toMatchObject({ status: "pending" });
+    });
+  });
 });
