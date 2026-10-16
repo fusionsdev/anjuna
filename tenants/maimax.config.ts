@@ -1,21 +1,19 @@
 /**
- * Maimax tenant — placeholder config. Run `bun run bootstrap --tenant maimax` to provision
- * resources. Then replace every placeholder value with the real one and commit.
- *
- * Placeholder convention: `.invalid` TLD (RFC 2606 reserved) for domains that aren't set yet.
- * Replace with real values before triggering the first release deploy.
+ * Maimax tenant. Account, domains, LeadsGate aid and D1 ids are the real provisioned values.
+ * Do not re-run `bun run bootstrap --tenant maimax`: it would overwrite the hand-edited
+ * maimax wrangler configs with older templates.
  */
 import type { TenantConfig } from "./schema";
 
 const config: TenantConfig = {
   name: "maimax",
-  // REPLACE: maimax Cloudflare account ID (32 hex chars, from Cloudflare dashboard).
+  // maimax Cloudflare account ID.
   accountId: "c1a44deffd54a8ce35cb9e68abeb7b11",
   // Owner-provided hostname of the maimax core Worker.
   coreDomain: "core.maimax.fit",
   // Owner-provided hostname of the maimax control panel Worker.
   appDomain: "app.maimax.fit",
-  // REPLACE: LeadsGate affiliate ID for the maimax account.
+  // LeadsGate affiliate ID for the maimax account.
   leadsGateAid: "17244",
   prepopBase: "/apply",
   brandDefaults: {
@@ -26,7 +24,7 @@ const config: TenantConfig = {
   },
   // maimax drain VPS (143.14.147.127) — /opt/drain/drain.mjs polls core.maimax.fit.
   drainUrl: "http://143.14.147.127",
-  // REPLACE: maimax listmonk base URL once the listmonk instance is deployed.
+  // maimax listmonk base URL; undefined until a listmonk instance exists.
   listmonkUrl: undefined,
   secrets: {
     // GitHub Actions secret names in the `maimax` Environment — must differ from aduplift secrets.
@@ -36,7 +34,7 @@ const config: TenantConfig = {
     postbackTokenSalt: "MAIMAX_POSTBACK_TOKEN_SALT",
     coreToken: "MAIMAX_CORE_TOKEN",
   },
-  // REPLACE: maimax owner login email.
+  // maimax owner login email used by bootstrap seeding.
   ownerEmail: "owner@maimax.fit",
   d1: {
     leads:   "e22ee9b3-1c94-4c97-ad3a-fca721910bc8",

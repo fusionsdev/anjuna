@@ -128,8 +128,7 @@ jobs:
   deploy-maimax:
     name: Deploy (maimax)
     needs: deploy-aduplift
-    # Maimax's Cloudflare account and wrangler.deploy.maimax.jsonc files do not exist
-    # yet (Wave 4 O7, owner-gated). Set repo variable MAIMAX_ENABLED=true to turn on.
+    # Off until the maimax tenant setup is finished. Set repo variable MAIMAX_ENABLED=true to turn on.
     if: ${{ vars.MAIMAX_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: maimax
@@ -151,11 +150,35 @@ jobs:
           bun x wrangler d1 migrations apply maimax-factory --remote --config workers/core/wrangler.deploy.maimax.jsonc
           bun x wrangler d1 migrations apply maimax-auth    --remote --config apps/web/wrangler.deploy.maimax.jsonc
 
+      - name: Build and upload brand runtime bundle (maimax)
+        run: |
+          bun run --filter @anjuna/brand-runtime bundle
+          sha256sum packages/brand-runtime/dist/brand-runtime.js
+          bunx wrangler r2 object put anjuna-artifacts/runtime/brand-runtime.js --file packages/brand-runtime/dist/brand-runtime.js --content-type application/javascript --remote --config workers/core/wrangler.deploy.maimax.jsonc
+
       - name: Deploy core (maimax)
         run: bun x wrangler deploy --config workers/core/wrangler.deploy.maimax.jsonc
 
-      # anjuna-factory is not deployed in the maimax account yet; add its
-      # secret check and deploy here once the owner creates it there.
+      # The factory binds core's FactoryLifecycleService, and web binds the factory,
+      # so the factory deploys after core and before web.
+      - name: Check factory secrets (maimax)
+        run: |
+          bun x wrangler secret list --config workers/factory/wrangler.maimax.jsonc > /tmp/factory-secrets.json
+          MISSING=""
+          for NAME in CF_API_TOKEN CORE_TOKEN; do
+            jq -e --arg n "$NAME" 'map(.name) | index($n)' /tmp/factory-secrets.json > /dev/null || MISSING="$MISSING $NAME"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "anjuna-factory (maimax) is missing secret(s):$MISSING"
+            echo "The owner must set them once:"
+            for NAME in $MISSING; do
+              echo "  bun x wrangler secret put $NAME --config workers/factory/wrangler.maimax.jsonc"
+            done
+            exit 1
+          fi
+
+      - name: Deploy factory (maimax)
+        run: bun x wrangler deploy --config workers/factory/wrangler.maimax.jsonc
 
       - name: Set core secrets (maimax)
         run: |
