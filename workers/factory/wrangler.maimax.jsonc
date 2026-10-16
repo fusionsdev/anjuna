@@ -51,7 +51,7 @@
   "vars": {
     "CF_ACCOUNT_ID": "c1a44deffd54a8ce35cb9e68abeb7b11",
     "CORE_ACCOUNT": "maimax",
-    "CORE_DOMAIN": "core.maimax.fit",
+    "CORE_DOMAIN": "core.maimax.com",
     "CORE_SERVICE_NAME": "anjuna-core",
     "DEFAULT_FORM_ROUTE": "/request",
     "DEFAULT_AMOUNT_BUCKETS": "[350,500,750,1000,1500,1750,2000,3000,3250,4500,5000]",

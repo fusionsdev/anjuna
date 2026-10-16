@@ -97,7 +97,7 @@ describe("Cloudflare Access gate on /api/*", () => {
     expect(res.status).toBe(200);
   });
 
-  it.each(["app.maimax.fit", "app.aduplift.ai"])("keeps Secure cookies at the edge even with the flag set (%s)", async (host) => {
+  it.each(["app.maimax.com", "app.aduplift.ai"])("keeps Secure cookies at the edge even with the flag set (%s)", async (host) => {
     const t = await token();
     const origin = `https://${host}`;
     const env = makeEnv({ DEV_ACCESS_BYPASS: "1", ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD, BETTER_AUTH_URL: origin });
@@ -115,7 +115,7 @@ describe("Cloudflare Access gate on /api/*", () => {
   });
 
   it("does not bypass Access on the maimax host at the edge", async () => {
-    const origin = "https://app.maimax.fit";
+    const origin = "https://app.maimax.com";
     const env = makeEnv({ DEV_ACCESS_BYPASS: "1", BETTER_AUTH_URL: origin });
     // Sign-in needs no session, so a 401 here proves Access itself rejected the request.
     const res = await call("/api/auth/sign-in/email", {
@@ -127,7 +127,7 @@ describe("Cloudflare Access gate on /api/*", () => {
     expect(await res.json()).toEqual({ error: "unauthorized" });
   });
 
-  it.each(["app.maimax.fit", "app.aduplift.ai"])("rejects local HTTP origins at the edge even with the flag set (%s)", async (host) => {
+  it.each(["app.maimax.com", "app.aduplift.ai"])("rejects local HTTP origins at the edge even with the flag set (%s)", async (host) => {
     const t = await token();
     const origin = `https://${host}`;
     const env = makeEnv({ DEV_ACCESS_BYPASS: "1", BETTER_AUTH_URL: origin });

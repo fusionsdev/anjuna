@@ -6,9 +6,9 @@ const req = (url: string, ip?: string) => new Request(url, { headers: ip ? { "CF
 
 describe("isLocalDev", () => {
   it.each([
-    ["1", "https://app.maimax.fit/api/me", "203.0.113.8", false],
+    ["1", "https://app.maimax.com/api/me", "203.0.113.8", false],
     ["1", "https://app.aduplift.ai/api/me", "203.0.113.8", false],
-    ["1", "https://app.maimax.fit/api/me", undefined, false],
+    ["1", "https://app.maimax.com/api/me", undefined, false],
     ["1", "https://app.aduplift.ai/api/me", undefined, true],
     ["1", "https://app.aduplift.ai/api/me", "127.0.0.1", true],
     ["1", "http://localhost:8787/api/me", "::1", true],
