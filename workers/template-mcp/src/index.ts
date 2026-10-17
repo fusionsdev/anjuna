@@ -1,7 +1,9 @@
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { authenticate, type BuilderIdentity } from "./auth";
 import type { Env } from "./env";
+import { handleImportRequest } from "./import-service";
 import { registerTools } from "./tools";
 
 type McpProps = { builder: BuilderIdentity };
@@ -12,6 +14,13 @@ export class TemplateMcp extends McpAgent<Env, unknown, McpProps> {
 
   async init(): Promise<void> {
     registerTools(this.server, this.env, this.props?.builder ?? null);
+  }
+}
+
+/** Dashboard "Import from URL". A named entrypoint is reachable only through a service binding (anjuna-web TEMPLATE_MCP). */
+export class TemplateImportService extends WorkerEntrypoint<Env> {
+  fetch(request: Request): Promise<Response> {
+    return handleImportRequest(request, this.env);
   }
 }
 

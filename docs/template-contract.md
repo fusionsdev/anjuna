@@ -157,3 +157,5 @@ A bolt.new chat cannot pass a built site as one tool argument (on 2026-10-17 a 1
    - `duplicate`: this exact build was already submitted. Nothing changed.
 6. "reduce image sizes" means the build is over 30 MB, 2000 files or 10 MB per file. Compress or resize images and submit again.
 7. Only if the site cannot be published: call `begin_upload`, then `upload_files` with every file in `dist/` as `{ "path", "content", "encoding", "part" }`, at most 20,000 characters of content per call (cut larger files into parts 0, 1, 2 ...), then `finish_upload`. The result is the same as `submit_template_url`. The batch size is `UPLOAD_BATCH_CHARS` in `workers/template-mcp/src/submit.ts`.
+
+The owner and employees can paste the same published URL into "Import from URL" on the dashboard's Templates screen. It runs the same pipeline.
