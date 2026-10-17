@@ -11,7 +11,7 @@
   "preview_urls": false,
   "routes": [
     {
-      "pattern": "core.maimax.fit",
+      "pattern": "core.maimax.com",
       "custom_domain": true
     }
   ],
