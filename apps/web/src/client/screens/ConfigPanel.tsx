@@ -1,4 +1,7 @@
-import { BRAND_PATCH_FIELD_GROUPS, roleAtLeast, type BrandConfig, type BrandPatchRequest, type FlowGateMode } from "@anjuna/contracts";
+import {
+  BRAND_PATCH_FIELD_GROUPS, SITE_TEXT_LIMITS, SiteBrandName, SiteDescription, SiteTitle, roleAtLeast,
+  type BrandConfig, type BrandPatchRequest, type FlowGateMode, type TemplateTextDefaults,
+} from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 
@@ -9,6 +12,8 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
   const [brand, setBrand] = useState<BrandConfig | null>(null);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
+  const [defaults, setDefaults] = useState<TemplateTextDefaults | null>(null);
+  useEffect(() => { void api.siteTextDefaults(brandId).then((r) => setDefaults(r.defaults), () => setDefaults(null)); }, [brandId]);
 
   const load = useCallback(() => api.brand(brandId).then(setBrand, (e) => setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ" })), [brandId]);
   useEffect(() => void load(), [load]);
@@ -51,6 +56,11 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
       </Section>
 
       <KeywordSection key={brand.updated_at} brand={brand} onSave={(k) => save({ keyword_default: k })} />
+
+      {can(me, "site_text") && (
+        <SiteTextSection key={`s${brand.updated_at}${defaults ? "d" : ""}`} brand={brand} defaults={defaults}
+          onSave={(patch) => save(patch, "บันทึกข้อความหน้าเว็บแล้ว (Site text saved)")} />
+      )}
 
       {me.role === "owner" && <Section title="ย้อนกลับ (Rollback)">
         <button
@@ -233,5 +243,65 @@ function TokenModal({ token, onClose }: { token: string; onClose: () => void }) 
         </div>
       </div>
     </div>
+  );
+}
+
+type SiteField = "brand_name" | "site_title" | "site_description";
+const SITE_FIELDS: Array<{ field: SiteField; source: keyof TemplateTextDefaults; label: string; max: number; schema: typeof SiteTitle }> = [
+  { field: "brand_name", source: "brand_name", label: "ชื่อแบรนด์ (Brand name)", max: SITE_TEXT_LIMITS.brand_name, schema: SiteBrandName },
+  { field: "site_title", source: "title", label: "ชื่อหน้า (Page title)", max: SITE_TEXT_LIMITS.title, schema: SiteTitle },
+  { field: "site_description", source: "description", label: "คำอธิบาย (Meta description)", max: SITE_TEXT_LIMITS.description, schema: SiteDescription },
+];
+
+/** Brand name, page title and meta description: template defaults, editable per brand. Empty or equal to the default saves null. */
+function SiteTextSection({ brand, defaults, onSave }: { brand: BrandConfig; defaults: TemplateTextDefaults | null; onSave: (patch: BrandPatchRequest) => void }) {
+  const fallback = (f: (typeof SITE_FIELDS)[number]) => defaults?.[f.source] ?? "";
+  const [values, setValues] = useState<Record<SiteField, string>>(
+    () => Object.fromEntries(SITE_FIELDS.map((f) => [f.field, brand[f.field] ?? fallback(f)])) as Record<SiteField, string>,
+  );
+  const edited = (f: (typeof SITE_FIELDS)[number]) => values[f.field].trim() !== "" && values[f.field].trim() !== fallback(f);
+  const errors = SITE_FIELDS.map((f) => {
+    const value = values[f.field].trim();
+    if (!value) return null;
+    const parsed = f.schema.safeParse(value);
+    return parsed.success ? null : `${f.label}: ${parsed.error.issues[0]?.message ?? "invalid"}`;
+  }).filter((e): e is string => e !== null);
+  const patch: BrandPatchRequest = {};
+  for (const f of SITE_FIELDS) {
+    const next = edited(f) ? values[f.field].trim() : null;
+    if (next !== brand[f.field]) patch[f.field] = next;
+  }
+  const changed = Object.keys(patch).length > 0;
+  const shown = (field: SiteField) => values[field].trim() || "-";
+
+  return (
+    <Section title="ข้อความหน้าเว็บ (Site text)">
+      {SITE_FIELDS.map((f) => (
+        <div key={f.field} className="site-field">
+          <div className="row split">
+            <span>{f.label}</span>
+            <span className="badge">{edited(f) ? "แก้ไขแล้ว (Edited)" : "จากเทมเพลต (From template)"}</span>
+          </div>
+          <input aria-label={f.label} value={values[f.field]} onChange={(e) => setValues({ ...values, [f.field]: e.target.value })} />
+          <div className="row split small">
+            <span className={values[f.field].trim().length > f.max ? "error" : "muted"}>{`${values[f.field].trim().length}/${f.max}`}</span>
+            <button className="link" aria-label={`รีเซ็ต ${f.label} (Reset to template)`} onClick={() => setValues({ ...values, [f.field]: fallback(f) })}>
+              รีเซ็ตเป็นค่าเทมเพลต (Reset to template)
+            </button>
+          </div>
+        </div>
+      ))}
+      {errors.map((e) => <div key={e} className="error small">{e}</div>)}
+      <div className="site-preview" aria-label="ตัวอย่าง (Preview)">
+        <div className="preview-tab" aria-label="แท็บเบราว์เซอร์ (Browser tab)">{shown("site_title")}</div>
+        <div className="preview-serp">
+          <div className="muted small">{brand.hostnames[0]}</div>
+          <div className="preview-serp-title">{shown("site_title")}</div>
+          <div className="small">{shown("site_description")}</div>
+        </div>
+        <div className="preview-brand"><span className="muted small">Header / footer</span> <b>{shown("brand_name")}</b></div>
+      </div>
+      <button className="primary" disabled={!changed || errors.length > 0} onClick={() => onSave(patch)}>บันทึกข้อความหน้าเว็บ (Save site text)</button>
+    </Section>
   );
 }

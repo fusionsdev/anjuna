@@ -1,4 +1,4 @@
-import { BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
+import { BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
 import type {
   AdminRole,
   AlertsReportResponse,
@@ -88,6 +88,7 @@ export const api = {
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
   brands: () => request<{ brands: BrandSummary[]; generated_at: string }>("GET", "/api/brands"),
   brand: (id: string) => request<{ brand: BrandConfig }>("GET", `/api/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
+  siteTextDefaults: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/site-text`).then((body) => SiteTextDefaultsResponse.parse(body)),
   patchBrand: (id: string, body: BrandPatchRequest) => request<BrandPatchResponse>("PATCH", `/api/brands/${encodeURIComponent(id)}`, body),
   setStatus: (id: string, action: "pause" | "resume") =>
     request<BrandStatusChangeResponse>("POST", `/api/brands/${encodeURIComponent(id)}/${action}`, {}),

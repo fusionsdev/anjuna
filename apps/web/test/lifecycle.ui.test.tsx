@@ -73,6 +73,7 @@ beforeEach(() => {
       stats_7d: { leads: 9, sold: 3, pending: 2 },
     }] : [], generated_at: "2026-10-06T00:00:00Z" })],
     ["GET /api/brands/brand-a", () => json({ brand: config })],
+    ["GET /api/brands/brand-a/site-text", () => json({ brand_id: "brand-a", defaults: null })],
     ["GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: [] })],
     ["PATCH /api/brands/brand-a", (init) => {
       const { expected_updated_at: _, ...patch } = JSON.parse(String(init?.body));
@@ -305,7 +306,7 @@ describe("mounted lifecycle UI with API responses", () => {
     render(<BrandLifecycle me={employee} />);
     await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
-    await within(panel).findByRole("textbox");
+    await within(panel).findAllByRole("textbox");
     expect(within(panel).queryByRole("button", { name: pauseName })).toBeNull();
     expect(section(panel, keywordSection).getByRole("textbox")).toBeDefined();
     expect(within(panel).queryByRole("textbox", { name: bucketsLabel })).toBeNull();
@@ -324,7 +325,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("button", { name: pauseName });
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "สถานะ (Pause / Resume)", keywordSection, rollbackName, "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
+      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", rollbackName, "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
     ]);
     for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)"]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
     expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();
