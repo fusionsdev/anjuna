@@ -23,6 +23,12 @@ export const PANEL_ROLE_TABLE = {
   recoverBrand: "owner",
   /** Redeploy re-uploads the runtime of a live brand: Owner-only, like Rollback. */
   redeployBrand: "owner",
+  /** Templates screen: list, detail and Import from URL are employee and owner; Approve is owner only. */
+  listTemplates: "employee",
+  importTemplate: "employee",
+  approveTemplate: "owner",
+  /** Builder keys for the template MCP: owner only. */
+  manageBuilderKeys: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 

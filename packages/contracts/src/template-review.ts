@@ -54,3 +54,57 @@ export const TemplateSubmitResult = z.strictObject({
   next_step: z.string().min(1),
 });
 export type TemplateSubmitResult = z.infer<typeof TemplateSubmitResult>;
+
+// ── Control panel: Templates screen ─────────────────────────────────────────────
+
+/** Timestamps stay plain strings: rows written by hand with datetime('now') must still list. */
+const Stamp = z.string().min(1);
+
+export const TemplateVersionSummary = z.strictObject({
+  template_version_id: z.string().min(1).max(128),
+  template_id: z.string().min(1).max(64),
+  name: z.string().min(1),
+  version: z.number().int().positive(),
+  status: TemplateReviewStatus,
+  submitted_by_label: z.string().nullable(),
+  created_at: Stamp,
+  sealed_at: Stamp.nullable(),
+});
+export type TemplateVersionSummary = z.infer<typeof TemplateVersionSummary>;
+
+export const TemplateListResponse = z.strictObject({ templates: z.array(TemplateVersionSummary) });
+export type TemplateListResponse = z.infer<typeof TemplateListResponse>;
+
+export const TemplateCheckResult = z.strictObject({
+  check_name: z.enum(["lint", "identity_scan", "screenshot_desktop", "screenshot_mobile"]),
+  result: z.enum(["pass", "fail"]),
+  details: z.unknown(),
+  created_at: Stamp,
+});
+export type TemplateCheckResult = z.infer<typeof TemplateCheckResult>;
+
+export const TemplateDetailResponse = z.strictObject({
+  template: TemplateVersionSummary.extend({
+    sha256: z.string(),
+    sealed_by: z.string().nullable(),
+    text_defaults: TemplateTextDefaults.nullable(),
+  }),
+  checks: z.array(TemplateCheckResult),
+  screenshots: z.strictObject({ desktop: z.string().nullable(), mobile: z.string().nullable() }),
+});
+export type TemplateDetailResponse = z.infer<typeof TemplateDetailResponse>;
+
+export const TemplateImportRequest = z.strictObject({
+  url: z.url(),
+  template_name: z.string().trim().min(1).max(128),
+});
+export type TemplateImportRequest = z.infer<typeof TemplateImportRequest>;
+
+export const TemplateApproveResponse = z.strictObject({
+  ok: z.literal(true),
+  template_version_id: z.string(),
+  sealed_by: z.string(),
+  sealed_at: z.string(),
+  already_sealed: z.boolean(),
+});
+export type TemplateApproveResponse = z.infer<typeof TemplateApproveResponse>;

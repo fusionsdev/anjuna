@@ -256,6 +256,10 @@ describe("role table coverage", () => {
       upgradeAll: "owner",
       recoverBrand: "owner",
       redeployBrand: "owner",
+      listTemplates: "employee",
+      importTemplate: "employee",
+      approveTemplate: "owner",
+      manageBuilderKeys: "owner",
     });
   });
 });

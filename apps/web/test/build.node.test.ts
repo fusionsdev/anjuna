@@ -27,7 +27,9 @@ describe("wrangler.jsonc", () => {
       { binding: "CORE", service: "anjuna-core", entrypoint: "AdminService" },
       { binding: "CORE_LIFECYCLE", service: "anjuna-core", entrypoint: "PanelLifecycleService" },
       { binding: "FACTORY_WORKER", service: "anjuna-factory" },
+      { binding: "TEMPLATE_MCP", service: "anjuna-template-mcp", entrypoint: "TemplateImportService" },
     ]);
+    expect(wrangler.r2_buckets).toEqual([{ binding: "ARTIFACTS", bucket_name: "anjuna-artifacts" }]);
     expect(wrangler.vars.MOCK_CORE).toBe("0");
     expect(JSON.stringify(wrangler).toLowerCase()).not.toContain("leads");
   });
@@ -45,6 +47,12 @@ describe("wrangler.jsonc", () => {
 
 it.each(["wrangler.deploy.aduplift.jsonc", "wrangler.deploy.maimax.jsonc"])("%s never sets DEV_ACCESS_BYPASS", (file) => {
   expect(readFileSync(path.join(root, file), "utf8")).not.toContain("DEV_ACCESS_BYPASS");
+});
+
+it.each(["wrangler.deploy.aduplift.jsonc", "wrangler.deploy.maimax.jsonc"])("%s binds the template import service and the artifacts bucket", (file) => {
+  const config = JSON.parse(stripComments(readFileSync(path.join(root, file), "utf8")));
+  expect(config.services).toContainEqual({ binding: "TEMPLATE_MCP", service: "anjuna-template-mcp", entrypoint: "TemplateImportService" });
+  expect(config.r2_buckets).toEqual([{ binding: "ARTIFACTS", bucket_name: "anjuna-artifacts" }]);
 });
 
 describe("SPA build", () => {
