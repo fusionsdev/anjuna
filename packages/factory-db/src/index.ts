@@ -57,3 +57,6 @@ export type AuditActorRole = (typeof AUDIT_ACTOR_ROLES)[number];
 /** Checklist item names shared with the lifecycle wire contract. */
 export const CHECKLIST_ITEMS = ["drain_route", "leadsgate_postbacks", "test_sold", "final_url"] as const;
 export type ChecklistItem = (typeof CHECKLIST_ITEMS)[number];
+
+export { sealTemplateVersionRecord } from "./seal.js";
+export type { SealFailure, SealOutcome } from "./seal.js";

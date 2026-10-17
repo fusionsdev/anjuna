@@ -7,6 +7,7 @@
  *   3. seal_template_version    — owner marks as immutable (status = 'sealed')
  */
 
+import { sealTemplateVersionRecord } from "@anjuna/factory-db";
 import { runChecks } from "@anjuna/template-cert";
 import type { Source } from "@anjuna/template-cert";
 import type { TemplateTextDefaults } from "@anjuna/contracts";
@@ -257,35 +258,9 @@ export async function sealTemplateVersion(
   if (!envOwnerSecret) throw new Error("OWNER_SECRET is not configured on this deployment");
   if (ownerSecret !== envOwnerSecret) throw new Error("Invalid owner secret");
 
-  const tv = await db
-    .prepare("SELECT status FROM template_versions WHERE template_version_id = ?1")
-    .bind(template_version_id)
-    .first<{ status: string }>();
-  if (!tv) throw new Error(`template_version ${template_version_id} not found`);
-  if (tv.status !== "certified") throw new Error(`Cannot seal: status is '${tv.status}', expected 'certified'`);
-
-  // Only the latest result for each viewport counts; old passes cannot mask a failed retry.
-  const { results } = await db.prepare(`SELECT id, check_name, result, artifact_r2_key FROM certifications
-    WHERE id IN (SELECT MAX(id) FROM certifications WHERE template_version_id = ?1 GROUP BY check_name)`)
-    .bind(template_version_id).all<{ id: number; check_name: string; result: string; artifact_r2_key: string | null }>();
-  for (const viewport of viewports) {
-    const check = results.find((row) => row.check_name === viewport.check_name);
-    if (check?.result !== "pass" || !check.artifact_r2_key) {
-      throw new Error(`Cannot seal: missing passing ${viewport.check_name} evidence. Re-run certification.`);
-    }
-    await requireArtifact(r2, check.artifact_r2_key);
-  }
-
-  const sealed_at = iso();
-  const latestCheckId = Math.max(...results.map((row) => row.id));
-  const [update] = await db.batch([
-    db.prepare(`UPDATE template_versions SET status = 'sealed', sealed_by = ?2, sealed_at = ?3
-      WHERE template_version_id = ?1 AND status = 'certified'
-      AND (SELECT MAX(id) FROM certifications WHERE template_version_id = ?1) = ?4`)
-      .bind(template_version_id, sealed_by, sealed_at, latestCheckId),
-    audit(db, "template.seal", template_version_id, sealed_by, "owner", { status: "certified" }, { status: "sealed", sealed_by, sealed_at }, sealed_at),
-  ]);
-  if (!update?.meta.changes) throw new Error("Cannot seal: certification changed. Retry after certification completes.");
-
-  return { template_version_id, sealed_by, sealed_at };
+  const outcome = await sealTemplateVersionRecord(db, r2, { template_version_id, sealed_by });
+  if (!outcome.ok) throw new Error(outcome.message);
+  // The MCP tool seals once; a repeat call keeps its old error. Only the dashboard path is idempotent.
+  if (outcome.already_sealed) throw new Error("Cannot seal: status is 'sealed', expected 'certified'");
+  return { template_version_id, sealed_by: outcome.sealed_by, sealed_at: outcome.sealed_at };
 }
