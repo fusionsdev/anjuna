@@ -151,3 +151,35 @@ describe("directory vs in-memory source", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe("page text (title, description, data-brand)", () => {
+  it("a landing page without <title> or meta description fails structure", () => {
+    const files = indexWith(validIndex().replace(/<title>.*?<\/title>/, "").replace(/<meta name="description"[^>]*>/, ""));
+    const errors = issuesFor(check(files), "structure").filter((i) => i.severity === "error");
+    expect(errors.map((i) => i.en)).toEqual([expect.stringContaining("<title>"), expect.stringContaining('meta name="description"')]);
+    expect(errors.every((i) => i.location === "index.html" && i.th.length > 0)).toBe(true);
+  });
+
+  it("an over-long title or description is a warning, not an error", () => {
+    const files = indexWith(
+      validIndex()
+        .replace(/<title>.*?<\/title>/, `<title>${"T".repeat(71)}</title>`)
+        .replace(/<meta name="description" content="[^"]*">/, `<meta name="description" content="${"d".repeat(161)}">`),
+    );
+    const result = check(files);
+    expect(result.ok).toBe(true);
+    expect(issuesFor(result, "structure").filter((i) => i.severity === "warning")).toHaveLength(2);
+  });
+
+  it("a template without data-brand passes with one warning", () => {
+    const result = check(indexWith(validIndex().replace(" data-brand", "")));
+    expect(result.ok).toBe(true);
+    expect(issuesFor(result, "structure").map((i) => i.en)).toEqual([expect.stringContaining("data-brand")]);
+  });
+
+  it("a data-brand element with nested elements is a warning", () => {
+    const result = check(indexWith(validIndex().replace('<a href="/" data-brand>Harbor</a>', '<a href="/" data-brand><b>Harbor</b></a>')));
+    expect(result.ok).toBe(true);
+    expect(issuesFor(result, "structure").map((i) => i.en)).toEqual([expect.stringContaining("only the brand name")]);
+  });
+});

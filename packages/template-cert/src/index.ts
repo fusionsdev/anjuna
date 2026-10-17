@@ -1,5 +1,6 @@
 import type { Check, CheckContext } from "./checks.js";
 import { structure } from "./checks/structure.js";
+import { meta } from "./checks/meta.js";
 import { keyword } from "./checks/keyword.js";
 import { cta } from "./checks/cta.js";
 import { pii } from "./checks/pii.js";
@@ -18,7 +19,7 @@ interface CheckDef {
 }
 
 const CHECKS: readonly CheckDef[] = [
-  { rule: "structure", name: "Structure & required pages", nameTh: "โครงสร้างและหน้าที่จำเป็น", run: structure },
+  { rule: "structure", name: "Structure & required pages", nameTh: "โครงสร้างและหน้าที่จำเป็น", run: (ctx) => [...structure(ctx), ...meta(ctx)] },
   { rule: "keyword", name: "Keyword slot in the H1", nameTh: "ช่องคำค้นใน H1", run: keyword },
   { rule: "cta", name: "CTA form", nameTh: "ฟอร์ม CTA", run: cta },
   { rule: "pii", name: "Personal-data inputs & extra forms", nameTh: "ช่องข้อมูลส่วนตัวและฟอร์มอื่น", run: pii },

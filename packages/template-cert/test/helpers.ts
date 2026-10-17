@@ -11,7 +11,9 @@ export function makeSource(files: Record<string, string>, label = "fixture"): So
 
 export function validIndex(): string {
   return `<!doctype html><html><head><meta charset="utf-8">` +
+    `<title>Harbor | Funding Options</title><meta name="description" content="Check your funding options in minutes.">` +
     `<style>:root{color:#000}</style></head><body>` +
+    `<header><a href="/" data-brand>Harbor</a></header>` +
     `<h1><span data-kw>Funding Options</span> | Check Your Options</h1>` +
     `<form method="get" action="/go" data-cta>` +
     `<select name="requested_amount"><option value="350">$350</option><option value="1000">$1,000</option><option value="5000">$5,000</option></select>` +

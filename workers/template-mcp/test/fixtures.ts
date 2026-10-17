@@ -29,7 +29,7 @@ export function ctaForm(options: { buckets?: readonly (number | string)[]; zipEx
 const footer = `<footer class="site"><nav><a href="/privacy/">Privacy</a> <a href="/terms/">Terms</a> <a href="/do-not-sell/">Do Not Sell or Share My Personal Information</a> <a href="/disclosures/">Disclosures</a></nav><p>Not a lender. Rates and terms vary by lender and state. Not all applicants qualify.</p></footer>`;
 
 export function page(body: string, head = "", title = "Harbor | Funding"): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>${head}<style>body{margin:0}</style></head><body>${body}${footer}</body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="description" content="Check your funding options in minutes."><title>${title}</title>${head}<style>body{margin:0}</style></head><body>${body}${footer}</body></html>`;
 }
 
 /** A minimal site that satisfies the contract. */
@@ -37,7 +37,7 @@ export function goodSite(o: SiteOptions = {}): FileMap {
   const p = o.classPrefix ?? "hb";
   const sections = o.sections ?? [`<section class="${p}-steps"><h2>How it works</h2><ol><li>Pick an amount</li><li>Enter your ZIP</li></ol></section>`];
   const index = page(
-    `<header class="${p}-top"><a href="/">Harbor</a></header><main><h1>${o.h1 ?? '<span data-kw>Funding Options</span> | Check Your Options in Minutes'}</h1><p>${o.hero ?? "Answer two quick questions to see if a lending partner may be able to help."}</p>${o.ctaForm ?? ctaForm()}${sections.join("")}${o.extraBody ?? ""}</main>`,
+    `<header class="${p}-top"><a href="/" data-brand>Harbor</a></header><main><h1>${o.h1 ?? '<span data-kw>Funding Options</span> | Check Your Options in Minutes'}</h1><p>${o.hero ?? "Answer two quick questions to see if a lending partner may be able to help."}</p>${o.ctaForm ?? ctaForm()}${sections.join("")}${o.extraBody ?? ""}</main>`,
     `<link rel="stylesheet" href="/assets/site.css">${o.extraHead ?? ""}`,
     o.title,
   );

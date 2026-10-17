@@ -26,4 +26,10 @@ describe("contract constants match docs/template-contract.md", () => {
     expect(payload.cta_form_example).toContain('action="/go"');
     expect(payload.workflow.join(" ")).toContain("similarity_check");
   });
+
+  it("page text rules are documented and served", () => {
+    expect(doc).toContain("data-brand");
+    expect(doc).toContain('<meta name="description"');
+    expect(contractForBuilders().rules.map((r) => r.id)).toEqual(expect.arrayContaining(["page-text", "brand-slot"]));
+  });
 });

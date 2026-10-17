@@ -30,7 +30,9 @@ export type RuleId =
   | "cloaking"
   | "brand-clean"
   | "cfg-element"
-  | "links-resolve";
+  | "links-resolve"
+  | "page-text"
+  | "brand-slot";
 
 export interface ContractRule {
   id: RuleId;
@@ -129,6 +131,18 @@ export const CONTRACT_RULES: readonly ContractRule[] = [
     level: "must",
     rule: "Every internal link, stylesheet, script, image and CSS url() resolves to a file in dist/ (the runtime paths /go, /api/*, /_f/* excepted).",
     how: "Fix broken paths. Use root-relative paths and trailing-slash routes (/privacy/).",
+  },
+  {
+    id: "page-text",
+    level: "must",
+    rule: "/index.html has a <title> (up to 70 characters are used) and <meta name=\"description\" content=\"...\"> (up to 160 characters are used). They are the defaults the dashboard shows and edits per brand.",
+    how: "<title>Harbor Funding | Check Your Options</title><meta name=\"description\" content=\"Compare funding options from lending partners in minutes.\">",
+  },
+  {
+    id: "brand-slot",
+    level: "should",
+    rule: "Every element whose text is the brand name (header, footer, legal pages) carries data-brand and holds only that text. The brand Worker replaces its content with the brand's name. Without any data-brand the template passes with a warning.",
+    how: "<a href=\"/\"><img src=\"/logo.svg\" alt=\"\"><span data-brand>Harbor Funding</span></a>. Legal page titles: <title>Privacy Policy | Harbor Funding</title>.",
   },
 ];
 

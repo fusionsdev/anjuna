@@ -80,6 +80,15 @@ Exactly one CTA form on the landing page:
 
 The brand Worker writes `<script type="application/json" id="cfg">` (brand name, amount, ZIP, keyword, form route, A/B variant, proxy paths). A template may read it (the React `KeywordSlot` reads `cfg.keyword`), but must never write to it, depend on fields not listed here, or put its own data in an element with `id="cfg"`.
 
+### 3.4 Page title, description and brand name
+
+The dashboard edits three texts per brand: brand name, page title and meta description. The template supplies the defaults.
+
+- `/index.html` **must** have a `<title>` (the first 70 characters are used) and `<meta name="description" content="...">` (the first 160 characters are used). The brand Worker writes the brand's values into them, and into `og:title` and `og:description` when those tags exist.
+- Put `data-brand` on every element whose text is the brand name: header logo text, footer, legal pages. The element must hold only the brand name text, no icons or images, because the Worker replaces its whole content: `<a href="/"><img src="/logo.svg" alt=""><span data-brand>Harbor Funding</span></a>`.
+- A template without any `data-brand` still passes, with a warning. New templates should always have it.
+- On pages other than `/`, the Worker replaces the template's brand name inside `<title>` with the brand's name. Write legal page titles like `Privacy Policy | Harbor Funding`.
+
 ## 4. Banned content
 
 A template **must not** contain:
@@ -125,6 +134,7 @@ Do not hand-roll this with `useEffect` + `useState` on the span text or with `da
 - [ ] Exactly one `form[data-cta]` with `method="get"`, `action="/go"`, fields `requested_amount` (canonical buckets) and `zip`.
 - [ ] No "Personal Loan(s)", no PII inputs, no external scripts or analytics, no platform or other-brand identifiers.
 - [ ] Tokens only in HTML or JSON; Astro styles `is:global`.
+- [ ] `/index.html` has `<title>` and `<meta name="description">`; brand name text carries `data-brand`.
 - [ ] Desktop and mobile screenshots reviewed; owner seals the version (SHA-256, immutable).
 
 ## 8. Builder prompts
