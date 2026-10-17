@@ -56,12 +56,6 @@ jobs:
           bun x wrangler d1 migrations apply aduplift-factory --remote --config workers/core/wrangler.deploy.aduplift.jsonc
           bun x wrangler d1 migrations apply aduplift-auth    --remote --config apps/web/wrangler.deploy.aduplift.jsonc
 
-      - name: Build and upload brand runtime bundle (aduplift)
-        run: |
-          bun run --filter @anjuna/brand-runtime bundle
-          sha256sum packages/brand-runtime/dist/brand-runtime.js
-          bunx wrangler r2 object put anjuna-artifacts/runtime/brand-runtime.js --file packages/brand-runtime/dist/brand-runtime.js --content-type application/javascript --remote --config workers/core/wrangler.deploy.aduplift.jsonc
-
       - name: Deploy core (aduplift)
         run: bun x wrangler deploy --config workers/core/wrangler.deploy.aduplift.jsonc
 
@@ -107,6 +101,13 @@ jobs:
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://core.aduplift.ai/api/conversions/pending)
           test "$STATUS" = "401" || (echo "core smoke test failed: got $STATUS"; exit 1)
 
+      # After the core smoke test: new brand runtimes ask core for site text, which only the new core answers.
+      - name: Build and upload brand runtime bundle (aduplift)
+        run: |
+          bun run --filter @anjuna/brand-runtime bundle
+          sha256sum packages/brand-runtime/dist/brand-runtime.js
+          bunx wrangler r2 object put anjuna-artifacts/runtime/brand-runtime.js --file packages/brand-runtime/dist/brand-runtime.js --content-type application/javascript --remote --config workers/core/wrangler.deploy.aduplift.jsonc
+
       - name: Deploy template MCP (aduplift)
         run: bun x wrangler deploy --config workers/template-mcp/wrangler.jsonc
 
@@ -114,6 +115,8 @@ jobs:
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://mcp.aduplift.ai/health)
           test "$STATUS" = "200" || (echo "template MCP smoke test failed: got $STATUS"; exit 1)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" -d '{}' https://mcp.aduplift.ai/mcp)
+          test "$STATUS" = "401" || (echo "template MCP smoke test failed: POST /mcp without a key got $STATUS"; exit 1)
 
       - name: Deploy web (aduplift)
         run: bun x wrangler deploy --config apps/web/wrangler.deploy.aduplift.jsonc
@@ -157,12 +160,6 @@ jobs:
           bun x wrangler d1 migrations apply maimax-leads   --remote --config workers/core/wrangler.deploy.maimax.jsonc
           bun x wrangler d1 migrations apply maimax-factory --remote --config workers/core/wrangler.deploy.maimax.jsonc
           bun x wrangler d1 migrations apply maimax-auth    --remote --config apps/web/wrangler.deploy.maimax.jsonc
-
-      - name: Build and upload brand runtime bundle (maimax)
-        run: |
-          bun run --filter @anjuna/brand-runtime bundle
-          sha256sum packages/brand-runtime/dist/brand-runtime.js
-          bunx wrangler r2 object put anjuna-artifacts/runtime/brand-runtime.js --file packages/brand-runtime/dist/brand-runtime.js --content-type application/javascript --remote --config workers/core/wrangler.deploy.maimax.jsonc
 
       - name: Deploy core (maimax)
         run: bun x wrangler deploy --config workers/core/wrangler.deploy.maimax.jsonc
@@ -211,6 +208,13 @@ jobs:
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.MAIMAX_CORE_DOMAIN }}/api/conversions/pending)
           test "$STATUS" = "401" || (echo "maimax core smoke test failed: got $STATUS"; exit 1)
 
+      # After the core smoke test: new brand runtimes ask core for site text, which only the new core answers.
+      - name: Build and upload brand runtime bundle (maimax)
+        run: |
+          bun run --filter @anjuna/brand-runtime bundle
+          sha256sum packages/brand-runtime/dist/brand-runtime.js
+          bunx wrangler r2 object put anjuna-artifacts/runtime/brand-runtime.js --file packages/brand-runtime/dist/brand-runtime.js --content-type application/javascript --remote --config workers/core/wrangler.deploy.maimax.jsonc
+
       - name: Deploy template MCP (maimax)
         run: bun x wrangler deploy --config workers/template-mcp/wrangler.maimax.jsonc
 
@@ -218,6 +222,8 @@ jobs:
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://mcp.maimax.com/health)
           test "$STATUS" = "200" || (echo "maimax template MCP smoke test failed: got $STATUS"; exit 1)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" -d '{}' https://mcp.maimax.com/mcp)
+          test "$STATUS" = "401" || (echo "maimax template MCP smoke test failed: POST /mcp without a key got $STATUS"; exit 1)
 
       - name: Deploy web (maimax)
         run: bun x wrangler deploy --config apps/web/wrangler.deploy.maimax.jsonc

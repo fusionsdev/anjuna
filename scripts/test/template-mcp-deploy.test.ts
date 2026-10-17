@@ -37,7 +37,23 @@ describe("template MCP per tenant (no deployment)", () => {
       expect(deploy, tenant).toBeGreaterThan(names.indexOf(`Apply D1 migrations (${tenant})`));
       expect(deploy, tenant).toBeLessThan(names.indexOf(`Deploy web (${tenant})`));
       expect(steps[deploy]!.run?.trim()).toBe(`bun x wrangler deploy --config workers/template-mcp/${file}`);
-      expect(steps[names.indexOf(`Smoke test template MCP (${tenant})`)]?.run).toContain(`https://${host}/health`);
+      const smoke = steps[names.indexOf(`Smoke test template MCP (${tenant})`)]?.run;
+      expect(smoke).toContain(`https://${host}/health`);
+      expect(smoke).toContain(`-X POST -H "content-type: application/json" -d '{}' https://${host}/mcp)`);
+      expect(smoke).toContain('test "$STATUS" = "401"');
+    }
+  });
+
+  // Deploy order: a new brand runtime asks core for site text, so it goes up only after the new core answers.
+  it("uploads the brand runtime bundle after the core smoke test in both tenant jobs", () => {
+    const workflow = parseDocument(readFileSync(new URL(".github/workflows/deploy.yml", root), "utf8")).toJS() as {
+      jobs: Record<string, { steps: { name?: string }[] }>;
+    };
+    for (const tenant of ["aduplift", "maimax"]) {
+      const names = workflow.jobs[`deploy-${tenant}`]!.steps.map((step) => step.name);
+      const bundle = names.indexOf(`Build and upload brand runtime bundle (${tenant})`);
+      expect(names.indexOf(`Smoke test core (${tenant})`), tenant).toBeGreaterThan(names.indexOf(`Deploy core (${tenant})`));
+      expect(bundle, tenant).toBeGreaterThan(names.indexOf(`Smoke test core (${tenant})`));
     }
   });
 });
