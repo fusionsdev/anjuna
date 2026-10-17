@@ -1,11 +1,13 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TemplateSubmitResult } from "@anjuna/contracts";
-import { readZip } from "../src/archive";
+import { InputError, readZip } from "../src/archive";
 import { computeFingerprint } from "../src/fingerprint";
-import { assembleZip, detectFramework, submitTemplate, type SubmitRequest } from "../src/submit";
+import {
+  UPLOAD_CALL_MAX_CHARS, addUploadChunks, assembleZip, beginUpload, detectFramework, filesToMap, payloadStats, submitTemplate, takeUpload, type SubmitRequest,
+} from "../src/submit";
 import { goodSite, withFile, withIndex } from "./fixtures";
-import { NOW, addBrand, addSealedTemplate, resetDb, setupDb } from "./helpers";
+import { NOW, addBrand, addKey, addSealedTemplate, resetDb, setupDb } from "./helpers";
 
 vi.mock("../src/screenshots", () => ({ takeScreenshot: vi.fn() }));
 import { takeScreenshot } from "../src/screenshots";
@@ -130,5 +132,79 @@ describe("submitTemplate", () => {
     expect(result.issues.map((i) => i.rule)).toEqual(["screenshot_desktop", "screenshot_mobile"]);
     expect(result.issues[0]!.fix).toMatch(/platform problem/);
     expect((await versions())[0]).toMatchObject({ status: "rejected" });
+  });
+});
+
+const code = (fn: () => unknown) => {
+  try {
+    fn();
+  } catch (e) {
+    return e instanceof InputError ? e.code : "other";
+  }
+  return "none";
+};
+
+describe("filesToMap", () => {
+  it("decodes utf8 and base64 files and normalizes ./ and leading / paths", () => {
+    const files = filesToMap([
+      { path: "./index.html", content: "<h1>Hi</h1>" },
+      { path: "/assets/logo.png", content: btoa("\x89PNG"), encoding: "base64" },
+    ]);
+    expect([...files.keys()]).toEqual(["index.html", "assets/logo.png"]);
+    expect(new TextDecoder().decode(files.get("index.html"))).toBe("<h1>Hi</h1>");
+    expect([...files.get("assets/logo.png")!]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it("rejects zip-slip, duplicates, bad base64 and oversized files", () => {
+    expect(code(() => filesToMap([{ path: "../evil.html", content: "x" }]))).toBe("zip_slip");
+    expect(code(() => filesToMap([{ path: "a.html", content: "x" }, { path: "./a.html", content: "y" }]))).toBe("duplicate_entry");
+    expect(code(() => filesToMap([{ path: "a.png", content: "%%%", encoding: "base64" }]))).toBe("bad_base64");
+    expect(code(() => filesToMap([{ path: "big.txt", content: "x".repeat(10 * 1024 * 1024 + 1) }]))).toBe("file_too_large");
+  });
+
+  it("reports the payload size and the largest file", () => {
+    const files = filesToMap([{ path: "a.html", content: "abc" }, { path: "b.css", content: "abcdef" }]);
+    expect(payloadStats(files)).toEqual({ files: 2, bytes: 9, largest_file: { path: "b.css", bytes: 6 } });
+  });
+});
+
+describe("chunked upload", () => {
+  beforeAll(setupDb);
+  beforeEach(async () => {
+    await resetDb();
+    await addKey();
+  });
+  const all = () => [...goodSite()].map(([path, bytes]) => ({ path, content: new TextDecoder().decode(bytes), encoding: "utf8" as const }));
+
+  it("joins split files and batches into the same archive as one submit_template call", async () => {
+    const files = all();
+    const index = files.find((f) => f.path === "index.html")!;
+    const id = await beginUpload(env, "bk_test", "harbor", "Harbor");
+    expect(id).toMatch(/^up_[0-9a-f]{32}$/);
+    const half = Math.floor(index.content.length / 2);
+    await addUploadChunks(env, "bk_test", id, [{ path: "index.html", content: index.content.slice(0, half), part: 0 }]);
+    const stored = await addUploadChunks(env, "bk_test", id, [{ path: "index.html", content: index.content.slice(half), part: 1 }, ...files.filter((f) => f !== index)]);
+    expect(stored).toEqual({ chunks_stored: files.length + 1, files: files.length });
+    const upload = await takeUpload(env, "bk_test", id);
+    expect(upload).toMatchObject({ template_id: "harbor", template_name: "Harbor" });
+    expect(assembleZip(filesToMap(upload.files))).toEqual(assembleZip(filesToMap(files)));
+    await expect(takeUpload(env, "bk_test", id)).rejects.toMatchObject({ code: "unknown_upload" });
+  });
+
+  it("refuses an oversized call, another key's upload and a missing part", async () => {
+    const id = await beginUpload(env, "bk_test", "harbor", "Harbor");
+    await expect(addUploadChunks(env, "bk_test", id, [{ path: "a.html", content: "x".repeat(UPLOAD_CALL_MAX_CHARS + 1) }])).rejects.toMatchObject({ code: "batch_too_large" });
+    await addKey("anj_mcp_second-key-0123456789abcd", "other", "bk_other");
+    await expect(addUploadChunks(env, "bk_other", id, [{ path: "a.html", content: "x" }])).rejects.toMatchObject({ code: "unknown_upload" });
+    await addUploadChunks(env, "bk_test", id, [{ path: "a.html", content: "x", part: 1 }]);
+    await expect(takeUpload(env, "bk_test", id)).rejects.toMatchObject({ code: "missing_part" });
+  });
+
+  it("prunes uploads older than six hours", async () => {
+    const old = await beginUpload(env, "bk_test", "harbor", "Harbor", Date.parse("2026-10-17T00:00:00Z"));
+    await addUploadChunks(env, "bk_test", old, [{ path: "a.html", content: "x" }]);
+    await beginUpload(env, "bk_test", "harbor", "Harbor", Date.parse("2026-10-17T07:00:00Z"));
+    await expect(takeUpload(env, "bk_test", old)).rejects.toMatchObject({ code: "unknown_upload" });
+    expect((await env.FACTORY.prepare("SELECT count(*) AS n FROM template_upload_chunks").first<{ n: number }>())!.n).toBe(0);
   });
 });

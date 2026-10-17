@@ -15,7 +15,7 @@ export async function setupDb(): Promise<void> {
 
 export async function resetDb(): Promise<void> {
   await env.FACTORY.batch(
-    ["builder_key_usage", "builder_keys", "certifications", "template_fingerprints", "brand_revisions", "brands", "form_artifacts", "template_versions", "templates"].map((t) => env.FACTORY.prepare(`DELETE FROM ${t}`)),
+    ["template_upload_chunks", "template_uploads", "builder_key_usage", "builder_keys", "certifications", "template_fingerprints", "brand_revisions", "brands", "form_artifacts", "template_versions", "templates"].map((t) => env.FACTORY.prepare(`DELETE FROM ${t}`)),
   );
 }
 

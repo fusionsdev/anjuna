@@ -8,7 +8,10 @@ import type { Env } from "./env";
 import { SIGNAL_FIXES, compareFingerprints, computeFingerprint, type Fingerprint, type SignalScores } from "./fingerprint";
 import { measurePayload, probePublishedUrl } from "./probe";
 import type { BuilderIdentity } from "./auth";
-import { submitTemplateUrl } from "./submit";
+import {
+  SUBMIT_SHAPE, UPLOAD_BATCH_CHARS, UPLOAD_CHUNK, addUploadChunks, beginUpload, filesToMap, limitRejection, payloadStats,
+  submitTemplate, submitTemplateUrl, takeUpload, type SubmittedFile,
+} from "./submit";
 import { loadFromGithub, loadFromUrl, loadZipBase64, type Loaded } from "./input";
 
 const SOURCE_SHAPE = {
@@ -382,6 +385,103 @@ export function registerTools(server: McpServer, env: Env, builder: BuilderIdent
           submitted_by: { key_id: auth.builder.keyId, label: auth.builder.label },
           created_by: auth.builder.keyId,
         }));
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  /** Shared by submit_template and finish_upload: decode, log the size, run the pipeline. */
+  const submitFiles = async (who: BuilderIdentity, templateId: string, templateName: string, submitted: SubmittedFile[], via: string) => {
+    let files: FileMap;
+    try {
+      files = filesToMap(submitted);
+    } catch (error) {
+      const rejected = limitRejection(error);
+      if (rejected) return text(rejected);
+      throw error;
+    }
+    console.log(JSON.stringify({ event: "submit_template_payload", via, template_id: templateId, key_id: who.keyId, ...payloadStats(files) }));
+    return text(await submitTemplate(env, {
+      template_id: templateId, template_name: templateName, files,
+      submitted_by: { key_id: who.keyId, label: who.label }, created_by: who.keyId,
+    }));
+  };
+  const UPLOAD_ID = z.string().regex(/^up_[0-9a-f]{32}$/).describe("The upload_id from begin_upload.");
+
+  server.registerTool(
+    "submit_template",
+    {
+      title: "Submit a small template as files in one call",
+      description:
+        "For builders that can pass the whole dist/ in one tool argument (a small build). bolt.new cannot: use submit_template_url, " +
+        "or begin_upload / upload_files / finish_upload. Same result as submit_template_url.",
+      inputSchema: SUBMIT_SHAPE,
+    },
+    async (args) => {
+      const auth = requireBuilder(builder);
+      if (!auth.ok) return auth.result;
+      try {
+        return await submitFiles(auth.builder, args.template_id, args.template_name, args.files, "submit_template");
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "begin_upload",
+    {
+      title: "Start a chunked file upload",
+      description: `Fallback when the site cannot be published: returns upload_id. Then call upload_files with at most ${UPLOAD_BATCH_CHARS} characters of file content per call, and finish_upload when every file is sent.`,
+      inputSchema: { template_id: SUBMIT_SHAPE.template_id, template_name: SUBMIT_SHAPE.template_name },
+    },
+    async (args) => {
+      const auth = requireBuilder(builder);
+      if (!auth.ok) return auth.result;
+      try {
+        const upload_id = await beginUpload(env, auth.builder.keyId, args.template_id, args.template_name);
+        return text({ upload_id, batch_chars: UPLOAD_BATCH_CHARS, next_step: `Call upload_files with upload_id and files totalling at most ${UPLOAD_BATCH_CHARS} characters of content per call.` });
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "upload_files",
+    {
+      title: "Send one batch of files",
+      description:
+        `Send part of dist/: at most ${UPLOAD_BATCH_CHARS} characters of content per call, as { path, content, encoding, part }. ` +
+        "Cut a larger file into consecutive pieces and send them as part 0, 1, 2 ... with the same path and encoding.",
+      inputSchema: { upload_id: UPLOAD_ID, files: z.array(UPLOAD_CHUNK).min(1).max(200) },
+    },
+    async (args) => {
+      const auth = requireBuilder(builder);
+      if (!auth.ok) return auth.result;
+      try {
+        const stored = await addUploadChunks(env, auth.builder.keyId, args.upload_id, args.files);
+        return text({ upload_id: args.upload_id, ...stored, next_step: "Send the next batch, or call finish_upload when every file is sent." });
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "finish_upload",
+    {
+      title: "Submit the uploaded files",
+      description: "Joins every uploaded file and runs the same pipeline as submit_template_url, with the same result.",
+      inputSchema: { upload_id: UPLOAD_ID },
+    },
+    async (args) => {
+      const auth = requireBuilder(builder);
+      if (!auth.ok) return auth.result;
+      try {
+        const upload = await takeUpload(env, auth.builder.keyId, args.upload_id);
+        return await submitFiles(auth.builder, upload.template_id, upload.template_name, upload.files, "finish_upload");
       } catch (error) {
         return failure(error);
       }

@@ -74,6 +74,8 @@ describe("factory-db migrations", () => {
         "template_versions",
         "template_fingerprints",
         "templates",
+        "template_upload_chunks",
+        "template_uploads",
         "brand_checklist",
       ].sort(),
     );

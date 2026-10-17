@@ -4,6 +4,7 @@
  * import (R2 + factory D1 draft), certification and text-default extraction. Template code never runs.
  */
 import { zipSync } from "fflate";
+import { z } from "zod";
 import {
   TEMPLATE_VERSION_REVIEW_STATUS,
   type TemplateSubmitIssue,
@@ -11,7 +12,7 @@ import {
   type TemplateTextDefaults,
   type TemplateVersionStatusName,
 } from "@anjuna/contracts";
-import { InputError, readZip, type FileMap } from "./archive";
+import { InputError, LIMITS, readZip, safePath, type FileMap } from "./archive";
 import { sha256Hex } from "./auth";
 import { certifyTemplateVersion, importTemplateVersion } from "./certifier";
 import { checkTemplate, normalizeRoot, type Issue } from "./checker";
@@ -244,4 +245,141 @@ export async function submitTemplateUrl(env: Env, request: SubmitUrlRequest): Pr
     });
   }
   return submitTemplate(env, { ...rest, files: loaded.files });
+}
+
+// ── File list (submit_template) and chunked upload (fallback path) ─────────────
+
+export const SUBMITTED_FILE = z.object({
+  path: z.string().min(1).max(512).describe("Path inside dist/, e.g. index.html, privacy/index.html, assets/site.css."),
+  content: z.string().describe("The file content: plain text when encoding is utf8, base64 when encoding is base64."),
+  encoding: z.enum(["utf8", "base64"]).default("utf8").describe("utf8 for HTML, CSS, JS, SVG and JSON; base64 for images and fonts."),
+});
+export type SubmittedFile = z.input<typeof SUBMITTED_FILE>;
+
+export const SUBMIT_SHAPE = {
+  template_id: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Use 2-63 lowercase letters, digits or dashes, e.g. harbor-funding")
+    .describe("Lowercase slug for this template. Send the same template_id again to add a new version."),
+  template_name: z.string().trim().min(1).max(128).describe("Template name shown in the dashboard."),
+  files: z.array(SUBMITTED_FILE).min(1).max(LIMITS.maxFiles).describe("Every file inside dist/ after npm run build."),
+};
+
+function fromBase64(path: string, value: string): Uint8Array {
+  let binary: string;
+  try {
+    binary = atob(value.replace(/\s+/g, ""));
+  } catch {
+    throw new InputError("bad_base64", `${path}: content is not valid base64.`);
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+const cleanPath = (raw: string) => safePath(raw.replace(/^\/+/, ""));
+
+/** Same safety rules as a zip entry: no zip-slip, no absolute or backslash paths, no duplicates, per-file and total limits. */
+export function filesToMap(files: readonly SubmittedFile[]): FileMap {
+  if (files.length > LIMITS.maxFiles) throw new InputError("too_many_files", `${files.length} files; the limit is ${LIMITS.maxFiles}.`);
+  const map: FileMap = new Map();
+  let total = 0;
+  for (const file of files) {
+    const path = cleanPath(file.path);
+    if (map.has(path)) throw new InputError("duplicate_entry", `The file ${path} is listed twice.`);
+    const bytes = (file.encoding ?? "utf8") === "base64" ? fromBase64(path, file.content) : new TextEncoder().encode(file.content);
+    if (bytes.length > LIMITS.maxFileBytes) {
+      throw new InputError("file_too_large", `${path} is ${(bytes.length / 1048576).toFixed(1)} MB; the per-file limit is 10 MB.`);
+    }
+    total += bytes.length;
+    if (total > LIMITS.maxTotalBytes) throw new InputError("too_large", "The files add up to more than 100 MB.");
+    map.set(path, bytes);
+  }
+  return map;
+}
+
+export interface PayloadStats {
+  files: number;
+  bytes: number;
+  largest_file: { path: string; bytes: number } | null;
+}
+
+export function payloadStats(files: FileMap): PayloadStats {
+  let bytes = 0;
+  let largest: PayloadStats["largest_file"] = null;
+  for (const [path, content] of files) {
+    bytes += content.length;
+    if (!largest || content.length > largest.bytes) largest = { path, bytes: content.length };
+  }
+  return { files: files.size, bytes, largest_file: largest };
+}
+
+/** What builders are told per upload_files call (Task 1 measurement); the server accepts up to UPLOAD_CALL_MAX_CHARS. */
+export const UPLOAD_BATCH_CHARS = 20_000;
+export const UPLOAD_CALL_MAX_CHARS = 65_536;
+export const UPLOAD_TTL_MS = 6 * 60 * 60 * 1000;
+
+export const UPLOAD_CHUNK = SUBMITTED_FILE.extend({
+  part: z.number().int().min(0).max(9999).default(0)
+    .describe("0 for a whole file. A larger file is cut into consecutive pieces sent as part 0, 1, 2 ... (base64 may be cut anywhere)."),
+});
+export type UploadChunk = z.input<typeof UPLOAD_CHUNK>;
+
+async function requireUpload(env: Pick<Env, "FACTORY">, keyId: string, uploadId: string): Promise<{ template_id: string; template_name: string }> {
+  const row = await env.FACTORY.prepare("SELECT template_id, template_name FROM template_uploads WHERE upload_id = ?1 AND key_id = ?2")
+    .bind(uploadId, keyId)
+    .first<{ template_id: string; template_name: string }>();
+  if (!row) throw new InputError("unknown_upload", "Unknown or expired upload_id. Call begin_upload again and resend the files.");
+  return row;
+}
+
+export async function beginUpload(env: Pick<Env, "FACTORY">, keyId: string, templateId: string, templateName: string, now = Date.now()): Promise<string> {
+  const stale = new Date(now - UPLOAD_TTL_MS).toISOString();
+  const uploadId = `up_${crypto.randomUUID().replaceAll("-", "")}`;
+  await env.FACTORY.batch([
+    env.FACTORY.prepare("DELETE FROM template_upload_chunks WHERE upload_id IN (SELECT upload_id FROM template_uploads WHERE created_at < ?1)").bind(stale),
+    env.FACTORY.prepare("DELETE FROM template_uploads WHERE created_at < ?1").bind(stale),
+    env.FACTORY.prepare("INSERT INTO template_uploads (upload_id, key_id, template_id, template_name, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
+      .bind(uploadId, keyId, templateId, templateName, new Date(now).toISOString()),
+  ]);
+  return uploadId;
+}
+
+export async function addUploadChunks(env: Pick<Env, "FACTORY">, keyId: string, uploadId: string, chunks: readonly UploadChunk[]): Promise<{ chunks_stored: number; files: number }> {
+  const chars = chunks.reduce((n, chunk) => n + chunk.content.length, 0);
+  if (chars > UPLOAD_CALL_MAX_CHARS) {
+    throw new InputError("batch_too_large", `This call carries ${chars} characters of content; send at most ${UPLOAD_BATCH_CHARS} per upload_files call.`);
+  }
+  await requireUpload(env, keyId, uploadId);
+  const statements = chunks.map((chunk) =>
+    env.FACTORY.prepare("INSERT OR REPLACE INTO template_upload_chunks (upload_id, path, part, encoding, content) VALUES (?1, ?2, ?3, ?4, ?5)")
+      .bind(uploadId, cleanPath(chunk.path), chunk.part ?? 0, chunk.encoding ?? "utf8", chunk.content));
+  const results = await env.FACTORY.batch([
+    ...statements,
+    env.FACTORY.prepare("SELECT count(*) AS chunks, count(DISTINCT path) AS files FROM template_upload_chunks WHERE upload_id = ?1").bind(uploadId),
+  ]);
+  const counts = results[results.length - 1]!.results[0] as { chunks: number; files: number };
+  return { chunks_stored: counts.chunks, files: counts.files };
+}
+
+export async function takeUpload(env: Pick<Env, "FACTORY">, keyId: string, uploadId: string): Promise<{ template_id: string; template_name: string; files: SubmittedFile[] }> {
+  const upload = await requireUpload(env, keyId, uploadId);
+  const { results } = await env.FACTORY.prepare("SELECT path, part, encoding, content FROM template_upload_chunks WHERE upload_id = ?1 ORDER BY path, part")
+    .bind(uploadId)
+    .all<{ path: string; part: number; encoding: "utf8" | "base64"; content: string }>();
+  const files = new Map<string, { encoding: "utf8" | "base64"; parts: string[] }>();
+  for (const row of results) {
+    const file = files.get(row.path) ?? { encoding: row.encoding, parts: [] };
+    if (row.part !== file.parts.length) {
+      throw new InputError("missing_part", `${row.path} is missing part ${file.parts.length}. Send it with upload_files, then call finish_upload again.`);
+    }
+    if (row.encoding !== file.encoding) throw new InputError("mixed_encoding", `${row.path} mixes utf8 and base64 parts; send every part with the same encoding.`);
+    file.parts.push(row.content);
+    files.set(row.path, file);
+  }
+  await env.FACTORY.batch([
+    env.FACTORY.prepare("DELETE FROM template_upload_chunks WHERE upload_id = ?1").bind(uploadId),
+    env.FACTORY.prepare("DELETE FROM template_uploads WHERE upload_id = ?1").bind(uploadId),
+  ]);
+  return { ...upload, files: [...files].map(([path, file]) => ({ path, encoding: file.encoding, content: file.parts.join("") })) };
 }

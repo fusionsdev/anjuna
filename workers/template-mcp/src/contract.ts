@@ -1,3 +1,4 @@
+import { UPLOAD_BATCH_CHARS } from "./submit";
 /**
  * The landing template contract (docs/template-contract.md) as data. One source for the
  * `get_template_contract` tool and for the rule ids / constants the checker reports against.
@@ -166,6 +167,7 @@ export function contractForBuilders() {
       "4. Call submit_template_url with url, template_id (lowercase slug, e.g. harbor-funding) and template_name. Do not paste files or zips into a tool call.",
       "5. status awaiting_approval: done; tell the user the owner approves it in the dashboard. status rejected: fix every item in issues (each has rule, file, message, fix), publish again and call submit_template_url again. status duplicate: this exact build was already submitted; nothing changed.",
       "6. \"reduce image sizes\" means the build is over 30 MB, 2000 files or 10 MB per file: compress or resize images and submit again.",
+      `7. Only if you cannot publish: call begin_upload, then upload_files with every file in dist/ ({ path, content, encoding, part }) using at most ${UPLOAD_BATCH_CHARS} characters of content per call (cut larger files into parts 0, 1, 2 ...), then finish_upload. Never paste a zip.`,
     ],
     required_pages: REQUIRED_PAGES,
     reserved_paths: RESERVED_PATHS.map((p) => `/${p}`),

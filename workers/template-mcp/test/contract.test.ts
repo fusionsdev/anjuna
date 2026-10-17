@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import doc from "../../../docs/template-contract.md?raw";
 import { AMOUNT_BUCKETS, REQUIRED_PAGES, RESERVED_PATHS, contractForBuilders } from "../src/contract";
+import { UPLOAD_BATCH_CHARS } from "../src/submit";
 
 describe("contract constants match docs/template-contract.md", () => {
   it("amount buckets", () => {
@@ -38,5 +39,12 @@ describe("contract constants match docs/template-contract.md", () => {
     expect(steps).toContain("probe_url");
     expect(steps).toContain("submit_template_url");
     expect(doc).toContain("## 9. How to submit (bolt.new)");
+  });
+
+  it("serves the upload batch size in the steps and the doc", () => {
+    const steps = contractForBuilders().how_to_submit.join(" ");
+    expect(steps).toContain("begin_upload");
+    expect(steps).toContain(`at most ${UPLOAD_BATCH_CHARS} characters`);
+    expect(doc).toContain(`at most ${UPLOAD_BATCH_CHARS.toLocaleString("en-US")} characters`);
   });
 });

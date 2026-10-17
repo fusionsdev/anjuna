@@ -16,6 +16,8 @@ Identical sites across brands risk Google Ads bans, so uniqueness is checked too
 | `probe_url` | `url` | every redirect hop and status, `final_url`, `visible_text_chars`, `client_rendered`, `ok` |
 | `measure_payload` | `text` | `received_chars`, `received_bytes` (sizes `upload_files` batches) |
 | `submit_template_url` | `url` (published static site), `template_id`, `template_name` | `status` `awaiting_approval` / `rejected` / `duplicate`, `issues` (`rule`, `file`, `message`, `fix`), `dashboard_url`, `text_defaults`. Primary path for bolt.new; stores the builder key's id and label |
+| `submit_template` | `template_id`, `template_name`, `files` (every file in `dist/`) | same result as `submit_template_url`; only for builders that can pass the whole build in one argument |
+| `begin_upload` / `upload_files` / `finish_upload` | `template_id`, `template_name`; then `upload_id` + up to `UPLOAD_BATCH_CHARS` characters of `files` per call (`part` splits large files); then `upload_id` | `upload_id`; stored counts; then the `submit_template_url` result. Uploads belong to one key and expire after 6 hours |
 
 Checks (all static; template JavaScript is never executed): static output only, reserved paths (`/go`, `/api`, `/_f`),
 required pages, legal footer links on every page, one `data-kw` span with plain text inside the `<h1>`,
