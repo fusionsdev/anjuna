@@ -17,7 +17,7 @@ export default defineConfig(async () => {
                 d1Databases: ["FACTORY"],
                 r2Buckets: ["ARTIFACTS"],
                 durableObjects: { MCP_OBJECT: { className: "TemplateMcp", useSQLite: true } },
-                bindings: { MIGRATIONS: migrations, RATE_LIMIT_PER_MINUTE: "1000", SIMILARITY_THRESHOLD: "0.5", OWNER_SECRET: "test-owner-secret" },
+                bindings: { MIGRATIONS: migrations, RATE_LIMIT_PER_MINUTE: "1000", SIMILARITY_THRESHOLD: "0.5", OWNER_SECRET: "test-owner-secret", DASHBOARD_URL: "https://app.test" },
               },
             }),
           ],

@@ -142,3 +142,17 @@ Do not hand-roll this with `useEffect` + `useState` on the span text or with `da
 **OpenDesign / Bolt.new (Astro):** "Start from `packages/template-astro-starter`. Keep `KeywordSlot` inside the H1, keep `CtaForm` unchanged except styling and labels, keep all four legal pages, keep `<style is:global>`. Do not add scripts, analytics, fonts from CDNs or any new form fields. Output: `astro build` → `dist/`."
 
 **v0 (Next.js static export):** "Use `output: 'export'`. Render the H1 with `<KeywordSlot default=\"…\" />` from `@anjuna/keyword-slot-react`. Add exactly one `<form method=\"get\" action=\"/go\" data-cta>` with `requested_amount` (canonical buckets) and a 5-digit `zip`. Create `/privacy`, `/terms`, `/do-not-sell`, `/disclosures`. No analytics, no external scripts, no PII inputs, never the words \"Personal Loan\"."
+
+## 9. How to submit (bolt.new)
+
+A bolt.new chat cannot pass a built site as one tool argument (on 2026-10-17 a 101 KB zip, 135,284 base64 characters, failed). Submit the published URL instead.
+
+1. Build static HTML: `npm run build`. Every page in `dist/` must contain its real text. A `dist/index.html` that is only `<div id="root"></div>` plus a script is rejected.
+2. Publish the site in bolt.new and keep the published URL exactly as bolt.new shows it.
+3. Call `probe_url` with that URL. `ok` must be `true`. A 404 "Website not found" means the publish is not live yet: publish again and wait a minute.
+4. Call `submit_template_url` with `url`, `template_id` (lowercase slug, for example `harbor-funding`) and `template_name`.
+5. Read `status` in the result:
+   - `awaiting_approval`: done. The owner approves it in the dashboard (Templates).
+   - `rejected`: fix every item in `issues` (`rule`, `file`, `message`, `fix`), publish again and call `submit_template_url` again.
+   - `duplicate`: this exact build was already submitted. Nothing changed.
+6. "reduce image sizes" means the build is over 30 MB, 2000 files or 10 MB per file. Compress or resize images and submit again.

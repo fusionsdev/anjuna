@@ -32,4 +32,11 @@ describe("contract constants match docs/template-contract.md", () => {
     expect(doc).toContain('<meta name="description"');
     expect(contractForBuilders().rules.map((r) => r.id)).toEqual(expect.arrayContaining(["page-text", "brand-slot"]));
   });
+
+  it("tells the builder to publish and submit the URL", () => {
+    const steps = contractForBuilders().how_to_submit.join(" ");
+    expect(steps).toContain("probe_url");
+    expect(steps).toContain("submit_template_url");
+    expect(doc).toContain("## 9. How to submit (bolt.new)");
+  });
 });

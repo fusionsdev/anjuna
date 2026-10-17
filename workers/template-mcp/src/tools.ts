@@ -7,6 +7,8 @@ import { certifyTemplateVersion, importTemplateVersion, sealTemplateVersion } fr
 import type { Env } from "./env";
 import { SIGNAL_FIXES, compareFingerprints, computeFingerprint, type Fingerprint, type SignalScores } from "./fingerprint";
 import { measurePayload, probePublishedUrl } from "./probe";
+import type { BuilderIdentity } from "./auth";
+import { submitTemplateUrl } from "./submit";
 import { loadFromGithub, loadFromUrl, loadZipBase64, type Loaded } from "./input";
 
 const SOURCE_SHAPE = {
@@ -71,11 +73,11 @@ export function similarityThreshold(env: Pick<Env, "SIMILARITY_THRESHOLD">): num
 /** Per-signal hard limits: a near copy of one aspect fails even when the overall score is low. */
 const HARD = { text: 0.5, imagesShared: 3 } as const;
 
-export async function similarityCheck(env: Env, files: FileMap, brandId?: string): Promise<SimilarityReport> {
+export async function similarityCheck(env: Env, files: FileMap, brandId?: string, excludeTemplateId?: string): Promise<SimilarityReport> {
   const threshold = similarityThreshold(env);
   const candidate = await computeFingerprint(files);
   const { results } = await env.FACTORY.prepare(
-    `SELECT f.template_version_id, f.fingerprint_json, t.name AS template, tv.version,
+    `SELECT f.template_version_id, f.fingerprint_json, t.name AS template, tv.template_id, tv.version,
             b.brand_id, b.name AS brand_name, b.domain
        FROM template_fingerprints f
        JOIN template_versions tv ON tv.template_version_id = f.template_version_id
@@ -83,16 +85,17 @@ export async function similarityCheck(env: Env, files: FileMap, brandId?: string
        LEFT JOIN brand_revisions br ON br.template_version_id = tv.template_version_id
        LEFT JOIN brands b ON b.brand_id = br.brand_id
       WHERE tv.status = 'sealed'`,
-  ).all<{ template_version_id: string; fingerprint_json: string; template: string; version: number; brand_id: string | null; brand_name: string | null; domain: string | null }>();
+  ).all<{ template_version_id: string; fingerprint_json: string; template: string; template_id: string; version: number; brand_id: string | null; brand_name: string | null; domain: string | null }>();
 
-  const byVersion = new Map<string, { fingerprint: string; template: string; version: number; brands: SimilarityMatch["brands"] }>();
+  const byVersion = new Map<string, { fingerprint: string; template: string; template_id: string; version: number; brands: SimilarityMatch["brands"] }>();
   for (const row of results) {
-    const entry = byVersion.get(row.template_version_id) ?? { fingerprint: row.fingerprint_json, template: row.template, version: row.version, brands: [] };
+    const entry = byVersion.get(row.template_version_id) ?? { fingerprint: row.fingerprint_json, template: row.template, template_id: row.template_id, version: row.version, brands: [] };
     if (row.brand_id) entry.brands.push({ brand_id: row.brand_id, name: row.brand_name ?? "", domain: row.domain ?? "" });
     byVersion.set(row.template_version_id, entry);
   }
   const matches: SimilarityMatch[] = [];
   for (const [id, entry] of byVersion) {
+    if (excludeTemplateId && entry.template_id === excludeTemplateId) continue; // earlier versions of the same template
     if (brandId && entry.brands.some((b) => b.brand_id === brandId)) continue; // the brand's own earlier template
     let other: Fingerprint;
     try {
@@ -146,7 +149,14 @@ export async function runCheck(env: Env, loaded: Loaded, brandId?: string): Prom
   return { ...report, source: loaded.source, ...(loaded.notes.length ? { notes: loaded.notes } : {}) };
 }
 
-export function registerTools(server: McpServer, env: Env): void {
+/** The calling builder, or the unauthorized tool result. Every builder-gated tool starts with this. */
+function requireBuilder(builder: BuilderIdentity | null): { ok: true; builder: BuilderIdentity } | { ok: false; result: ReturnType<typeof text> } {
+  return builder
+    ? { ok: true, builder }
+    : { ok: false, result: text({ error: "unauthorized", message: "This session has no builder key." }, true) };
+}
+
+export function registerTools(server: McpServer, env: Env, builder: BuilderIdentity | null = null): void {
   server.registerTool(
     "get_template_contract",
     {
@@ -336,6 +346,42 @@ export function registerTools(server: McpServer, env: Env): void {
         const probe = await probePublishedUrl(args.url);
         console.log(JSON.stringify({ event: "probe_url", final_url: probe.final_url, status: probe.status, hops: probe.hops.length, ok: probe.ok }));
         return text(probe);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  // ── Builder submit ────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "submit_template_url",
+    {
+      title: "Submit a published template by URL",
+      description:
+        "The way to submit from bolt.new: publish the site, run probe_url on the published URL, then call this with the URL. " +
+        "The server downloads the HTML, CSS and images (JavaScript never runs), zips them, checks them against the contract and " +
+        "against other brands' designs, stores the version and runs certification. Result status: awaiting_approval (done; the " +
+        "owner approves it in the dashboard), rejected (fix every issue, publish again and call again), duplicate (this exact build " +
+        "was already submitted). A page that only renders with JavaScript is rejected. Read get_template_contract first.",
+      inputSchema: {
+        url: z.string().url().describe("https URL of the published site, exactly as bolt.new shows it after publishing."),
+        template_id: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Use 2-63 lowercase letters, digits or dashes, e.g. harbor-funding")
+          .describe("Lowercase slug for this template. Send the same template_id again to add a new version."),
+        template_name: z.string().trim().min(1).max(128).describe("Template name shown in the dashboard."),
+      },
+    },
+    async (args) => {
+      const auth = requireBuilder(builder);
+      if (!auth.ok) return auth.result;
+      try {
+        return text(await submitTemplateUrl(env, {
+          url: args.url,
+          template_id: args.template_id,
+          template_name: args.template_name,
+          submitted_by: { key_id: auth.builder.keyId, label: auth.builder.label },
+          created_by: auth.builder.keyId,
+        }));
       } catch (error) {
         return failure(error);
       }

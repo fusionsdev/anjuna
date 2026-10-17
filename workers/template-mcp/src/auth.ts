@@ -3,8 +3,8 @@ import type { Env } from "./env";
 export const DEFAULT_RATE_LIMIT = 60;
 const WINDOW_SECONDS = 60;
 
-export async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+export async function sha256Hex(value: string | Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", typeof value === "string" ? new TextEncoder().encode(value) : value);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 

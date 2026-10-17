@@ -1,3 +1,4 @@
+import { vi } from "vitest";
 import { zipSync, strToU8, gzipSync } from "fflate";
 import type { FileMap } from "../src/archive";
 import { AMOUNT_BUCKETS } from "../src/contract";
@@ -122,4 +123,21 @@ export function tarGz(entries: { path: string; content?: string | Uint8Array; ty
     offset += b.length;
   }
   return gzipSync(tar);
+}
+
+/** A client-rendered SPA shell: no visible body text, content only after JavaScript runs. */
+export const spaShell: FileMap = new Map([["index.html", enc(
+  "<!doctype html><html><head><title>Harbor | App</title></head><body><div id=\"root\"></div><noscript>Enable JavaScript</noscript><script type=\"module\" src=\"/assets/index.js\"></script></body></html>",
+)]]);
+
+/** Stub fetch as a static host serving dist/ files (/ -> index.html, /privacy/ -> privacy/index.html); anything else gets bolt.host's 404. */
+export function serve(files: FileMap): void {
+  vi.stubGlobal("fetch", async (input: string) => {
+    const path = new URL(String(input)).pathname;
+    const key = path === "/" ? "index.html" : path.endsWith("/") ? `${path.slice(1)}index.html` : path.slice(1);
+    const body = files.get(key);
+    return body
+      ? new Response(body, { headers: { "content-type": key.endsWith(".css") ? "text/css" : "text/html" } })
+      : new Response("Website not found", { status: 404, headers: { "content-type": "text/html" } });
+  });
 }

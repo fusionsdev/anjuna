@@ -5,7 +5,7 @@ import { sha256Hex } from "../src/auth";
 import { computeFingerprint } from "../src/fingerprint";
 import { LIMITS } from "../src/archive";
 import { BASE, KEY, addBrand, addKey, addSealedTemplate, callTool, connect, resetDb, setupDb } from "./helpers";
-import { ctaForm, goodSite, otherSite, tarGz, toZip, withIndex, zipBase64 } from "./fixtures";
+import { ctaForm, goodSite, otherSite, serve, tarGz, toZip, withIndex, zipBase64 } from "./fixtures";
 
 beforeAll(setupDb);
 beforeEach(async () => {
@@ -156,6 +156,19 @@ describe("tools over streamable HTTP", () => {
     expect(names).toContain("seal_template_version");
     expect(names).toContain("measure_payload");
     expect(names).toContain("probe_url");
+    expect(names).toContain("submit_template_url");
+    await client.close();
+  });
+
+  it("submit_template_url: crawls the site and records the calling builder key", async () => {
+    serve(goodSite());
+    const client = await connect();
+    const { isError, data } = await callTool(client, "submit_template_url", { url: "https://harbor.bolt.host/", template_id: "harbor", template_name: "Harbor" });
+    expect(isError).toBe(false);
+    // This pool has no BROWSER binding: certification stores the version and rejects it on the screenshots.
+    expect(data).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" });
+    const row = await env.FACTORY.prepare("SELECT submitted_by_key_id, submitted_by_label FROM template_versions WHERE template_version_id = 'tv_harbor_v1'").first();
+    expect(row).toEqual({ submitted_by_key_id: "bk_test", submitted_by_label: "test builder" });
     await client.close();
   });
 

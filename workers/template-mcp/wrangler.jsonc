@@ -26,7 +26,7 @@
   "browser": { "binding": "BROWSER" },
   "durable_objects": { "bindings": [{ "name": "MCP_OBJECT", "class_name": "TemplateMcp" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TemplateMcp"] }],
-  "vars": { "RATE_LIMIT_PER_MINUTE": "60", "SIMILARITY_THRESHOLD": "0.5" }
+  "vars": { "RATE_LIMIT_PER_MINUTE": "60", "SIMILARITY_THRESHOLD": "0.5", "DASHBOARD_URL": "https://app.aduplift.ai" }
   // Optional secrets: GITHUB_TOKEN (read-only for private repos), OWNER_SECRET (required for seal_template_version).
   // Builder API keys are stored as SHA-256 hashes in the factory D1 (builder_keys); mint with scripts/mint-key.mjs.
 }

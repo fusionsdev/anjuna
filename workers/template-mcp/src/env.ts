@@ -16,6 +16,8 @@ declare global {
       SIMILARITY_THRESHOLD?: string;
       /** Owner secret required to call seal_template_version. */
       OWNER_SECRET?: string;
+      /** Control panel origin for links in submit results, e.g. https://app.aduplift.ai. */
+      DASHBOARD_URL?: string;
     }
   }
 }
