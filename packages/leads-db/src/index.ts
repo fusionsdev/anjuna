@@ -19,6 +19,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0008_lifecycle.sql",
   "0009_continuation_applicant.sql",
   "0010_zip_lookup_seed.sql",
+  "0011_brand_site_text.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
@@ -110,6 +111,10 @@ export interface BrandRuntimeRow {
   form_version: string | null;
   applied_revision_id: string | null;
   last_lifecycle_install_id: string | null;
+  /** Site text from the control panel; null = the template default. */
+  brand_name: string | null;
+  site_title: string | null;
+  site_description: string | null;
   created_at: string;
   updated_at: string;
 }

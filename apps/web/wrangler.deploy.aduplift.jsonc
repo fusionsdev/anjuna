@@ -50,6 +50,17 @@
     {
       "binding": "FACTORY_WORKER",
       "service": "anjuna-factory"
+    },
+    {
+      "binding": "TEMPLATE_MCP",
+      "service": "anjuna-template-mcp",
+      "entrypoint": "TemplateImportService"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "anjuna-artifacts"
     }
   ],
   "vars": {

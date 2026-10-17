@@ -46,6 +46,9 @@ interface BrandRow {
   paused: number;
   ab_config_json: string | null;
   keyword_default: string | null;
+  brand_name: string | null;
+  site_title: string | null;
+  site_description: string | null;
   created_at: string;
   updated_at: string;
   form_version?: string | null;
@@ -210,6 +213,9 @@ function brandConfig(row: BrandRow): BrandConfig {
     status: row.paused === 1 ? "paused" : "live",
     form_version: row.form_version ?? null,
     keyword_default: row.keyword_default,
+    brand_name: row.brand_name,
+    site_title: row.site_title,
+    site_description: row.site_description,
     amount_buckets: parseJson(row.amount_buckets) as number[],
     ab_config: lowercaseAbConfig(parseJson(row.ab_config_json)),
     flow_gate_mode: row.flow_gate_mode as BrandConfig["flow_gate_mode"],
@@ -232,7 +238,7 @@ function brandColumns(includeFormVersion: boolean, table = ""): string {
   const columns = [
     "brand_id", "account", "hostnames", "drain_key", "postback_token_hash", "aid",
     "prepop_base", "amount_buckets", "flow_gate_mode", "paused", "ab_config_json",
-    "keyword_default", "created_at", "updated_at",
+    "keyword_default", "brand_name", "site_title", "site_description", "created_at", "updated_at",
     ...(includeFormVersion ? ["form_version"] : []),
   ];
   return columns.map((column) => `${prefix}${column} AS ${column}`).join(", ");
@@ -359,6 +365,9 @@ async function patchBrand(
   const changes: Array<{ field: BrandPatchField; column: string; stored: unknown; old: unknown; next: unknown }> = [];
   const candidates: Array<[BrandPatchField, string, unknown, unknown, unknown]> = [
     ["keyword_default", "keyword_default", patch.keyword_default, before.keyword_default, patch.keyword_default],
+    ["brand_name", "brand_name", patch.brand_name, before.brand_name, patch.brand_name],
+    ["site_title", "site_title", patch.site_title, before.site_title, patch.site_title],
+    ["site_description", "site_description", patch.site_description, before.site_description, patch.site_description],
     ["amount_buckets", "amount_buckets", patch.amount_buckets, before.amount_buckets,
       patch.amount_buckets === undefined ? undefined : JSON.stringify(patch.amount_buckets)],
     ["ab_config", "ab_config_json", patch.ab_config, before.ab_config,

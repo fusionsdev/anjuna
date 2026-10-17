@@ -72,6 +72,25 @@ describe("RPC auth and public settings", () => {
   });
 });
 
+describe("brandSettings site text", () => {
+  it("returns site text only to runtimes that ask for it, and drops a stored value that no longer validates", async () => {
+    await h.db.prepare("UPDATE brand_runtime SET brand_name = 'Quick Funds', site_title = 'Quick Funds | Options', site_description = 'Personal loans fast' WHERE brand_id = 'brand-a'").run();
+    const legacy = await (await rpc("brandSettings", { brand_id: "brand-a" })).json() as Record<string, unknown>;
+    expect(legacy).toEqual(JSON.parse(fixtureText("rpc/brandSettings.response.json")));
+    const current = await (await rpc("brandSettings", { brand_id: "brand-a", include_site_text: true })).json();
+    expect(current).toMatchObject({ brand_name: "Quick Funds", site_title: "Quick Funds | Options", site_description: null });
+  });
+
+  it("a request without include_site_text parses with the old strict shape, also while paused", async () => {
+    const OldShape = LeadsRpc.brandSettings.response.omit({ brand_name: true, site_title: true, site_description: true }).strict();
+    await h.db.prepare("UPDATE brand_runtime SET brand_name = 'Quick Funds', site_title = 'Quick Funds | Options', paused = 1 WHERE brand_id = 'brand-a'").run();
+    const response = await rpc("brandSettings", { brand_id: "brand-a" });
+    expect(response.status).toBe(200);
+    expect(OldShape.parse(await response.json())).toMatchObject({ paused: true });
+    expect((await rpc("brandSettings", { brand_id: "brand-a", include_site_text: true })).status).toBe(200);
+  });
+});
+
 describe("V1 lead path", () => {
   it.each([false, true])("stores validated lite/full (%s), trusted identity, evidence, attribution and outbox", async (full) => {
     const input = submit(payload(full));

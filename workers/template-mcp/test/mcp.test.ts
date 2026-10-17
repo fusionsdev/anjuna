@@ -4,8 +4,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { sha256Hex } from "../src/auth";
 import { computeFingerprint } from "../src/fingerprint";
 import { LIMITS } from "../src/archive";
+import { UPLOAD_BATCH_CHARS } from "../src/submit";
 import { BASE, KEY, addBrand, addKey, addSealedTemplate, callTool, connect, resetDb, setupDb } from "./helpers";
-import { ctaForm, goodSite, otherSite, tarGz, toZip, withIndex, zipBase64 } from "./fixtures";
+import { ctaForm, goodSite, otherSite, serve, tarGz, toZip, withIndex, zipBase64 } from "./fixtures";
 
 beforeAll(setupDb);
 beforeEach(async () => {
@@ -133,6 +134,14 @@ describe("rate limit", () => {
 });
 
 describe("tools over streamable HTTP", () => {
+  it("measure_payload: reports how many characters arrived", async () => {
+    const client = await connect();
+    const { isError, data } = await callTool(client, "measure_payload", { text: "x".repeat(20_000) });
+    expect(isError).toBe(false);
+    expect(data).toEqual({ received_chars: 20_000, received_bytes: 20_000 });
+    await client.close();
+  });
+
   it("lists all tools including certification pipeline", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
@@ -146,6 +155,47 @@ describe("tools over streamable HTTP", () => {
     expect(names).toContain("import_template_version");
     expect(names).toContain("certify_template_version");
     expect(names).toContain("seal_template_version");
+    expect(names).toContain("measure_payload");
+    expect(names).toContain("probe_url");
+    expect(names).toContain("submit_template_url");
+    for (const tool of ["submit_template", "begin_upload", "upload_files", "finish_upload"]) expect(names).toContain(tool);
+    await client.close();
+  });
+
+  it("submit_template_url: crawls the site and records the calling builder key", async () => {
+    serve(goodSite());
+    const client = await connect();
+    const { isError, data } = await callTool(client, "submit_template_url", { url: "https://harbor.bolt.host/", template_id: "harbor", template_name: "Harbor" });
+    expect(isError).toBe(false);
+    // This pool has no BROWSER binding: certification stores the version and rejects it on the screenshots.
+    expect(data).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" });
+    const row = await env.FACTORY.prepare("SELECT submitted_by_key_id, submitted_by_label FROM template_versions WHERE template_version_id = 'tv_harbor_v1'").first();
+    expect(row).toEqual({ submitted_by_key_id: "bk_test", submitted_by_label: "test builder" });
+    await client.close();
+  });
+
+  const distFiles = () => [...goodSite()].map(([path, bytes]) => ({ path, content: new TextDecoder().decode(bytes), encoding: "utf8" }));
+  const storedBy = () => env.FACTORY.prepare("SELECT submitted_by_key_id FROM template_versions WHERE template_version_id = 'tv_harbor_v1'").first();
+
+  it("submit_template: one call with every dist/ file", async () => {
+    const client = await connect();
+    const { data } = await callTool(client, "submit_template", { template_id: "harbor", template_name: "Harbor", files: distFiles() });
+    expect(data).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" }); // no BROWSER binding in this pool
+    expect(await storedBy()).toEqual({ submitted_by_key_id: "bk_test" });
+    await client.close();
+  });
+
+  it("begin_upload, upload_files and finish_upload submit a site in batches", async () => {
+    const client = await connect();
+    const files = distFiles();
+    const begun = await callTool(client, "begin_upload", { template_id: "harbor", template_name: "Harbor" });
+    const upload_id = begun.data.upload_id as string;
+    expect(begun.data.batch_chars).toBe(UPLOAD_BATCH_CHARS);
+    expect((await callTool(client, "upload_files", { upload_id, files: files.slice(0, 3) })).data).toMatchObject({ chunks_stored: 3, files: 3 });
+    expect((await callTool(client, "upload_files", { upload_id, files: files.slice(3) })).data).toMatchObject({ files: files.length });
+    const done = await callTool(client, "finish_upload", { upload_id });
+    expect(done.data).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" });
+    expect(await storedBy()).toEqual({ submitted_by_key_id: "bk_test" });
     await client.close();
   });
 

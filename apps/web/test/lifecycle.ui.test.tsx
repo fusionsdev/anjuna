@@ -14,7 +14,7 @@ const brand = LifecycleBrandSummary.parse({
 });
 const initialConfig: BrandConfig = {
   brand_id: brand.brand_id, account: brand.account, hostnames: brand.hostnames, status: "live",
-  form_version: "form@abcdef1", keyword_default: "Quick Loan", amount_buckets: [100, 500],
+  form_version: "form@abcdef1", keyword_default: "Quick Loan", brand_name: null, site_title: null, site_description: null, amount_buckets: [100, 500],
   ab_config: { experiment_id: "exp-1", variants: [{ id: "lite_v1", weight: 50 }, { id: "full_v1", weight: 50 }] },
   flow_gate_mode: "param", aid: "123", prepop_base: "https://buyer.example/apply", drain_key: "brand-a",
   postback_token: "set", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z",
@@ -73,6 +73,7 @@ beforeEach(() => {
       stats_7d: { leads: 9, sold: 3, pending: 2 },
     }] : [], generated_at: "2026-10-06T00:00:00Z" })],
     ["GET /api/brands/brand-a", () => json({ brand: config })],
+    ["GET /api/brands/brand-a/site-text", () => json({ brand_id: "brand-a", defaults: null })],
     ["GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: [] })],
     ["PATCH /api/brands/brand-a", (init) => {
       const { expected_updated_at: _, ...patch } = JSON.parse(String(init?.body));
@@ -305,7 +306,7 @@ describe("mounted lifecycle UI with API responses", () => {
     render(<BrandLifecycle me={employee} />);
     await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
-    await within(panel).findByRole("textbox");
+    await within(panel).findAllByRole("textbox");
     expect(within(panel).queryByRole("button", { name: pauseName })).toBeNull();
     expect(section(panel, keywordSection).getByRole("textbox")).toBeDefined();
     expect(within(panel).queryByRole("textbox", { name: bucketsLabel })).toBeNull();
@@ -324,7 +325,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("button", { name: pauseName });
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "สถานะ (Pause / Resume)", keywordSection, rollbackName, "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
+      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", rollbackName, "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
     ]);
     for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)"]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
     expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();

@@ -10,6 +10,10 @@ export interface Env {
   FACTORY_WORKER?: Fetcher;
   /** Private PanelLifecycleService binding on core. */
   CORE_LIFECYCLE?: Fetcher;
+  /** R2 (read): certification screenshots for the Templates screen. */
+  ARTIFACTS?: R2Bucket;
+  /** Service Binding to anjuna-template-mcp's TemplateImportService (Import from URL). */
+  TEMPLATE_MCP?: Fetcher;
   /** Static assets (the SPA). */
   ASSETS: Fetcher;
 

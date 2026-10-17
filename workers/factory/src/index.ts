@@ -4,6 +4,7 @@ import { RollbackBrandWorkflow } from "./workflows/rollback.js";
 import { UpgradeAllWorkflow, upgradeWorkflowId } from "./workflows/upgrade-all.js";
 import { isQueuedCompensationInstall, rejectQueuedInstall, setInstallStatus } from "./receipt.js";
 import { recoverBrand } from "./workflows/recover.js";
+import { parseSealRequest, sealTemplate } from "./seal.js";
 
 export { InstallBrandWorkflow, RollbackBrandWorkflow, UpgradeAllWorkflow };
 
@@ -80,6 +81,14 @@ export default {
       const instanceId = await upgradeWorkflowId(params);
       await env.UPGRADE_WORKFLOW.create({ id: instanceId, params });
       return Response.json({ ok: true, instance_id: instanceId });
+    }
+
+    // POST /seal-template  { template_version_id, sealed_by, sealed_role }  (control panel Approve)
+    if (url.pathname === "/seal-template") {
+      const input = parseSealRequest(await request.json().catch(() => null));
+      if (!input) return Response.json({ ok: false, error: "invalid", message: "template_version_id, sealed_by and sealed_role are required" }, { status: 400 });
+      const outcome = await sealTemplate(env, input);
+      return Response.json(outcome.body, { status: outcome.status });
     }
 
     return new Response("Not Found", { status: 404 });

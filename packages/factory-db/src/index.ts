@@ -9,6 +9,8 @@ export const FACTORY_DB_MIGRATIONS = [
   "0002_builder_keys.sql",
   "0003_template_fingerprints.sql",
   "0004_lifecycle.sql",
+  "0005_template_submissions.sql",
+  "0006_template_uploads.sql",
 ] as const;
 
 export const TEMPLATE_FRAMEWORKS = ["astro", "next_export", "react_spa"] as const;
@@ -55,3 +57,6 @@ export type AuditActorRole = (typeof AUDIT_ACTOR_ROLES)[number];
 /** Checklist item names shared with the lifecycle wire contract. */
 export const CHECKLIST_ITEMS = ["drain_route", "leadsgate_postbacks", "test_sold", "final_url"] as const;
 export type ChecklistItem = (typeof CHECKLIST_ITEMS)[number];
+
+export { sealTemplateVersionRecord } from "./seal.js";
+export type { SealFailure, SealOutcome } from "./seal.js";

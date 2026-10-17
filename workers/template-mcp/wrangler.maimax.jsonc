@@ -1,0 +1,24 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "anjuna-template-mcp",
+  "main": "src/index.ts",
+  "account_id": "c1a44deffd54a8ce35cb9e68abeb7b11",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["global_fetch_strictly_public", "nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "mcp.maimax.com", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "FACTORY",
+      "database_name": "maimax-factory",
+      "database_id": "4d83cd96-8a12-48aa-96a0-1f97c2028dcf",
+      "migrations_dir": "../../packages/factory-db/migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "anjuna-artifacts" }],
+  "browser": { "binding": "BROWSER" },
+  "durable_objects": { "bindings": [{ "name": "MCP_OBJECT", "class_name": "TemplateMcp" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TemplateMcp"] }],
+  "vars": { "RATE_LIMIT_PER_MINUTE": "60", "SIMILARITY_THRESHOLD": "0.5", "DASHBOARD_URL": "https://app.maimax.com" }
+}

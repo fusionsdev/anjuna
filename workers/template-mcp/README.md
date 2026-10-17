@@ -13,6 +13,11 @@ Identical sites across brands risk Google Ads bans, so uniqueness is checked too
 | `check_template` | `zip_base64` **or** `url` (zip, or a live static site), optional `brand_id` | `pass`/`fail` + issues, each with `rule`, `file`, `message`, `fix` |
 | `check_github_repo` | `owner`, `repo`, optional `ref`, `path`, `brand_id` | same report, for the built output found in the repo |
 | `similarity_check` | `zip_base64` **or** `url`, optional `brand_id` | `pass`/`fail`, closest sealed templates (brand, score per signal) and what to change |
+| `probe_url` | `url` | every redirect hop and status, `final_url`, `visible_text_chars`, `client_rendered`, `ok` |
+| `measure_payload` | `text` | `received_chars`, `received_bytes` (sizes `upload_files` batches) |
+| `submit_template_url` | `url` (published static site), `template_id`, `template_name` | `status` `awaiting_approval` / `rejected` / `duplicate`, `issues` (`rule`, `file`, `message`, `fix`), `dashboard_url`, `text_defaults`. Primary path for bolt.new; stores the builder key's id and label |
+| `submit_template` | `template_id`, `template_name`, `files` (every file in `dist/`) | same result as `submit_template_url`; only for builders that can pass the whole build in one argument |
+| `begin_upload` / `upload_files` / `finish_upload` | `template_id`, `template_name`; then `upload_id` + up to `UPLOAD_BATCH_CHARS` characters of `files` per call (`part` splits large files); then `upload_id` | `upload_id`; stored counts; then the `submit_template_url` result. Uploads belong to one key and expire after 6 hours. One upload holds at most `UPLOAD_MAX_CHARS` (20,000,000) characters in `UPLOAD_MAX_CHUNKS` (4000) chunks; an upload over either cap is deleted with `upload_too_large` |
 
 Checks (all static; template JavaScript is never executed): static output only, reserved paths (`/go`, `/api`, `/_f`),
 required pages, legal footer links on every page, one `data-kw` span with plain text inside the `<h1>`,
@@ -27,7 +32,7 @@ no `#cfg` element, every internal link/asset resolves. The constants are tested 
   `Authorization: Bearer <key>`, `Authorization: <key>`, `X-API-Key: <key>`, `Api-Key: <key>`.
   A key in the URL query string is never accepted. A 401 carries `WWW-Authenticate: Bearer realm="anjuna-template-mcp"`.
   Keys are per builder, stored only as SHA-256 hashes in the factory D1 (`builder_keys`),
-  revocable with `revoked_at`. Mint one with `node scripts/mint-key.mjs "<label>"` (prints the key once plus the `INSERT`).
+  revocable with `revoked_at`. Staff keys are created, listed (with last use) and revoked by an owner in the control panel under Builder keys. `node scripts/mint-key.mjs "<label>"` remains for keys minted outside the panel.
   Revoke: `UPDATE builder_keys SET revoked_at = datetime('now') WHERE key_id = '...'`.
 - Rate limit per key: `RATE_LIMIT_PER_MINUTE` requests (default 60), fixed window in `builder_key_usage`; `429` + `Retry-After`.
 - Zip: max 30 MB, 2000 files, 10 MB per file, 100 MB expanded. Rejected: zip-slip (`..`, absolute, backslash paths),
@@ -56,7 +61,11 @@ A candidate fails against any sealed template of another brand when the weighted
 (default 0.5), its text similarity is >= 0.5, or it shares 3 or more identical images. The report names the brand
 and the signals to change. Pass `brand_id` to exclude that brand's own earlier templates.
 
-## Deploy (owner-gated, not done here)
+## Deploy
 
-`wrangler.jsonc` pins the account, `workers_dev: false` and Custom Domain `mcp.aduplift.ai`. The D1 binding points at the AdUplift factory D1 (`aduplift-factory`).
-Apply factory migrations 0002 and 0003 before the first request.
+CI deploys the template MCP on every `v*` tag, after the factory D1 migrations and before the web Worker (anjuna-web binds its `TemplateImportService` entrypoint):
+
+- aduplift: `wrangler.jsonc`, Custom Domain `mcp.aduplift.ai`, D1 `aduplift-factory`.
+- maimax: `wrangler.maimax.jsonc`, Custom Domain `mcp.maimax.com`, D1 `maimax-factory`, only when the repo variable `MAIMAX_ENABLED` is `true`. Builder keys are per tenant because each tenant has its own factory D1. Maimax works only after its tenant setup (factory deploy, Access, R2 bucket, `MAIMAX_CORE_TOKEN`, `MAIMAX_CF_ACCESS_CLIENT_ID`, `MAIMAX_CF_ACCESS_CLIENT_SECRET`) is done.
+
+Both jobs smoke-test `GET /health` for HTTP 200.

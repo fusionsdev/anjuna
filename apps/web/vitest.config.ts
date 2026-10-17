@@ -16,6 +16,7 @@ export default defineConfig(async () => {
                 compatibilityDate: "2026-08-01",
                 compatibilityFlags: ["nodejs_compat"],
                 d1Databases: ["AUTH", "FACTORY"],
+                r2Buckets: ["ARTIFACTS"],
                 bindings: { AUTH_MIGRATIONS: authMigrations, FACTORY_MIGRATIONS: factoryMigrations },
               },
             }),

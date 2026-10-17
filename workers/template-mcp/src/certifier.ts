@@ -7,20 +7,18 @@
  *   3. seal_template_version    — owner marks as immutable (status = 'sealed')
  */
 
+import { sealTemplateVersionRecord } from "@anjuna/factory-db";
 import { runChecks } from "@anjuna/template-cert";
 import type { Source } from "@anjuna/template-cert";
+import type { TemplateTextDefaults } from "@anjuna/contracts";
 import { readZip, type FileMap } from "./archive.js";
+import { sha256Hex } from "./auth.js";
 import { computeFingerprint } from "./fingerprint.js";
 import { otherBrands, similarityCheck } from "./tools.js";
 import type { Env } from "./env.js";
 import { takeScreenshot } from "./screenshots.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 function toSource(files: FileMap, label: string): Source {
   return { label, files };
@@ -75,6 +73,10 @@ export async function importTemplateVersion(
     template_name: string;
     framework: "astro" | "next_export" | "react_spa";
     created_by: string;
+    /** Builder submit: the builder key (or dashboard user) that sent it. */
+    submitted_by?: { key_id: string | null; label: string } | null;
+    /** Builder submit: brand name, title and description extracted from index.html. */
+    text_defaults?: TemplateTextDefaults | null;
   },
 ): Promise<ImportResult> {
   // Validate before any D1 or R2 side effects, using the same limits as certification.
@@ -106,10 +108,13 @@ export async function importTemplateVersion(
   await db.batch([parent, db
     .prepare(
       `INSERT INTO template_versions
-         (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, 'draft', ?6, ?7)`,
+         (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at,
+          text_defaults_json, submitted_by_key_id, submitted_by_label)
+       VALUES (?1, ?2, ?3, ?4, ?5, 'draft', ?6, ?7, ?8, ?9, ?10)`,
     )
-    .bind(template_version_id, params.template_id, version, sha256, r2_key, params.created_by, now),
+    .bind(template_version_id, params.template_id, version, sha256, r2_key, params.created_by, now,
+      params.text_defaults ? JSON.stringify(params.text_defaults) : null,
+      params.submitted_by?.key_id ?? null, params.submitted_by?.label ?? null),
     audit(db, "template.import", template_version_id, params.created_by, "system", null, { status: "draft", sha256, r2_key }, now),
   ]);
 
@@ -149,9 +154,9 @@ export async function certifyTemplateVersion(
   const now = iso();
 
   const tv = await db
-    .prepare("SELECT r2_key, status FROM template_versions WHERE template_version_id = ?1")
+    .prepare("SELECT r2_key, status, template_id FROM template_versions WHERE template_version_id = ?1")
     .bind(template_version_id)
-    .first<{ r2_key: string; status: string }>();
+    .first<{ r2_key: string; status: string; template_id: string }>();
   if (!tv) throw new Error(`template_version ${template_version_id} not found`);
   if (tv.status === "sealed") throw new Error("Template version is already sealed");
 
@@ -184,7 +189,8 @@ export async function certifyTemplateVersion(
 
   // ── 2. Identity scan (fingerprint + similarity) ────────────────────────────
   const fingerprint = await computeFingerprint(files);
-  const similarity = await similarityCheck(env as Env, files, brand_id);
+  // Earlier sealed versions of the same template are its own history, not another brand's design.
+  const similarity = await similarityCheck(env as Env, files, brand_id, tv.template_id);
   const identityPass = similarity.pass;
   const identityDetails = { fingerprint_summary: `${files.size} files`, similarity };
   checks.push({ check_name: "identity_scan", result: identityPass ? "pass" : "fail", details: identityDetails });
@@ -252,35 +258,9 @@ export async function sealTemplateVersion(
   if (!envOwnerSecret) throw new Error("OWNER_SECRET is not configured on this deployment");
   if (ownerSecret !== envOwnerSecret) throw new Error("Invalid owner secret");
 
-  const tv = await db
-    .prepare("SELECT status FROM template_versions WHERE template_version_id = ?1")
-    .bind(template_version_id)
-    .first<{ status: string }>();
-  if (!tv) throw new Error(`template_version ${template_version_id} not found`);
-  if (tv.status !== "certified") throw new Error(`Cannot seal: status is '${tv.status}', expected 'certified'`);
-
-  // Only the latest result for each viewport counts; old passes cannot mask a failed retry.
-  const { results } = await db.prepare(`SELECT id, check_name, result, artifact_r2_key FROM certifications
-    WHERE id IN (SELECT MAX(id) FROM certifications WHERE template_version_id = ?1 GROUP BY check_name)`)
-    .bind(template_version_id).all<{ id: number; check_name: string; result: string; artifact_r2_key: string | null }>();
-  for (const viewport of viewports) {
-    const check = results.find((row) => row.check_name === viewport.check_name);
-    if (check?.result !== "pass" || !check.artifact_r2_key) {
-      throw new Error(`Cannot seal: missing passing ${viewport.check_name} evidence. Re-run certification.`);
-    }
-    await requireArtifact(r2, check.artifact_r2_key);
-  }
-
-  const sealed_at = iso();
-  const latestCheckId = Math.max(...results.map((row) => row.id));
-  const [update] = await db.batch([
-    db.prepare(`UPDATE template_versions SET status = 'sealed', sealed_by = ?2, sealed_at = ?3
-      WHERE template_version_id = ?1 AND status = 'certified'
-      AND (SELECT MAX(id) FROM certifications WHERE template_version_id = ?1) = ?4`)
-      .bind(template_version_id, sealed_by, sealed_at, latestCheckId),
-    audit(db, "template.seal", template_version_id, sealed_by, "owner", { status: "certified" }, { status: "sealed", sealed_by, sealed_at }, sealed_at),
-  ]);
-  if (!update?.meta.changes) throw new Error("Cannot seal: certification changed. Retry after certification completes.");
-
-  return { template_version_id, sealed_by, sealed_at };
+  const outcome = await sealTemplateVersionRecord(db, r2, { template_version_id, sealed_by });
+  if (!outcome.ok) throw new Error(outcome.message);
+  // The MCP tool seals once; a repeat call keeps its old error. Only the dashboard path is idempotent.
+  if (outcome.already_sealed) throw new Error("Cannot seal: status is 'sealed', expected 'certified'");
+  return { template_version_id, sealed_by: outcome.sealed_by, sealed_at: outcome.sealed_at };
 }

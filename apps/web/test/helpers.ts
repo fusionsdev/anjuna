@@ -32,6 +32,7 @@ export function makeEnv(over: Partial<Env> = {}): Env {
   return {
     AUTH: env.AUTH,
     FACTORY: env.FACTORY,
+    ARTIFACTS: env.ARTIFACTS,
     CORE: noCore,
     ASSETS: assetsFetcher,
     ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.com",

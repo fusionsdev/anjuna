@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBrandWorker, CoreError } from "../src/index.js";
+import { createBrandWorker, CoreError, HttpsCoreClient } from "../src/index.js";
 import { createSettingsCache } from "../src/settings-cache.js";
 import { cfg, cookieHeader, HANDOFF, setup } from "./helpers.js";
 import settingsFixture from "../../contracts/fixtures/rpc/brandSettings.response.json";
@@ -109,5 +109,28 @@ describe("live brand settings", () => {
     vi.spyOn(core, "zip").mockResolvedValue({ status: 404, data: { found: false } });
     const response = await get("/api/zip?zip=99999");
     expect([response.status, await response.json()]).toEqual([404, { found: false }]);
+  });
+  // Deploy order: a brand runtime can reach a core deployed before site text, whose strict request schema answers 400.
+  it("asks once more without include_site_text when core answers 400, and serves no site text", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const send = vi.fn(async (request: Request) => {
+      const body = await request.json() as Record<string, unknown>;
+      bodies.push(body);
+      if ("include_site_text" in body) return Response.json({ error: "invalid_request" }, { status: 400 });
+      return Response.json({ ...live(), keyword_default: "Older Core" });
+    });
+    const { config } = setup({ core: new HttpsCoreClient({ credential: "test" }, send) });
+    const settings = await createSettingsCache()(config);
+    expect(bodies).toEqual([{ brand_id: "brand-a", include_site_text: true }, { brand_id: "brand-a" }]);
+    expect(settings.keyword_default).toBe("Older Core");
+    expect([settings.brand_name, settings.site_title, settings.site_description]).toEqual([null, null, null]);
+  });
+
+  it("does not ask again when core fails with a status other than 400", async () => {
+    const send = vi.fn(async () => Response.json({ error: "unavailable" }, { status: 503 }));
+    const { config } = setup({ core: new HttpsCoreClient({ credential: "test" }, send) });
+    const settings = await createSettingsCache()(config);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(settings.keyword_default).toBeNull();
   });
 });

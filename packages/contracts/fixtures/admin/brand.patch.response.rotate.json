@@ -9,6 +9,9 @@
     "status": "live",
     "form_version": "form@8ba11d3",
     "keyword_default": "Quick Cash Today",
+    "brand_name": null,
+    "site_title": null,
+    "site_description": null,
     "amount_buckets": [
       500,
       1000,

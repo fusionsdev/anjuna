@@ -60,6 +60,23 @@ describe("brandSettings", () => {
   });
 });
 
+describe("brandSettings site text", () => {
+  it("site text is optional on the wire and validated when present", () => {
+    const data = fixture<object>("rpc/brandSettings.response.json");
+    expect(BrandSettingsResponse.parse({ ...data, brand_name: "Quick Funds", site_title: null, site_description: null })).toMatchObject({ brand_name: "Quick Funds" });
+    expect(BrandSettingsResponse.safeParse({ ...data, site_title: "Personal Loans" }).success).toBe(false);
+    expect(BrandSettingsRequest.parse({ brand_id: "brand-a", include_site_text: true })).toEqual({ brand_id: "brand-a", include_site_text: true });
+    expect(BrandSettingsRequest.safeParse({ brand_id: "brand-a", include_site_text: false }).success).toBe(false);
+  });
+
+  it("the old strict response shape still parses a legacy response", () => {
+    const OldShape = BrandSettingsResponse.omit({ brand_name: true, site_title: true, site_description: true });
+    const data = fixture<object>("rpc/brandSettings.response.json");
+    expect(OldShape.strict().parse(data)).toEqual(data);
+    expect(OldShape.strict().safeParse({ ...data, brand_name: "Quick Funds" }).success).toBe(false);
+  });
+});
+
 describe("recordClick", () => {
   it("golden request/response parse", () => {
     expect(RecordClickRequest.safeParse(fixture("rpc/recordClick.request.json")).success).toBe(true);

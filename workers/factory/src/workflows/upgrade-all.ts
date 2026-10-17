@@ -1,3 +1,4 @@
+import { withTextDefaults } from "@anjuna/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
@@ -182,6 +183,8 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
     });
 
     const { revision_map } = await step.do("create_revisions", async () => {
+      const target = await db.prepare("SELECT text_defaults_json FROM template_versions WHERE template_version_id = ?")
+        .bind(params.to_template_version_id).first<{ text_defaults_json: string | null }>();
       const entries: Array<{ brand_id: string; revision_id: string }> = [];
       for (const brand_id of brand_ids) {
         const current = await db.prepare("SELECT revision, config_json FROM brand_revisions WHERE brand_id = ? ORDER BY revision DESC LIMIT 1").bind(brand_id).first<{ revision: number; config_json: string }>();
@@ -190,7 +193,8 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
         await db.prepare(
           `INSERT OR IGNORE INTO brand_revisions (revision_id, brand_id, revision, template_version_id, form_artifact_id, config_json, created_by, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(revision_id, brand_id, current.revision + 1, params.to_template_version_id, params.form_artifact_id, current.config_json, params.started_by, now).run();
+        ).bind(revision_id, brand_id, current.revision + 1, params.to_template_version_id, params.form_artifact_id,
+          withTextDefaults(current.config_json, target?.text_defaults_json ?? null), params.started_by, now).run();
         entries.push({ brand_id, revision_id });
       }
       return { revision_map: Object.fromEntries(entries.map((entry) => [entry.brand_id, entry.revision_id])) };

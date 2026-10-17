@@ -6,7 +6,7 @@ import { AuditEntry, type AdminRole, type AuditEntry as AuditEntryT } from "@anj
 
 export const PANEL_AUDIT_PREFIXES = ["auth.", "user."] as const;
 /** Factory actions that originate in the panel (brand lifecycle, install start). */
-const FACTORY_AUDIT_PREFIXES = ["brand.create", "install.start", "install.failed", "redeploy", "upgrade", "form_artifact", "checklist"] as const;
+const FACTORY_AUDIT_PREFIXES = ["brand.create", "install.start", "install.failed", "redeploy", "upgrade", "form_artifact", "checklist", "builder_key"] as const;
 const isFactoryAudit = (action: string): boolean => FACTORY_AUDIT_PREFIXES.some((p) => action === p || action.startsWith(p + "."));
 
 export const isPanelAudit = (action: string): boolean => PANEL_AUDIT_PREFIXES.some((p) => action.startsWith(p));

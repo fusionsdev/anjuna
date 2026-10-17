@@ -5,6 +5,7 @@ declare global {
     interface Env {
       AUTH: D1Database;
       FACTORY: D1Database;
+      ARTIFACTS: R2Bucket;
       AUTH_MIGRATIONS: D1Migration[];
       FACTORY_MIGRATIONS: D1Migration[];
     }

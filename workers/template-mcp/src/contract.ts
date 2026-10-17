@@ -1,3 +1,4 @@
+import { UPLOAD_BATCH_CHARS } from "./submit";
 /**
  * The landing template contract (docs/template-contract.md) as data. One source for the
  * `get_template_contract` tool and for the rule ids / constants the checker reports against.
@@ -30,7 +31,9 @@ export type RuleId =
   | "cloaking"
   | "brand-clean"
   | "cfg-element"
-  | "links-resolve";
+  | "links-resolve"
+  | "page-text"
+  | "brand-slot";
 
 export interface ContractRule {
   id: RuleId;
@@ -130,6 +133,18 @@ export const CONTRACT_RULES: readonly ContractRule[] = [
     rule: "Every internal link, stylesheet, script, image and CSS url() resolves to a file in dist/ (the runtime paths /go, /api/*, /_f/* excepted).",
     how: "Fix broken paths. Use root-relative paths and trailing-slash routes (/privacy/).",
   },
+  {
+    id: "page-text",
+    level: "must",
+    rule: "/index.html has a <title> (up to 70 characters are used) and <meta name=\"description\" content=\"...\"> (up to 160 characters are used). They are the defaults the dashboard shows and edits per brand.",
+    how: "<title>Harbor Funding | Check Your Options</title><meta name=\"description\" content=\"Compare funding options from lending partners in minutes.\">",
+  },
+  {
+    id: "brand-slot",
+    level: "should",
+    rule: "Every element whose text is the brand name (header, footer, legal pages) carries data-brand and holds only that text. The brand Worker replaces its content with the brand's name. Without any data-brand the template passes with a warning.",
+    how: "<a href=\"/\"><img src=\"/logo.svg\" alt=\"\"><span data-brand>Harbor Funding</span></a>. Legal page titles: <title>Privacy Policy | Harbor Funding</title>.",
+  },
 ];
 
 export const CONTRACT_BANNED_PHRASES = [
@@ -144,7 +159,16 @@ export function contractForBuilders() {
     title: "Anjuna landing template contract",
     intro:
       "You are building a landing template for one Anjuna brand. Every brand must have its OWN unique design: never reuse a layout, copy or images from another brand's template (identical sites risk ad-account bans). Your output is the static dist/ of a site. Before you finish, call check_template (zip or URL) and similarity_check, fix every issue they report, and call them again until both pass.",
-    deliverable: "Static output only: the built dist/ folder zipped (max 30 MB, 2000 files; no symlinks).",
+    deliverable: "Static output only: the built dist/ folder (max 30 MB, 2000 files, 10 MB per file). Every page must be real HTML, not an empty <div id=\"root\"> filled by JavaScript.",
+    how_to_submit: [
+      "1. Build static HTML: run npm run build. Every page in dist/ must contain its real text; a dist/index.html that is only <div id=\"root\"></div> plus a script is rejected.",
+      "2. Publish the site in bolt.new. Use the published URL exactly as bolt.new shows it.",
+      "3. Call probe_url with that URL. ok must be true. If status is 404 (\"Website not found\"), publish again and wait a minute. If client_rendered is true, make the pages static HTML first.",
+      "4. Call submit_template_url with url, template_id (lowercase slug, e.g. harbor-funding) and template_name. Do not paste files or zips into a tool call.",
+      "5. status awaiting_approval: done; tell the user the owner approves it in the dashboard. status rejected: fix every item in issues (each has rule, file, message, fix), publish again and call submit_template_url again. status duplicate: this exact build was already submitted; nothing changed.",
+      "6. \"reduce image sizes\" means the build is over 30 MB, 2000 files or 10 MB per file: compress or resize images and submit again.",
+      `7. Only if you cannot publish: call begin_upload, then upload_files with every file in dist/ ({ path, content, encoding, part }) using at most ${UPLOAD_BATCH_CHARS} characters of content per call (cut larger files into parts 0, 1, 2 ...), then finish_upload. Never paste a zip.`,
+    ],
     required_pages: REQUIRED_PAGES,
     reserved_paths: RESERVED_PATHS.map((p) => `/${p}`),
     amount_buckets: AMOUNT_BUCKETS,
@@ -160,10 +184,10 @@ export function contractForBuilders() {
     banned_phrases: CONTRACT_BANNED_PHRASES,
     workflow: [
       "1. Design a unique layout, visual identity, copy and imagery for this brand.",
-      "2. Build to static output and zip dist/.",
-      "3. Call check_template; fix every error (warnings should be fixed too).",
-      "4. Call similarity_check with the same input; if it fails, change what the report says to change.",
-      "5. Re-run both until both pass.",
+      "2. Build to static HTML (npm run build) and publish it.",
+      "3. Call probe_url, then submit_template_url. It runs the same checks as check_template and similarity_check.",
+      "4. If status is rejected, fix every issue, publish again and submit again. Stop when status is awaiting_approval or duplicate.",
+      "5. Without submit access: zip dist/, call check_template and similarity_check until both pass, and hand the zip to the owner.",
     ],
     source: "docs/template-contract.md",
   };

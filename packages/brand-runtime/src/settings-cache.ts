@@ -19,8 +19,18 @@ export function createSettingsCache() {
     if (!current.pending && current.expires <= Date.now()) {
       current.pending = (async () => {
         try {
-          const result = await withCoreTimeout(() => config.core.brandSettings({ brand_id: fallback.brand_id }), config.coreTimeoutMs);
-          if (result.status !== 200) throw new CoreError(result.status);
+          const load = async (siteText: boolean) => {
+            const body = siteText ? { brand_id: fallback.brand_id, include_site_text: true as const } : { brand_id: fallback.brand_id };
+            const result = await withCoreTimeout(() => config.core.brandSettings(body), config.coreTimeoutMs);
+            if (result.status !== 200) throw new CoreError(result.status);
+            return result;
+          };
+          // A core deployed before site text refuses the include_site_text key with 400. Ask once more without
+          // it; that answer has no site text, so the page keeps the template's text.
+          const result = await load(true).catch((error: unknown) => {
+            if (error instanceof CoreError && error.status === 400) return load(false);
+            throw error;
+          });
           const live = BrandSettingsResponse.parse(result.data);
           // Apply existing identity/route checks before caching anything that will be served.
           BrandSettings.parse({ ...fallback, ...live, formRoute: live.form_route });

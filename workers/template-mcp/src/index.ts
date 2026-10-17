@@ -1,15 +1,26 @@
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { authenticate } from "./auth";
+import { authenticate, type BuilderIdentity } from "./auth";
 import type { Env } from "./env";
+import { handleImportRequest } from "./import-service";
 import { registerTools } from "./tools";
 
+type McpProps = { builder: BuilderIdentity };
+
 /** The MCP protocol endpoint. Authentication happens in the Worker's fetch handler before a request gets here. */
-export class TemplateMcp extends McpAgent<Env> {
+export class TemplateMcp extends McpAgent<Env, unknown, McpProps> {
   server = new McpServer({ name: "anjuna-template-mcp", version: "0.1.0" });
 
   async init(): Promise<void> {
-    registerTools(this.server, this.env);
+    registerTools(this.server, this.env, this.props?.builder ?? null);
+  }
+}
+
+/** Dashboard "Import from URL". A named entrypoint is reachable only through a service binding (anjuna-web TEMPLATE_MCP). */
+export class TemplateImportService extends WorkerEntrypoint<Env> {
+  fetch(request: Request): Promise<Response> {
+    return handleImportRequest(request, this.env);
   }
 }
 
@@ -32,6 +43,8 @@ export default {
     if (request.method === "OPTIONS") return handler.fetch(request, env, ctx);
     const auth = await authenticate(request, env);
     if (!auth.ok) return auth.response;
+    // McpAgent stores ctx.props on the session and exposes it as this.props in init().
+    (ctx as unknown as { props: McpProps }).props = { builder: auth.builder };
     return handler.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;

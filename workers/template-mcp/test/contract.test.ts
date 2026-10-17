@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import doc from "../../../docs/template-contract.md?raw";
 import { AMOUNT_BUCKETS, REQUIRED_PAGES, RESERVED_PATHS, contractForBuilders } from "../src/contract";
+import { UPLOAD_BATCH_CHARS } from "../src/submit";
 
 describe("contract constants match docs/template-contract.md", () => {
   it("amount buckets", () => {
@@ -25,5 +26,25 @@ describe("contract constants match docs/template-contract.md", () => {
     expect(payload.rules.length).toBeGreaterThanOrEqual(15);
     expect(payload.cta_form_example).toContain('action="/go"');
     expect(payload.workflow.join(" ")).toContain("similarity_check");
+  });
+
+  it("page text rules are documented and served", () => {
+    expect(doc).toContain("data-brand");
+    expect(doc).toContain('<meta name="description"');
+    expect(contractForBuilders().rules.map((r) => r.id)).toEqual(expect.arrayContaining(["page-text", "brand-slot"]));
+  });
+
+  it("tells the builder to publish and submit the URL", () => {
+    const steps = contractForBuilders().how_to_submit.join(" ");
+    expect(steps).toContain("probe_url");
+    expect(steps).toContain("submit_template_url");
+    expect(doc).toContain("## 9. How to submit (bolt.new)");
+  });
+
+  it("serves the upload batch size in the steps and the doc", () => {
+    const steps = contractForBuilders().how_to_submit.join(" ");
+    expect(steps).toContain("begin_upload");
+    expect(steps).toContain(`at most ${UPLOAD_BATCH_CHARS} characters`);
+    expect(doc).toContain(`at most ${UPLOAD_BATCH_CHARS.toLocaleString("en-US")} characters`);
   });
 });

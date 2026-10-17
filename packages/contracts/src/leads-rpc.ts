@@ -14,6 +14,7 @@ import { BrandId, Hostname, Zip5, OpaqueToken, ExperimentId, VariantId } from ".
 import { FormLeadPayload, LeadError, ZipResponse } from "./form-payload.js";
 import { AbConfig, AmountBuckets, FlowGateMode } from "./admin-api.js";
 import { FormRoute, Keyword } from "./runtime-config.js";
+import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 
 /** Opaque server-minted token (click session, continuation, handoff). URL- and cookie-safe. */
 export { OpaqueToken } from "./common.js";
@@ -170,7 +171,11 @@ export const VerifyHandoffResponse = z.discriminatedUnion("valid", [VerifyHandof
 export type VerifyHandoffResponse = z.infer<typeof VerifyHandoffResponse>;
 
 // --- live public settings --------------------------------------------------------------------
-export const BrandSettingsRequest = z.strictObject({ brand_id: BrandId });
+export const BrandSettingsRequest = z.strictObject({
+  brand_id: BrandId,
+  /** Brand runtimes with site text support ask for it. Older runtimes omit it and keep the old strict shape. */
+  include_site_text: z.literal(true).optional(),
+});
 export const BrandSettingsResponse = z.strictObject({
   flow_gate_mode: FlowGateMode,
   paused: z.boolean(),
@@ -178,6 +183,10 @@ export const BrandSettingsResponse = z.strictObject({
   ab_config: AbConfig.nullable(),
   keyword_default: Keyword.nullable(),
   form_route: FormRoute,
+  /** Present only when the request set include_site_text. Null = use the template default. */
+  brand_name: SiteBrandName.nullable().optional(),
+  site_title: SiteTitle.nullable().optional(),
+  site_description: SiteDescription.nullable().optional(),
 });
 export type BrandSettingsResponse = z.infer<typeof BrandSettingsResponse>;
 

@@ -118,8 +118,16 @@ describe("request context", () => {
 });
 
 describe("authorize()", () => {
+  it("employee may edit site text; values are validated", () => {
+    expect(authorize("patchBrand", "employee", { brand_name: "Quick Funds", site_title: null }).ok).toBe(true);
+    expect(BrandPatchRequest.safeParse({ site_description: "Personal Loan offers" }).success).toBe(false);
+    expect(BrandPatchRequest.safeParse({ site_title: "T".repeat(71) }).success).toBe(false);
+    expect(BrandPatchRequest.safeParse({ brand_name: null }).success).toBe(true);
+  });
+
   it("owner-only PATCH fields are rejected for an employee, each one listed", () => {
-    const ownerOnly = BRAND_PATCH_FIELDS.filter((f) => f !== "keyword_default");
+    const employeeFields: string[] = ["keyword_default", "brand_name", "site_title", "site_description"];
+    const ownerOnly = BRAND_PATCH_FIELDS.filter((f) => !employeeFields.includes(f));
     for (const f of ownerOnly) {
       const r = authorize("patchBrand", "employee", { [f]: f === "rotate_postback_token" ? true : "x" });
       expect(r.ok, f).toBe(false);
@@ -246,6 +254,7 @@ describe("secrets never appear in GET fixtures", () => {
 const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by: (AdminEndpoint | `patch:${string}`)[] }[] = [
   { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "alertsReport", "mailingStatus"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
+  { action: "Edit site text", employee: "yes", covered_by: ["patch:site_text"] },
   { action: "Pause / resume a brand", employee: "yes", covered_by: ["pauseBrand", "resumeBrand"] },
   { action: "Change A/B weights", employee: "no", covered_by: ["patch:ab_weights"] },
   { action: "Change amount buckets", employee: "no", covered_by: ["patch:amount_buckets"] },

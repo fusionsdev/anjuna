@@ -80,6 +80,15 @@ Exactly one CTA form on the landing page:
 
 The brand Worker writes `<script type="application/json" id="cfg">` (brand name, amount, ZIP, keyword, form route, A/B variant, proxy paths). A template may read it (the React `KeywordSlot` reads `cfg.keyword`), but must never write to it, depend on fields not listed here, or put its own data in an element with `id="cfg"`.
 
+### 3.4 Page title, description and brand name
+
+The dashboard edits three texts per brand: brand name, page title and meta description. The template supplies the defaults.
+
+- `/index.html` **must** have a `<title>` (the first 70 characters are used) and `<meta name="description" content="...">` (the first 160 characters are used). When the dashboard edits the title or description, the brand Worker writes the edited value into the tag, and into `og:title` or `og:description` when those tags exist. An unedited title and `og:title` are served as the template wrote them, with the template's brand name replaced by the brand's name (whole words only). An unedited description is served as written.
+- Put `data-brand` on every element whose text is the brand name: header logo text, footer, legal pages. The element must hold only the brand name text, no icons or images, because the Worker replaces its whole content: `<a href="/"><img src="/logo.svg" alt=""><span data-brand>Harbor Funding</span></a>`.
+- A template without any `data-brand` still passes, with a warning. New templates should always have it.
+- On pages other than `/`, the Worker replaces the template's brand name inside `<title>` with the brand's name. Write legal page titles like `Privacy Policy | Harbor Funding`.
+
 ## 4. Banned content
 
 A template **must not** contain:
@@ -125,6 +134,7 @@ Do not hand-roll this with `useEffect` + `useState` on the span text or with `da
 - [ ] Exactly one `form[data-cta]` with `method="get"`, `action="/go"`, fields `requested_amount` (canonical buckets) and `zip`.
 - [ ] No "Personal Loan(s)", no PII inputs, no external scripts or analytics, no platform or other-brand identifiers.
 - [ ] Tokens only in HTML or JSON; Astro styles `is:global`.
+- [ ] `/index.html` has `<title>` and `<meta name="description">`; brand name text carries `data-brand`.
 - [ ] Desktop and mobile screenshots reviewed; owner seals the version (SHA-256, immutable).
 
 ## 8. Builder prompts
@@ -132,3 +142,20 @@ Do not hand-roll this with `useEffect` + `useState` on the span text or with `da
 **OpenDesign / Bolt.new (Astro):** "Start from `packages/template-astro-starter`. Keep `KeywordSlot` inside the H1, keep `CtaForm` unchanged except styling and labels, keep all four legal pages, keep `<style is:global>`. Do not add scripts, analytics, fonts from CDNs or any new form fields. Output: `astro build` → `dist/`."
 
 **v0 (Next.js static export):** "Use `output: 'export'`. Render the H1 with `<KeywordSlot default=\"…\" />` from `@anjuna/keyword-slot-react`. Add exactly one `<form method=\"get\" action=\"/go\" data-cta>` with `requested_amount` (canonical buckets) and a 5-digit `zip`. Create `/privacy`, `/terms`, `/do-not-sell`, `/disclosures`. No analytics, no external scripts, no PII inputs, never the words \"Personal Loan\"."
+
+## 9. How to submit (bolt.new)
+
+A bolt.new chat cannot pass a built site as one tool argument (on 2026-10-17 a 101 KB zip, 135,284 base64 characters, failed). Submit the published URL instead.
+
+1. Build static HTML: `npm run build`. Every page in `dist/` must contain its real text. A `dist/index.html` that is only `<div id="root"></div>` plus a script is rejected.
+2. Publish the site in bolt.new and keep the published URL exactly as bolt.new shows it.
+3. Call `probe_url` with that URL. `ok` must be `true`. A 404 "Website not found" means the publish is not live yet: publish again and wait a minute.
+4. Call `submit_template_url` with `url`, `template_id` (lowercase slug, for example `harbor-funding`) and `template_name`.
+5. Read `status` in the result:
+   - `awaiting_approval`: done. The owner approves it in the dashboard (Templates).
+   - `rejected`: fix every item in `issues` (`rule`, `file`, `message`, `fix`), publish again and call `submit_template_url` again.
+   - `duplicate`: this exact build was already submitted. Nothing changed.
+6. "reduce image sizes" means the build is over 30 MB, 2000 files or 10 MB per file. Compress or resize images and submit again.
+7. Only if the site cannot be published: call `begin_upload`, then `upload_files` with every file in `dist/` as `{ "path", "content", "encoding", "part" }`, at most 20,000 characters of content per call (cut larger files into parts 0, 1, 2 ...), then `finish_upload`. The result is the same as `submit_template_url`. The batch size is `UPLOAD_BATCH_CHARS` in `workers/template-mcp/src/submit.ts`.
+
+The owner and employees can paste the same published URL into "Import from URL" on the dashboard's Templates screen. It runs the same pipeline.

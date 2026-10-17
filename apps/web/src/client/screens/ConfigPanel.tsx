@@ -1,14 +1,20 @@
-import { BRAND_PATCH_FIELD_GROUPS, roleAtLeast, type BrandConfig, type BrandPatchRequest, type FlowGateMode } from "@anjuna/contracts";
+import {
+  BRAND_PATCH_FIELD_GROUPS, SITE_TEXT_LIMITS, SiteBrandName, SiteDescription, SiteTitle, roleAtLeast,
+  type BrandConfig, type BrandPatchRequest, type FlowGateMode, type TemplateTextDefaults,
+} from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 
 /** The UI hides what the role cannot do; the server enforces it regardless. */
 const can = (me: Me, group: keyof typeof BRAND_PATCH_FIELD_GROUPS) => roleAtLeast(me.role, BRAND_PATCH_FIELD_GROUPS[group].min_role);
 
-export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brandId: string; onClose: () => void; onChanged: () => void }) {
+/** brandName: the display name typed at brand creation (brands.name), which the brand Worker serves when no brand name was edited. */
+export function ConfigPanel({ me, brandId, brandName, onClose, onChanged }: { me: Me; brandId: string; brandName?: string; onClose: () => void; onChanged: () => void }) {
   const [brand, setBrand] = useState<BrandConfig | null>(null);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
+  const [defaults, setDefaults] = useState<TemplateTextDefaults | null>(null);
+  useEffect(() => { void api.siteTextDefaults(brandId).then((r) => setDefaults(r.defaults), () => setDefaults(null)); }, [brandId]);
 
   const load = useCallback(() => api.brand(brandId).then(setBrand, (e) => setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ" })), [brandId]);
   useEffect(() => void load(), [load]);
@@ -51,6 +57,11 @@ export function ConfigPanel({ me, brandId, onClose, onChanged }: { me: Me; brand
       </Section>
 
       <KeywordSection key={brand.updated_at} brand={brand} onSave={(k) => save({ keyword_default: k })} />
+
+      {can(me, "site_text") && (
+        <SiteTextSection key={`s${brand.updated_at}${defaults ? "d" : ""}`} brand={brand} brandName={brandName ?? null} defaults={defaults}
+          onSave={(patch) => save(patch, "บันทึกข้อความหน้าเว็บแล้ว (Site text saved)")} />
+      )}
 
       {me.role === "owner" && <Section title="ย้อนกลับ (Rollback)">
         <button
@@ -233,5 +244,89 @@ function TokenModal({ token, onClose }: { token: string; onClose: () => void }) 
         </div>
       </div>
     </div>
+  );
+}
+
+type SiteField = "brand_name" | "site_title" | "site_description";
+const SITE_FIELDS: Array<{ field: SiteField; source: keyof TemplateTextDefaults; label: string; max: number; schema: typeof SiteTitle }> = [
+  { field: "brand_name", source: "brand_name", label: "ชื่อแบรนด์ (Brand name)", max: SITE_TEXT_LIMITS.brand_name, schema: SiteBrandName },
+  { field: "site_title", source: "title", label: "ชื่อหน้า (Page title)", max: SITE_TEXT_LIMITS.title, schema: SiteTitle },
+  { field: "site_description", source: "description", label: "คำอธิบาย (Meta description)", max: SITE_TEXT_LIMITS.description, schema: SiteDescription },
+];
+
+const WORD_CHAR = /^[\p{L}\p{N}]$/u;
+/**
+ * The brand Worker's replacement of the template brand name in an unedited title, on plain text: whole words only,
+ * so "Max" leaves "Maximum" unchanged.
+ */
+function replaceTemplateBrand(text: string, from: string | null | undefined, to: string): string {
+  if (!from || from === to) return text;
+  const chars = [...from];
+  const before = WORD_CHAR.test(chars[0] ?? "") ? "(?<![\\p{L}\\p{N}])" : "";
+  const after = WORD_CHAR.test(chars.at(-1) ?? "") ? "(?![\\p{L}\\p{N}])" : "";
+  const literal = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`${before}${literal}${after}`, "gu"), () => to);
+}
+
+/**
+ * Brand name, page title and meta description, editable per brand. The brand name defaults to the brand's display name
+ * (else the template's); title and description default to the template. Empty or equal to the default saves null.
+ */
+function SiteTextSection({ brand, brandName, defaults, onSave }: { brand: BrandConfig; brandName: string | null; defaults: TemplateTextDefaults | null; onSave: (patch: BrandPatchRequest) => void }) {
+  const fromBrand = (f: (typeof SITE_FIELDS)[number]) => f.field === "brand_name" && !!brandName;
+  const fallback = (f: (typeof SITE_FIELDS)[number]) => (fromBrand(f) ? brandName : defaults?.[f.source]) ?? "";
+  const [values, setValues] = useState<Record<SiteField, string>>(
+    () => Object.fromEntries(SITE_FIELDS.map((f) => [f.field, brand[f.field] ?? fallback(f)])) as Record<SiteField, string>,
+  );
+  const edited = (f: (typeof SITE_FIELDS)[number]) => values[f.field].trim() !== "" && values[f.field].trim() !== fallback(f);
+  const errors = SITE_FIELDS.map((f) => {
+    const value = values[f.field].trim();
+    if (!value) return null;
+    const parsed = f.schema.safeParse(value);
+    return parsed.success ? null : `${f.label}: ${parsed.error.issues[0]?.message ?? "invalid"}`;
+  }).filter((e): e is string => e !== null);
+  const patch: BrandPatchRequest = {};
+  for (const f of SITE_FIELDS) {
+    const next = edited(f) ? values[f.field].trim() : null;
+    if (next !== brand[f.field]) patch[f.field] = next;
+  }
+  const changed = Object.keys(patch).length > 0;
+  const shown = (field: SiteField) => values[field].trim() || "-";
+  const titleField = SITE_FIELDS.find((f) => f.field === "site_title")!;
+  const brandField = SITE_FIELDS.find((f) => f.field === "brand_name")!;
+  // An unedited title is served as the template wrote it, with the template brand name replaced by the effective brand name.
+  const previewTitle = edited(titleField)
+    ? values.site_title.trim()
+    : replaceTemplateBrand(fallback(titleField), defaults?.brand_name, values.brand_name.trim() || fallback(brandField)) || "-";
+
+  return (
+    <Section title="ข้อความหน้าเว็บ (Site text)">
+      {SITE_FIELDS.map((f) => (
+        <div key={f.field} className="site-field">
+          <div className="row split">
+            <span>{f.label}</span>
+            <span className="badge">{edited(f) ? "แก้ไขแล้ว (Edited)" : fromBrand(f) ? "จากแบรนด์ (From brand)" : "จากเทมเพลต (From template)"}</span>
+          </div>
+          <input aria-label={f.label} value={values[f.field]} onChange={(e) => setValues({ ...values, [f.field]: e.target.value })} />
+          <div className="row split small">
+            <span className={values[f.field].trim().length > f.max ? "error" : "muted"}>{`${values[f.field].trim().length}/${f.max}`}</span>
+            <button className="link" aria-label={`รีเซ็ต ${f.label} (${fromBrand(f) ? "Reset to brand name" : "Reset to template"})`} onClick={() => setValues({ ...values, [f.field]: fallback(f) })}>
+              {fromBrand(f) ? "รีเซ็ตเป็นชื่อแบรนด์ (Reset to brand name)" : "รีเซ็ตเป็นค่าเทมเพลต (Reset to template)"}
+            </button>
+          </div>
+        </div>
+      ))}
+      {errors.map((e) => <div key={e} className="error small">{e}</div>)}
+      <div className="site-preview" aria-label="ตัวอย่าง (Preview)">
+        <div className="preview-tab" aria-label="แท็บเบราว์เซอร์ (Browser tab)">{previewTitle}</div>
+        <div className="preview-serp">
+          <div className="muted small">{brand.hostnames[0]}</div>
+          <div className="preview-serp-title">{previewTitle}</div>
+          <div className="small">{shown("site_description")}</div>
+        </div>
+        <div className="preview-brand"><span className="muted small">Header / footer</span> <b>{values.brand_name.trim() || fallback(brandField) || "-"}</b></div>
+      </div>
+      <button className="primary" disabled={!changed || errors.length > 0} onClick={() => onSave(patch)}>บันทึกข้อความหน้าเว็บ (Save site text)</button>
+    </Section>
   );
 }
