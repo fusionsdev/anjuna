@@ -1,4 +1,4 @@
-import { LatestUpgradeResponse, SealedTemplatesResponse } from "@anjuna/contracts";
+import { LatestUpgradeResponse, SealedTemplatesResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
 import type {
   AdminRole,
   AlertsReportResponse,
@@ -16,6 +16,7 @@ import type {
   CoreListError,
   FunnelReportResponse,
   MailingStatusResponse,
+  TemplateImportRequest,
 } from "@anjuna/contracts";
 
 export interface Me {
@@ -74,6 +75,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  templates: () => request<unknown>("GET", "/api/templates").then((body) => TemplateListResponse.parse(body)),
+  template: (id: string) => request<unknown>("GET", `/api/templates/${encodeURIComponent(id)}`).then((body) => TemplateDetailResponse.parse(body)),
+  approveTemplate: (id: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, {}).then((body) => TemplateApproveResponse.parse(body)),
+  importTemplate: (body: TemplateImportRequest) => request<unknown>("POST", "/api/templates/import", body).then((result) => TemplateSubmitResult.parse(result)),
   sealedTemplates: () => request<unknown>("GET", "/api/templates/sealed").then((body) => SealedTemplatesResponse.parse(body)),
   me: () => request<{ user: Me }>("GET", "/api/me").then((r) => r.user),
   signIn: (email: string, password: string) => request<unknown>("POST", "/api/auth/sign-in/email", { email, password }),

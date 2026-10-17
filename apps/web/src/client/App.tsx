@@ -6,14 +6,15 @@ import { BrandLifecycle } from "./screens/BrandLifecycle";
 import { FunnelScreen } from "./screens/Funnel";
 import { MailingScreen } from "./screens/Mailing";
 import { SignIn } from "./screens/SignIn";
+import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
 
-type View = "brands" | "funnel" | "alerts" | "mailing" | "audit" | "users";
+type View = "brands" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<View>("brands");
+  const [view, setView] = useState<View>(() => (window.location.hash.startsWith("#templates") ? "templates" : "brands"));
 
   const refresh = useCallback(async () => {
     try {
@@ -32,6 +33,7 @@ export function App() {
 
   const nav: { id: View; label: string; show: boolean }[] = [
     { id: "brands", label: "แบรนด์ (Brands)", show: true },
+    { id: "templates", label: "เทมเพลต (Templates)", show: true },
     { id: "funnel", label: "รายงานฟันเนล (Funnel)", show: true },
     { id: "alerts", label: "การแจ้งเตือน (Alerts)", show: true },
     { id: "mailing", label: "สถานะเมล (Mailing)", show: true },
@@ -68,6 +70,7 @@ export function App() {
       </aside>
       <main className="content">
         {view === "brands" && <BrandLifecycle me={me} />}
+        {view === "templates" && <TemplatesScreen me={me} />}
         {view === "funnel" && <FunnelScreen />}
         {view === "alerts" && <AlertsScreen />}
         {view === "mailing" && <MailingScreen />}
