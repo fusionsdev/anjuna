@@ -61,7 +61,11 @@ A candidate fails against any sealed template of another brand when the weighted
 (default 0.5), its text similarity is >= 0.5, or it shares 3 or more identical images. The report names the brand
 and the signals to change. Pass `brand_id` to exclude that brand's own earlier templates.
 
-## Deploy (owner-gated, not done here)
+## Deploy
 
-`wrangler.jsonc` pins the account, `workers_dev: false` and Custom Domain `mcp.aduplift.ai`. The D1 binding points at the AdUplift factory D1 (`aduplift-factory`).
-Apply factory migrations 0002 and 0003 before the first request.
+CI deploys the template MCP on every `v*` tag, after the factory D1 migrations and before the web Worker (anjuna-web binds its `TemplateImportService` entrypoint):
+
+- aduplift: `wrangler.jsonc`, Custom Domain `mcp.aduplift.ai`, D1 `aduplift-factory`.
+- maimax: `wrangler.maimax.jsonc`, Custom Domain `mcp.maimax.com`, D1 `maimax-factory`, only when the repo variable `MAIMAX_ENABLED` is `true`. Builder keys are per tenant because each tenant has its own factory D1. Maimax works only after its tenant setup (factory deploy, Access, R2 bucket, `MAIMAX_CORE_TOKEN`, `MAIMAX_CF_ACCESS_CLIENT_ID`, `MAIMAX_CF_ACCESS_CLIENT_SECRET`) is done.
+
+Both jobs smoke-test `GET /health` for HTTP 200.

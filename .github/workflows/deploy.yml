@@ -107,6 +107,14 @@ jobs:
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://core.aduplift.ai/api/conversions/pending)
           test "$STATUS" = "401" || (echo "core smoke test failed: got $STATUS"; exit 1)
 
+      - name: Deploy template MCP (aduplift)
+        run: bun x wrangler deploy --config workers/template-mcp/wrangler.jsonc
+
+      - name: Smoke test template MCP (aduplift)
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://mcp.aduplift.ai/health)
+          test "$STATUS" = "200" || (echo "template MCP smoke test failed: got $STATUS"; exit 1)
+
       - name: Deploy web (aduplift)
         run: bun x wrangler deploy --config apps/web/wrangler.deploy.aduplift.jsonc
 
@@ -202,6 +210,14 @@ jobs:
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ vars.MAIMAX_CORE_DOMAIN }}/api/conversions/pending)
           test "$STATUS" = "401" || (echo "maimax core smoke test failed: got $STATUS"; exit 1)
+
+      - name: Deploy template MCP (maimax)
+        run: bun x wrangler deploy --config workers/template-mcp/wrangler.maimax.jsonc
+
+      - name: Smoke test template MCP (maimax)
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://mcp.maimax.com/health)
+          test "$STATUS" = "200" || (echo "maimax template MCP smoke test failed: got $STATUS"; exit 1)
 
       - name: Deploy web (maimax)
         run: bun x wrangler deploy --config apps/web/wrangler.deploy.maimax.jsonc

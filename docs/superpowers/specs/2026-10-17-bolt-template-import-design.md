@@ -93,7 +93,7 @@ Settings, "Builder keys" (owner only): create a key with a label, show it once w
 
 ### 5. Maimax
 
-- Add `workers/template-mcp/wrangler.maimax.jsonc` (`mcp.maimax.fit`, `maimax-factory`, the maimax R2 bucket). Keys are per tenant, because each tenant has its own factory D1.
+- Add `workers/template-mcp/wrangler.maimax.jsonc` (`mcp.maimax.com`, `maimax-factory`, the maimax R2 bucket). Keys are per tenant, because each tenant has its own factory D1.
 - Add template-mcp deploy steps to `.github/workflows/deploy.yml` for aduplift and for maimax (behind `MAIMAX_ENABLED`).
 - Maimax works only after its tenant setup is finished (factory deploy, Access, R2 bucket, `MAIMAX_CORE_TOKEN`, `MAIMAX_CF_ACCESS_CLIENT_ID`, `MAIMAX_CF_ACCESS_CLIENT_SECRET`). That setup is a separate piece of work and is not in this spec.
 
