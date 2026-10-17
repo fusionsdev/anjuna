@@ -207,6 +207,21 @@ describe("factory-db constraints", () => {
     ).rejects.toThrow(/CHECK constraint failed/);
   });
 
+  it("stores a submission's text defaults and submitter on the template version", async () => {
+    await run("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('t-sub', 'Submitted', 'react_spa', 'bk_1', ?1)", NOW);
+    await run(
+      `INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, created_by, created_at,
+         text_defaults_json, submitted_by_key_id, submitted_by_label)
+       VALUES ('tv-sub', 't-sub', 1, ?1, 'k', 'bk_1', ?2, ?3, 'bk_1', 'Somchai (bolt.new)')`,
+      "e".repeat(64), NOW, JSON.stringify({ brand_name: "Harbor", title: "Harbor | Funding", description: null }),
+    );
+    expect(await env.DB.prepare(
+      "SELECT submitted_by_label, json_extract(text_defaults_json, '$.title') AS title FROM template_versions WHERE template_version_id = 'tv-sub'",
+    ).first()).toEqual({ submitted_by_label: "Somchai (bolt.new)", title: "Harbor | Funding" });
+    await expect(run("UPDATE template_versions SET text_defaults_json = 'not json' WHERE template_version_id = 'tv-sub'"))
+      .rejects.toThrow(/CHECK constraint failed/);
+  });
+
   it("allows one brand per domain", async () => {
     await expect(
       run(

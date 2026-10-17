@@ -262,6 +262,7 @@
       "name": "@anjuna/template-mcp",
       "version": "0.0.0",
       "dependencies": {
+        "@anjuna/contracts": "workspace:*",
         "@anjuna/template-cert": "workspace:*",
         "@cloudflare/puppeteer": "^1.4.0",
         "@modelcontextprotocol/sdk": "^1.31.0",
