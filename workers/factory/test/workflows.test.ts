@@ -679,6 +679,24 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(dispatch).toHaveBeenCalledTimes(status === "ready" ? 2 : 1);
   });
 
+  it("copies the target template's text defaults into the upgrade revision", async () => {
+    const f = await fixture(true);
+    await env.FACTORY.prepare("DELETE FROM installs WHERE install_id=?").bind(f.install).run();
+    const target = `target-text-${f.id}`;
+    const defaults = { brand_name: "Copperline", title: "Copperline | Funding Options", description: "Check your funding options." };
+    await env.FACTORY.prepare("INSERT INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_at,created_by,created_at,text_defaults_json) VALUES (?,?,3,?,?,'sealed',?,'owner',?,?)")
+      .bind(target, f.template, target, `${f.id}/site.zip`, now, now, JSON.stringify(defaults)).run();
+    f.bindings.INSTALL_WORKFLOW = { create: vi.fn(async ({ params }: { params: InstallParams }) => {
+      await env.FACTORY.prepare("UPDATE installs SET status='ready' WHERE install_id=?").bind(params.install_id).run();
+      await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?,'sync_runtime','ok','{}',?)").bind(params.install_id, now).run();
+      return { id: params.install_id };
+    }) } as unknown as Workflow;
+    const params: UpgradeAllParams = { from_template_version_id: f.version, to_template_version_id: target, form_artifact_id: f.artifact, canary_brand_id: f.brand, started_by: "owner", started_role: "owner" };
+    await UpgradeAllWorkflow.prototype.run.call({ env: f.bindings } as unknown as UpgradeAllWorkflow, event(params), steps().step);
+    const revision = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id=? AND template_version_id=?").bind(f.brand, target).first<{ config_json: string }>();
+    expect(JSON.parse(revision!.config_json).text_defaults).toEqual(defaults);
+  });
+
   describe("smoke during upgrade", () => {
     type Fixture = Awaited<ReturnType<typeof fixture>>;
     async function addUpgradeRevision(f: Fixture) {

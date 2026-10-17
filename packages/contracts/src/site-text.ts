@@ -45,3 +45,27 @@ export function normalizeSiteText(raw: string | null | undefined, field: SiteTex
   const parsed = SCHEMAS[field].safeParse(cut);
   return parsed.success ? parsed.data : null;
 }
+
+/**
+ * A brand revision's config_json with the template version's text defaults: the fallback the brand
+ * Worker serves when core is unreachable. Missing or invalid defaults remove the key.
+ */
+export function withTextDefaults(configJson: string, textDefaultsJson: string | null): string {
+  const config = JSON.parse(configJson) as Record<string, unknown>;
+  delete config.text_defaults;
+  if (textDefaultsJson) {
+    try {
+      const parsed = TemplateTextDefaults.safeParse(JSON.parse(textDefaultsJson));
+      if (parsed.success) config.text_defaults = parsed.data;
+    } catch {
+      /* invalid JSON: no defaults */
+    }
+  }
+  return JSON.stringify(config);
+}
+
+export const SiteTextDefaultsResponse = z.strictObject({
+  brand_id: z.string().min(1).max(128),
+  defaults: TemplateTextDefaults.nullable(),
+});
+export type SiteTextDefaultsResponse = z.infer<typeof SiteTextDefaultsResponse>;

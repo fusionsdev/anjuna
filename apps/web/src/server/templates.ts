@@ -9,6 +9,7 @@ import {
   TemplateImportRequest,
   TemplateListResponse,
   TemplateSubmitResult,
+  SiteTextDefaultsResponse,
   TemplateTextDefaults,
   templateSlug,
   type AdminRequestContext,
@@ -169,5 +170,20 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     }));
   }
 
+  m = path.match(/^\/api\/brands\/([^/]+)\/site-text$/);
+  if (m && method === "GET") {
+    if (!authorizePanel("listTemplates", ctx.actor_role).ok) return forbidden("employee");
+    const brandId = decodePathSegment(m[1]!);
+    if (brandId === null) return notFound("brand");
+    // The deployed revision's defaults; before the first install, the latest revision's.
+    const row = await env.FACTORY.prepare(
+      `SELECT r.config_json FROM brands b JOIN brand_revisions r ON r.revision_id = COALESCE(b.current_revision_id,
+         (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1))
+       WHERE b.brand_id = ?1`,
+    ).bind(brandId).first<{ config_json: string }>();
+    const stored = row ? (parseJson(row.config_json) as { text_defaults?: unknown } | null)?.text_defaults ?? null : null;
+    const defaults = TemplateTextDefaults.safeParse(stored);
+    return json(200, SiteTextDefaultsResponse.parse({ brand_id: brandId, defaults: defaults.success ? defaults.data : null }));
+  }
   return undefined;
 }

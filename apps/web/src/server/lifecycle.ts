@@ -8,6 +8,7 @@ import {
   BrandId,
   BrandName,
   isBrandClean,
+  withTextDefaults,
   LifecycleBrandSummary,
   SealedTemplatesResponse,
   adminContextToHeaders,
@@ -131,7 +132,8 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   }
   const defaults = tenantDefaults(env);
   if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
-  const template = await env.FACTORY.prepare("SELECT template_version_id FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'").bind(template_version_id).first();
+  const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+    .bind(template_version_id).first<{ template_version_id: string; text_defaults_json: string | null }>();
   if (!template) return json(422, { error: "template_not_sealed" });
   const artifact = await env.FACTORY.prepare(`SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE ${COMPATIBLE_FORM} ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1`).bind(defaults.payload_version).first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
   if (!artifact) return json(422, { error: "compatible_form_artifact_missing" });
@@ -140,7 +142,7 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   const brandId = `brand_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const revisionId = `${brandId}_rev_1`;
   const now = new Date().toISOString();
-  const config = JSON.stringify({ keyword_default });
+  const config = withTextDefaults(JSON.stringify({ keyword_default }), template.text_defaults_json);
   try { await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, name, defaults.account, domain, keyword_default, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,1,?3,?4,?5,?6,?7)").bind(revisionId, brandId, template_version_id, artifact.form_artifact_id, config, ctx.actor_id, now),
