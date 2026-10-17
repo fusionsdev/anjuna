@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { SPA_MESSAGE, isClientRenderedShell, submitTemplateUrl } from "../src/submit";
+import { NEXT_REJECTED, REDUCE_IMAGES, SPA_MESSAGE, isClientRenderedShell, submitTemplateUrl } from "../src/submit";
 import { goodSite, serve, spaShell as spa } from "./fixtures";
 import { resetDb, setupDb } from "./helpers";
 
@@ -29,6 +29,20 @@ describe("submitTemplateUrl", () => {
   it("crawls a published static site and runs the full pipeline", async () => {
     serve(goodSite());
     expect(await submit("https://harbor.bolt.host/")).toMatchObject({ status: "awaiting_approval", template_version_id: "tv_harbor_v1" });
+  });
+
+  it("stops a crawl whose pages add up to more than 30 MB with the archive-limits rejection", async () => {
+    const site = goodSite();
+    const index = new TextDecoder().decode(site.get("index.html")!);
+    const links = [1, 2, 3, 4].map((n) => `<a href="/big${n}/">Page ${n}</a>`).join("");
+    site.set("index.html", new TextEncoder().encode(index.replace("</main>", `${links}</main>`)));
+    const big = new TextEncoder().encode(`<!doctype html><html><body>${"x".repeat(9 * 1024 * 1024)}</body></html>`);
+    for (const n of [1, 2, 3, 4]) site.set(`big${n}/index.html`, big);
+    serve(site);
+    const result = await submit("https://harbor.bolt.host/");
+    expect(result).toMatchObject({ status: "rejected", template_version_id: null, next_step: NEXT_REJECTED });
+    expect(result.issues).toEqual([{ rule: "archive-limits", message: "The published site is larger than the import limits (2000 files / 30 MB).", fix: REDUCE_IMAGES }]);
+    expect(await count()).toBe(0);
   });
 
   it("rejects an SPA with the static HTML instruction and stores nothing", async () => {

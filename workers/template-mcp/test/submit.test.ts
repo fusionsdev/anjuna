@@ -4,7 +4,7 @@ import { TemplateSubmitResult } from "@anjuna/contracts";
 import { InputError, readZip } from "../src/archive";
 import { computeFingerprint } from "../src/fingerprint";
 import {
-  UPLOAD_CALL_MAX_CHARS, UPLOAD_MAX_CHUNKS, UPLOAD_MAX_OPEN_PER_KEY, addUploadChunks, assembleZip, beginUpload, detectFramework, filesToMap, payloadStats, submitTemplate, takeUpload, type SubmitRequest,
+  UPLOAD_CALL_MAX_CHARS, UPLOAD_MAX_CHARS, UPLOAD_MAX_CHUNKS, UPLOAD_MAX_OPEN_PER_KEY, addUploadChunks, assembleZip, beginUpload, detectFramework, filesToMap, payloadStats, submitTemplate, takeUpload, type SubmitRequest,
 } from "../src/submit";
 import { goodSite, withFile, withIndex } from "./fixtures";
 import { NOW, addBrand, addKey, addSealedTemplate, resetDb, setupDb } from "./helpers";
@@ -212,17 +212,39 @@ describe("chunked upload", () => {
     env.FACTORY.batch(Array.from({ length: parts }, (_, part) =>
       env.FACTORY.prepare("INSERT INTO template_upload_chunks (upload_id, path, part, encoding, content) VALUES (?1, 'big.bin', ?2, 'utf8', substr(hex(zeroblob(?3)), 1, ?3))").bind(id, part, size)));
 
-  it("caps the characters per upload at upload and at finish", async () => {
-    const id = await beginUpload(env, "bk_test", "harbor", "Harbor");
-    await stuff(id, 43, 1_000_000); // 43,000,000 > UPLOAD_MAX_CHARS
-    await expect(addUploadChunks(env, "bk_test", id, [{ path: "a.html", content: "x" }])).rejects.toMatchObject({ code: "upload_too_large" });
-    await expect(takeUpload(env, "bk_test", id)).rejects.toMatchObject({ code: "upload_too_large" });
+  const rows = async (id: string) => {
+    const uploads = await env.FACTORY.prepare("SELECT count(*) AS n FROM template_uploads WHERE upload_id = ?1").bind(id).first<{ n: number }>();
+    const chunks = await env.FACTORY.prepare("SELECT count(*) AS n FROM template_upload_chunks WHERE upload_id = ?1").bind(id).first<{ n: number }>();
+    return uploads!.n + chunks!.n;
+  };
+
+  it("caps the characters per upload at upload and at finish, and deletes the oversized upload", async () => {
+    expect(UPLOAD_MAX_CHARS).toBe(20_000_000);
+    const parts = UPLOAD_MAX_CHARS / 1_000_000;
+    const atUpload = await beginUpload(env, "bk_test", "harbor", "Harbor");
+    await stuff(atUpload, parts, 1_000_000); // exactly UPLOAD_MAX_CHARS stored; one more character is over
+    await expect(addUploadChunks(env, "bk_test", atUpload, [{ path: "a.html", content: "x" }])).rejects.toMatchObject({ code: "upload_too_large" });
+    expect(await rows(atUpload)).toBe(0);
+    const atFinish = await beginUpload(env, "bk_test", "harbor", "Harbor");
+    await stuff(atFinish, parts + 1, 1_000_000);
+    await expect(takeUpload(env, "bk_test", atFinish)).rejects.toMatchObject({ code: "upload_too_large" });
+    expect(await rows(atFinish)).toBe(0);
   });
 
-  it("caps the chunk count per upload", async () => {
+  it("caps the chunk count per upload and deletes the oversized upload", async () => {
     const id = await beginUpload(env, "bk_test", "harbor", "Harbor");
     await stuff(id, UPLOAD_MAX_CHUNKS, 1);
     await expect(addUploadChunks(env, "bk_test", id, [{ path: "a.html", content: "x" }])).rejects.toMatchObject({ code: "upload_too_large" });
+    expect(await rows(id)).toBe(0);
+  });
+
+  it("frees the open upload slot of an upload rejected as too large", async () => {
+    const ids = [];
+    for (let i = 0; i < UPLOAD_MAX_OPEN_PER_KEY; i++) ids.push(await beginUpload(env, "bk_test", "harbor", "Harbor"));
+    await expect(beginUpload(env, "bk_test", "harbor", "Harbor")).rejects.toMatchObject({ code: "too_many_uploads" });
+    await stuff(ids[0]!, UPLOAD_MAX_CHUNKS, 1);
+    await expect(addUploadChunks(env, "bk_test", ids[0]!, [{ path: "a.html", content: "x" }])).rejects.toMatchObject({ code: "upload_too_large" });
+    await expect(beginUpload(env, "bk_test", "harbor", "Harbor")).resolves.toMatch(/^up_/);
   });
 
   it("caps the open uploads per key", async () => {

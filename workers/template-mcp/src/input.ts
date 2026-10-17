@@ -155,8 +155,11 @@ async function crawlSite(entry: URL, entryBody: Uint8Array): Promise<Loaded> {
   const absorb = (url: URL, type: string, body: Uint8Array) => {
     const key = fileKey(url, type);
     if (!key || files.has(key)) return;
+    // Running totals stop the crawl as soon as the site breaks the import limits, before the bytes are zipped.
     total += body.length;
-    if (total > LIMITS.maxTotalBytes || files.size >= LIMITS.maxFiles) throw new InputError("too_large", "The site is larger than the checker's limits (2000 files / 100 MB).");
+    if (total > LIMITS.maxArchiveBytes || files.size >= LIMITS.maxFiles) {
+      throw new InputError("too_large", `The published site is larger than the import limits (${LIMITS.maxFiles} files / ${LIMITS.maxArchiveBytes / 1048576} MB).`);
+    }
     files.set(key, body);
     if (type.includes("html") || /\.html?$/i.test(key)) {
       const doc = parseHtml(decode(body));
