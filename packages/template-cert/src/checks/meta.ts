@@ -1,12 +1,13 @@
+import { SITE_TEXT_LIMITS } from "@anjuna/contracts";
 import type { HTMLElement } from "node-html-parser";
 import { parseHtml } from "../html.js";
 import { err, warn } from "../issue.js";
 import type { Check } from "../checks.js";
 import type { Issue } from "../types.js";
 
-/** The dashboard keeps at most this many characters (packages/contracts SITE_TEXT_LIMITS). */
-export const TITLE_MAX = 70;
-export const DESCRIPTION_MAX = 160;
+/** The dashboard keeps at most this many characters. */
+export const TITLE_MAX = SITE_TEXT_LIMITS.title;
+export const DESCRIPTION_MAX = SITE_TEXT_LIMITS.description;
 
 const squash = (text: string) => text.replace(/\s+/g, " ").trim();
 const decode = (bytes: Uint8Array) => new TextDecoder("utf-8").decode(bytes);
