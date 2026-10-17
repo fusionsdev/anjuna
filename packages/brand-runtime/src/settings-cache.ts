@@ -19,7 +19,7 @@ export function createSettingsCache() {
     if (!current.pending && current.expires <= Date.now()) {
       current.pending = (async () => {
         try {
-          const result = await withCoreTimeout(() => config.core.brandSettings({ brand_id: fallback.brand_id }), config.coreTimeoutMs);
+          const result = await withCoreTimeout(() => config.core.brandSettings({ brand_id: fallback.brand_id, include_site_text: true }), config.coreTimeoutMs);
           if (result.status !== 200) throw new CoreError(result.status);
           const live = BrandSettingsResponse.parse(result.data);
           // Apply existing identity/route checks before caching anything that will be served.

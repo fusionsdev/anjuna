@@ -8,6 +8,7 @@ import { APPLY_HTML } from "./apply.js";
 import { BrandSettings, LEGAL_PATHS, STATIC_FILES, STATIC_PREFIXES, type BrandConfigSource, type BrandWorkerConfig } from "./config.js";
 import { CoreError, withCoreTimeout, type AnalyticsKind, type CoreResult, type SubmitContext } from "./core-client.js";
 import { createSettingsCache } from "./settings-cache.js";
+import { applySiteText, effectiveSiteText, type EffectiveSiteText } from "./site-text.js";
 import { cookie, json, notFound, PayloadTooLarge, readCappedBody, readCookie, redirect } from "./http.js";
 
 const PAUSE_HTML = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Temporarily unavailable</title><h1>Temporarily unavailable</h1><p>Please try again later.</p></html>';
@@ -93,12 +94,13 @@ function escapeAttribute(value: string): string {
 }
 
 async function serveHtml(url: URL, config: BrandWorkerConfig, assetPath: string, keyword: string | null,
-  extra: { cfg?: RuntimeConfig; cta?: ClickParams } = {}): Promise<Response> {
+  extra: { cfg?: RuntimeConfig; cta?: ClickParams; site?: { text: EffectiveSiteText; page: "index" | "other" } } = {}): Promise<Response> {
   // Do not forward visitor headers or query strings to static assets (UA/IP/referrer parity).
   const asset = await config.assets.fetch(new Request(new URL(assetPath, url.origin)));
   if (!asset.ok) { await asset.body?.cancel(); return notFound(); }
   let rewriter = new HTMLRewriter();
   if (keyword) rewriter = rewriter.on("[data-kw]", { element(element) { element.setInnerContent(keyword); } });
+  if (extra.site) rewriter = applySiteText(rewriter, extra.site.text, extra.site.page);
   if (extra.cfg) {
     const payload = encodeRuntimeConfig(extra.cfg);
     rewriter = rewriter.on('script[type="application/json"]#cfg', { element(element) { element.setInnerContent(payload, { html: true }); } });
@@ -166,7 +168,8 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
     if (response.status !== 200 && response.status !== 304) { await response.body?.cancel(); return notFound(); }
     return response;
   }
-  if (legal) return serveHtml(url, config, `${legal}/index.html`, null);
+  const site = effectiveSiteText(settings);
+  if (legal) return serveHtml(url, config, `${legal}/index.html`, null, { site: { text: site, page: "other" } });
   if (path === "/api/health") return json({ ok: true });
   if (proxy) {
     try {
@@ -222,7 +225,7 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   const keyword = keywordFor(url, settings);
   if (path === "/") {
     const [response, clickCookie] = await Promise.all([
-      serveHtml(url, config, "/index.html", keyword, { cta: adParams(url) }),
+      serveHtml(url, config, "/index.html", keyword, { cta: adParams(url), site: { text: site, page: "index" } }),
       captureClick(request, url, config, settings, assignment),
     ]);
     if (clickCookie) response.headers.append("set-cookie", clickCookie);
@@ -254,8 +257,9 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
     }
     if (!handoff) return gateFail(url);
     return finish(await serveHtml(url, config, "/_f/index.html", keyword, {
-      cfg: { brand: settings.brand, amount: handoff.amount, zip: handoff.zip, keyword,
+      cfg: { brand: site.brand, amount: handoff.amount, zip: handoff.zip, keyword,
         formRoute: settings.formRoute, variant: assignment.variant, proxies: settings.proxies },
+      site: { text: site, page: "other" },
     }));
   }
   if (path === "/api/leads") {
@@ -276,7 +280,7 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
         brand_id: settings.brand_id, hostname: settings.hostname,
         click_session_id: click.success ? click.data : null, ...attribution(assignment), lead,
         client: { ip: request.headers.get("cf-connecting-ip")?.slice(0, 64) || "unknown", user_agent: (request.headers.get("user-agent") ?? "").slice(0, 512) },
-      }, { consent_brand: settings.brand,
+      }, { consent_brand: site.brand,
         ...(request.headers.get("sec-gpc") === "1" ? { gpc: "1" } : request.headers.get("sec-gpc") === "0" ? { gpc: "0" } : {}),
       });
       const data = result.data;

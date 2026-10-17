@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { AbConfig, AmountBuckets, BrandId, FlowGateMode, FormRoute, Hostname, ProxyPaths, RuntimeConfig, isBrandClean } from "@anjuna/contracts";
+import {
+  AbConfig, AmountBuckets, BrandId, FlowGateMode, FormRoute, Hostname, ProxyPaths, RuntimeConfig,
+  SiteBrandName, SiteDescription, SiteTitle, TemplateTextDefaults, isBrandClean,
+} from "@anjuna/contracts";
 import type { CoreClient, FetchBinding } from "./core-client.js";
 
 export const LEGAL_PATHS = ["/privacy", "/terms", "/disclosures", "/do-not-sell"] as const;
@@ -19,6 +22,12 @@ export const BrandSettings = z.object({
   flow_gate_mode: FlowGateMode.default("param"),
   paused: z.boolean().default(false),
   keyword_default: z.string().nullable().default(null),
+  /** Template defaults baked into the revision (factory config_json.text_defaults). Invalid values become null. */
+  text_defaults: TemplateTextDefaults.nullable().default(null).catch(null),
+  /** Dashboard site text from core live settings. Null = template default. */
+  brand_name: SiteBrandName.nullable().default(null).catch(null),
+  site_title: SiteTitle.nullable().default(null).catch(null),
+  site_description: SiteDescription.nullable().default(null).catch(null),
   default_variant: RuntimeConfig.shape.variant.default("lite_v1"),
   ab_config: AbConfig.nullable().default(null),
   proxies: ProxyPaths.default({ posthog: "/_t", sentry: "/_e" }),
