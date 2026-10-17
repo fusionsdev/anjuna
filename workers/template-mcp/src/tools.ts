@@ -6,6 +6,7 @@ import { contractForBuilders } from "./contract";
 import { certifyTemplateVersion, importTemplateVersion, sealTemplateVersion } from "./certifier";
 import type { Env } from "./env";
 import { SIGNAL_FIXES, compareFingerprints, computeFingerprint, type Fingerprint, type SignalScores } from "./fingerprint";
+import { measurePayload, probePublishedUrl } from "./probe";
 import { loadFromGithub, loadFromUrl, loadZipBase64, type Loaded } from "./input";
 
 const SOURCE_SHAPE = {
@@ -301,6 +302,40 @@ export function registerTools(server: McpServer, env: Env): void {
       try {
         const result = await sealTemplateVersion(env.FACTORY, env.ARTIFACTS, args.owner_secret, env.OWNER_SECRET, args.template_version_id, args.sealed_by);
         return text({ pass: true, ...result });
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  // ── Diagnostics kept from the bolt.new spike ─────────────────────────────
+
+  server.registerTool(
+    "measure_payload",
+    {
+      title: "Measure one tool argument",
+      description: "Diagnostic: send text of a chosen size (for example 10,000, 20,000 or 50,000 characters) and get back how many characters arrived. It sizes upload_files batches.",
+      inputSchema: { text: z.string().describe("Any text; only its length is measured.") },
+    },
+    async (args) => {
+      const measured = measurePayload(args.text);
+      console.log(JSON.stringify({ event: "measure_payload", ...measured }));
+      return text(measured);
+    },
+  );
+
+  server.registerTool(
+    "probe_url",
+    {
+      title: "Check a published site URL",
+      description: "Diagnostic: requests the URL (at most 3 redirects) and reports every status, the final URL, the first 500 visible characters, and whether the page has visible text or is an empty JavaScript shell. ok must be true before submit_template_url.",
+      inputSchema: { url: z.string().url().describe("https URL of the published site, as bolt.new shows it after publishing.") },
+    },
+    async (args) => {
+      try {
+        const probe = await probePublishedUrl(args.url);
+        console.log(JSON.stringify({ event: "probe_url", final_url: probe.final_url, status: probe.status, hops: probe.hops.length, ok: probe.ok }));
+        return text(probe);
       } catch (error) {
         return failure(error);
       }

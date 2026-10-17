@@ -133,6 +133,14 @@ describe("rate limit", () => {
 });
 
 describe("tools over streamable HTTP", () => {
+  it("measure_payload: reports how many characters arrived", async () => {
+    const client = await connect();
+    const { isError, data } = await callTool(client, "measure_payload", { text: "x".repeat(20_000) });
+    expect(isError).toBe(false);
+    expect(data).toEqual({ received_chars: 20_000, received_bytes: 20_000 });
+    await client.close();
+  });
+
   it("lists all tools including certification pipeline", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
@@ -146,6 +154,8 @@ describe("tools over streamable HTTP", () => {
     expect(names).toContain("import_template_version");
     expect(names).toContain("certify_template_version");
     expect(names).toContain("seal_template_version");
+    expect(names).toContain("measure_payload");
+    expect(names).toContain("probe_url");
     await client.close();
   });
 
