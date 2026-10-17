@@ -4894,7 +4894,7 @@ describe("template MCP per tenant (no deployment)", () => {
     const workflow = parseDocument(readFileSync(new URL(".github/workflows/deploy.yml", root), "utf8")).toJS() as {
       jobs: Record<string, { steps: { name?: string; run?: string }[] }>;
     };
-    for (const [tenant, file, host] of [["aduplift", "wrangler.jsonc", "mcp.aduplift.ai"], ["maimax", "wrangler.maimax.jsonc", "mcp.maimax.fit"]] as const) {
+    for (const [tenant, file, host] of [["aduplift", "wrangler.jsonc", "mcp.aduplift.ai"], ["maimax", "wrangler.maimax.jsonc", "mcp.maimax.com"]] as const) {
       const steps = workflow.jobs[`deploy-${tenant}`]!.steps;
       const names = steps.map((step) => step.name);
       const deploy = names.indexOf(`Deploy template MCP (${tenant})`);
@@ -4926,7 +4926,7 @@ Create `workers/template-mcp/wrangler.maimax.jsonc` (no comments, so plain JSON 
   "compatibility_flags": ["global_fetch_strictly_public", "nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "mcp.maimax.fit", "custom_domain": true }],
+  "routes": [{ "pattern": "mcp.maimax.com", "custom_domain": true }],
   "d1_databases": [
     {
       "binding": "FACTORY",
@@ -4939,7 +4939,7 @@ Create `workers/template-mcp/wrangler.maimax.jsonc` (no comments, so plain JSON 
   "browser": { "binding": "BROWSER" },
   "durable_objects": { "bindings": [{ "name": "MCP_OBJECT", "class_name": "TemplateMcp" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TemplateMcp"] }],
-  "vars": { "RATE_LIMIT_PER_MINUTE": "60", "SIMILARITY_THRESHOLD": "0.5", "DASHBOARD_URL": "https://app.maimax.fit" }
+  "vars": { "RATE_LIMIT_PER_MINUTE": "60", "SIMILARITY_THRESHOLD": "0.5", "DASHBOARD_URL": "https://app.maimax.com" }
 }
 ```
 
@@ -4964,7 +4964,7 @@ In `deploy-maimax`, insert before `- name: Deploy web (maimax)`:
 
       - name: Smoke test template MCP (maimax)
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://mcp.maimax.fit/health)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://mcp.maimax.com/health)
           test "$STATUS" = "200" || (echo "maimax template MCP smoke test failed: got $STATUS"; exit 1)
 
 ```
@@ -4975,7 +4975,7 @@ In `workers/template-mcp/README.md` replace the "Deploy (owner-gated, not done h
 CI deploys the template MCP on every `v*` tag, after the factory D1 migrations and before the web Worker (anjuna-web binds its `TemplateImportService` entrypoint):
 
 - aduplift: `wrangler.jsonc`, Custom Domain `mcp.aduplift.ai`, D1 `aduplift-factory`.
-- maimax: `wrangler.maimax.jsonc`, Custom Domain `mcp.maimax.fit`, D1 `maimax-factory`, only when the repo variable `MAIMAX_ENABLED` is `true`. Builder keys are per tenant because each tenant has its own factory D1. Maimax works only after its tenant setup (factory deploy, Access, R2 bucket, `MAIMAX_CORE_TOKEN`, `MAIMAX_CF_ACCESS_CLIENT_ID`, `MAIMAX_CF_ACCESS_CLIENT_SECRET`) is done.
+- maimax: `wrangler.maimax.jsonc`, Custom Domain `mcp.maimax.com`, D1 `maimax-factory`, only when the repo variable `MAIMAX_ENABLED` is `true`. Builder keys are per tenant because each tenant has its own factory D1. Maimax works only after its tenant setup (factory deploy, Access, R2 bucket, `MAIMAX_CORE_TOKEN`, `MAIMAX_CF_ACCESS_CLIENT_ID`, `MAIMAX_CF_ACCESS_CLIENT_SECRET`) is done.
 
 Both jobs smoke-test `GET /health` for HTTP 200.
 ```
