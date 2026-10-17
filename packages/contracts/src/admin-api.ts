@@ -26,6 +26,7 @@
 import { z } from "zod";
 import { BrandId, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
 import { Keyword } from "./runtime-config.js";
+import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
 
 // --- roles and request context ------------------------------------------------------------------
@@ -185,6 +186,10 @@ export const BrandConfig = z.strictObject({
   status: BrandStatus,
   form_version: FormVersion.nullable(),
   keyword_default: Keyword.nullable(),
+  /** Site text edited in the control panel. Null = the template default. */
+  brand_name: SiteBrandName.nullable(),
+  site_title: SiteTitle.nullable(),
+  site_description: SiteDescription.nullable(),
   amount_buckets: AmountBuckets,
   ab_config: AbConfig.nullable(),
   flow_gate_mode: FlowGateMode,
@@ -206,6 +211,9 @@ export type GetBrandResponse = z.infer<typeof GetBrandResponse>;
 /** Editable fields. `rotate_postback_token: true` asks core to mint a new token. */
 export const BRAND_PATCH_FIELDS = [
   "keyword_default",
+  "brand_name",
+  "site_title",
+  "site_description",
   "amount_buckets",
   "ab_config",
   "flow_gate_mode",
@@ -220,6 +228,10 @@ export const BrandPatchRequest = z
   .strictObject({
     /** Null clears it (the template keeps its own default text). */
     keyword_default: Keyword.nullable().optional(),
+    /** Null resets the field to the template default. */
+    brand_name: SiteBrandName.nullable().optional(),
+    site_title: SiteTitle.nullable().optional(),
+    site_description: SiteDescription.nullable().optional(),
     amount_buckets: AmountBuckets.optional(),
     /** Null stops the test. */
     ab_config: AbConfig.nullable().optional(),
@@ -666,6 +678,11 @@ export const BRAND_PATCH_FIELD_GROUPS = {
     min_role: "employee",
     fields: ["keyword_default"],
     plan_action: "Edit keyword default",
+  },
+  site_text: {
+    min_role: "employee",
+    fields: ["brand_name", "site_title", "site_description"],
+    plan_action: "Edit site text",
   },
   ab_weights: {
     min_role: "owner",

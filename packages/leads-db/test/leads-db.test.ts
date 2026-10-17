@@ -270,6 +270,15 @@ describe("Anjuna additions", () => {
         .run();
     };
 
+    it("stores per-brand site text and enforces the length limits", async () => {
+      await insert({ brand_id: "brand-text", brand_name: "Quick Funds", site_title: "Quick Funds | Options", site_description: "Compare options." });
+      expect(await env.DB.prepare("SELECT brand_name, site_title, site_description FROM brand_runtime WHERE brand_id = 'brand-text'").first())
+        .toEqual({ brand_name: "Quick Funds", site_title: "Quick Funds | Options", site_description: "Compare options." });
+      await expect(insert({ brand_id: "brand-text-2", site_title: "T".repeat(71) })).rejects.toThrow(/CHECK constraint failed/);
+      await expect(insert({ brand_id: "brand-text-3", site_description: "d".repeat(161) })).rejects.toThrow(/CHECK constraint failed/);
+      await expect(insert({ brand_id: "brand-text-4", brand_name: "" })).rejects.toThrow(/CHECK constraint failed/);
+    });
+
     it("stores a brand with defaults param gate and not paused", async () => {
       await insert();
       const row = await env.DB

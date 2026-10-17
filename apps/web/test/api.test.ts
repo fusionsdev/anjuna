@@ -224,6 +224,9 @@ describe("role table coverage", () => {
   it("every PATCH field group is enforced exactly as ADMIN_ROLE_TABLE says", async () => {
     const sample: Record<string, unknown> = {
       keyword_default: "Table Keyword",
+      brand_name: "Table Brand",
+      site_title: "Table Brand | Options",
+      site_description: "Compare options from lending partners.",
       ab_config: { experiment_id: "exp-2026-10", variants: [{ id: "a", weight: 50 }, { id: "b", weight: 50 }] },
       amount_buckets: [500, 1000, 1500, 2500, 3000],
       flow_gate_mode: "signed_cookie",

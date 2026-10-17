@@ -61,7 +61,7 @@ function handler<M extends LeadsRpcMethod>(method: M): RpcHandler {
         case "zip": return await zip(parsed.data as LeadsRpcRequest<"zip">, env);
         case "issueHandoff": return await issueHandoff(parsed.data as LeadsRpcRequest<"issueHandoff">, env, brand);
         case "verifyHandoff": return await verifyHandoff(parsed.data as LeadsRpcRequest<"verifyHandoff">, env);
-        case "brandSettings": return json(publicSettings(brand));
+        case "brandSettings": return json(publicSettings(brand, (parsed.data as LeadsRpcRequest<"brandSettings">).include_site_text === true));
         default: return json({ error: "not_found" }, 404);
       }
     } catch {

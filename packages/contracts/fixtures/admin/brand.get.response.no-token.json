@@ -8,6 +8,9 @@
     "status": "paused",
     "form_version": null,
     "keyword_default": null,
+    "brand_name": null,
+    "site_title": null,
+    "site_description": null,
     "amount_buckets": [
       350,
       500,

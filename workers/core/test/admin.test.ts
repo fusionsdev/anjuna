@@ -413,3 +413,20 @@ describe("mailing status with LISTMONK_* set", () => {
     }
   });
 });
+
+describe("site text through the admin API", () => {
+  const save = (body: unknown) => h.admin("/admin/brands/brand-a", employee, { method: "PATCH", body: JSON.stringify(body) });
+
+  it("lets an employee edit site text, validates it, and resets a field with null", async () => {
+    const ok = await save({ brand_name: "Quick Funds", site_title: "Quick Funds | Check Your Options", site_description: "Compare funding options from lending partners." });
+    expect(ok.status).toBe(200);
+    expect(BrandPatchResponse.parse(await ok.json())).toMatchObject({ changed: ["brand_name", "site_title", "site_description"], brand: { brand_name: "Quick Funds" } });
+    for (const bad of [{ site_title: "T".repeat(71) }, { site_description: "Personal Loans for everyone" }, { brand_name: "Anjuna Funds" }, { site_title: "<b>Bold</b>" }]) {
+      expect((await save(bad)).status, JSON.stringify(bad)).toBe(422);
+    }
+    const reset = await save({ site_title: null });
+    expect(BrandPatchResponse.parse(await reset.json()).brand.site_title).toBeNull();
+    const brand = GetBrandResponse.parse(await (await h.admin("/admin/brands/brand-a", employee)).json()).brand;
+    expect(brand).toMatchObject({ brand_name: "Quick Funds", site_title: null, site_description: "Compare funding options from lending partners." });
+  });
+});
