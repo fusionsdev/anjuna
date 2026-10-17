@@ -28,10 +28,54 @@ const live = (text: Record<string, string | null>) => ({ ...structuredClone(sett
 afterEach(() => vi.restoreAllMocks());
 
 describe("site text", () => {
-  it("serves the template defaults when nothing was edited", async () => {
+  // Controller ruling (final review Important 4): a brand made as "Brand A" from a "Harbor" template never shows "Harbor" as its name.
+  it("serves the template text with the brand display name when nothing was edited", async () => {
     const html = await (await site().get("/")).text();
-    expect(html).toContain("<title>Harbor | Funding Options</title>");
-    expect(html).toContain('<a href="/" data-brand>Harbor</a>');
+    expect(html).toContain("<title>Brand A | Funding Options</title>");
+    expect(html).toContain('<meta property="og:title" content="Brand A | Funding Options">');
+    expect(html).toContain('<meta name="description" content="Harbor helps you compare.">');
+    expect(html).toContain('<a href="/" data-brand>Brand A</a>');
+    expect(html).toContain("<footer><span data-brand>Brand A</span></footer>");
+  });
+
+  it("keeps an unedited 80 character template title and a distinct og:title", async () => {
+    const title = "Compare Funding Options From Trusted Lenders Nationally In One Easy Request Form";
+    expect(title).toHaveLength(80);
+    const index = `<!doctype html><html><head><title>${title}</title><meta property="og:title" content="Harbor &amp; You: Options Today"><meta name="description" content="Template words."></head><body><span data-brand>Harbor</span></body></html>`;
+    const assets = { fetch: async () => new Response(index, { headers: { "content-type": "text/html" } }) };
+    const { get, core } = site({ assets, text_defaults: { brand_name: "Harbor", title: title.slice(0, 70).trim(), description: "Template words." } });
+    core.settings = live({ brand_name: null, site_title: null, site_description: null });
+    const html = await (await get("/")).text();
+    expect(html).toContain(`<title>${title}</title>`);
+    expect(html).toContain('<meta property="og:title" content="Brand A &amp; You: Options Today">');
+    expect(html).toContain('<meta name="description" content="Template words.">');
+  });
+
+  it("changes only the brand inside the index title and og:title when only the brand name was edited", async () => {
+    const { get, core } = site();
+    core.settings = live({ brand_name: "Quick Funds", site_title: null, site_description: null });
+    const html = await (await get("/")).text();
+    expect(html).toContain("<title>Quick Funds | Funding Options</title>");
+    expect(html).toContain('<meta property="og:title" content="Quick Funds | Funding Options">');
+    expect(html).toContain('<meta name="description" content="Harbor helps you compare.">');
+    expect(html).toContain('<meta property="og:description" content="Harbor helps you compare.">');
+  });
+
+  it("matches the template brand only as a whole word and never inside an entity", async () => {
+    const pages: Record<string, string> = {
+      "/index.html": "<!doctype html><html><head><title>Max | Maximum Savings, Max2 and Max</title></head><body></body></html>",
+      "/terms/index.html": "<!doctype html><html><head><title>nbsp&nbsp;Terms &amp; amp</title></head><body></body></html>",
+    };
+    const assets = { fetch: async (request: Request) => new Response(pages[new URL(request.url).pathname] ?? "missing", { status: pages[new URL(request.url).pathname] ? 200 : 404 }) };
+    const max = site({ assets, text_defaults: { brand_name: "Max", title: null, description: null } });
+    max.core.settings = live({ brand_name: "Quick Funds", site_title: null, site_description: null });
+    expect(await (await max.get("/")).text()).toContain("<title>Quick Funds | Maximum Savings, Max2 and Quick Funds</title>");
+    const nbsp = site({ assets, text_defaults: { brand_name: "nbsp", title: null, description: null } });
+    nbsp.core.settings = live({ brand_name: "Quick Funds", site_title: null, site_description: null });
+    expect(await (await nbsp.get("/terms")).text()).toContain("<title>Quick Funds&nbsp;Terms &amp; amp</title>");
+    const amp = site({ assets, text_defaults: { brand_name: "amp", title: null, description: null } });
+    amp.core.settings = live({ brand_name: "Quick Funds", site_title: null, site_description: null });
+    expect(await (await amp.get("/terms")).text()).toContain("<title>nbsp&nbsp;Terms &amp; Quick Funds</title>");
   });
 
   it("writes edited title, description and og tags on the index page", async () => {
@@ -68,10 +112,10 @@ describe("site text", () => {
     expect(submit).toHaveBeenCalledWith(expect.anything(), { consent_brand: "Quick Funds" });
   });
 
-  it("asks core for site text and serves the baked defaults when core is unreachable", async () => {
+  it("asks core for site text and serves the template text with the brand display name when core is unreachable", async () => {
     const { get, core } = site();
     core.failure = new Error("core down");
-    expect(await (await get("/")).text()).toContain("<title>Harbor | Funding Options</title>");
+    expect(await (await get("/")).text()).toContain("<title>Brand A | Funding Options</title>");
     expect(core.calls.brandSettings).toEqual([{ brand_id: "brand-a", include_site_text: true }]);
   });
 

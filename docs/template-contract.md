@@ -84,7 +84,7 @@ The brand Worker writes `<script type="application/json" id="cfg">` (brand name,
 
 The dashboard edits three texts per brand: brand name, page title and meta description. The template supplies the defaults.
 
-- `/index.html` **must** have a `<title>` (the first 70 characters are used) and `<meta name="description" content="...">` (the first 160 characters are used). The brand Worker writes the brand's values into them, and into `og:title` and `og:description` when those tags exist.
+- `/index.html` **must** have a `<title>` (the first 70 characters are used) and `<meta name="description" content="...">` (the first 160 characters are used). When the dashboard edits the title or description, the brand Worker writes the edited value into the tag, and into `og:title` or `og:description` when those tags exist. An unedited title and `og:title` are served as the template wrote them, with the template's brand name replaced by the brand's name (whole words only). An unedited description is served as written.
 - Put `data-brand` on every element whose text is the brand name: header logo text, footer, legal pages. The element must hold only the brand name text, no icons or images, because the Worker replaces its whole content: `<a href="/"><img src="/logo.svg" alt=""><span data-brand>Harbor Funding</span></a>`.
 - A template without any `data-brand` still passes, with a warning. New templates should always have it.
 - On pages other than `/`, the Worker replaces the template's brand name inside `<title>` with the brand's name. Write legal page titles like `Privacy Policy | Harbor Funding`.
