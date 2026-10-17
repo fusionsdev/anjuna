@@ -1,4 +1,4 @@
-import { LatestUpgradeResponse, SealedTemplatesResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
+import { BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
 import type {
   AdminRole,
   AlertsReportResponse,
@@ -75,6 +75,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  builderKeys: () => request<unknown>("GET", "/api/builder-keys").then((body) => BuilderKeyListResponse.parse(body)),
+  createBuilderKey: (label: string) => request<unknown>("POST", "/api/builder-keys", { label }).then((body) => BuilderKeyCreateResponse.parse(body)),
+  revokeBuilderKey: (id: string) => request<{ key: unknown }>("POST", `/api/builder-keys/${encodeURIComponent(id)}/revoke`, {}).then((body) => BuilderKeySummary.parse(body.key)),
   templates: () => request<unknown>("GET", "/api/templates").then((body) => TemplateListResponse.parse(body)),
   template: (id: string) => request<unknown>("GET", `/api/templates/${encodeURIComponent(id)}`).then((body) => TemplateDetailResponse.parse(body)),
   approveTemplate: (id: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, {}).then((body) => TemplateApproveResponse.parse(body)),

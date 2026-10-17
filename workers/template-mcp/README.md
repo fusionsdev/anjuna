@@ -32,7 +32,7 @@ no `#cfg` element, every internal link/asset resolves. The constants are tested 
   `Authorization: Bearer <key>`, `Authorization: <key>`, `X-API-Key: <key>`, `Api-Key: <key>`.
   A key in the URL query string is never accepted. A 401 carries `WWW-Authenticate: Bearer realm="anjuna-template-mcp"`.
   Keys are per builder, stored only as SHA-256 hashes in the factory D1 (`builder_keys`),
-  revocable with `revoked_at`. Mint one with `node scripts/mint-key.mjs "<label>"` (prints the key once plus the `INSERT`).
+  revocable with `revoked_at`. Staff keys are created, listed (with last use) and revoked by an owner in the control panel under Builder keys. `node scripts/mint-key.mjs "<label>"` remains for keys minted outside the panel.
   Revoke: `UPDATE builder_keys SET revoked_at = datetime('now') WHERE key_id = '...'`.
 - Rate limit per key: `RATE_LIMIT_PER_MINUTE` requests (default 60), fixed window in `builder_key_usage`; `429` + `Retry-After`.
 - Zip: max 30 MB, 2000 files, 10 MB per file, 100 MB expanded. Rejected: zip-slip (`..`, absolute, backslash paths),

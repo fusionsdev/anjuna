@@ -11,3 +11,4 @@ export * from "./admin-api.js";
 export * from "./lifecycle.js";
 export * from "./site-text.js";
 export * from "./template-review.js";
+export * from "./builder-keys.js";

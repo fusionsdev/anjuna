@@ -6,10 +6,11 @@ import { BrandLifecycle } from "./screens/BrandLifecycle";
 import { FunnelScreen } from "./screens/Funnel";
 import { MailingScreen } from "./screens/Mailing";
 import { SignIn } from "./screens/SignIn";
+import { BuilderKeysScreen } from "./screens/BuilderKeys";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
 
-type View = "brands" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users";
+type View = "brands" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -39,6 +40,7 @@ export function App() {
     { id: "mailing", label: "สถานะเมล (Mailing)", show: true },
     { id: "audit", label: "ประวัติการเปลี่ยนแปลง (Audit log)", show: true },
     { id: "users", label: "ผู้ใช้ (Users)", show: me.role === "owner" },
+    { id: "builder-keys", label: "คีย์ Builder (Builder keys)", show: me.role === "owner" },
   ];
 
   return (
@@ -71,6 +73,7 @@ export function App() {
       <main className="content">
         {view === "brands" && <BrandLifecycle me={me} />}
         {view === "templates" && <TemplatesScreen me={me} />}
+        {view === "builder-keys" && me.role === "owner" && <BuilderKeysScreen />}
         {view === "funnel" && <FunnelScreen />}
         {view === "alerts" && <AlertsScreen />}
         {view === "mailing" && <MailingScreen />}
