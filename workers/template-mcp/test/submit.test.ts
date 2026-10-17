@@ -4,7 +4,7 @@ import { TemplateSubmitResult } from "@anjuna/contracts";
 import { InputError, readZip } from "../src/archive";
 import { computeFingerprint } from "../src/fingerprint";
 import {
-  UPLOAD_CALL_MAX_CHARS, addUploadChunks, assembleZip, beginUpload, detectFramework, filesToMap, payloadStats, submitTemplate, takeUpload, type SubmitRequest,
+  UPLOAD_CALL_MAX_CHARS, UPLOAD_MAX_CHUNKS, UPLOAD_MAX_OPEN_PER_KEY, addUploadChunks, assembleZip, beginUpload, detectFramework, filesToMap, payloadStats, submitTemplate, takeUpload, type SubmitRequest,
 } from "../src/submit";
 import { goodSite, withFile, withIndex } from "./fixtures";
 import { NOW, addBrand, addKey, addSealedTemplate, resetDb, setupDb } from "./helpers";
@@ -206,5 +206,27 @@ describe("chunked upload", () => {
     await beginUpload(env, "bk_test", "harbor", "Harbor", Date.parse("2026-10-17T07:00:00Z"));
     await expect(takeUpload(env, "bk_test", old)).rejects.toMatchObject({ code: "unknown_upload" });
     expect((await env.FACTORY.prepare("SELECT count(*) AS n FROM template_upload_chunks").first<{ n: number }>())!.n).toBe(0);
+  });
+
+  const stuff = (id: string, parts: number, size: number) =>
+    env.FACTORY.batch(Array.from({ length: parts }, (_, part) =>
+      env.FACTORY.prepare("INSERT INTO template_upload_chunks (upload_id, path, part, encoding, content) VALUES (?1, 'big.bin', ?2, 'utf8', substr(hex(zeroblob(?3)), 1, ?3))").bind(id, part, size)));
+
+  it("caps the characters per upload at upload and at finish", async () => {
+    const id = await beginUpload(env, "bk_test", "harbor", "Harbor");
+    await stuff(id, 43, 1_000_000); // 43,000,000 > UPLOAD_MAX_CHARS
+    await expect(addUploadChunks(env, "bk_test", id, [{ path: "a.html", content: "x" }])).rejects.toMatchObject({ code: "upload_too_large" });
+    await expect(takeUpload(env, "bk_test", id)).rejects.toMatchObject({ code: "upload_too_large" });
+  });
+
+  it("caps the chunk count per upload", async () => {
+    const id = await beginUpload(env, "bk_test", "harbor", "Harbor");
+    await stuff(id, UPLOAD_MAX_CHUNKS, 1);
+    await expect(addUploadChunks(env, "bk_test", id, [{ path: "a.html", content: "x" }])).rejects.toMatchObject({ code: "upload_too_large" });
+  });
+
+  it("caps the open uploads per key", async () => {
+    for (let i = 0; i < UPLOAD_MAX_OPEN_PER_KEY; i++) await beginUpload(env, "bk_test", "harbor", "Harbor");
+    await expect(beginUpload(env, "bk_test", "harbor", "Harbor")).rejects.toMatchObject({ code: "too_many_uploads" });
   });
 });

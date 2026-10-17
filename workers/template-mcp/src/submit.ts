@@ -317,6 +317,10 @@ export function payloadStats(files: FileMap): PayloadStats {
 /** What builders are told per upload_files call (Task 1 measurement); the server accepts up to UPLOAD_CALL_MAX_CHARS. */
 export const UPLOAD_BATCH_CHARS = 20_000;
 export const UPLOAD_CALL_MAX_CHARS = 65_536;
+/** Per upload: base64 of the 30 MB archive cap, at most 4000 stored chunks, 5 open uploads per key. Bounds D1 growth and the memory takeUpload needs. */
+export const UPLOAD_MAX_CHARS = Math.ceil((LIMITS.maxArchiveBytes * 4) / 3);
+export const UPLOAD_MAX_CHUNKS = 4000;
+export const UPLOAD_MAX_OPEN_PER_KEY = 5;
 export const UPLOAD_TTL_MS = 6 * 60 * 60 * 1000;
 
 export const UPLOAD_CHUNK = SUBMITTED_FILE.extend({
@@ -339,10 +343,23 @@ export async function beginUpload(env: Pick<Env, "FACTORY">, keyId: string, temp
   await env.FACTORY.batch([
     env.FACTORY.prepare("DELETE FROM template_upload_chunks WHERE upload_id IN (SELECT upload_id FROM template_uploads WHERE created_at < ?1)").bind(stale),
     env.FACTORY.prepare("DELETE FROM template_uploads WHERE created_at < ?1").bind(stale),
+  ]);
+  const open = await env.FACTORY.prepare("SELECT count(*) AS n FROM template_uploads WHERE key_id = ?1").bind(keyId).first<{ n: number }>();
+  if ((open?.n ?? 0) >= UPLOAD_MAX_OPEN_PER_KEY) {
+    throw new InputError("too_many_uploads", `This key already has ${UPLOAD_MAX_OPEN_PER_KEY} open uploads. Finish one with finish_upload, or wait 6 hours for the oldest to expire.`);
+  }
+  await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO template_uploads (upload_id, key_id, template_id, template_name, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
       .bind(uploadId, keyId, templateId, templateName, new Date(now).toISOString()),
   ]);
   return uploadId;
+}
+
+async function uploadUsage(env: Pick<Env, "FACTORY">, uploadId: string): Promise<{ chars: number; chunks: number }> {
+  const row = await env.FACTORY.prepare("SELECT coalesce(sum(length(content)), 0) AS chars, count(*) AS chunks FROM template_upload_chunks WHERE upload_id = ?1")
+    .bind(uploadId)
+    .first<{ chars: number; chunks: number }>();
+  return { chars: row?.chars ?? 0, chunks: row?.chunks ?? 0 };
 }
 
 export async function addUploadChunks(env: Pick<Env, "FACTORY">, keyId: string, uploadId: string, chunks: readonly UploadChunk[]): Promise<{ chunks_stored: number; files: number }> {
@@ -351,6 +368,10 @@ export async function addUploadChunks(env: Pick<Env, "FACTORY">, keyId: string, 
     throw new InputError("batch_too_large", `This call carries ${chars} characters of content; send at most ${UPLOAD_BATCH_CHARS} per upload_files call.`);
   }
   await requireUpload(env, keyId, uploadId);
+  const used = await uploadUsage(env, uploadId);
+  if (used.chars + chars > UPLOAD_MAX_CHARS || used.chunks + chunks.length > UPLOAD_MAX_CHUNKS) {
+    throw new InputError("upload_too_large", `An upload holds at most ${UPLOAD_MAX_CHARS} characters in ${UPLOAD_MAX_CHUNKS} chunks; this one would reach ${used.chars + chars} characters in ${used.chunks + chunks.length} chunks. A site this large breaks the 30 MB limit: reduce image sizes.`);
+  }
   const statements = chunks.map((chunk) =>
     env.FACTORY.prepare("INSERT OR REPLACE INTO template_upload_chunks (upload_id, path, part, encoding, content) VALUES (?1, ?2, ?3, ?4, ?5)")
       .bind(uploadId, cleanPath(chunk.path), chunk.part ?? 0, chunk.encoding ?? "utf8", chunk.content));
@@ -364,6 +385,10 @@ export async function addUploadChunks(env: Pick<Env, "FACTORY">, keyId: string, 
 
 export async function takeUpload(env: Pick<Env, "FACTORY">, keyId: string, uploadId: string): Promise<{ template_id: string; template_name: string; files: SubmittedFile[] }> {
   const upload = await requireUpload(env, keyId, uploadId);
+  const used = await uploadUsage(env, uploadId); // before loading any row, so an oversized upload cannot exhaust Worker memory
+  if (used.chars > UPLOAD_MAX_CHARS) {
+    throw new InputError("upload_too_large", `The upload holds ${used.chars} characters; the limit is ${UPLOAD_MAX_CHARS}. Reduce image sizes and start again with begin_upload.`);
+  }
   const { results } = await env.FACTORY.prepare("SELECT path, part, encoding, content FROM template_upload_chunks WHERE upload_id = ?1 ORDER BY path, part")
     .bind(uploadId)
     .all<{ path: string; part: number; encoding: "utf8" | "base64"; content: string }>();
