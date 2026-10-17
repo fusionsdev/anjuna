@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { authorize } from "@anjuna/contracts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { call, resetState, sessions, setupDatabases } from "./helpers";
 
@@ -32,6 +33,15 @@ describe("site text defaults", () => {
   it("answers null defaults for a brand the factory does not know, and 401 without a session", async () => {
     expect(await (await call("/api/brands/brand-a/site-text", { cookie: employee })).json()).toEqual({ brand_id: "brand-a", defaults: null });
     expect((await call("/api/brands/brand-a/site-text")).status).toBe(401);
+  });
+
+  it("lets every role that can read the brand read its site text defaults", async () => {
+    for (const role of ["owner", "employee"] as const) {
+      const cookie = await sessions[role]();
+      const [brandRead, siteText] = [await call("/api/brands/brand-a", { cookie }), await call("/api/brands/brand-a/site-text", { cookie })];
+      const allowed = authorize("getBrand", role).ok;
+      expect([brandRead.status === 403, siteText.status]).toEqual([!allowed, allowed ? 200 : 403]);
+    }
   });
 
   it("saves site text through the brand PATCH and validates it", async () => {

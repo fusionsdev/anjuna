@@ -14,7 +14,12 @@ const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? e
 
 function selectedFromHash(): string | null {
   const match = /^#templates\/(.+)$/.exec(window.location.hash);
-  return match ? decodeURIComponent(match[1]!) : null;
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]!);
+  } catch {
+    return null; // a malformed escape such as "#templates/%" opens the list
+  }
 }
 
 export function TemplatesScreen({ me }: { me: Me }) {

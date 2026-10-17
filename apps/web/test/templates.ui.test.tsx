@@ -71,6 +71,14 @@ describe("Templates screen", () => {
     expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
   });
 
+  it("shows the list when the URL hash holds a malformed escape", async () => {
+    window.location.hash = "#templates/%";
+    render(<TemplatesScreen me={owner} />);
+    expect(await screen.findByText("Bolt Harbor")).toBeTruthy();
+    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates"]);
+    window.location.hash = "";
+  });
+
   it("imports from a URL and shows the static HTML instruction on rejection", async () => {
     routes.set("POST /api/templates/import", () => json({
       status: "rejected", template_version_id: null, version: null, sha256: null, dashboard_url: null,

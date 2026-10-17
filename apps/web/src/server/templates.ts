@@ -11,6 +11,7 @@ import {
   TemplateSubmitResult,
   SiteTextDefaultsResponse,
   TemplateTextDefaults,
+  authorize,
   templateSlug,
   type AdminRequestContext,
   type TemplateVersionStatusName,
@@ -172,7 +173,9 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
 
   m = path.match(/^\/api\/brands\/([^/]+)\/site-text$/);
   if (m && method === "GET") {
-    if (!authorizePanel("listTemplates", ctx.actor_role).ok) return forbidden("employee");
+    // Site text defaults belong to the brand, so the brand read rule applies (as GET /api/brands/:id).
+    const access = authorize("getBrand", ctx.actor_role);
+    if (!access.ok) return json(access.status, access.error);
     const brandId = decodePathSegment(m[1]!);
     if (brandId === null) return notFound("brand");
     // The deployed revision's defaults; before the first install, the latest revision's.

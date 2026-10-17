@@ -7,14 +7,16 @@ const employee = { id: "employee", email: "emp1@example.test", role: "employee" 
 const DEFAULTS = { brand_name: "Copperline", title: "Copperline | Funding Options", description: "Check your funding options." };
 const brand = { ...brandFixture.brand, brand_name: null, site_title: "Edited Title", site_description: null };
 let patches: unknown[];
+let served: { brand: typeof brand | (Omit<typeof brand, "site_title"> & { site_title: null }); defaults: typeof DEFAULTS };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 beforeEach(() => {
   patches = [];
+  served = { brand, defaults: DEFAULTS };
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
-    if (method === "GET" && input === "/api/brands/brand-a") return json({ brand });
-    if (method === "GET" && input === "/api/brands/brand-a/site-text") return json({ brand_id: "brand-a", defaults: DEFAULTS });
+    if (method === "GET" && input === "/api/brands/brand-a") return json({ brand: served.brand });
+    if (method === "GET" && input === "/api/brands/brand-a/site-text") return json({ brand_id: "brand-a", defaults: served.defaults });
     if (method === "PATCH" && input === "/api/brands/brand-a") {
       patches.push(JSON.parse(String(init!.body)));
       return json({ brand, changed: ["site_title"], audit_id: 1 });
@@ -61,6 +63,31 @@ describe("Site text card", () => {
     fireEvent.change(field("คำอธิบาย (Meta description)"), { target: { value: "Personal loans today" } });
     expect(saveButton().disabled).toBe(true);
     expect(screen.getByText(/personal loan/)).toBeTruthy();
+  });
+
+  // Controller ruling (final review Important 4): the brand name defaults to the name typed at brand creation.
+  it("defaults the brand name to the brand display name and previews the title the brand Worker serves", async () => {
+    served.brand = { ...brand, site_title: null };
+    render(<ConfigPanel me={employee} brandId="brand-a" brandName="Quick Funds" onClose={() => {}} onChanged={() => {}} />);
+    await waitFor(() => expect(field("ชื่อแบรนด์ (Brand name)").value).toBe("Quick Funds"));
+    expect(screen.getAllByText("จากแบรนด์ (From brand)")).toHaveLength(1);
+    expect(screen.getAllByText("จากเทมเพลต (From template)")).toHaveLength(2);
+    expect(field("ชื่อหน้า (Page title)").value).toBe(DEFAULTS.title);
+    expect(screen.getByLabelText("แท็บเบราว์เซอร์ (Browser tab)").textContent).toBe("Quick Funds | Funding Options");
+    fireEvent.change(field("ชื่อแบรนด์ (Brand name)"), { target: { value: "Harbor Cash" } });
+    expect(screen.getByLabelText("แท็บเบราว์เซอร์ (Browser tab)").textContent).toBe("Harbor Cash | Funding Options");
+    fireEvent.change(field("ชื่อแบรนด์ (Brand name)"), { target: { value: "" } });
+    expect(screen.getByLabelText("ตัวอย่าง (Preview)").textContent).toContain("Header / footer Quick Funds");
+    fireEvent.click(screen.getByRole("button", { name: "รีเซ็ต ชื่อแบรนด์ (Brand name) (Reset to brand name)" }));
+    expect(field("ชื่อแบรนด์ (Brand name)").value).toBe("Quick Funds");
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  it("previews the brand replacement on whole words only", async () => {
+    served.brand = { ...brand, site_title: null };
+    served.defaults = { brand_name: "Max", title: "Max | Maximum Savings", description: "Check your funding options." };
+    render(<ConfigPanel me={employee} brandId="brand-a" brandName="Quick Funds" onClose={() => {}} onChanged={() => {}} />);
+    await waitFor(() => expect(screen.getByLabelText("แท็บเบราว์เซอร์ (Browser tab)").textContent).toBe("Quick Funds | Maximum Savings"));
   });
 
   it("renders entity-like text as text, not HTML", async () => {
