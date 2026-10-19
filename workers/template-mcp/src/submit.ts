@@ -17,6 +17,7 @@ import { sha256Hex } from "./auth";
 import { certifyTemplateVersion, importTemplateVersion } from "./certifier";
 import { checkTemplate, normalizeRoot, type Issue } from "./checker";
 import type { Env } from "./env";
+import { stripHostBadges } from "./host-badge";
 import { decode } from "./html";
 import { loadFromUrl, type Loaded } from "./input";
 import { visibleBodyText } from "./probe";
@@ -54,6 +55,8 @@ export interface SubmitRequest {
   submitted_by: SubmittedBy;
   /** templates.created_by / template_versions.created_by: the builder key id, or the dashboard user id. */
   created_by: string;
+  /** Warnings the caller already knows about, e.g. host badges stripped by URL import; merged before the archive checks. */
+  warnings?: TemplateSubmitIssue[];
 }
 
 export type SubmitResult = TemplateSubmitResult;
@@ -130,7 +133,7 @@ async function certifyAndReport(
 
 export async function submitTemplate(env: Env, request: SubmitRequest): Promise<SubmitResult> {
   const { files, notes } = normalizeRoot(request.files);
-  const warnings = notes.map(toIssue);
+  const warnings = [...(request.warnings ?? []), ...notes.map(toIssue)];
 
   let zip: Uint8Array;
   try {
@@ -216,7 +219,10 @@ export interface SubmitUrlRequest extends Omit<SubmitRequest, "files"> {
   url: string;
 }
 
-/** Crawl the published site (https, public hosts, 3 redirects, 150 requests; JavaScript never runs), then submit it. */
+/**
+ * Crawl the published site (https, public hosts, 3 redirects, 150 requests; JavaScript never runs), then submit it.
+ * Badge scripts the host injects at publish time (bolt.host) are removed first and reported as host-badge warnings.
+ */
 export async function submitTemplateUrl(env: Env, request: SubmitUrlRequest): Promise<SubmitResult> {
   const { url, ...rest } = request;
   let loaded: Loaded;
@@ -244,7 +250,15 @@ export async function submitTemplateUrl(env: Env, request: SubmitUrlRequest): Pr
       }],
     });
   }
-  return submitTemplate(env, { ...rest, files: loaded.files });
+  // A downloaded zip is the builder's own archive, so only a crawled site (source "url:site:<host>") can carry a host-injected badge.
+  const { files, stripped } = loaded.source.startsWith("url:site:") ? stripHostBadges(loaded.files) : { files: loaded.files, stripped: [] };
+  const badgeWarnings = stripped.map((s) => ({
+    rule: "host-badge",
+    file: s.file,
+    message: `Removed the ${s.host} badge script that the host injects at publish time. It is not part of the template.`,
+    fix: "Nothing to do. The sealed template never contains it.",
+  }));
+  return submitTemplate(env, { ...rest, files, warnings: [...(rest.warnings ?? []), ...badgeWarnings] });
 }
 
 // ── File list (submit_template) and chunked upload (fallback path) ─────────────
