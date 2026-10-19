@@ -40,7 +40,7 @@ export function App() {
     { id: "mailing", label: "สถานะเมล (Mailing)", show: true },
     { id: "audit", label: "ประวัติการเปลี่ยนแปลง (Audit log)", show: true },
     { id: "users", label: "ผู้ใช้ (Users)", show: me.role === "owner" },
-    { id: "builder-keys", label: "คีย์ Builder (Builder keys)", show: me.role === "owner" },
+    { id: "builder-keys", label: "คีย์ Builder (Builder keys)", show: true },
   ];
 
   return (
@@ -73,7 +73,7 @@ export function App() {
       <main className="content">
         {view === "brands" && <BrandLifecycle me={me} />}
         {view === "templates" && <TemplatesScreen me={me} />}
-        {view === "builder-keys" && me.role === "owner" && <BuilderKeysScreen />}
+        {view === "builder-keys" && <BuilderKeysScreen me={me} />}
         {view === "funnel" && <FunnelScreen />}
         {view === "alerts" && <AlertsScreen />}
         {view === "mailing" && <MailingScreen />}
