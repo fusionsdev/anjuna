@@ -1,6 +1,6 @@
 /**
  * Builder keys for the template MCP (factory D1 builder_keys). Replaces scripts/mint-key.mjs for staff keys.
- * The key is shown once in the create response; the table and the audit log hold only its label and hash.
+ * The key is stored beside its SHA-256 hash and listed in the panel; the audit log holds only the label.
  */
 import {
   BUILDER_KEY_PREFIX,
@@ -18,7 +18,7 @@ import { authorizePanel } from "./panel-roles.js";
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 
-const COLUMNS = "key_id, label, created_by, created_at, last_used_at, revoked_at";
+const COLUMNS = "key_id, label, secret, created_by, created_at, last_used_at, revoked_at";
 
 /** 32 random bytes, base64url without padding: the same format scripts/mint-key.mjs prints. */
 function newSecret(): string {
@@ -35,7 +35,11 @@ async function sha256Hex(value: string): Promise<string> {
 export async function handleBuilderKeyRoute(request: Request, env: Env, path: string, ctx: AdminRequestContext): Promise<Response | undefined> {
   const revoke = path.match(/^\/api\/builder-keys\/([^/]+)\/revoke$/);
   if (path !== "/api/builder-keys" && !revoke) return undefined;
-  if (!authorizePanel("manageBuilderKeys", ctx.actor_role).ok) return json(403, { error: "forbidden_role", required_role: "owner" });
+  if (revoke) {
+    if (!authorizePanel("manageBuilderKeys", ctx.actor_role).ok) return json(403, { error: "forbidden_role", required_role: "owner" });
+  } else if (!authorizePanel("viewBuilderKeys", ctx.actor_role).ok) {
+    return json(403, { error: "forbidden_role", required_role: "employee" });
+  }
 
   if (path === "/api/builder-keys" && request.method === "GET") {
     const { results } = await env.FACTORY.prepare(`SELECT ${COLUMNS} FROM builder_keys ORDER BY created_at DESC, key_id`).all();
@@ -49,17 +53,17 @@ export async function handleBuilderKeyRoute(request: Request, env: Env, path: st
     }
     const secret = newSecret();
     const key = {
-      key_id: `bk_${crypto.randomUUID()}`, label: parsed.data.label, created_by: ctx.actor_id,
+      key_id: `bk_${crypto.randomUUID()}`, label: parsed.data.label, secret, created_by: ctx.actor_id,
       created_at: new Date().toISOString(), last_used_at: null, revoked_at: null,
     };
-    await env.FACTORY.prepare("INSERT INTO builder_keys (key_id, label, key_hash, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
-      .bind(key.key_id, key.label, await sha256Hex(secret), key.created_by, key.created_at)
+    await env.FACTORY.prepare("INSERT INTO builder_keys (key_id, label, key_hash, secret, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
+      .bind(key.key_id, key.label, await sha256Hex(secret), secret, key.created_by, key.created_at)
       .run();
     await writeFactoryAudit(env.FACTORY, {
       actor_id: ctx.actor_id, actor_role: ctx.actor_role, action: "builder_key.create",
       entity_type: "builder_key", entity_id: key.key_id, after: { label: key.label },
     });
-    return json(201, BuilderKeyCreateResponse.parse({ key, secret }));
+    return json(201, BuilderKeyCreateResponse.parse({ key }));
   }
 
   if (revoke && request.method === "POST") {

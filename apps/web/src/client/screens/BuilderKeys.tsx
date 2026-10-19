@@ -1,15 +1,17 @@
 import type { BuilderKeySummary } from "@anjuna/contracts";
-import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "../api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError, api, type Me } from "../api";
 
-export function BuilderKeysScreen() {
+export function BuilderKeysScreen({ me }: { me: Me }) {
   const [keys, setKeys] = useState<BuilderKeySummary[] | null>(null);
   const [label, setLabel] = useState("");
-  const [created, setCreated] = useState<{ label: string; secret: string } | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const copiedTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(() => api.builderKeys().then((r) => setKeys(r.keys), (e) => setMsg(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ")), []);
   useEffect(() => void load(), [load]);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
   async function run(fn: () => Promise<unknown>) {
     setMsg(null);
@@ -21,24 +23,50 @@ export function BuilderKeysScreen() {
     }
   }
 
+  async function copy(k: BuilderKeySummary) {
+    if (!k.secret) return;
+    setMsg(null);
+    try {
+      await navigator.clipboard.writeText(k.secret);
+    } catch {
+      setMsg("คัดลอกไม่สำเร็จ (Copy failed)");
+      return;
+    }
+    setCopiedId(k.key_id);
+    window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopiedId((id) => (id === k.key_id ? null : id)), 2000);
+  }
+
   return (
     <>
       <h1>คีย์ Builder (Builder keys)</h1>
-      <p className="muted">คีย์สำหรับเชื่อม bolt.new กับ template MCP หนึ่งคนต่อหนึ่งคีย์ (One key per staff member for the bolt.new connector)</p>
+      <p className="muted">คีย์สำหรับเชื่อม bolt.new กับ template MCP หนึ่งคนต่อหนึ่งคีย์ คีย์แสดงในตารางตลอด (One key per staff member; the key stays visible here)</p>
       {msg && <div className="error">{msg}</div>}
       <table className="table">
         <thead>
-          <tr><th>ชื่อคีย์ (Label)</th><th>สร้างเมื่อ (Created)</th><th>ใช้ล่าสุด (Last used)</th><th>สถานะ (Status)</th><th /></tr>
+          <tr><th>ชื่อคีย์ (Label)</th><th>คีย์ (Key)</th><th>สร้างเมื่อ (Created)</th><th>ใช้ล่าสุด (Last used)</th><th>สถานะ (Status)</th><th /></tr>
         </thead>
         <tbody>
           {(keys ?? []).map((k) => (
             <tr key={k.key_id}>
               <td>{k.label}</td>
+              <td>
+                {k.secret ? (
+                  <>
+                    <code>{k.secret}</code>{" "}
+                    <button aria-label={`คัดลอกคีย์ ${k.label} (Copy)`} onClick={() => void copy(k)}>
+                      {copiedId === k.key_id ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}
+                    </button>
+                  </>
+                ) : (
+                  <span className="muted small">ไม่ได้เก็บไว้ สร้างคีย์ใหม่ (Not stored, create a new key)</span>
+                )}
+              </td>
               <td className="muted small">{k.created_at}</td>
               <td className="muted small">{k.last_used_at ?? "ยังไม่เคยใช้ (Never)"}</td>
               <td><span className={`pill ${k.revoked_at ? "alert" : "ok"}`}>{k.revoked_at ? "ยกเลิกแล้ว (Revoked)" : "ใช้งาน (Active)"}</span></td>
               <td>
-                {!k.revoked_at && (
+                {me.role === "owner" && !k.revoked_at && (
                   <button
                     className="danger"
                     aria-label={`ยกเลิกคีย์ ${k.label} (Revoke)`}
@@ -59,34 +87,13 @@ export function BuilderKeysScreen() {
           className="primary"
           disabled={!label.trim()}
           onClick={() => void run(async () => {
-            const r = await api.createBuilderKey(label.trim());
-            setCreated({ label: r.key.label, secret: r.secret });
+            await api.createBuilderKey(label.trim());
             setLabel("");
           })}
         >
           สร้างคีย์ (Create key)
         </button>
       </div>
-      {created && <SecretModal label={created.label} secret={created.secret} onClose={() => setCreated(null)} />}
     </>
-  );
-}
-
-function SecretModal({ label, secret, onClose }: { label: string; secret: string; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="modal-wrap" role="dialog" aria-modal="true" aria-label="คีย์ใหม่ (New key)">
-      <div className="card modal">
-        <h2>{`คีย์ใหม่: ${label} (New key)`}</h2>
-        <div className="warn">คุณจะไม่เห็นคีย์นี้อีก (you will not see this again). คัดลอกแล้ววางใน bolt.new: Connectors, API key</div>
-        <code className="token">{secret}</code>
-        <div className="row">
-          <button className="primary" onClick={async () => { await navigator.clipboard?.writeText(secret).catch(() => undefined); setCopied(true); }}>
-            {copied ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}
-          </button>
-          <button onClick={onClose}>ปิด (Close)</button>
-        </div>
-      </div>
-    </div>
   );
 }

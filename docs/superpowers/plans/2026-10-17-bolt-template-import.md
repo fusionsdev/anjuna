@@ -5004,8 +5004,8 @@ EOF
 
 Every step is an owner step. Record the evidence (command output, screenshots, URLs) in the PR description. No commit.
 
-- [ ] **Step 1: Release.** Owner tags a release (`v*`). Expected: the Deploy workflow is green, including `Apply D1 migrations (aduplift)` (factory 0005 and 0006, leads 0011), `Deploy template MCP (aduplift)` and `Smoke test template MCP (aduplift)`.
-- [ ] **Step 2: Builder key.** In the control panel, owner opens Builder keys, creates "Acceptance (bolt.new)", copies the key. Expected: the key shows once; the list shows "ยังไม่เคยใช้ (Never)".
+- [ ] **Step 1: Release.** Owner tags a release (`v*`). Expected: the Deploy workflow is green, including `Apply D1 migrations (aduplift)` (factory 0005, 0006 and 0007, leads 0011), `Deploy template MCP (aduplift)` and `Smoke test template MCP (aduplift)`.
+- [ ] **Step 2: Builder key.** In the control panel, owner opens Builder keys, creates "Acceptance (bolt.new)", copies the key. Expected: the key shows in the table with a Copy button and stays there after reload; the list shows "ยังไม่เคยใช้ (Never)".
 - [ ] **Step 3: Connect bolt.new.** In bolt.new, add the custom MCP connector `https://mcp.aduplift.ai/mcp` with the key as API key. Expected: Builder keys shows a "last used" time within a minute.
 - [ ] **Step 4: Publish and submit from chat.** In a bolt.new project, ask: "Read get_template_contract, build static HTML, publish the site, run probe_url on the published URL, then call submit_template_url." Expected: `probe_url` returns `ok: true`; `submit_template_url` returns `status: "awaiting_approval"` with a `dashboard_url`, or `rejected` with issues that the AI fixes and resubmits until `awaiting_approval`.
 - [ ] **Step 5: SPA rejection.** Submit (or "Import from URL") a client-rendered page. Expected: `rejected` with "This site renders with JavaScript. Ask bolt.new to make it static HTML, then submit again."

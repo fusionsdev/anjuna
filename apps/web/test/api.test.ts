@@ -262,6 +262,7 @@ describe("role table coverage", () => {
       listTemplates: "employee",
       importTemplate: "employee",
       approveTemplate: "owner",
+      viewBuilderKeys: "employee",
       manageBuilderKeys: "owner",
     });
   });

@@ -27,7 +27,8 @@ export const PANEL_ROLE_TABLE = {
   listTemplates: "employee",
   importTemplate: "employee",
   approveTemplate: "owner",
-  /** Builder keys for the template MCP: owner only. */
+  /** Builder keys for the template MCP: list and create are employee and owner; revoke is owner only. */
+  viewBuilderKeys: "employee",
   manageBuilderKeys: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
