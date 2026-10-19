@@ -147,6 +147,11 @@ export function BrandLifecycle({ me }: { me: Me }) {
     })();
     return () => { active = false; };
   }, [selected?.brand_id, refresh]);
+  // A refreshed brand list gives `selected` a new object with the same brand_id; sync the server runtime status without the reset above.
+  useEffect(() => {
+    if (!selected) return;
+    setState((previous) => previous && previous.brand?.brand_id === selected.brand_id ? reduceLifecycleState(previous, { type: "brand_refresh", brand: selected }) : previous);
+  }, [selected]);
   useEffect(() => { void load(); }, [load, refresh]);
   useEffect(() => {
     const pending = pendingOperation && pendingOperation.brandId === selectedId && pendingOperation.generation === operationGeneration.current

@@ -27,6 +27,53 @@ describe("lifecycle state reducer", () => {
     expect(reduceLifecycleState(retry, { type: "compensation", install_id: "comp-ins-1" }).operation_status).toBe("compensation");
   });
 
+  it("clears a sticky sync_error only through a brand_refresh and keeps the other fields", () => {
+    const brand = { brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "live" as const, current_revision_id: "rev-2", bundle_form_version: "form@bundle-1", payload_version: "2026-01" };
+    const state = reduceLifecycleState(undefined, { type: "brand", brand: { ...brand, runtime_sync_status: "sync_error" } });
+    const installed = reduceLifecycleState(state, { type: "install", install: { install_id: "ins-1", brand_id: "brand-a", revision_id: "rev-2", status: "ready", runtime_sync_status: "ready", receipts: [] } });
+    expect(installed.runtime_sync_status).toBe("sync_error");
+    const withRetry = reduceLifecycleState(installed, { type: "retry", install_id: "ins-0", compensation_install_id: "comp-ins-0" });
+    const refreshed = reduceLifecycleState(withRetry, { type: "brand_refresh", brand: { ...brand, runtime_sync_status: "ready" } });
+    expect(refreshed.runtime_sync_status).toBe("ready");
+    expect(refreshed.brand?.runtime_sync_status).toBe("ready");
+    expect(refreshed.lifecycle_status).toBe(withRetry.lifecycle_status);
+    expect(refreshed.install).toBe(withRetry.install);
+    expect(refreshed.retry_install_id).toBe("ins-0");
+    expect(refreshed.compensation_install_id).toBe("comp-ins-0");
+    expect(refreshed.operation_status).toBe("retry");
+  });
+
+  it("sets sync_error from a brand_refresh on a ready state", () => {
+    const brand = { brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "live" as const, current_revision_id: "rev-2", bundle_form_version: "form@bundle-1", payload_version: "2026-01" };
+    const state = reduceLifecycleState(undefined, { type: "brand", brand: { ...brand, runtime_sync_status: "ready" } });
+    expect(state.runtime_sync_status).toBe("ready");
+    const refreshed = reduceLifecycleState(state, { type: "brand_refresh", brand: { ...brand, runtime_sync_status: "sync_error" } });
+    expect(refreshed.runtime_sync_status).toBe("sync_error");
+    expect(refreshed.lifecycle_status).toBe("ready");
+  });
+
+  it.each(["queued", "running"] as const)("keeps the runtime status of a %s install through a brand_refresh and replaces only the brand", (status) => {
+    const brand = { brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "live" as const, current_revision_id: "rev-2", bundle_form_version: "form@bundle-1", payload_version: "2026-01" };
+    const state = reduceLifecycleState(undefined, { type: "brand", brand: { ...brand, runtime_sync_status: "ready" } });
+    const installing = reduceLifecycleState(state, { type: "install", install: { install_id: "ins-1", brand_id: "brand-a", revision_id: "rev-2", status, runtime_sync_status: status, receipts: [] } });
+    expect(installing.runtime_sync_status).toBe(status);
+    const next = { ...brand, runtime_sync_status: "ready" as const, current_revision_id: "rev-3" };
+    const refreshed = reduceLifecycleState(installing, { type: "brand_refresh", brand: next });
+    expect(refreshed.runtime_sync_status).toBe(status);
+    expect(refreshed.brand).toBe(next);
+    expect(refreshed.lifecycle_status).toBe(installing.lifecycle_status);
+    expect(refreshed.install).toBe(installing.install);
+  });
+
+  it("keeps a detached lifecycle status through a brand_refresh of a live brand", () => {
+    const brand = { brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "live" as const, current_revision_id: "rev-2", runtime_sync_status: "ready" as const, bundle_form_version: "form@bundle-1", payload_version: "2026-01" };
+    const detached = reduceLifecycleState(undefined, { type: "install", install: { install_id: "ins-1", brand_id: "brand-a", revision_id: null, status: "ready", runtime_sync_status: "ready", receipts: [] } });
+    expect(detached.lifecycle_status).toBe("detached");
+    const refreshed = reduceLifecycleState(detached, { type: "brand_refresh", brand });
+    expect(refreshed.lifecycle_status).toBe("detached");
+    expect(refreshed.brand).toBe(brand);
+  });
+
   it.each(["draft", "queued", "running", "ready", "failed", "rolled_back", "detached", "unmanaged", "sync_error"] as const)(
     "represents %s as a stable lifecycle state",
     (status) => expect(reduceLifecycleState(undefined, { type: "status", status }).lifecycle_status).toBe(status),
