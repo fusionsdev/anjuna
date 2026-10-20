@@ -28,6 +28,12 @@ export function App() {
     }
   }, []);
   useEffect(() => void refresh(), [refresh]);
+  // A dashboard_url opened in a tab that already holds the panel changes only the hash.
+  useEffect(() => {
+    const onHash = () => { if (window.location.hash.startsWith("#templates")) setView("templates"); };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   if (loading) return <div className="center muted">กำลังโหลด…</div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
