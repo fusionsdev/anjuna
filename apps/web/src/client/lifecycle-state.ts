@@ -4,6 +4,7 @@ export type LifecycleUiStatus = "draft" | "queued" | "running" | "ready" | "fail
 export type LifecycleBrandForUi = Omit<LifecycleBrandSummary, "runtime_sync_status" | "status"> & { status: LifecycleBrandSummary["status"] | LifecycleUiStatus; runtime_sync_status: "queued" | "running" | "ready" | "failed" | "sync_error" };
 export type LifecycleEvent =
   | { type: "brand"; brand: LifecycleBrandForUi }
+  | { type: "brand_refresh"; brand: LifecycleBrandForUi }
   | { type: "install"; install: InstallWithReceipts }
   | { type: "retry"; install_id: string; compensation_install_id?: string }
   | { type: "compensation"; install_id: string }
@@ -24,6 +25,12 @@ export function reduceLifecycleState(state: LifecycleState | undefined, event: L
   if (event.type === "brand") {
     const status = event.brand.status === "live" ? "ready" : event.brand.status === "failed" ? "failed" : event.brand.status === "rolled_back" ? "rolled_back" : event.brand.status === "draft" ? "draft" : "running";
     return { ...current, brand: event.brand, lifecycle_status: status, runtime_sync_status: event.brand.runtime_sync_status === "ready" ? "ready" : event.brand.runtime_sync_status };
+  }
+  // The server brand summary is the authority that clears a sticky sync_error; install events cannot.
+  // While an install is queued or running, the install detail owns the runtime status, so only the brand is replaced.
+  if (event.type === "brand_refresh") {
+    const installing = current.install?.status === "queued" || current.install?.status === "running";
+    return installing ? { ...current, brand: event.brand } : { ...current, brand: event.brand, runtime_sync_status: event.brand.runtime_sync_status };
   }
   if (event.type === "install") {
     const status = event.install.status === "ready" && event.install.revision_id === null ? "detached" : event.install.status;

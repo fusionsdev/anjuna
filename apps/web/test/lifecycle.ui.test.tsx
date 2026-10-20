@@ -424,6 +424,45 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByText("Smoke check failed")).toBeNull();
   });
 
+  describe("runtime sync cell after a redeploy", () => {
+    const syncCell = () => screen.getByText("การซิงก์ runtime").nextElementSibling?.textContent;
+    const redeployName = "ติดตั้งใหม่ (Redeploy)";
+    const readyLabel = "พร้อมใช้งาน (ready)";
+    const runningLabel = "กำลังทำงาน (running)";
+    const syncErrorLabel = "ซิงก์ผิดพลาด (sync_error)";
+
+    it("clears a sync_error label once the list reports ready, without reselecting the brand", async () => {
+      vi.stubGlobal("confirm", vi.fn(() => true));
+      lifecycleRows = [{ ...brand, runtime_sync_status: "sync_error" }];
+      routes.set("POST /api/brands/brand-a/redeploy", () => {
+        lifecycleRows = [{ ...brand, runtime_sync_status: "ready" }];
+        return json({ install_id: "redeploy-1", brand_id: "brand-a", status: "running" }, 201);
+      });
+      detail({ ...failed, install_id: "redeploy-1", status: "ready", runtime_sync_status: "ready", receipts: [{ step: "sync_runtime", status: "ready" }] });
+      render(<BrandLifecycle me={owner} />);
+      await waitFor(() => expect(syncCell()).toBe(syncErrorLabel));
+      fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+      await screen.findAllByText("redeploy-1", { selector: "code" });
+      await waitFor(() => expect(syncCell()).toBe(readyLabel));
+      expect(requests.filter((r) => r.method === "GET" && r.path === "/api/brands/brand-a/installs")).toHaveLength(1);
+    });
+
+    it("does not show ready while the install is still running and the list reloads with ready", async () => {
+      vi.stubGlobal("confirm", vi.fn(() => true));
+      routes.set("POST /api/brands/brand-a/redeploy", () => {
+        lifecycleRows = [{ ...brand, runtime_sync_status: "ready", current_revision_id: "rev-2" }];
+        return json({ install_id: "redeploy-1", brand_id: "brand-a", status: "running" }, 201);
+      });
+      detail({ ...failed, install_id: "redeploy-1", revision_id: "rev-2", status: "running", runtime_sync_status: "running" });
+      render(<BrandLifecycle me={owner} />);
+      fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+      await screen.findAllByText("redeploy-1", { selector: "code" });
+      await waitFor(() => expect(requests.filter((r) => r.path === "/api/lifecycle/brands").length).toBeGreaterThan(1));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(syncCell()).toBe(runningLabel);
+    });
+  });
+
   it("surfaces the failed dispatch ID and error and retries that exact install", async () => {
     runtimeAvailable = false;
     lifecycleRows = [{ ...brand, status: "draft", runtime_sync_status: "queued" }];
