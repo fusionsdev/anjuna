@@ -34,6 +34,11 @@ export function TemplatesScreen({ me }: { me: Me }) {
   const load = useCallback(() => api.templates().then((r) => setTemplates(r.templates), (e) => setMsg({ kind: "err", text: errorText(e) })), []);
   useEffect(() => void load(), [load]);
   useEffect(() => {
+    const onHash = () => { if (window.location.hash.startsWith("#templates/")) setSelected(selectedFromHash()); };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  useEffect(() => {
     setDetail(null);
     if (selected) void api.template(selected).then(setDetail, (e) => setMsg({ kind: "err", text: errorText(e) }));
   }, [selected]);

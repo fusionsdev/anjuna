@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { App } from "../src/client/App";
 import { TemplatesScreen } from "../src/client/screens/Templates";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
@@ -18,6 +19,10 @@ const detail = {
   ],
   screenshots: { desktop: "/api/templates/tv-bolt-1/screenshots/desktop", mobile: null },
 };
+
+const detail2 = { ...detail, template: { ...detail.template, template_version_id: "tv-bolt-2", version: 2, text_defaults: { ...detail.template.text_defaults, title: "Marina | Funding" } } };
+// jsdom also fires its own async hashchange; the manual dispatch makes the event deterministic.
+const goTo = (hash: string) => act(() => { window.location.hash = hash; window.dispatchEvent(new HashChangeEvent("hashchange")); });
 
 type Handler = (init?: RequestInit) => Response;
 let routes: Map<string, Handler>;
@@ -71,6 +76,24 @@ describe("Templates screen", () => {
     expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
   });
 
+  it("opens the version when the hash changes after mount", async () => {
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Bolt Harbor");
+    expect(screen.queryByText("Harbor | Funding")).toBeNull();
+    await goTo("#templates/tv-bolt-1");
+    expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
+  });
+
+  it("switches to another version when the hash changes between versions", async () => {
+    routes.set("GET /api/templates/tv-bolt-2", () => json(detail2));
+    window.location.hash = "#templates/tv-bolt-1";
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Harbor | Funding");
+    await goTo("#templates/tv-bolt-2");
+    expect(await screen.findByText("Marina | Funding")).toBeTruthy();
+    expect(screen.queryByText("Harbor | Funding")).toBeNull();
+  });
+
   it("shows the list when the URL hash holds a malformed escape", async () => {
     window.location.hash = "#templates/%";
     render(<TemplatesScreen me={owner} />);
@@ -116,5 +139,22 @@ describe("Templates screen", () => {
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
     fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));
     expect(await screen.findByText("Only public https URLs are accepted.")).toBeTruthy();
+  });
+});
+
+describe("App deep link", () => {
+  it("switches from Brands to Templates when the hash changes to #templates/<id>", async () => {
+    routes.set("GET /api/me", () => json({ user: owner }));
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [] }));
+    routes.set("GET /api/brands", () => json({ brands: [], generated_at: STAMP }));
+    routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
+    await goTo("#other");
+    expect(screen.queryByRole("heading", { name: "เทมเพลต (Templates)" })).toBeNull();
+    await goTo("#templates/tv-bolt-1");
+    expect(await screen.findByRole("heading", { name: "เทมเพลต (Templates)" })).toBeTruthy();
+    expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Lifecycle แบรนด์" })).toBeNull();
   });
 });
