@@ -117,6 +117,8 @@ export const api = {
   wizardDefaults: () => request<unknown>("GET", "/api/wizard/defaults").then((result) => WizardDefaultsResponse.parse(result)),
   zoneCheck: (domain: string, brandId?: string) => request<unknown>("POST", "/api/wizard/zone-check", { domain, ...(brandId ? { brand_id: brandId } : {}) }).then((result) => ZoneCheckResponse.parse(result)),
   duplicateBrand: (brandId: string, body: DuplicateBrandRequest) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/duplicate`, body).then((result) => DuplicateBrandResponse.parse(result)),
+  /** Checks the draft, then starts the install; a second call while it runs answers with the same install id. */
+  generate: (brandId: string) => request<{ install_id: string; brand_id: string; status: string; idempotent?: boolean }>("POST", `/api/brands/${encodeURIComponent(brandId)}/generate`, {}),
   install: (brandId: string, revisionId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/install`, revisionId ? { revision_id: revisionId } : {}),
   rollbackLifecycle: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/rollback`, {}),
   redeploy: (brandId: string, formArtifactId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/redeploy`, formArtifactId ? { form_artifact_id: formArtifactId } : {}),

@@ -82,6 +82,10 @@ export function wizardErrorText(error: unknown): string {
   const code = error.body?.error;
   const message = error.body?.message ?? "";
   if (error.status === 409 && /domain is already registered/i.test(message)) return "โดเมนนี้ถูกใช้แล้ว (Domain is already registered)";
+  if (code === "draft_incomplete") {
+    // Generate answers 422 draft_incomplete with Thai + English issues (apps/web/src/server/generate.ts).
+    return error.body?.issues?.[0]?.message ?? "ฉบับร่างยังไม่ครบ (The draft is incomplete)";
+  }
   if (code === "lifecycle_operation_active") return "กำลังติดตั้งแบรนด์นี้อยู่ แก้ไขไม่ได้ (An install is running for this brand)";
   if (error.status === 409) return "ฉบับร่างถูกแก้ไขหรือติดตั้งแล้ว กรุณาโหลดใหม่ (The draft changed or was installed, reload)";
   if (code === "template_not_sealed") return "เทมเพลตนี้ยังไม่ได้อนุมัติ (The template is not approved)";

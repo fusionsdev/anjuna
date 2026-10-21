@@ -70,6 +70,30 @@ describe("mailing cron", () => {
     expect(suppressed.results).toEqual([{ email: "gone@example.com", reason: "blocklisted" }]);
   });
 
+  it("sends to the brand's own list without LISTMONK_LIST_MAP and syncs that list's unsubscribes", async () => {
+    await h.seedBrand();
+    await h.db.prepare("UPDATE brand_runtime SET listmonk_list_id = 31 WHERE brand_id = 'brand-a'").run();
+    await h.seedLead("lead-1");
+    await outbox("lead-1");
+    const lists: number[][] = [];
+    const queried: Array<number | undefined> = [];
+    const listmonk = new (class extends FakeListmonk {
+      override async createSubscriber(payload: { email: string; name: string; lists: number[]; attribs: Record<string, unknown> }) {
+        lists.push(payload.lists);
+        return super.createSubscriber(payload);
+      }
+      override async getSuppressions(page: number, perPage: number, reason: "blocklisted" | "unsubscribed", listId?: number) {
+        if (reason === "unsubscribed") queried.push(listId);
+        return super.getSuppressions(page, perPage, reason);
+      }
+    })();
+    const credentials = { LISTMONK_URL: configured.LISTMONK_URL, LISTMONK_USER: configured.LISTMONK_USER, LISTMONK_TOKEN: configured.LISTMONK_TOKEN };
+    expect(await runMailing(env(credentials), { listmonk })).toEqual({ ran: true, batches: 2 });
+    expect(await status("lead-1")).toMatchObject({ status: "sent" });
+    expect(lists).toEqual([[31]]);
+    expect(queried).toEqual([31]);
+  });
+
   it("a second run does not re-add anyone", async () => {
     await h.seedBrand();
     await h.seedLead("lead-1");

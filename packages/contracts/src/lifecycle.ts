@@ -235,6 +235,41 @@ export const ApplyRuntimeResponse = z.strictObject({
 });
 export type ApplyRuntimeResponse = z.infer<typeof ApplyRuntimeResponse>;
 
+export const AdsRoutingField = z.enum(["google_ads_account", "google_conversion_action", "adkit_project"]);
+export type AdsRoutingField = z.infer<typeof AdsRoutingField>;
+
+/**
+ * Install step sync_runtime, first install only: the draft's `profile.ads` routing for the drain. Core writes a field only
+ * while the brand_runtime column is NULL, so a value the owner set is never overwritten. The conversion action is written
+ * only next to its own account (runtime account NULL or equal), so a route never pairs one account with another's action.
+ */
+export const InstallAdsRoutingRequest = z.strictObject({
+  install_id: Id,
+  brand_id: BrandId,
+  account: Id,
+  ads: BrandProfile.shape.ads.unwrap().omit({ microsoft_ads_account: true }),
+});
+export type InstallAdsRoutingRequest = z.infer<typeof InstallAdsRoutingRequest>;
+
+export const InstallAdsRoutingResponse = z.strictObject({
+  /** Fields written by this call. */
+  copied: z.array(AdsRoutingField),
+  /** Fields the draft set that were not written: brand_runtime already held a value, or the action belongs to another account. */
+  kept: z.array(AdsRoutingField),
+});
+export type InstallAdsRoutingResponse = z.infer<typeof InstallAdsRoutingResponse>;
+
+/** Install step sync_runtime: give the brand its own listmonk list (brand_runtime.listmonk_list_id). Safe to repeat. */
+export const InstallMailingListRequest = z.strictObject({ install_id: Id, brand_id: BrandId, account: Id });
+export type InstallMailingListRequest = z.infer<typeof InstallMailingListRequest>;
+
+export const InstallMailingListResponse = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.enum(["stored", "found", "created"]), list_id: z.number().int().positive() }),
+  /** LISTMONK_URL, LISTMONK_USER or LISTMONK_TOKEN is unset in Core: no list, the cron falls back to LISTMONK_LIST_MAP. */
+  z.strictObject({ state: z.literal("not_configured"), list_id: z.null() }),
+]);
+export type InstallMailingListResponse = z.infer<typeof InstallMailingListResponse>;
+
 export const RuntimeStateRequest = z.strictObject({ brand_id: BrandId, account: Id });
 export type RuntimeStateRequest = z.infer<typeof RuntimeStateRequest>;
 
@@ -295,6 +330,8 @@ export const InstallReceipt = z.strictObject({
   step: z.string().min(1).max(64),
   status: z.enum(["queued", "running", "ready", "failed"]),
   error: z.string().max(500).optional(),
+  /** A step that finished but fell back, e.g. the brand's listmonk list could not be created and the tenant list is used. */
+  warning: z.string().max(500).optional(),
 });
 
 /**

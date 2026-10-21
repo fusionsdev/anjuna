@@ -169,7 +169,8 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
     setBusy(true);
     setNotice(null);
     try {
-      const started = await api.install(draft.brand.brand_id, draft.revision.revision_id);
+      // Generate checks the saved draft server-side and starts the install; the Lifecycle screen then shows InstallProgress.
+      const started = await api.generate(draft.brand.brand_id);
       onGenerated(draft.brand.brand_id, started.install_id);
     } catch (e) {
       setNotice(wizardErrorText(e));

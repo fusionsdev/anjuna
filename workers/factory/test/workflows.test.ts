@@ -2,7 +2,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { env, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { ANALYTICS_FORWARD_PATHS, ApplyRuntimeRequest, type RuntimeStateResponse } from "@anjuna/contracts";
+import { ANALYTICS_FORWARD_PATHS, ApplyRuntimeRequest, InstallAdsRoutingRequest, InstallMailingListRequest, type RuntimeStateResponse } from "@anjuna/contracts";
 import { InstallBrandWorkflow, type InstallParams } from "../src/workflows/install";
 import { RollbackBrandWorkflow, type RollbackParams } from "../src/workflows/rollback";
 import factory from "../src/index";
@@ -138,7 +138,13 @@ async function fixture(live = false, subdomain = false, paused = true) {
     zoneHttp: [] as number[], domainsHttp: [] as number[], stateHttp: [] as number[], zoneStatus: "active",
     // HTTP statuses Core answers, one per runtime apply, before it accepts one; and how many compensation dispatches fail first.
     applyHttp: [] as number[], dispatchFailures: 0,
+    // HTTP statuses Core answers, one per mailing-list call, before it gives the brand a list (502: listmonk failed).
+    listHttp: [] as number[],
     apex: [] as Array<Response | Error>, www: [] as Array<Response | Error> };
+  // Core's install-routing calls from sync_runtime, and the brand's stored listmonk list id.
+  const adsRouted: Array<ReturnType<typeof InstallAdsRoutingRequest.parse>> = [];
+  const listCalls: Array<ReturnType<typeof InstallMailingListRequest.parse>> = [];
+  let listId: number | null = null;
   const core = { async fetch(request: Request) {
     const input = await request.json() as Record<string, unknown>;
     if (new URL(request.url).pathname.endsWith("runtime-state")) {
@@ -147,6 +153,19 @@ async function fixture(live = false, subdomain = false, paused = true) {
       if (settings.stateMode === "fail") return new Response("core unavailable", { status: 503 });
       if (settings.stateMode === "absent") return Response.json({ state: "absent", brand_id: brand, account: "test", credential_account_match: true });
       return Response.json(runtime);
+    }
+    if (new URL(request.url).pathname.endsWith("/ads-routing")) {
+      const routed = InstallAdsRoutingRequest.parse(input);
+      adsRouted.push(routed);
+      return Response.json({ copied: Object.keys(routed.ads), kept: [] });
+    }
+    if (new URL(request.url).pathname.endsWith("/mailing-list")) {
+      listCalls.push(InstallMailingListRequest.parse(input));
+      const refused = settings.listHttp.shift();
+      if (refused) return Response.json({ error: "listmonk_failed", message: "listmonk list was not created: listmonk POST list failed: 502" }, { status: refused });
+      const state = listId ? "stored" : "created";
+      listId ??= 900;
+      return Response.json({ state, list_id: listId });
     }
     const parsed = ApplyRuntimeRequest.parse(input);
     if (settings.coreFails) return new Response("core unavailable", { status: 503 });
@@ -253,7 +272,7 @@ async function fixture(live = false, subdomain = false, paused = true) {
     },
   } as unknown as Env;
   const params: InstallParams = { install_id: install, brand_id: brand, revision_id: revision };
-  return { id, brand, revision, install, template, version, artifact, bindings, params, applied, counters, compensation, settings, uploads, network, domains,
+  return { id, brand, revision, install, template, version, artifact, bindings, params, applied, adsRouted, listCalls, counters, compensation, settings, uploads, network, domains,
     runtime: () => runtime, brandRow: () => db.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id=?").bind(brand).first(),
     installRow: () => db.prepare("SELECT status FROM installs WHERE install_id=?").bind(install).first(),
   };
@@ -437,7 +456,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       .map(([, init]) => (JSON.parse(String(init!.body)) as { hostname: string }).hostname);
     expect(attached).toEqual([`${f.id}.example`, `www.${f.id}.example`]);
     expect(f.applied[0]!.hostnames).toEqual([`${f.id}.example`, `www.${f.id}.example`]);
-    expect(JSON.parse((await smokeReceipt(f))!.output_json!)).toEqual({ apex_status: 200, www_status: 301 });
+    expect(JSON.parse((await smokeReceipt(f))!.output_json!)).toEqual({ apex_status: 200, www_status: 301, final_url: `https://${f.id}.example/` });
   });
 
   it("attaches and smokes only the bare domain for a subdomain-zone brand and never touches www", async () => {
@@ -455,7 +474,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(dnsNames).toEqual([`${f.id}.sub.example`]);
     expect(f.applied[0]!.hostnames).toEqual([`${f.id}.sub.example`]);
     expect(smokeCalls(f)).toHaveLength(1);
-    expect(JSON.parse((await smokeReceipt(f))!.output_json!)).toEqual({ apex_status: 200 });
+    expect(JSON.parse((await smokeReceipt(f))!.output_json!)).toEqual({ apex_status: 200, final_url: `https://${f.id}.sub.example/` });
     const receipt = await env.FACTORY.prepare("SELECT output_json FROM install_receipts WHERE install_id=? AND step='attach_domains'")
       .bind(f.install).first<{ output_json: string }>();
     expect(JSON.parse(receipt!.output_json)).toEqual({ apex_domain_id: `local-${f.id}.sub.example` });
@@ -736,7 +755,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       await addUpgradeRevision(f);
       await runInstall(f);
       expect(await f.installRow()).toEqual({ status: "ready" });
-      expect(await smokeOutput(f.install)).toEqual({ apex_status: 200, www_status: 301 });
+      expect(await smokeOutput(f.install)).toEqual({ apex_status: 200, www_status: 301, final_url: `https://${f.id}.example/` });
       expect(f.runtime()).toMatchObject({ paused: false, applied_revision_id: f.params.revision_id });
     });
 
@@ -799,7 +818,7 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       s.hooks.before = async (name) => { if (name === "smoke") f.settings.stateMode = "fail"; };
       await runInstall(f, s);
       expect(await f.installRow()).toEqual({ status: "ready" });
-      expect(await smokeOutput(f.install)).toEqual({ apex_status: 200, www_status: 301 });
+      expect(await smokeOutput(f.install)).toEqual({ apex_status: 200, www_status: 301, final_url: `https://${f.id}.example/` });
     });
   });
 
@@ -982,6 +1001,158 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
 
   // Cloudflare creates the DNS record of an attached Custom Domain itself, so the DNS preflight
   // must tell the brand's own record from a foreign one on first installs and on upgrades alike.
+  // sync_runtime runs on every install: a first install copies the draft's ads routing into Core and every install
+  // makes sure the brand has its own listmonk list (FUS-358).
+  describe("sync_runtime: ads routing and the brand's listmonk list", () => {
+    type Fixture = Awaited<ReturnType<typeof fixture>>;
+    const ads = { google_ads_account: "1234567890", google_conversion_action: "7754587837", adkit_project: "proj_A", microsoft_ads_account: "12345678" };
+    const withProfile = (f: Fixture, revision = f.revision) => env.FACTORY.prepare("UPDATE brand_revisions SET config_json=? WHERE revision_id=?")
+      .bind(JSON.stringify({ keyword_default: "Quick Loan", profile: { ads } }), revision).run();
+    const syncReceipt = async (installId: string) => {
+      const row = await env.FACTORY.prepare("SELECT status,output_json FROM install_receipts WHERE install_id=? AND step='sync_runtime'").bind(installId).first<{ status: string; output_json: string }>();
+      return row && { status: row.status, output: JSON.parse(row.output_json) as Record<string, unknown> };
+    };
+
+    it("a first install sends the draft's Google Ads route to Core (never the Microsoft account) and creates the list", async () => {
+      const f = await fixture();
+      await withProfile(f);
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(f.adsRouted).toEqual([{ install_id: f.install, brand_id: f.brand, account: "test",
+        ads: { google_ads_account: "1234567890", google_conversion_action: "7754587837", adkit_project: "proj_A" } }]);
+      expect(f.listCalls).toEqual([{ install_id: f.install, brand_id: f.brand, account: "test" }]);
+      expect(await syncReceipt(f.install)).toEqual({ status: "ok", output: {
+        ads_routing: { copied: ["google_ads_account", "google_conversion_action", "adkit_project"], kept: [] },
+        mailing_list: { state: "created", list_id: 900 },
+      } });
+      // One provision plus no second runtime apply: a first install applies in provision_runtime only.
+      expect(f.applied).toHaveLength(1);
+    });
+
+    it("render fills the legal pages from the revision profile and the public brand name", async () => {
+      const f = await fixture();
+      const enc = new TextEncoder();
+      await env.ARTIFACTS.put(`${f.id}/site.zip`, zip(new Map([
+        ["index.html", enc.encode('<h1 class="brand-logo">Example</h1>')],
+        ["terms/index.html", enc.encode('<p><span data-legal="brand_name">x</span> <span data-legal="contact.phone">x</span> <span data-legal="disclosures.apr_max">x</span></p>')],
+      ])));
+      await env.FACTORY.prepare("UPDATE brand_revisions SET config_json=? WHERE revision_id=?").bind(JSON.stringify({
+        profile: { contact: { phone: "+1 555 0100" }, disclosures: { apr_max: 35.99 }, copy: { brand_name: "Harbor Funding" } },
+      }), f.revision).run();
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      const rendered = unzip(new Uint8Array(await (await env.ARTIFACTS.get(`renders/${f.brand}/${f.revision}.zip`))!.arrayBuffer()));
+      const terms = DEC.decode([...rendered].find(([path]) => /terms\/index\.html$/.test(path))![1]);
+      expect(terms).toContain(">Harbor Funding<");
+      expect(terms).toContain(">+1 555 0100<");
+      expect(terms).toContain(">35.99%<");
+    });
+
+    it("render falls back to the brand name when the profile has no copy.brand_name", async () => {
+      const f = await fixture();
+      await env.ARTIFACTS.put(`${f.id}/site.zip`, zip(new Map([
+        ["index.html", new TextEncoder().encode('<h1 class="brand-logo">Example</h1>')],
+        ["terms/index.html", new TextEncoder().encode('<p><span data-legal="brand_name">x</span></p>')],
+      ])));
+      await runInstall(f);
+      const rendered = unzip(new Uint8Array(await (await env.ARTIFACTS.get(`renders/${f.brand}/${f.revision}.zip`))!.arrayBuffer()));
+      expect(DEC.decode([...rendered].find(([path]) => /terms\/index\.html$/.test(path))![1])).toContain(">Example<");
+    });
+
+    it("a first install without profile.ads makes no ads routing call", async () => {
+      const f = await fixture();
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(f.adsRouted).toEqual([]);
+      expect(f.listCalls).toHaveLength(1);
+    });
+
+    it("an upgrade of a live brand never copies ads routing, so a route the owner cleared stays clear", async () => {
+      const f = await fixture(true, false, false);
+      const next = `upgrade-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) SELECT ?,brand_id,2,template_version_id,form_artifact_id,config_json,'owner',? FROM brand_revisions WHERE revision_id=?")
+        .bind(next, now, f.revision).run();
+      await withProfile(f, next);
+      await env.FACTORY.prepare("UPDATE installs SET kind='upgrade',from_revision_id=?,to_revision_id=? WHERE install_id=?").bind(f.revision, next, f.install).run();
+      f.params.revision_id = next;
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(f.adsRouted).toEqual([]);
+      expect(f.listCalls).toHaveLength(1);
+      expect((await syncReceipt(f.install))!.output).toMatchObject({ state: "applied", applied_revision_id: next, mailing_list: { state: "created", list_id: 900 } });
+    });
+
+    it("a listmonk failure never blocks go-live: the install finishes with a warning and the tenant list fallback", async () => {
+      const f = await fixture();
+      await withProfile(f);
+      f.settings.listHttp.push(502);
+      const s = steps();
+      await runInstall(f, s);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      // One attempt, no step retry, no rollback.
+      expect(s.attempts.get("sync_runtime")).toBe(1);
+      expect(f.listCalls).toHaveLength(1);
+      expect(f.compensation).toHaveLength(0);
+      expect(await syncReceipt(f.install)).toEqual({ status: "ok", output: {
+        ads_routing: { copied: ["google_ads_account", "google_conversion_action", "adkit_project"], kept: [] },
+        mailing_list: { state: "fallback", list_id: null },
+        warning: "Mailing list: listmonk list was not created: listmonk POST list failed: 502 (502)",
+      } });
+      expect(f.adsRouted).toHaveLength(1);
+
+      // The next install of the brand (a redeploy) tries again and creates the list.
+      const next = `redeploy-${f.id}`;
+      const again = `install-again-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) SELECT ?,brand_id,2,template_version_id,form_artifact_id,config_json,'owner',? FROM brand_revisions WHERE revision_id=?")
+        .bind(next, now, f.revision).run();
+      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,from_revision_id,to_revision_id,status,started_by,started_at) VALUES (?,?,'upgrade',?,?,'queued','owner',?)")
+        .bind(again, f.brand, f.revision, next, now).run();
+      await runInstall({ ...f, params: { install_id: again, brand_id: f.brand, revision_id: next } });
+      expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(again).first()).toEqual({ status: "ready" });
+      expect(await syncReceipt(again)).toMatchObject({ status: "ok", output: { mailing_list: { state: "created", list_id: 900 } } });
+      expect((await syncReceipt(again))!.output).not.toHaveProperty("warning");
+      expect(f.listCalls).toHaveLength(2);
+      // An upgrade never copies ads routing.
+      expect(f.adsRouted).toHaveLength(1);
+    });
+
+    it("a mailing-list transport failure is a warning too", async () => {
+      const f = await fixture();
+      const real = f.bindings.CORE_LIFECYCLE as unknown as { fetch(request: Request): Promise<Response> };
+      (f.bindings as unknown as { CORE_LIFECYCLE: unknown }).CORE_LIFECYCLE = { fetch: async (request: Request) => {
+        if (new URL(request.url).pathname.endsWith("/mailing-list")) throw new Error("socket closed");
+        return real.fetch(request);
+      } };
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect((await syncReceipt(f.install))!.output).toMatchObject({ mailing_list: { state: "fallback", list_id: null }, warning: "Mailing list: Core lifecycle request failed (503)" });
+    });
+
+    it("a re-run of sync_runtime after its work succeeded finds the stored list and adds none", async () => {
+      const f = await fixture();
+      const s = steps();
+      let failed = false;
+      // The step's ok receipt write fails once, so the engine re-runs the whole step.
+      const real = f.bindings.FACTORY;
+      (f.bindings as unknown as { FACTORY: unknown }).FACTORY = new Proxy(real, { get: (t, p) => p === "prepare" ? (sql: string) => {
+        const statement = t.prepare(sql);
+        if (failed || !/^INSERT INTO install_receipts/.test(sql)) return statement;
+        return new Proxy(statement, { get: (target, prop) => prop === "bind" ? (...args: unknown[]) => {
+          const bound = target.bind(...args);
+          if (!(args.includes("sync_runtime") && args.includes("ok"))) return bound;
+          failed = true;
+          return new Proxy(bound, { get: (b, q) => q === "run" ? async () => { throw new Error("D1_ERROR: transient receipt write"); } : Reflect.get(b, q, b) });
+        } : Reflect.get(target, prop, target) });
+      } : Reflect.get(t, p, t) });
+      await runInstall(f, s);
+      expect(failed).toBe(true);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect(s.attempts.get("sync_runtime")).toBe(2);
+      expect((await syncReceipt(f.install))!.output).toMatchObject({ mailing_list: { state: "stored", list_id: 900 } });
+    });
+  });
+
   describe("DNS preflight in validate", () => {
     type Fixture = Awaited<ReturnType<typeof fixture>>;
     async function startUpgrade(f: Fixture) {

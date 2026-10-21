@@ -11,12 +11,20 @@ export function listMapFrom(raw: string | undefined): Record<string, number> | n
   }
 }
 
-/** True only when the cron would actually sync. A missing or invalid list map skips the run. */
+/**
+ * The tenant fallback map, for a brand without its own list (brand_runtime.listmonk_list_id). Unset means no fallback ({}).
+ * A value that is set but invalid is null, and the cron skips rather than guess.
+ */
+export function fallbackListMap(raw: string | undefined): Record<string, number> | null {
+  return raw === undefined || raw.trim() === "" ? {} : listMapFrom(raw);
+}
+
+/** True only when the cron would actually sync. Credentials missing, or a list map that is set but invalid, skips the run. */
 export function listmonkConfigured(env: {
   LISTMONK_URL?: string;
   LISTMONK_USER?: string;
   LISTMONK_TOKEN?: string;
   LISTMONK_LIST_MAP?: string;
 }): boolean {
-  return Boolean(env.LISTMONK_URL && env.LISTMONK_USER && env.LISTMONK_TOKEN && listMapFrom(env.LISTMONK_LIST_MAP));
+  return Boolean(env.LISTMONK_URL && env.LISTMONK_USER && env.LISTMONK_TOKEN && fallbackListMap(env.LISTMONK_LIST_MAP));
 }

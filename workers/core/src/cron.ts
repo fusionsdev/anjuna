@@ -11,9 +11,9 @@ import {
   type Notifier,
   type SubmitErrorCountsSource,
 } from "@anjuna/insights";
-import { ListmonkClient, syncOutbox, syncSuppressions } from "@anjuna/mailing";
+import { ListmonkClient, brandListIds, syncOutbox, syncSuppressions } from "@anjuna/mailing";
 import type { Env } from "./env.js";
-import { listMapFrom } from "./listmonk-config.js";
+import { fallbackListMap } from "./listmonk-config.js";
 
 export const MAILING_CRON = "*/5 * * * *";
 export const ALERTS_CRON = "*/15 * * * *";
@@ -42,9 +42,10 @@ export async function runMailing(env: Env, deps: CronDeps = {}): Promise<Mailing
     console.warn("mailing cron skipped: LISTMONK_URL, LISTMONK_USER and LISTMONK_TOKEN are not all set");
     return { ran: false, reason: "not_configured" };
   }
-  const listMap = listMapFrom(env.LISTMONK_LIST_MAP);
+  // Each brand sends to its own list (brand_runtime.listmonk_list_id, created at install); the map covers brands without one.
+  const listMap = fallbackListMap(env.LISTMONK_LIST_MAP);
   if (!listMap) {
-    console.error("mailing cron skipped: LISTMONK_LIST_MAP must be a JSON object of brand_id -> positive list id");
+    console.error("mailing cron skipped: LISTMONK_LIST_MAP, when set, must be a JSON object of brand_id -> positive list id");
     return { ran: false, reason: "invalid_list_map" };
   }
 
@@ -53,7 +54,7 @@ export async function runMailing(env: Env, deps: CronDeps = {}): Promise<Mailing
     batches++;
     if ((await syncOutbox(env.LEADS, listmonk, { listMap })) === 0) break;
   }
-  await syncSuppressions(env.LEADS, listmonk, [...new Set(Object.values(listMap))]);
+  await syncSuppressions(env.LEADS, listmonk, [...new Set([...Object.values(listMap), ...await brandListIds(env.LEADS)])]);
   return { ran: true, batches };
 }
 

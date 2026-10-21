@@ -94,8 +94,8 @@ describe("Redeploy button in the brand detail", () => {
     expect(confirm).toHaveBeenCalledTimes(1);
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(redeployPosts()).toHaveLength(1);
-    expect(await screen.findByText("render")).toBeTruthy();
-    expect(screen.getByText("validate")).toBeTruthy();
+    expect(await screen.findByText("สร้างหน้าเว็บ (Render)")).toBeTruthy();
+    expect(screen.getByText("ตรวจสอบข้อมูล (Validate)")).toBeTruthy();
     expect(requests.some((r) => r.path === "/api/installs/redeploy-ins")).toBe(true);
     // The run is active, so no second redeploy can be started from the screen.
     await waitFor(() => expect(screen.queryByRole("button", { name: redeployName })).toBeNull());
@@ -176,8 +176,8 @@ describe("Redeploy with the latest form in the brand detail", () => {
 });
 
 describe("the operation label in the receipts panel", () => {
-  // The first line under the Receipts / Errors heading, not the install ID line that tracks a pending operation.
-  const receiptsLine = async () => (await screen.findByRole("heading", { name: /Receipts/ })).parentElement!.querySelector("p")!;
+  // The first line under the Install progress heading, not the install ID line that tracks a pending operation.
+  const receiptsLine = async () => (await screen.findByRole("heading", { name: /Install progress/ })).parentElement!.querySelector("p")!;
   it.each([
     ["install", "ติดตั้ง (Install)"],
     ["rollback", "ย้อนกลับ (Rollback)"],

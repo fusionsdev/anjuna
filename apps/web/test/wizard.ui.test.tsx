@@ -59,7 +59,7 @@ beforeEach(() => {
       return json({ ...heldBody(), changed: [] });
     }],
     ["GET /api/wizard/drafts/brand_new", () => json(heldBody())],
-    ["POST /api/brands/brand_new/install", () => json({ install_id: "ins_1", brand_id: "brand_new", status: "running" }, 201)],
+    ["POST /api/brands/brand_new/generate", () => json({ install_id: "ins_1", brand_id: "brand_new", status: "running" }, 201)],
   ]);
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -202,10 +202,10 @@ describe("six-step flow to Generate", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }));
     await waitFor(() => expect(onGenerated).toHaveBeenCalledWith("brand_new", "ins_1"));
-    expect(sent("POST", "/api/brands/brand_new/install")[0]!.body).toEqual({ revision_id: "brand_new_rev_1" });
+    expect(sent("POST", "/api/brands/brand_new/generate")[0]!.body).toEqual({});
     // One create, four PATCHes, one install: nothing else wrote.
     expect(requests.filter((r) => r.method !== "GET" && r.path !== "/api/wizard/zone-check").map((r) => `${r.method} ${r.path}`)).toEqual([
-      "POST /api/brands/drafts", ...Array(4).fill("PATCH /api/brands/brand_new/draft"), "POST /api/brands/brand_new/install",
+      "POST /api/brands/drafts", ...Array(4).fill("PATCH /api/brands/brand_new/draft"), "POST /api/brands/brand_new/generate",
     ]);
   });
 
@@ -252,8 +252,19 @@ describe("six-step flow to Generate", () => {
     await heading("ผลิตภัณฑ์ (Product)");
   });
 
+  it("shows the first Generate issue when the server finds the draft incomplete", async () => {
+    routes.set("POST /api/brands/brand_new/generate", () => json({ error: "draft_incomplete", issues: [{ field: "profile.contact.email", message: "ต้องระบุอีเมล (Email is required)" }] }, 422));
+    hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} });
+    const { onGenerated } = setup(employee, { brandId: "brand_new" });
+    await heading("ตรวจสอบ (Review)");
+    await screen.findByText(/Zone maple.test is active/);
+    fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }));
+    expect(await screen.findByText("ต้องระบุอีเมล (Email is required)")).toBeTruthy();
+    expect(onGenerated).not.toHaveBeenCalled();
+  });
+
   it("reports a refused install, stays on Review and allows a retry", async () => {
-    routes.set("POST /api/brands/brand_new/install", () => json({ error: "lifecycle_operation_active", active_install_id: "ins_0" }, 409));
+    routes.set("POST /api/brands/brand_new/generate", () => json({ error: "lifecycle_operation_active", active_install_id: "ins_0" }, 409));
     hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} });
     const { onGenerated } = setup(employee, { brandId: "brand_new" });
     await heading("ตรวจสอบ (Review)");
@@ -471,7 +482,7 @@ describe("entry points on the Lifecycle screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeNull());
     expect(await screen.findByRole("heading", { name: "Maple Cash" })).toBeTruthy();
-    expect(sent("POST", "/api/brands/brand_new/install")).toHaveLength(1);
+    expect(sent("POST", "/api/brands/brand_new/generate")).toHaveLength(1);
   });
 
   it("offers Resume in wizard for a draft only, and Duplicate for every managed brand", async () => {
