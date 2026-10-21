@@ -16,12 +16,14 @@ import {
   type CoreListError,
   type CoreListErrorCode,
   type InstallOperation,
+  type BrandConfig,
   type GetBrandResponse,
 } from "@anjuna/contracts";
 import { z } from "zod";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
 import { callCore } from "./core.js";
+import { drainRouteRow } from "./drain-route-checklist.js";
 import { authorizePanel } from "./panel-roles.js";
 import { queueInstallRetry } from "./retry-install.js";
 import { latestUpgrade } from "./upgrade-outcomes.js";
@@ -339,13 +341,18 @@ async function checklist(request: Request, env: Env, ctx: AdminRequestContext, b
 
 const GLOBAL_POSTBACK_ACTOR = "system:global-postback";
 
-/** The tenant postback token covers a brand with no token of its own, so LeadsGate needs no entry for it. Computed per read, never stored. */
-async function globalPostbackRow(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Record<string, unknown> | null> {
+/** The brand as core stores it, for the computed checklist rows. Null when core fails. */
+async function coreBrand(env: Env, ctx: AdminRequestContext, brandId: string): Promise<BrandConfig | null> {
   if (!BrandId.safeParse(brandId).success) return null;
   try {
     const result = await callCore(env, ctx, { endpoint: "getBrand", params: { id: brandId } });
-    if (result.status !== 200 || (result.body as GetBrandResponse).brand.postback_token !== "global") return null;
+    return result.status === 200 ? (result.body as GetBrandResponse).brand : null;
   } catch { return null; }
+}
+
+/** The tenant postback token covers a brand with no token of its own, so LeadsGate needs no entry for it. Computed per read, never stored. */
+function globalPostbackRow(brand: BrandConfig, brandId: string): Record<string, unknown> | null {
+  if (brand.postback_token !== "global") return null;
   const at = new Date().toISOString();
   return {
     item: "leadsgate_postbacks",
@@ -502,10 +509,18 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
     const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all();
     const rows: Array<Record<string, unknown>> = results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined }));
-    const computed = rows.some((r) => r.item === "leadsgate_postbacks") ? null : await globalPostbackRow(env, ctx, brandId);
-    if (computed) {
-      rows.push(computed);
-      rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
+    const open = (item: string) => !rows.some((r) => r.item === item);
+    // One getBrand read serves every computed row; a stored attestation always wins.
+    const brand = open("leadsgate_postbacks") || open("drain_route") ? await coreBrand(env, ctx, brandId) : null;
+    if (brand) {
+      const computed = [
+        open("leadsgate_postbacks") ? globalPostbackRow(brand, brandId) : null,
+        open("drain_route") ? drainRouteRow(brand) : null,
+      ].filter((row): row is Record<string, unknown> => row !== null);
+      if (computed.length > 0) {
+        rows.push(...computed);
+        rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
+      }
     }
     return json(200, { brand_id: brandId, checklist: rows });
   }
