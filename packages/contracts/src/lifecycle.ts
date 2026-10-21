@@ -4,6 +4,7 @@ import {
   Hostname,
 } from "./common.js";
 import { AdminRequestContext, AdminRole, AmountBuckets, DrainKey, FormVersion, PrepopBase } from "./admin-api.js";
+import { BrandProfile } from "./brand-draft.js";
 import { FormRoute, Keyword } from "./runtime-config.js";
 
 const Id = z.string().min(1).max(128);
@@ -329,5 +330,7 @@ export const LifecycleBrandSummary = z.strictObject({
   payload_version: PayloadVersion.nullable(),
   /** The newest registered form artifact the tenant can use, when it is newer than the brand's own. Absent otherwise. */
   newer_form: z.strictObject({ form_artifact_id: Id, bundle_form_version: FormVersion }).optional(),
+  /** The brand profile from the latest revision's config_json. Only the single-brand read carries it. */
+  profile: BrandProfile.optional(),
 });
 export type LifecycleBrandSummary = z.infer<typeof LifecycleBrandSummary>;
