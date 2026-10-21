@@ -118,6 +118,29 @@ describe("BrandProfile", () => {
   });
 });
 
+describe("BrandProfile copy", () => {
+  const copy = (over: Record<string, unknown>) => ({ copy: over });
+  it("accepts the three site-text fields and the optional h1, cta and sub", () => {
+    expect(ok(copy({}))).toBe(true);
+    expect(ok(copy({ brand_name: "Maple Cash", site_title: "Maple Cash | Funding", site_description: "Check your options.", h1: "Cash when you need it", cta: "Check my rate", sub: "No impact on your credit score." }))).toBe(true);
+  });
+  it("reuses the site-text validators and limits", () => {
+    expect(ok(copy({ brand_name: "a".repeat(81) }))).toBe(false);
+    expect(ok(copy({ site_title: "a".repeat(71) }))).toBe(false);
+    expect(ok(copy({ site_description: "a".repeat(161) }))).toBe(false);
+    expect(ok(copy({ site_title: 'Say "hi"' }))).toBe(false);
+    expect(ok(copy({ h1: "<b>Hi</b>" }))).toBe(false);
+    expect(ok(copy({ cta: "a".repeat(41) }))).toBe(false);
+    expect(ok(copy({ sub: "a".repeat(201) }))).toBe(false);
+    expect(ok(copy({ h1: "a".repeat(100) }))).toBe(true);
+  });
+  it("refuses forbidden platform strings, the words personal loan and unknown keys", () => {
+    expect(ok(copy({ brand_name: "Anjuna Cash" }))).toBe(false);
+    expect(ok(copy({ h1: "A personal loan for you" }))).toBe(false);
+    expect(ok(copy({ headline: "x" }))).toBe(false);
+  });
+});
+
 describe("BRAND_PROFILE_DEFAULTS", () => {
   it("is a valid profile with 3 to 36 months, 35.99 APR and the global unsupported states", () => {
     expect(BrandProfile.parse(BRAND_PROFILE_DEFAULTS)).toEqual({

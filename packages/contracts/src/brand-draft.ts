@@ -1,12 +1,13 @@
 /**
  * What an employee can set on a brand draft before install: the brand profile (contact, disclosures,
- * ads routing) and the PATCH /api/brands/:id/draft contract. The profile is stored in the revision's
+ * site copy, ads routing) and the PATCH /api/brands/:id/draft contract. The profile is stored in the revision's
  * `config_json.profile`. It never holds tenant-owned runtime routing (amount buckets, form route).
  */
 import { z } from "zod";
 import { isBrandClean, BrandName } from "./common.js";
 import { AdkitProject, GoogleAdsAccount, GoogleConversionAction } from "./admin-api.js";
 import { cleanKeyword } from "./runtime-config.js";
+import { SiteBrandName, SiteDescription, SiteTitle, siteTextValue } from "./site-text.js";
 import { TEMPLATE_RULES } from "./template.js";
 import { V1_UNSUPPORTED_STATES } from "./v1.js";
 
@@ -80,10 +81,28 @@ const Ads = z.strictObject({
   microsoft_ads_account: z.string().regex(/^\d{6,12}$/, "Invalid microsoft_ads_account").optional(),
 });
 
+/** Limits of the optional page copy that the site-text contract does not cover. */
+export const COPY_LIMITS = { h1: 100, cta: 40, sub: 200 } as const;
+
+/**
+ * Page copy typed at draft time. brand_name, site_title and site_description are the runtime site-text
+ * fields under the same names and validators. A missing key means the template default.
+ * h1, cta and sub are optional extra copy for the copy step (and the copy assistant) to fill.
+ */
+const Copy = z.strictObject({
+  brand_name: SiteBrandName.optional(),
+  site_title: SiteTitle.optional(),
+  site_description: SiteDescription.optional(),
+  h1: siteTextValue(COPY_LIMITS.h1).optional(),
+  cta: siteTextValue(COPY_LIMITS.cta).optional(),
+  sub: siteTextValue(COPY_LIMITS.sub).optional(),
+});
+
 /** Every group is optional: a draft may carry any subset. */
 export const BrandProfile = z.strictObject({
   contact: Contact.optional(),
   disclosures: Disclosures.optional(),
+  copy: Copy.optional(),
   ads: Ads.optional(),
 });
 export type BrandProfile = z.infer<typeof BrandProfile>;
@@ -132,7 +151,7 @@ export const UpdateBrandDraftResponse = z.strictObject({
     form_artifact_id: Id,
   }),
   profile: BrandProfile.optional(),
-  /** Key names the call changed: name, keyword_default, template_version_id, profile.contact, profile.disclosures, profile.ads. */
+  /** Key names the call changed: name, keyword_default, template_version_id, profile.contact, profile.disclosures, profile.copy, profile.ads. */
   changed: z.array(z.string()),
 });
 export type UpdateBrandDraftResponse = z.infer<typeof UpdateBrandDraftResponse>;
