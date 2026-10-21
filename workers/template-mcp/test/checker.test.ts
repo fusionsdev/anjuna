@@ -1,7 +1,7 @@
 /**
  * Contract-checker tests. checkTemplate() now delegates to @anjuna/template-cert.
- * Rule IDs match template-cert's 8 coarse rules:
- *   "structure" | "keyword" | "cta" | "pii" | "wording" | "external" | "brand" | "links"
+ * Issue rule IDs use template-cert policy checkIds, including external-script,
+ * meta, guarantees and cta-advisory; the linter still groups its report into 8 sections.
  *
  * The following checks from the original implementation are not covered by template-cert
  * and are no longer enforced here: cloaking detection, cfg-element detection,
@@ -71,8 +71,8 @@ describe("check_template rules (via @anjuna/template-cert)", () => {
 
   it("CTA form: unexpected extra field", () => {
     const r = checkTemplate(withIndex(goodSite(), (h) => h.replace(ctaForm(), ctaForm({ extra: '<input name="amount_other">' }))));
-    expect(r.pass).toBe(false);
-    expect(rules(r)).toContain("cta");
+    expect(r.pass).toBe(true);
+    expect(rules(r, "warning")).toContain("cta-advisory");
   });
 
   it("required pages: missing page triggers structure rule", () => {
@@ -84,14 +84,15 @@ describe("check_template rules (via @anjuna/template-cert)", () => {
     expect(r.issues.some((i) => i.rule === "structure" && /terms/.test(i.message))).toBe(true);
   });
 
-  it("PII inputs: email, tel, name, password fields fail", () => {
+  it("PII inputs: email, name and password fields warn", () => {
     for (const field of [
       '<input type="email" name="e">',
       '<input name="first_name">',
       '<input type="password" name="p">',
     ]) {
       const r = checkTemplate(withIndex(goodSite(), (h) => h.replace("</main>", `<div>${field}</div></main>`)));
-      expect(rules(r), field).toContain("pii");
+      expect(r.pass).toBe(true);
+      expect(rules(r, "warning"), field).toContain("pii");
     }
     expect(rules(checkTemplate(goodSite()))).not.toContain("pii");
   });
@@ -103,8 +104,8 @@ describe("check_template rules (via @anjuna/template-cert)", () => {
 
   it("external scripts trigger external rule", () => {
     const head = (html: string) => checkTemplate(withIndex(goodSite(), (h) => h.replace("</head>", `${html}</head>`)));
-    expect(rules(head('<script src="https://www.googletagmanager.com/gtag/js?id=G-1"></script>'))).toContain("external");
-    expect(rules(head('<script src="//cdn.example.com/x.js"></script>'))).toContain("external");
+    expect(rules(head('<script src="https://www.googletagmanager.com/gtag/js?id=G-1"></script>'))).toContain("external-script");
+    expect(rules(head('<script src="//cdn.example.com/x.js"></script>'))).toContain("external-script");
   });
 
   it("external fonts and resources trigger external rule", () => {
@@ -121,7 +122,7 @@ describe("check_template rules (via @anjuna/template-cert)", () => {
   it("brand-clean: platform strings and other-brand domains", () => {
     expect(rules(checkTemplate(withIndex(goodSite(), (h) => h.replace("<title>", "<!-- built by Anjuna --><title>"))))).toContain("brand");
     const brands = [{ name: "Lantern Finance", domain: "lanternfinance.com" }];
-    // brand check matches on domain, not brand name
+    // Brand domains and names both remain blocking.
     expect(
       rules(checkTemplate(withIndex(goodSite(), (h) => h.replace("Answer two", "See lanternfinance.com. Answer two")), { otherBrands: brands }))
     ).toContain("brand");
@@ -130,13 +131,15 @@ describe("check_template rules (via @anjuna/template-cert)", () => {
 
   it("broken internal links trigger links rule", () => {
     const r = checkTemplate(withIndex(goodSite(), (h) => h.replace("</main>", '<a href="/about/">About</a></main>')));
-    expect(rules(r)).toContain("links");
+    expect(r.pass).toBe(true);
+    expect(rules(r, "warning")).toContain("links");
     expect(r.issues.some((i) => i.rule === "links" && /about/.test(i.message))).toBe(true);
   });
 
   it("broken img src triggers links rule", () => {
     const r = checkTemplate(withIndex(goodSite(), (h) => h.replace("</main>", '<img src="/img/missing.png"></main>')));
-    expect(rules(r)).toContain("links");
+    expect(r.pass).toBe(true);
+    expect(rules(r, "warning")).toContain("links");
   });
 
   it("external img does not trigger links rule", () => {

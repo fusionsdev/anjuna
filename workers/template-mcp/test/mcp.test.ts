@@ -167,8 +167,8 @@ describe("tools over streamable HTTP", () => {
     const client = await connect();
     const { isError, data } = await callTool(client, "submit_template_url", { url: "https://harbor.bolt.host/", template_id: "harbor", template_name: "Harbor" });
     expect(isError).toBe(false);
-    // This pool has no BROWSER binding: certification stores the version and rejects it on the screenshots.
-    expect(data).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" });
+    // This pool has no BROWSER binding: submission waits for approval with screenshot warnings.
+    expect(data).toMatchObject({ status: "awaiting_approval", template_version_id: "tv_harbor_v1" });
     const row = await env.FACTORY.prepare("SELECT submitted_by_key_id, submitted_by_label FROM template_versions WHERE template_version_id = 'tv_harbor_v1'").first();
     expect(row).toEqual({ submitted_by_key_id: "bk_test", submitted_by_label: "test builder" });
     await client.close();
@@ -180,7 +180,7 @@ describe("tools over streamable HTTP", () => {
   it("submit_template: one call with every dist/ file", async () => {
     const client = await connect();
     const { data } = await callTool(client, "submit_template", { template_id: "harbor", template_name: "Harbor", files: distFiles() });
-    expect(data).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" }); // no BROWSER binding in this pool
+    expect(data).toMatchObject({ status: "awaiting_approval", template_version_id: "tv_harbor_v1" }); // no BROWSER binding in this pool
     expect(await storedBy()).toEqual({ submitted_by_key_id: "bk_test" });
     await client.close();
   });
@@ -194,7 +194,7 @@ describe("tools over streamable HTTP", () => {
     expect((await callTool(client, "upload_files", { upload_id, files: files.slice(0, 3) })).data).toMatchObject({ chunks_stored: 3, files: 3 });
     expect((await callTool(client, "upload_files", { upload_id, files: files.slice(3) })).data).toMatchObject({ files: files.length });
     const done = await callTool(client, "finish_upload", { upload_id });
-    expect(done.data).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" });
+    expect(done.data).toMatchObject({ status: "awaiting_approval", template_version_id: "tv_harbor_v1" });
     expect(await storedBy()).toEqual({ submitted_by_key_id: "bk_test" });
     await client.close();
   });
@@ -218,7 +218,7 @@ describe("tools over streamable HTTP", () => {
       zip_base64: zipBase64(withIndex(goodSite(), (h) => h.replace('<span data-kw>Funding Options</span>', "Funding").replace("</head>", '<script src="https://cdn.example.com/a.js"></script></head>'))),
     });
     expect(bad.data.pass).toBe(false);
-    expect(bad.data.issues.map((i: { rule: string }) => i.rule)).toEqual(expect.arrayContaining(["keyword", "external"]));
+    expect(bad.data.issues.map((i: { rule: string }) => i.rule)).toEqual(expect.arrayContaining(["keyword", "external-script"]));
     for (const issue of bad.data.issues) expect(issue.message.length).toBeGreaterThan(10);
     await client.close();
   });

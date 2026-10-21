@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Template certification linter (T11): checks a static dist/ (or its ZIP) against the landing template contract and prints a bilingual repair report.",
   "exports": {
+    "./policy": { "types": "./src/policy.ts", "default": "./src/policy.ts" },
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"

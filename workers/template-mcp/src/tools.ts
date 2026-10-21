@@ -42,7 +42,7 @@ function loadSource(args: { zip_base64?: string; url?: string }): Promise<Loaded
 }
 
 export async function otherBrands(env: Pick<Env, "FACTORY">, brandId?: string): Promise<OtherBrand[]> {
-  const { results } = await env.FACTORY.prepare("SELECT name, domain FROM brands WHERE brand_id != ?1 AND status != 'retired'")
+  const { results } = await env.FACTORY.prepare("SELECT brand_id, name, domain FROM brands WHERE brand_id != ?1 AND status != 'retired'")
     .bind(brandId ?? "")
     .all<OtherBrand>();
   return results;

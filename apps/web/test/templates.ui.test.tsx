@@ -57,6 +57,32 @@ describe("Templates screen", () => {
     expect(screen.getAllByText("รออนุมัติ (Awaiting approval)").length).toBeGreaterThan(0);
   });
 
+  it("shows stored lint, similarity and screenshot warnings in yellow", async () => {
+    const warning = (rule: string, message: string) => ({ rule, message, fix: "Review with the owner." });
+    routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, checks: [
+      { check_name: "lint", result: "pass", details: { warning_issues: [warning("pii", "Email input advisory.")], import_warnings: [warning("host-badge", "Host badge removed.")] }, created_at: STAMP },
+      { check_name: "identity_scan", result: "fail", details: { warning_issues: [warning("similarity", "Similar layout.")] }, created_at: STAMP },
+      { check_name: "screenshot_mobile", result: "fail", details: { warning_issues: [warning("screenshot_mobile", "Mobile screenshot unavailable.")] }, created_at: STAMP },
+    ] }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    const warnings = await screen.findByRole("note", { name: "คำเตือน (Warnings)" });
+    expect(warnings.classList.contains("warn")).toBe(true);
+    for (const message of ["Email input advisory.", "Host badge removed.", "Similar layout.", "Mobile screenshot unavailable."]) expect(warnings.textContent).toContain(message);
+    expect(screen.getAllByText("คำเตือน (Warning)")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "อนุมัติ (Approve)" })).toBeTruthy();
+  });
+
+  it("keeps failed blocking checks red", async () => {
+    routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, template: { ...detail.template, status: "rejected" }, checks: [
+      { check_name: "lint", result: "fail", details: { warning_issues: [{ rule: "pii", message: "Email advisory.", fix: "Review." }] }, created_at: STAMP },
+    ] }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    expect((await screen.findByText("fail")).classList.contains("alert")).toBe(true);
+    expect(screen.queryByRole("button", { name: "อนุมัติ (Approve)" })).toBeNull();
+  });
+
   it("lets an owner approve and hides Approve from an employee", async () => {
     const first = render(<TemplatesScreen me={employee} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
@@ -129,6 +155,23 @@ describe("Templates screen", () => {
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
     fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));
     expect(await screen.findByText("Prerender the page to static HTML.")).toBeTruthy();
+  });
+
+  it("shows warnings returned from a duplicate import", async () => {
+    routes.set("POST /api/templates/import", () => json({
+      status: "duplicate", template_version_id: null, version: null, sha256: null, dashboard_url: null,
+      issues: [], warnings: [{ rule: "similarity", message: "Similar copy needs review.", fix: "Discuss the copy." }],
+      text_defaults: null, similarity: null, next_step: "Already submitted.",
+    }));
+    render(<TemplatesScreen me={employee} />);
+    await screen.findByText("Bolt Harbor");
+    fireEvent.change(screen.getByLabelText("URL ของเว็บที่เผยแพร่ (Published URL)"), { target: { value: "https://harbor.example.com/" } });
+    fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
+    fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));
+    const warnings = await screen.findByRole("note", { name: "คำเตือน (Warnings)" });
+    expect(warnings.classList.contains("warn")).toBe(true);
+    expect(warnings.textContent).toContain("Similar copy needs review.");
+    expect(warnings.textContent).toContain("Discuss the copy.");
   });
 
   it("shows the bad_url message from a 422", async () => {

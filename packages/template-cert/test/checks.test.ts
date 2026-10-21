@@ -82,12 +82,12 @@ describe("one fixture per failure type", () => {
     expect(issuesFor(result, "cta").some((i) => /not allowed/.test(i.en) && i.en.includes("9999"))).toBe(true);
   });
 
-  it("pii: an email input fails", () => {
+  it("pii: an email input warns", () => {
     const result = check(indexWith(validIndex().replace("</form>", '<input name="email" type="email"></form>')));
     expect(issuesFor(result, "pii").some((i) => /email/.test(i.en))).toBe(true);
   });
 
-  it("pii: an extra non-CTA form fails", () => {
+  it("pii: an extra non-CTA form warns", () => {
     const result = check(indexWith(validIndex() + "<form method=\"get\" action=\"/newsletter\"><input name=\"email\"></form>"));
     expect(issuesFor(result, "pii").some((i) => /not the CTA/.test(i.en))).toBe(true);
   });
@@ -97,7 +97,7 @@ describe("one fixture per failure type", () => {
     expect(issuesFor(result, "wording").some((i) => /personal loan/i.test(i.en))).toBe(true);
   });
 
-  it("wording: guaranteed approval fails", () => {
+  it("wording: guaranteed approval warns", () => {
     const result = check(indexWith("<html><body><h1><span data-kw>Funding</span></h1><p>Guaranteed approval for everyone.</p></body></html>"));
     expect(issuesFor(result, "wording").some((i) => /guaranteed approval/i.test(i.en))).toBe(true);
   });
@@ -107,7 +107,7 @@ describe("one fixture per failure type", () => {
     expect(issuesFor(result, "external").some((i) => /outside the site/.test(i.en))).toBe(true);
   });
 
-  it("external: an iframe fails", () => {
+  it("external: an iframe warns", () => {
     const result = check(indexWith(validIndex() + "<iframe src=\"https://example.com/embed\"></iframe>"));
     expect(issuesFor(result, "external").some((i) => /iframe/.test(i.en))).toBe(true);
   });
@@ -122,7 +122,7 @@ describe("one fixture per failure type", () => {
     expect(issuesFor(result, "brand").some((i) => /competitor\.com/.test(i.en))).toBe(true);
   });
 
-  it("links: a broken internal link fails", () => {
+  it("links: a broken internal link warns", () => {
     const result = check(indexWith(validIndex() + "<a href=\"/missing-page/\">Broken</a>"));
     expect(issuesFor(result, "links").some((i) => /broken/.test(i.en))).toBe(true);
   });
@@ -153,9 +153,10 @@ describe("directory vs in-memory source", () => {
 });
 
 describe("page text (title, description, data-brand)", () => {
-  it("a landing page without <title> or meta description fails structure", () => {
+  it("a landing page without title or description warns without rejecting", () => {
     const files = indexWith(validIndex().replace(/<title>.*?<\/title>/, "").replace(/<meta name="description"[^>]*>/, ""));
-    const errors = issuesFor(check(files), "structure").filter((i) => i.severity === "error");
+    expect(check(files).ok).toBe(true);
+    const errors = issuesFor(check(files), "structure").filter((i) => i.checkId === "meta" && i.severity === "warning");
     expect(errors.map((i) => i.en)).toEqual([expect.stringContaining("<title>"), expect.stringContaining('meta name="description"')]);
     expect(errors.every((i) => i.location === "index.html" && i.th.length > 0)).toBe(true);
   });

@@ -1,13 +1,14 @@
-import type { Issue, RuleId, Severity } from "./types.js";
+import { ruleDisposition } from "./policy.js";
+import type { Issue, RuleId } from "./types.js";
 
-export function issue(rule: RuleId, severity: Severity, location: string, en: string, th: string): Issue {
-  return { rule, severity, location, en, th };
+export function issue(rule: RuleId, location: string, en: string, th: string, checkId: string = rule): Issue {
+  return { rule, checkId, severity: ruleDisposition(checkId) === "block" ? "error" : "warning", location, en, th };
 }
 
-export function err(rule: RuleId, location: string, en: string, th: string): Issue {
-  return issue(rule, "error", location, en, th);
+export function err(rule: RuleId, location: string, en: string, th: string, checkId: string = rule): Issue {
+  return issue(rule, location, en, th, checkId);
 }
 
-export function warn(rule: RuleId, location: string, en: string, th: string): Issue {
-  return issue(rule, "warning", location, en, th);
+export function warn(rule: RuleId, location: string, en: string, th: string, checkId: string = rule): Issue {
+  return issue(rule, location, en, th, checkId);
 }

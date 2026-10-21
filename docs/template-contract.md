@@ -1,6 +1,10 @@
 # Landing template contract
 
-This is the contract for anyone, human or AI builder (OpenDesign, Bolt.new, v0, Stitch or Magic Patterns exports), who makes a landing template for an Anjuna brand. A template that breaks any **must** rule below is rejected at certification (T11) with a repair message. Requirement IDs refer to `docs/PRODUCT-BRIEF.md` (TP-1, TP-2, BR-2, BR-4, BR-5).
+This is the contract for anyone, human or AI builder (OpenDesign, Bolt.new, v0, Stitch or Magic Patterns exports), who makes a landing template for an Anjuna brand. Submission gates follow `packages/template-cert/src/policy.ts` (FUS-360). The guidance below also includes owner-review advisories; its **must** wording does not make every item a submission blocker.
+
+The four blocking groups are clean brand bytes; no external scripts; a valid amount-and-ZIP CTA to `/go` plus a KeywordSlot inside H1; and all four legal pages. Archive validity, traversal and size/count limits, Personal Loan wording, server/non-static output, SSRF/import failures and template-name ownership remain safety blockers. Unknown check ids block.
+
+Similarity/fingerprint findings, metadata, guarantee claims, PII advisories, non-script external resources and broken internal links are warnings. They are stored in certification details, returned on submit and duplicate, and shown in yellow in Templates detail. Import notices are stored separately. Missing or failed screenshots warn at submit; owner approval and seal still require passing desktop and mobile PNG evidence. Requirement IDs refer to `docs/PRODUCT-BRIEF.md` (TP-1, TP-2, BR-2, BR-4, BR-5).
 
 Reference implementations:
 

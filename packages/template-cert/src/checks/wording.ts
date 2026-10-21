@@ -44,6 +44,7 @@ export const wording: Check = ({ source }) => {
             path,
             `The page claims "${g.label}" ("…${snippet(text, m.index, m[0].length)}…"), a misleading guarantee. Remove approval, rate or speed guarantees.`,
             `หน้าสื่อสัญญา "${g.label}" ซึ่งเป็นการรับประกันที่ทำให้เข้าใจผิด กรุณาลบข้อความรับประกันการอนุมัติ อัตรา หรือความเร็วออก`,
+            "guarantees",
           ),
         );
       }

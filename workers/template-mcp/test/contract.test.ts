@@ -1,3 +1,4 @@
+import { TEMPLATE_RULE_POLICY } from "@anjuna/template-cert/policy";
 import { describe, expect, it } from "vitest";
 import doc from "../../../docs/template-contract.md?raw";
 import { AMOUNT_BUCKETS, REQUIRED_PAGES, RESERVED_PATHS, contractForBuilders } from "../src/contract";
@@ -23,6 +24,8 @@ describe("contract constants match docs/template-contract.md", () => {
 
   it("get_template_contract payload carries every rule and the workflow", () => {
     const payload = contractForBuilders();
+    expect(payload.submission_policy).toBe(TEMPLATE_RULE_POLICY);
+    expect(payload.intro).toContain("do not prevent awaiting_approval");
     expect(payload.rules.length).toBeGreaterThanOrEqual(15);
     expect(payload.cta_form_example).toContain('action="/go"');
     expect(payload.workflow.join(" ")).toContain("similarity_check");

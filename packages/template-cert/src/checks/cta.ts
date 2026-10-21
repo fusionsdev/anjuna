@@ -42,6 +42,7 @@ export const cta: Check = ({ source }) => {
         "index.html",
         `Found ${forms.length} CTA forms (data-cta). There must be exactly one.`,
         `พบฟอร์ม CTA (data-cta) จำนวน ${forms.length} ฟอร์ม ต้องมีเพียงอันเดียว`,
+        "cta-advisory",
       ),
     );
   }
@@ -91,6 +92,7 @@ export const cta: Check = ({ source }) => {
         "index.html",
         "The CTA form has a field without a name attribute. Every field must be named requested_amount or zip.",
         "ฟอร์ม CTA มีช่องที่ไม่มี name attribute ทุกช่องต้องตั้งชื่อเป็น requested_amount หรือ zip เท่านั้น",
+        "cta-advisory",
       ),
     );
   }
@@ -103,6 +105,7 @@ export const cta: Check = ({ source }) => {
           "index.html",
           `The CTA form has an unexpected field "${name}". Only "requested_amount" and "zip" are allowed; do not add hidden or extra inputs.`,
           `ฟอร์ม CTA มีช่อง "${name}" ซึ่งเกินจำเป็น อนุญาตแค่ "requested_amount" และ "zip" เท่านั้น อย่าเพิ่มช่องอื่นหรือ hidden input`,
+        "cta-advisory",
         ),
       );
     }

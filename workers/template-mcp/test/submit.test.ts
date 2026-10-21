@@ -68,9 +68,9 @@ describe("submitTemplate", () => {
   });
 
   it("re-certifies the same files when the stored version was rejected, without creating a version", async () => {
-    vi.mocked(takeScreenshot).mockRejectedValueOnce(new Error("Browser Rendering quota exceeded"));
     const first = await submitTemplate(browserEnv, request());
-    expect(first).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" });
+    // A version rejected under the previous policy can be retried in place.
+    await env.FACTORY.prepare("UPDATE template_versions SET status = 'rejected' WHERE template_version_id = ?1").bind(first.template_version_id).run();
     const again = await submitTemplate(browserEnv, request(goodSite(), { submitted_by: { key_id: "bk_other", label: "Second try" } }));
     expect(again).toMatchObject({ status: "awaiting_approval", template_version_id: "tv_harbor_v1", version: 1, sha256: first.sha256, issues: [] });
     const rows = await versions();
@@ -89,15 +89,20 @@ describe("submitTemplate", () => {
     expect((await env.ARTIFACTS.list()).objects.map((o) => o.key)).toEqual(before);
   });
 
-  it("rejects a near copy of another brand's sealed template, naming the brand", async () => {
+  it("accepts a similarity-only template with a persisted warning naming the brand", async () => {
     await addBrand("b_lantern", "Lantern Finance", "lanternfinance.com");
     await addSealedTemplate({ id: "lantern", name: "Lantern", fingerprint: await computeFingerprint(goodSite()), brandId: "b_lantern" });
     const result = await submitTemplate(browserEnv, request());
-    expect(result.status).toBe("rejected");
+    expect(result.status).toBe("awaiting_approval");
     expect(result.similarity?.pass).toBe(false);
-    expect(result.issues.some((i) => i.rule === "similarity" && /Lantern Finance/.test(`${i.message} ${i.fix}`))).toBe(true);
-    // Only the seeded sealed Lantern version exists; nothing was stored for the submission.
-    expect((await versions()).map((v) => v.template_version_id)).toEqual(["tv_lantern"]);
+    expect(result.issues).toEqual([]);
+    expect(result.warnings.some((i) => i.rule === "similarity" && /Lantern Finance/.test(`${i.message} ${i.fix}`))).toBe(true);
+    const stored = await env.FACTORY.prepare("SELECT details_json FROM certifications WHERE template_version_id = ?1 AND check_name = 'identity_scan'").bind(result.template_version_id).first<{ details_json: string }>();
+    expect(JSON.parse(stored!.details_json).warning_issues).toEqual(result.warnings.filter((i) => i.rule === "similarity"));
+    const again = await submitTemplate(browserEnv, request());
+    expect(again.status).toBe("duplicate");
+    expect(again.warnings).toEqual(result.warnings);
+    expect(await versions()).toHaveLength(2);
   });
 
   it("does not compare a new version with the same template's own sealed versions", async () => {
@@ -109,6 +114,56 @@ describe("submitTemplate", () => {
     ]);
     const result = await submitTemplate(browserEnv, request(withIndex(goodSite(), (h) => h.replace("Answer two", "Answer two short"))));
     expect(result).toMatchObject({ status: "awaiting_approval", template_version_id: "tv_harbor_v2", version: 2 });
+  });
+
+  it.each([
+    { name: "foreign brand domain", rule: "brand", extra: "<p>lanternfinance.com</p>" },
+    { name: "foreign brand id", rule: "brand", extra: '<script>const brand = "b_lantern";</script>' },
+    { name: "foreign brand name", rule: "brand", extra: "<p>Lantern Finance</p>" },
+    { name: "anjuna bytes", rule: "brand", extra: "<!-- Anjuna -->" },
+    { name: "aurum bytes", rule: "brand", extra: "<!-- AURUM -->" },
+    { name: "PostHog key", rule: "brand", extra: '<script>const key = "phc_testKey123";</script>' },
+    { name: "Sentry DSN", rule: "brand", extra: '<script>const dsn = "https://key@o1.ingest.sentry.io/42";</script>' },
+    { name: "external script", rule: "external-script", extra: '<script src="https://cdn.example/x.js"></script>' },
+  ])("rejects $name alone", async ({ rule, extra }) => {
+    await addBrand("b_lantern", "Lantern Finance", "lanternfinance.com");
+    const result = await submitTemplate(browserEnv, request(withIndex(goodSite(), (h) => h + extra)));
+    expect(result.status).toBe("rejected");
+    expect([...new Set(result.issues.map((i) => i.rule))]).toEqual([rule]);
+    expect(await versions()).toHaveLength(0);
+  });
+
+  it.each(["privacy", "terms", "disclosures", "do-not-sell"])("rejects a missing %s page alone", async (slug) => {
+    const files = goodSite();
+    files.delete(slug + "/index.html");
+    const result = await submitTemplate(browserEnv, request(files));
+    expect(result.status).toBe("rejected");
+    expect([...new Set(result.issues.map((i) => i.rule))]).toEqual(["structure"]);
+    expect(await versions()).toHaveLength(0);
+  });
+
+  it.each(["action", "requested_amount", "zip"])("rejects a broken CTA %s alone", async (field) => {
+    const files = withIndex(goodSite(), (h) => field === "action" ? h.replace('action="/go"', 'action="/wrong"') : h.replaceAll('name="' + field + '"', 'name="missing"'));
+    const result = await submitTemplate(browserEnv, request(files));
+    expect(result.status).toBe("rejected");
+    expect([...new Set(result.issues.map((i) => i.rule))]).toEqual(["cta"]);
+    expect(await versions()).toHaveLength(0);
+  });
+
+  it("persists lint advisories separately from import notices and returns them on duplicate", async () => {
+    const files = withIndex(goodSite(), (h) => h.replace(/<title>.*?<\/title>/, "") + '<input type="email" name="email"><img src="https://cdn.example/x.png"><a href="/missing/">Missing</a><p>Guaranteed approval</p>');
+    const notice = { rule: "host-badge", message: "Removed the host badge.", fix: "Nothing to do." };
+    const first = await submitTemplate(browserEnv, request(files, { warnings: [notice] }));
+    expect(first.status).toBe("awaiting_approval");
+    expect(first.issues).toEqual([]);
+    expect(first.warnings.map((i) => i.rule)).toEqual(expect.arrayContaining(["meta", "pii", "external", "links", "guarantees", "host-badge"]));
+    const row = await env.FACTORY.prepare("SELECT details_json FROM certifications WHERE template_version_id = ?1 AND check_name = 'lint'").bind(first.template_version_id).first<{ details_json: string }>();
+    const details = JSON.parse(row!.details_json);
+    expect(details.import_warnings).toEqual([notice]);
+    expect(details.warning_issues.map((i: { rule: string }) => i.rule)).not.toContain("host-badge");
+    const again = await submitTemplate(browserEnv, request(files));
+    expect(again.status).toBe("duplicate");
+    expect(again.warnings).toEqual(first.warnings);
   });
 
   it("rejects a template name owned by another template id", async () => {
@@ -125,13 +180,14 @@ describe("submitTemplate", () => {
     expect(result.issues[0]!.fix).toMatch(/reduce image sizes/i);
   });
 
-  it("stores a version whose screenshots fail as rejected, with a platform fix", async () => {
+  it("stores screenshot failures as warnings and awaits owner approval", async () => {
     vi.mocked(takeScreenshot).mockRejectedValue(new Error("Browser Rendering quota exceeded"));
     const result = await submitTemplate(browserEnv, request());
-    expect(result).toMatchObject({ status: "rejected", template_version_id: "tv_harbor_v1" });
-    expect(result.issues.map((i) => i.rule)).toEqual(["screenshot_desktop", "screenshot_mobile"]);
-    expect(result.issues[0]!.fix).toMatch(/platform problem/);
-    expect((await versions())[0]).toMatchObject({ status: "rejected" });
+    expect(result).toMatchObject({ status: "awaiting_approval", template_version_id: "tv_harbor_v1", issues: [] });
+    expect(result.warnings.map((i) => i.rule)).toEqual(["screenshot_desktop", "screenshot_mobile"]);
+    expect(result.warnings[0]!.fix).toMatch(/platform problem/);
+    expect((await versions())[0]).toMatchObject({ status: "certified" });
+    expect((await submitTemplate(browserEnv, request())).warnings).toEqual(result.warnings);
   });
 });
 

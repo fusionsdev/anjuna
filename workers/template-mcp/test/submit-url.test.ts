@@ -61,7 +61,7 @@ describe("submitTemplateUrl", () => {
     vi.stubGlobal("fetch", async () => new Response(zip, { headers: { "content-type": "application/zip" } }));
     const result = await submit("https://builds.example.com/site.zip");
     expect(result.warnings.some((w) => w.rule === "host-badge")).toBe(false);
-    expect(result.issues).toContainEqual(expect.objectContaining({ rule: "external" }));
+    expect(result.issues).toContainEqual(expect.objectContaining({ rule: "external-script" }));
   });
 
   it("stops a crawl whose pages add up to more than 30 MB with the archive-limits rejection", async () => {

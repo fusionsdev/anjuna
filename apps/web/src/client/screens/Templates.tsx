@@ -1,3 +1,5 @@
+import { TemplateSubmitIssue } from "@anjuna/contracts";
+import { ruleDisposition } from "@anjuna/template-cert/policy";
 import type { TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "../api";
@@ -109,11 +111,27 @@ export function TemplatesScreen({ me }: { me: Me }) {
   );
 }
 
+function checkWarnings(details: unknown, key: "warning_issues" | "import_warnings" = "warning_issues"): TemplateSubmitIssue[] {
+  if (!details || typeof details !== "object") return [];
+  const parsed = TemplateSubmitIssue.array().safeParse((details as Record<string, unknown>)[key]);
+  return parsed.success ? parsed.data : [];
+}
+
+function Warnings({ issues }: { issues: TemplateSubmitIssue[] }) {
+  if (!issues.length) return null;
+  return <div className="warn" role="note" aria-label="คำเตือน (Warnings)">
+    <b>คำเตือน (Warnings)</b>
+    <ul>{issues.map((issue, i) => <li key={i}><code>{issue.rule}</code> {issue.file ? issue.file + ": " : ""}{issue.message}{" "}<span>{issue.fix}</span></li>)}</ul>
+  </div>;
+}
+
 function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: TemplateDetailResponse; busy: boolean; onApprove: () => void }) {
   const t = detail.template;
   const identity = detail.checks.find((c) => c.check_name === "identity_scan");
   const similarity = (identity?.details as { similarity?: { summary?: string } } | null | undefined)?.similarity?.summary ?? null;
   const defaults = t.text_defaults;
+  const warnings = detail.checks.flatMap((c) => checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn"));
+  const importWarnings = detail.checks.flatMap((c) => checkWarnings(c.details, "import_warnings"));
   return (
     <section className="card section" aria-label="รายละเอียดเทมเพลต (Template detail)">
       <div className="row split">
@@ -129,8 +147,13 @@ function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: Templ
       </div>
       <h3>ผลการตรวจ (Checks)</h3>
       <ul>
-        {detail.checks.map((c) => <li key={c.check_name}><span className={`pill ${c.result === "pass" ? "ok" : "alert"}`}>{c.result}</span> {c.check_name}</li>)}
+        {detail.checks.map((c) => {
+          const advisory = checkWarnings(c.details).length > 0 || checkWarnings(c.details, "import_warnings").length > 0 || (c.result === "fail" && ruleDisposition(c.check_name) === "warn");
+          const blocking = c.result === "fail" && ruleDisposition(c.check_name) === "block";
+          return <li key={c.check_name}><span className={`pill ${blocking ? "alert" : advisory ? "warn" : "ok"}`}>{blocking ? "fail" : advisory ? "คำเตือน (Warning)" : "pass"}</span> {c.check_name}</li>;
+        })}
       </ul>
+      <Warnings issues={[...warnings, ...importWarnings]} />
       {similarity && <p className="small">ความคล้าย (Similarity): {similarity}</p>}
       <h3>ข้อความเริ่มต้น (Text defaults)</h3>
       <div className="status-grid">
@@ -151,6 +174,7 @@ function SubmitOutcome({ result }: { result: TemplateSubmitResult }) {
     <div className={result.status === "rejected" ? "error" : "ok"} role="status">
       <b>{title}</b>
       <p>{result.next_step}</p>
+      <Warnings issues={result.warnings} />
       {result.issues.length > 0 && (
         <ul>{result.issues.map((issue, i) => <li key={i}><code>{issue.rule}</code> {issue.file ? `${issue.file}: ` : ""}{issue.message}{" "}<span className="muted">{issue.fix}</span></li>)}</ul>
       )}
