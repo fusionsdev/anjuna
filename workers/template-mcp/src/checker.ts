@@ -15,6 +15,7 @@ export interface Issue {
 }
 
 export interface OtherBrand {
+  brand_id?: string;
   name: string;
   domain: string;
 }
@@ -69,11 +70,12 @@ export function checkTemplate(input: FileMap, opts: { otherBrands?: OtherBrand[]
   const { files, notes } = normalizeRoot(input);
   const source: Source = { label: "template", files };
   const denyDomains = (opts.otherBrands ?? []).map((b) => b.domain);
-  const result = runChecks(source, { denyDomains });
+  const denyIdentifiers = (opts.otherBrands ?? []).flatMap((b) => [b.name, ...(b.brand_id ? [b.brand_id] : [])]);
+  const result = runChecks(source, { denyDomains, denyIdentifiers });
 
   const certIssues: Issue[] = result.checks.flatMap((c) =>
     c.issues.map((i) => ({
-      rule: i.rule,
+      rule: i.checkId,
       severity: i.severity,
       file: i.location || undefined,
       message: i.en,

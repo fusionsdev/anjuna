@@ -1,5 +1,4 @@
 import { FORBIDDEN_BRAND_STRINGS } from "@anjuna/contracts";
-import { isTextLike } from "../html.js";
 import { err } from "../issue.js";
 import type { Check } from "../checks.js";
 
@@ -12,7 +11,7 @@ export function normalizeDenyDomain(input: string): string {
   return d.replace(/\.+$/, "");
 }
 
-export const brand: Check = ({ source, denyDomains }) => {
+export const brand: Check = ({ source, denyDomains, denyIdentifiers }) => {
   const issues: ReturnType<typeof err>[] = [];
   const deny = denyDomains.map(normalizeDenyDomain).filter((d) => d.length > 0);
 
@@ -30,6 +29,17 @@ export const brand: Check = ({ source, denyDomains }) => {
         );
       }
     }
+    for (const identifier of denyIdentifiers.map((value) => value.trim().toLowerCase()).filter(Boolean)) {
+      if (lower.includes(identifier)) issues.push(err("brand", path,
+        `The other brand identifier "${identifier}" appears in the template. Remove it.`,
+        `พบชื่อหรือรหัสของแบรนด์อื่น "${identifier}" กรุณาลบออก`));
+    }
+    if (/phc_[a-z0-9_-]+/i.test(text)) issues.push(err("brand", path,
+      "A PostHog project key appears in the template. Remove it; use the first-party proxy.",
+      "พบ PostHog key ใน template กรุณาลบออกและใช้พร็อกซีของโดเมนตนเอง"));
+    if (/https?:\/\/[^\s/@]+(?::[^\s/@]*)?@[^\s/]*sentry\.io\/\d+/i.test(text)) issues.push(err("brand", path,
+      "A Sentry DSN appears in the template. Remove it; use the first-party proxy.",
+      "พบ Sentry DSN ใน template กรุณาลบออกและใช้พร็อกซีของโดเมนตนเอง"));
     for (const domain of deny) {
       if (lower.includes(domain)) {
         issues.push(
@@ -46,7 +56,6 @@ export const brand: Check = ({ source, denyDomains }) => {
 
   for (const [path, bytes] of source.files) {
     scan(path, path); // file names are brand bytes too
-    if (!isTextLike(path, bytes)) continue;
     scan(path, new TextDecoder("utf-8").decode(bytes));
   }
 

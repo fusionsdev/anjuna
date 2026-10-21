@@ -1,3 +1,4 @@
+import { TEMPLATE_RULE_POLICY } from "@anjuna/template-cert/policy";
 import { UPLOAD_BATCH_CHARS } from "./submit";
 /**
  * The landing template contract (docs/template-contract.md) as data. One source for the
@@ -158,7 +159,7 @@ export function contractForBuilders() {
   return {
     title: "Anjuna landing template contract",
     intro:
-      "You are building a landing template for one Anjuna brand. Every brand must have its OWN unique design: never reuse a layout, copy or images from another brand's template (identical sites risk ad-account bans). Your output is the static dist/ of a site. Before you finish, call check_template (zip or URL) and similarity_check, fix every issue they report, and call them again until both pass.",
+      "You are building a landing template for one Anjuna brand. Every brand must have its OWN unique design: never reuse a layout, copy or images from another brand's template (identical sites risk ad-account bans). Your output is the static dist/ of a site. Before you finish, call check_template (zip or URL) and similarity_check. Fix blocking issues; advisories, including similarity, go to the owner for review and do not prevent awaiting_approval.",
     deliverable: "Static output only: the built dist/ folder (max 30 MB, 2000 files, 10 MB per file). Every page must be real HTML, not an empty <div id=\"root\"> filled by JavaScript.",
     how_to_submit: [
       "1. Build static HTML: run npm run build. Every page in dist/ must contain its real text; a dist/index.html that is only <div id=\"root\"></div> plus a script is rejected.",
@@ -180,14 +181,16 @@ export function contractForBuilders() {
       '\n  </select>\n' +
       '  <input name="zip" inputmode="numeric" pattern="[0-9]{5}" minlength="5" maxlength="5" required>\n' +
       '  <button type="submit">Continue</button>\n</form>',
+    // Design guidance levels are separate from the submit-time disposition below.
     rules: CONTRACT_RULES,
+    submission_policy: TEMPLATE_RULE_POLICY,
     banned_phrases: CONTRACT_BANNED_PHRASES,
     workflow: [
       "1. Design a unique layout, visual identity, copy and imagery for this brand.",
       "2. Build to static HTML (npm run build) and publish it.",
       "3. Call probe_url, then submit_template_url. It runs the same checks as check_template and similarity_check.",
       "4. If status is rejected, fix every issue, publish again and submit again. Stop when status is awaiting_approval or duplicate.",
-      "5. Without submit access: zip dist/, call check_template and similarity_check until both pass, and hand the zip to the owner.",
+      "5. Without submit access: zip dist/, fix check_template errors, run similarity_check, and hand the zip and warnings to the owner.",
     ],
     source: "docs/template-contract.md",
   };

@@ -227,14 +227,25 @@ describe("certification evidence and audit regressions", () => {
     expect((await certifyTemplateVersion(browserEnv, id, "own")).status).toBe("certified");
   });
 
-  it("rejects without BROWSER and reports both missing screenshots", async () => {
+  it("warns without BROWSER but still blocks seal without both screenshots", async () => {
     const id = await seedTemplateVersion();
     const result = await certifyTemplateVersion(env, id);
-    expect(result.status).toBe("rejected");
+    expect(result.status).toBe("certified");
     expect(result.checks.filter((c) => c.result === "fail").map((c) => c.check_name)).toEqual(["screenshot_desktop", "screenshot_mobile"]);
-    expect(result.repair_messages.join(" ")).toContain("Bind BROWSER");
+    expect(result.repair_messages).toEqual([]);
+    expect(result.warnings.map((i) => i.message).join(" ")).toContain("Bind BROWSER");
     expect(takeScreenshot).not.toHaveBeenCalled();
-    await expect(seal(id)).rejects.toThrow("certified");
+    await expect(seal(id)).rejects.toThrow("screenshot_desktop");
+  });
+
+  it("clears old screenshot warnings on retry and keeps importer notices", async () => {
+    const id = await seedTemplateVersion();
+    const notice = { rule: "host-badge", message: "Removed host badge.", fix: "Nothing to do." };
+    const first = await certifyTemplateVersion(env, id, undefined, [notice]);
+    expect(first.warnings).toHaveLength(3);
+    const retry = await certifyTemplateVersion(browserEnv, id);
+    expect(retry.warnings).toEqual([notice]);
+    await expect(seal(id)).resolves.toMatchObject({ template_version_id: id });
   });
 
   it("persists both viewport artifacts before certification", async () => {
@@ -247,22 +258,23 @@ describe("certification evidence and audit regressions", () => {
     }
   });
 
-  it("rejects a failed mobile capture even after an earlier successful run", async () => {
+  it("warns on failed mobile capture and blocks seal despite an earlier successful run", async () => {
     const id = await seedTemplateVersion();
     await certifyTemplateVersion(browserEnv, id);
     vi.mocked(takeScreenshot).mockResolvedValueOnce(new Uint8Array([1])).mockRejectedValueOnce(new Error("mobile capture failed"));
     const result = await certifyTemplateVersion(browserEnv, id);
-    expect(result.status).toBe("rejected");
-    expect(result.repair_messages.join(" ")).toContain("mobile capture failed");
-    // Even a legacy/stale certified status must not let old passing evidence through.
-    await env.FACTORY.prepare("UPDATE template_versions SET status = 'certified' WHERE template_version_id = ?").bind(id).run();
+    expect(result.status).toBe("certified");
+    expect(result.warnings.map((i) => i.message).join(" ")).toContain("mobile capture failed");
     await expect(seal(id)).rejects.toThrow("screenshot_mobile");
   });
 
-  it("rejects empty screenshots", async () => {
+  it("warns on empty screenshots and blocks seal", async () => {
     const id = await seedTemplateVersion();
     vi.mocked(takeScreenshot).mockResolvedValue(new Uint8Array());
-    expect((await certifyTemplateVersion(browserEnv, id)).status).toBe("rejected");
+    const result = await certifyTemplateVersion(browserEnv, id);
+    expect(result.status).toBe("certified");
+    expect(result.warnings).toHaveLength(2);
+    await expect(seal(id)).rejects.toThrow("screenshot_desktop");
   });
 
   it.each(["screenshot_desktop", "screenshot_mobile"])("blocks seal without %s check or artifact", async (name) => {

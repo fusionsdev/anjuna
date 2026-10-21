@@ -22,6 +22,8 @@ export type RuleId =
 export interface Issue {
   /** One of the eight stable rule ids, so the factory can key on it. */
   rule: RuleId;
+  /** Policy id; separate from the report group. */
+  checkId: string;
   severity: Severity;
   /** Where the problem lives: a file path relative to dist/ and/or an element hint. */
   location: string;
@@ -59,6 +61,8 @@ export interface LoadFailure {
 export interface CheckerOptions {
   /** Domains the template must not mention (other brands). Lowercased hostnames preferred. */
   denyDomains?: readonly string[];
+  /** Other brands' names and identifiers. */
+  denyIdentifiers?: readonly string[];
   /** Human label for the report header (defaults to the input path). */
   label?: string;
 }

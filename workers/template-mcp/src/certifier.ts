@@ -10,7 +10,9 @@
 import { sealTemplateVersionRecord } from "@anjuna/factory-db";
 import { runChecks } from "@anjuna/template-cert";
 import type { Source } from "@anjuna/template-cert";
-import type { TemplateTextDefaults } from "@anjuna/contracts";
+import { ruleDisposition } from "@anjuna/template-cert/policy";
+import { readStoredWarnings, storedIssues, uniqueIssues } from "./warnings.js";
+import type { TemplateSubmitIssue, TemplateTextDefaults } from "@anjuna/contracts";
 import { readZip, type FileMap } from "./archive.js";
 import { sha256Hex } from "./auth.js";
 import { computeFingerprint } from "./fingerprint.js";
@@ -135,6 +137,7 @@ export interface CertifyResult {
   status: "certified" | "rejected";
   checks: CertCheckRow[];
   repair_messages: string[];
+  warnings: TemplateSubmitIssue[];
 }
 
 /**
@@ -142,12 +145,13 @@ export interface CertifyResult {
  * Updates template_versions.status to 'certified' or 'rejected'.
  *
  * Browser Rendering screenshots require env.BROWSER (owner-gated, Wave 4).
- * Missing Browser Rendering or screenshot evidence rejects certification.
+ * Screenshot failures warn at submit. Seal still requires passing desktop/mobile evidence.
  */
 export async function certifyTemplateVersion(
   env: Pick<Env, "FACTORY" | "ARTIFACTS" | "BROWSER" | "SIMILARITY_THRESHOLD">,
   template_version_id: string,
   brand_id?: string,
+  importWarnings?: TemplateSubmitIssue[],
 ): Promise<CertifyResult> {
   const db = env.FACTORY;
   const r2 = env.ARTIFACTS;
@@ -170,10 +174,14 @@ export async function certifyTemplateVersion(
   const repair_messages: string[] = [];
 
   // ── 1. Lint ─────────────────────────────────────────────────────────────────
-  const denyDomains = (await otherBrands(env, brand_id)).map((brand) => brand.domain);
-  const lintResult = runChecks(source, { denyDomains });
+  const brands = await otherBrands(env, brand_id);
+  const lintResult = runChecks(source, { denyDomains: brands.map((b) => b.domain), denyIdentifiers: brands.flatMap((b) => [b.name, ...(b.brand_id ? [b.brand_id] : [])]) });
   const lintPass = lintResult.ok;
   const lintDetails = {
+    warning_issues: lintResult.checks.flatMap((c) => c.issues.filter((i) => i.severity === "warning").map((i) => ({
+      rule: i.checkId, ...(i.location ? { file: i.location } : {}), message: i.en, fix: i.en,
+    }))),
+    import_warnings: uniqueIssues([...(await readStoredWarnings(db, template_version_id)).importWarnings, ...(importWarnings ?? [])]),
     errors: lintResult.errors,
     warnings: lintResult.warnings,
     checks: lintResult.checks.map((c) => ({ rule: c.rule, status: c.status, issues: c.issues })),
@@ -182,7 +190,7 @@ export async function certifyTemplateVersion(
   if (!lintPass) {
     for (const c of lintResult.checks) {
       for (const issue of c.issues) {
-        if (issue.severity === "error") repair_messages.push(`[${issue.rule}] ${issue.en}`);
+        if (issue.severity === "error") repair_messages.push(`[${issue.checkId}] ${issue.en}`);
       }
     }
   }
@@ -192,13 +200,13 @@ export async function certifyTemplateVersion(
   // Earlier sealed versions of the same template are its own history, not another brand's design.
   const similarity = await similarityCheck(env as Env, files, brand_id, tv.template_id);
   const identityPass = similarity.pass;
-  const identityDetails = { fingerprint_summary: `${files.size} files`, similarity };
+  const identityIssues: TemplateSubmitIssue[] = similarity.pass ? [] : (similarity.fixes.length ? similarity.fixes : ["Review the layout, copy and images with the owner."])
+    .map((fix) => ({ rule: "similarity", message: similarity.summary, fix }));
+  const identityDetails = { fingerprint_summary: `${files.size} files`, similarity, warning_issues: identityIssues.filter((i) => ruleDisposition(i.rule) === "warn") };
   checks.push({ check_name: "identity_scan", result: identityPass ? "pass" : "fail", details: identityDetails });
-  if (!identityPass) {
-    repair_messages.push(...similarity.fixes);
-  }
+  repair_messages.push(...identityIssues.filter((i) => ruleDisposition(i.rule) === "block").map((i) => `[${i.rule}] ${i.message}`));
 
-  // Both screenshots are mandatory, including when the binding is absent.
+  // Record failed screenshots honestly; they block seal, not submission for owner review.
   const runId = crypto.randomUUID();
   for (const viewport of viewports) {
     try {
@@ -210,13 +218,16 @@ export async function certifyTemplateVersion(
       await requireArtifact(r2, key);
       checks.push({ check_name: viewport.check_name, result: "pass", details: { width: viewport.width, height: viewport.height }, artifact_r2_key: key });
     } catch (err) {
-      checks.push({ check_name: viewport.check_name, result: "fail", details: { error: String(err) } });
-      repair_messages.push(`[${viewport.check_name}] ${String(err)}`);
+      const issue: TemplateSubmitIssue = { rule: viewport.check_name, message: String(err),
+        fix: "This is a platform problem. Tell the owner to re-run certification; passing desktop and mobile screenshots are required before approval." };
+      const advisory = ruleDisposition(issue.rule) === "warn";
+      checks.push({ check_name: viewport.check_name, result: "fail", details: { error: String(err), warning_issues: advisory ? [issue] : [] } });
+      if (!advisory) repair_messages.push(`[${issue.rule}] ${issue.message}`);
     }
   }
 
   // ── Persist certification rows ─────────────────────────────────────────────
-  const allPass = checks.every((c) => c.result === "pass");
+  const allPass = checks.every((c) => c.result === "pass" || ruleDisposition(c.check_name) === "warn") && repair_messages.length === 0;
   const newStatus = allPass ? "certified" : "rejected";
   await db.batch([
     db.prepare("INSERT OR REPLACE INTO template_fingerprints (template_version_id, fingerprint_json, created_at) VALUES (?1, ?2, ?3)")
@@ -232,7 +243,8 @@ export async function certifyTemplateVersion(
     audit(db, "template.certify", template_version_id, "system", "system", { status: tv.status }, { status: newStatus, checks }, now),
   ]);
 
-  return { template_version_id, status: newStatus, checks, repair_messages };
+  const warnings = uniqueIssues(checks.flatMap((c) => [...storedIssues(c.details, "warning_issues"), ...storedIssues(c.details, "import_warnings")]));
+  return { template_version_id, status: newStatus, checks, repair_messages, warnings };
 }
 
 // ── Seal ───────────────────────────────────────────────────────────────────────

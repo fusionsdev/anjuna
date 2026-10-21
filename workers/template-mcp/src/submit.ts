@@ -12,6 +12,8 @@ import {
   type TemplateTextDefaults,
   type TemplateVersionStatusName,
 } from "@anjuna/contracts";
+import { ruleDisposition } from "@anjuna/template-cert/policy";
+import { readStoredWarnings, uniqueIssues } from "./warnings";
 import { InputError, LIMITS, readZip, safePath, type FileMap } from "./archive";
 import { sha256Hex } from "./auth";
 import { certifyTemplateVersion, importTemplateVersion } from "./certifier";
@@ -115,7 +117,7 @@ async function certifyAndReport(
   version: { template_version_id: string; version: number; sha256: string },
   extra: { warnings: TemplateSubmitIssue[]; text_defaults: TemplateTextDefaults; similarity: SimilarityBrief },
 ): Promise<SubmitResult> {
-  const certified = await certifyTemplateVersion(env, version.template_version_id);
+  const certified = await certifyTemplateVersion(env, version.template_version_id, undefined, extra.warnings);
   const waiting = certified.status === "certified";
   return result({
     status: waiting ? "awaiting_approval" : "rejected",
@@ -124,7 +126,7 @@ async function certifyAndReport(
     sha256: version.sha256,
     dashboard_url: dashboardUrl(env, version.template_version_id),
     issues: waiting ? [] : certified.repair_messages.map(certificationIssue),
-    warnings: extra.warnings,
+    warnings: certified.warnings,
     text_defaults: extra.text_defaults,
     similarity: extra.similarity,
     next_step: waiting ? NEXT_WAITING : NEXT_REJECTED,
@@ -133,7 +135,8 @@ async function certifyAndReport(
 
 export async function submitTemplate(env: Env, request: SubmitRequest): Promise<SubmitResult> {
   const { files, notes } = normalizeRoot(request.files);
-  const warnings = [...(request.warnings ?? []), ...notes.map(toIssue)];
+  const importWarnings = [...(request.warnings ?? []), ...notes.map(toIssue)];
+  const warnings = [...importWarnings];
 
   let zip: Uint8Array;
   try {
@@ -155,12 +158,13 @@ export async function submitTemplate(env: Env, request: SubmitRequest): Promise<
     await env.FACTORY.prepare(
       "UPDATE template_versions SET status = 'draft', text_defaults_json = ?2, submitted_by_key_id = ?3, submitted_by_label = ?4 WHERE template_version_id = ?1 AND status = 'rejected'",
     ).bind(existing.template_version_id, JSON.stringify(text_defaults), request.submitted_by.key_id, request.submitted_by.label).run();
-    return certifyAndReport(env, { ...existing, sha256 }, { warnings, text_defaults, similarity: null });
+    return certifyAndReport(env, { ...existing, sha256 }, { warnings: importWarnings, text_defaults, similarity: null });
   }
   if (existing) {
     return result({
       status: "duplicate", template_version_id: existing.template_version_id, version: existing.version, sha256,
-      dashboard_url: dashboardUrl(env, existing.template_version_id), warnings,
+      dashboard_url: dashboardUrl(env, existing.template_version_id),
+      warnings: uniqueIssues([...warnings, ...(await readStoredWarnings(env.FACTORY, existing.template_version_id)).warnings]),
       next_step: `This exact build is already version ${existing.version} (${TEMPLATE_VERSION_REVIEW_STATUS[existing.status]}). Nothing was created.`,
     });
   }
@@ -184,8 +188,11 @@ export async function submitTemplate(env: Env, request: SubmitRequest): Promise<
   warnings.push(...report.issues.filter((issue) => issue.severity === "warning").map(toIssue));
   const similarity = await similarityCheck(env, files, undefined, request.template_id);
   const brief = { pass: similarity.pass, summary: similarity.summary, fixes: similarity.fixes };
-  if (errors.length > 0 || !similarity.pass) {
-    return result({ status: "rejected", sha256, warnings, similarity: brief, issues: [...errors, ...similarityIssues(similarity)], next_step: NEXT_REJECTED });
+  for (const issue of similarityIssues(similarity)) {
+    (ruleDisposition(issue.rule) === "block" ? errors : warnings).push(issue);
+  }
+  if (errors.length > 0) {
+    return result({ status: "rejected", sha256, warnings, similarity: brief, issues: errors, next_step: NEXT_REJECTED });
   }
 
   const imported = await importTemplateVersion(env.FACTORY, env.ARTIFACTS, zip, {
@@ -196,7 +203,7 @@ export async function submitTemplate(env: Env, request: SubmitRequest): Promise<
     submitted_by: request.submitted_by,
     text_defaults,
   });
-  return certifyAndReport(env, imported, { warnings, text_defaults, similarity: brief });
+  return certifyAndReport(env, imported, { warnings: importWarnings, text_defaults, similarity: brief });
 }
 
 // ── Published URL (primary path for bolt.new) ──────────────────────────────────

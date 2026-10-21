@@ -36,7 +36,7 @@ function outcome(def: CheckDef, issues: Issue[]): CheckOutcome {
 }
 
 export function runChecks(source: Source, options: CheckerOptions = {}): CheckResult {
-  const ctx: CheckContext = { source, denyDomains: [...(options.denyDomains ?? [])] };
+  const ctx: CheckContext = { source, denyDomains: [...(options.denyDomains ?? [])], denyIdentifiers: [...(options.denyIdentifiers ?? [])] };
   const checks = CHECKS.map((def) => outcome(def, def.run(ctx)));
   const errors = checks.reduce((n, c) => n + c.issues.filter((i) => i.severity === "error").length, 0);
   const warnings = checks.reduce((n, c) => n + c.issues.filter((i) => i.severity === "warning").length, 0);

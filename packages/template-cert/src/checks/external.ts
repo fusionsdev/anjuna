@@ -22,7 +22,7 @@ interface ExternalFinding {
   kind: string;
 }
 
-/** Classify an external URL as a Google Fonts warning or an error. */
+/** Report non-script resources as advisories; scripts have their own blocking policy id. */
 function classify(url: string, path: string, what: string, issues: (ReturnType<typeof err> | ReturnType<typeof warn>)[]): void {
   if (isGoogleFontsUrl(url)) {
     issues.push(
@@ -38,7 +38,7 @@ function classify(url: string, path: string, what: string, issues: (ReturnType<t
       err(
         "external",
         path,
-        `${what} loads from outside the site (${url}). A template must only use same-origin assets. Ship the file inside dist/ instead.`,
+        `${what} loads from outside the site (${url}). Prefer same-origin assets. Ship the file inside dist/ to avoid outside requests.`,
         `${what} โหลดจากภายนอก (${url}) template ต้องใช้ไฟล์ในโดเมนเดียวกันเท่านั้น กรุณาใส่ไฟล์ไว้ใน dist/ แทน`,
       ),
     );
@@ -74,7 +74,9 @@ export const external: Check = ({ source }) => {
 
     for (const s of root.querySelectorAll("script[src]")) {
       const src = (s.getAttribute("src") ?? "").trim();
-      if (src && isExternalUrl(src)) classify(src, path, "A <script>", issues);
+      if (src && isExternalUrl(src)) issues.push(err("external", path,
+        `A <script> loads from outside the site (${src}). Ship the script inside dist/ instead.`,
+        `สคริปต์โหลดจากภายนอก (${src}) กรุณาใส่สคริปต์ไว้ใน dist/`, "external-script"));
     }
 
     for (const s of root.querySelectorAll("script")) {
