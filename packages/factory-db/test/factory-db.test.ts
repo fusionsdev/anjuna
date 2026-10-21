@@ -63,6 +63,7 @@ describe("factory-db migrations", () => {
     expect(await userTables(env.DB)).toEqual(
       [
         "audit_log",
+        "brand_assets",
         "brand_revisions",
         "brands",
         "builder_key_usage",
@@ -101,6 +102,20 @@ describe("factory-db constraints", () => {
         NOW,
       ),
     ).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("holds one favicon and one logo per brand within the size and type checks", async () => {
+    const insert = (brand: string, kind: string, type: string, length: number) => run(
+      "INSERT INTO brand_assets (brand_id, kind, content_type, byte_length, sha256, body_base64, updated_by, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 'AAAA', 'u1', ?6)",
+      brand, kind, type, length, "d".repeat(64), NOW,
+    );
+    await insert("b1", "favicon", "image/png", 10);
+    await insert("b1", "logo", "image/svg+xml", 262144);
+    await expect(insert("b1", "logo", "image/png", 10)).rejects.toThrow(/UNIQUE constraint failed/);
+    await expect(insert("b1", "banner", "image/png", 10)).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insert("b1", "favicon", "image/gif", 10)).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insert("b1", "favicon", "image/png", 262145)).rejects.toThrow(/CHECK constraint failed/);
+    await expect(insert("missing", "favicon", "image/png", 10)).rejects.toThrow(/FOREIGN KEY/);
   });
 
   it("records one receipt per install step (idempotent re-runs)", async () => {

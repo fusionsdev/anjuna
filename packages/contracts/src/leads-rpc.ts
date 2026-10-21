@@ -13,6 +13,7 @@ import { z } from "zod";
 import { BrandId, Hostname, Zip5, OpaqueToken, ExperimentId, VariantId } from "./common.js";
 import { FormLeadPayload, LeadError, ZipResponse } from "./form-payload.js";
 import { AbConfig, AmountBuckets, FlowGateMode } from "./admin-api.js";
+import { BrandAssetBody, BrandAssetKind } from "./brand-assets.js";
 import { FormRoute, Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 
@@ -190,6 +191,13 @@ export const BrandSettingsResponse = z.strictObject({
 });
 export type BrandSettingsResponse = z.infer<typeof BrandSettingsResponse>;
 
+// --- brand assets ----------------------------------------------------------------------------
+/** The favicon or logo the panel stored for the brand. Core answers 404 when there is none. */
+export const BrandAssetRequest = z.strictObject({ brand_id: BrandId, kind: BrandAssetKind });
+export type BrandAssetRequest = z.infer<typeof BrandAssetRequest>;
+export const BrandAssetResponse = BrandAssetBody;
+export type BrandAssetResponse = z.infer<typeof BrandAssetResponse>;
+
 /**
  * Authenticated Worker context headers; the existing submitLead JSON shape is unchanged.
  * submitLead requires x-consent-brand = encodeURIComponent(configured display name).
@@ -216,6 +224,7 @@ export const LeadsRpc = {
   issueHandoff: { path: "/rpc/issueHandoff", request: IssueHandoffRequest, response: IssueHandoffResponse },
   verifyHandoff: { path: "/rpc/verifyHandoff", request: VerifyHandoffRequest, response: VerifyHandoffResponse },
   brandSettings: { path: "/rpc/brandSettings", request: BrandSettingsRequest, response: BrandSettingsResponse },
+  brandAsset: { path: "/rpc/brandAsset", request: BrandAssetRequest, response: BrandAssetResponse },
 } as const;
 export type LeadsRpcMethod = keyof typeof LeadsRpc;
 export type LeadsRpcRequest<M extends LeadsRpcMethod> = z.input<(typeof LeadsRpc)[M]["request"]>;
