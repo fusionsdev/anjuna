@@ -4,9 +4,12 @@ import {
   VerifySoldLeadResponse,
   RuntimeListResponse,
   PrepopBase,
-  cleanKeyword,
+  BrandDraftKeyword,
   BrandId,
   BrandName,
+  BrandProfile,
+  UpdateBrandDraftRequest,
+  type UpdateBrandDraftResponse,
   isBrandClean,
   withTextDefaults,
   LifecycleBrandSummary,
@@ -42,8 +45,9 @@ const Artifact = z.strictObject({
 });
 const Draft = z.strictObject({
   domain: z.string().min(1).max(253).transform((value) => value.toLowerCase().replace(/\.$/, "")).refine((value) => !value.startsWith("www."), "Use the apex domain, not a www hostname").refine((value) => /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/.test(value), "Must be a valid apex domain"),
-  keyword_default: z.string().min(1).max(60).transform(cleanKeyword).refine((value) => Boolean(value), "Keyword is empty after normalization"), template_version_id: Id,
+  keyword_default: BrandDraftKeyword, template_version_id: Id,
   name: BrandName.optional(),
+  profile: BrandProfile.optional(),
 });
 // Absent form_artifact_id keeps the form the brand runs.
 const Redeploy = z.strictObject({ form_artifact_id: Id.optional() });
@@ -128,7 +132,7 @@ async function dispatch(
 async function createDraft(request: Request, env: Env, ctx: AdminRequestContext): Promise<Response> {
   const parsed = Draft.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
-  const { domain, keyword_default, template_version_id } = parsed.data;
+  const { domain, keyword_default, template_version_id, profile } = parsed.data;
   const name = parsed.data.name ?? domain.split(".")[0]!.replaceAll("-", " ");
   if (parsed.data.name === undefined && (!isBrandClean(name) || name.length > 60)) {
     const message = isBrandClean(name) ? "ชื่อแบรนด์ที่สร้างจากโดเมนยาวเกิน 60 ตัวอักษร กรุณาระบุชื่อแบรนด์" : "ชื่อแบรนด์มีคำที่ไม่อนุญาต";
@@ -146,7 +150,7 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
   const brandId = `brand_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const revisionId = `${brandId}_rev_1`;
   const now = new Date().toISOString();
-  const config = withTextDefaults(JSON.stringify({ keyword_default }), template.text_defaults_json);
+  const config = withTextDefaults(JSON.stringify({ keyword_default, ...(profile ? { profile } : {}) }), template.text_defaults_json);
   try { await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, name, defaults.account, domain, keyword_default, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,1,?3,?4,?5,?6,?7)").bind(revisionId, brandId, template_version_id, artifact.form_artifact_id, config, ctx.actor_id, now),
@@ -156,6 +160,90 @@ async function createDraft(request: Request, env: Env, ctx: AdminRequestContext)
     throw error;
   }
   return json(201, { brand: { brand_id: brandId, name, domain, keyword_default, status: "draft" }, revision: { revision_id: revisionId, revision: 1, template_version_id, form_artifact_id: artifact.form_artifact_id } });
+}
+
+// Every statement of the draft edit batch carries this gate, so a draft that an install claimed, or that another edit
+// changed, since the read is left untouched. ?1 brand, ?2 revision, ?3 its template version, ?4 its config_json as read.
+const DRAFT_EDIT_GATE = `EXISTS (
+    SELECT 1 FROM brands b JOIN brand_revisions r ON r.brand_id = b.brand_id
+    WHERE b.brand_id = ?1 AND b.status IN ('draft','failed') AND r.revision_id = ?2 AND r.template_version_id = ?3 AND r.config_json = ?4)
+  AND NOT EXISTS (SELECT 1 FROM installs WHERE brand_id = ?1 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running'))`;
+const PROFILE_GROUPS = ["contact", "disclosures", "ads"] as const;
+
+/** The profile stored on a revision's config_json. Undefined when absent or not a valid profile. */
+function storedProfile(configJson: string): BrandProfile | undefined {
+  try {
+    const parsed = BrandProfile.safeParse((JSON.parse(configJson) as { profile?: unknown } | null)?.profile);
+    return parsed.success ? parsed.data : undefined;
+  } catch { return undefined; }
+}
+
+type ActiveOperation = { install_id: string; kind: string; status: string };
+const operationActive = (active: ActiveOperation): Response =>
+  json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
+
+async function updateDraft(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
+  const parsed = UpdateBrandDraftRequest.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
+  const body = parsed.data;
+  const brand = await env.FACTORY.prepare("SELECT brand_id,name,domain,keyword_default,status FROM brands WHERE brand_id = ?1").bind(brandId)
+    .first<{ brand_id: string; name: string; domain: string; keyword_default: string | null; status: string }>();
+  if (!brand) return json(404, { error: "not_found", resource: "brand" });
+  if (brand.status !== "draft" && brand.status !== "failed") return json(409, { error: "conflict", message: "Only draft or failed brands can be edited" });
+  const active = await activeLifecycleOperation(env.FACTORY, brandId);
+  if (active) return operationActive(active);
+  const revision = await env.FACTORY.prepare("SELECT revision_id,revision,template_version_id,form_artifact_id,config_json FROM brand_revisions WHERE brand_id = ?1 ORDER BY revision DESC LIMIT 1").bind(brandId)
+    .first<{ revision_id: string; revision: number; template_version_id: string; form_artifact_id: string; config_json: string }>();
+  if (!revision) return json(422, { error: "revision_missing" });
+
+  // Only keyword_default, text_defaults and profile are touched in config_json; every other key stays as stored.
+  let config = JSON.parse(revision.config_json) as Record<string, unknown>;
+  let templateVersionId = revision.template_version_id;
+  const templateChanged = body.template_version_id !== undefined && body.template_version_id !== revision.template_version_id;
+  if (templateChanged) {
+    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+      .bind(body.template_version_id).first<{ template_version_id: string; text_defaults_json: string | null }>();
+    if (!template) return json(422, { error: "template_not_sealed" });
+    templateVersionId = template.template_version_id;
+    config = JSON.parse(withTextDefaults(JSON.stringify(config), template.text_defaults_json)) as Record<string, unknown>;
+  }
+  if (body.keyword_default !== undefined) config.keyword_default = body.keyword_default;
+  const before = storedProfile(revision.config_json);
+  if (body.profile !== undefined) config.profile = body.profile;
+
+  // Key names only: the audit row never carries the contact or disclosure text itself.
+  const changed: string[] = [];
+  if (body.name !== undefined && body.name !== brand.name) changed.push("name");
+  if (body.keyword_default !== undefined && body.keyword_default !== brand.keyword_default) changed.push("keyword_default");
+  if (templateChanged) changed.push("template_version_id");
+  if (body.profile !== undefined) {
+    for (const group of PROFILE_GROUPS) if (JSON.stringify(body.profile[group] ?? null) !== JSON.stringify(before?.[group] ?? null)) changed.push(`profile.${group}`);
+  }
+
+  const name = body.name ?? brand.name;
+  const keywordDefault = body.keyword_default ?? brand.keyword_default;
+  if (changed.length > 0) {
+    const now = new Date().toISOString();
+    const gate = [brandId, revision.revision_id, revision.template_version_id, revision.config_json] as const;
+    const [claim] = await env.FACTORY.batch([
+      env.FACTORY.prepare(`UPDATE brands SET name = ?5, keyword_default = ?6, updated_at = ?7 WHERE brand_id = ?1 AND ${DRAFT_EDIT_GATE}`).bind(...gate, name, keywordDefault, now),
+      env.FACTORY.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,after_json,created_at)
+        SELECT ?5,?6,'brand.draft_update','brand',?1,?7,?8 WHERE ${DRAFT_EDIT_GATE}`).bind(...gate, ctx.actor_id, ctx.actor_role, JSON.stringify({ changed }), now),
+      env.FACTORY.prepare(`UPDATE brand_revisions SET template_version_id = ?5, config_json = ?6 WHERE revision_id = ?2 AND ${DRAFT_EDIT_GATE}`).bind(...gate, templateVersionId, JSON.stringify(config)),
+    ]);
+    if (claim!.meta.changes !== 1) {
+      const raced = await activeLifecycleOperation(env.FACTORY, brandId);
+      if (raced) return operationActive(raced);
+      return json(409, { error: "conflict", message: "The draft changed or was installed while saving; reload and try again" });
+    }
+  }
+  const profile = storedProfile(JSON.stringify(config));
+  return json(200, {
+    brand: { brand_id: brand.brand_id, name, domain: brand.domain, keyword_default: keywordDefault, status: brand.status },
+    revision: { revision_id: revision.revision_id, revision: revision.revision, template_version_id: templateVersionId, form_artifact_id: revision.form_artifact_id },
+    ...(profile ? { profile } : {}),
+    changed,
+  } satisfies UpdateBrandDraftResponse);
 }
 
 async function startInstall(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
@@ -442,6 +530,12 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   if (path === "/api/brands/drafts" && method === "POST") {
     const g = authorizePanel("createBrand", ctx.actor_role); return g.ok ? createDraft(request, env, ctx) : forbidden(ctx.actor_role);
   }
+  m = path.match(/^\/api\/brands\/([^/]+)\/draft$/);
+  if (m && method === "PATCH") {
+    const g = authorizePanel("createBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
+    return updateDraft(request, env, ctx, brandId);
+  }
   if ((path === "/api/lifecycle/brands" || path === "/api/brands/lifecycle") && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     return json(200, await lifecycleBrandRows(env, ctx));
@@ -451,7 +545,12 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const result = await lifecycleBrandRows(env, ctx);
     const row = result.brands.find((candidate) => candidate.brand_id === m![1]);
-    return row ? json(200, { brand: row, core_error: result.core_error }) : result.core_error
+    if (row) {
+      const latest = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id = ?1 ORDER BY revision DESC LIMIT 1").bind(row.brand_id).first<{ config_json: string }>();
+      const profile = latest ? storedProfile(latest.config_json) : undefined;
+      return json(200, { brand: profile ? { ...row, profile } : row, core_error: result.core_error });
+    }
+    return result.core_error
       ? json(502, { error: "core_list_failed", code: result.core_error.code, message: result.core_error.message })
       : json(404, { error: "not_found", resource: "brand" });
   }
