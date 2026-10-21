@@ -7,7 +7,7 @@ import {
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
 import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, stepErrorText } from "../receipt.js";
-import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
+import { CoreLifecycleClient } from "../core-lifecycle-client.js";
 import {
   LOCAL_STEP_RETRY_CONFIG, REMOTE_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, failFast, instanceState, receiptInRetriedStep, stepReceipt,
 } from "../step-receipt.js";
@@ -181,7 +181,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       const { render_r2_key } = await step.do("render", LOCAL_STEP_RETRY_CONFIG, async (ctx) => {
         return stepReceipt(db, install_id, "render", LOCAL_STEP_RETRY_CONFIG, ctx, async () => {
           const revision = await db
-            .prepare("SELECT template_version_id, form_artifact_id FROM brand_revisions WHERE revision_id = ?")
+            .prepare("SELECT template_version_id, form_artifact_id, config_json FROM brand_revisions WHERE revision_id = ?")
             .bind(revision_id)
             .first<RevisionRow>();
           if (!revision) throw new NonRetryableError(`Revision ${revision_id} not found`);
@@ -199,7 +199,11 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             readZipFromR2(ARTIFACTS, fa.r2_key),
           ]);
 
-          const { files } = await settleOnFailure(() => renderBrand(templateFiles, formFiles, brand_id, revision_id));
+          // Legal pages print the draft profile and the public brand name (profile.copy.brand_name, else brands.name).
+          const { files } = await settleOnFailure(() => {
+            const profile = (JSON.parse(revision.config_json) as { profile?: BrandProfile }).profile;
+            return renderBrand(templateFiles, formFiles, brand_id, revision_id, { brand_name: profile?.copy?.brand_name ?? name, profile });
+          });
           const key = await writeRenderToR2(ARTIFACTS, brand_id, revision_id, files);
           return { render_r2_key: key };
         });
@@ -363,8 +367,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
 
       // ── Step 9: Sync runtime ───────────────────────────────────────────────
       // Runs on every install. A live brand's install applies the new revision to Core here (a first install did that in
-      // provision_runtime). A first install copies the draft's ads routing into Core, and every install makes sure the brand
-      // has its own listmonk list. Re-run: Core answers a repeated install_id with a noop (workers/core/src/lifecycle.ts,
+      // provision_runtime). A first install copies the draft's ads routing into Core, and every install tries to give the
+      // brand its own listmonk list. Re-run: Core answers a repeated install_id with a noop (workers/core/src/lifecycle.ts,
       // applyRuntime), writes ads routing only into NULL columns, and answers a stored list id without calling listmonk.
       await step.do("sync_runtime", REMOTE_STEP_RETRY_CONFIG, async (ctx) => stepReceipt(db, install_id, "sync_runtime", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
         const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
@@ -382,16 +386,20 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
         // cleared on purpose must stay clear through a later redeploy or upgrade.
         const ads = previous_revision_id ? null : await draftAds(db, revision_id);
         const ads_routing = ads ? await client.adsRouting({ install_id, brand_id, account, ads }) : undefined;
-        let mailing_list: InstallMailingListResponse;
+        // Mailing never blocks go-live and leads never depend on it. A failed list call leaves listmonk_list_id NULL, so the
+        // cron keeps sending this brand's leads to the tenant list (LISTMONK_LIST_MAP); the step ends ok with a warning and
+        // the next install of the brand tries again. One attempt per step run: no retry delays the install.
+        let mailing_list: InstallMailingListResponse | { state: "fallback"; list_id: null };
+        let warning: string | undefined;
         try {
           // listmonk may answer slower than Core's own 3 s budget: two calls (find, then create).
           mailing_list = await new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN, 15_000)
             .mailingList({ install_id, brand_id, account });
         } catch (err) {
-          if (err instanceof CoreLifecycleError) throw new CoreLifecycleError(`Mailing list: ${err.message}`, err.deterministic);
-          throw err;
+          mailing_list = { state: "fallback", list_id: null };
+          warning = `Mailing list: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
         }
-        return { ...result, ...(ads_routing ? { ads_routing } : {}), mailing_list };
+        return { ...result, ...(ads_routing ? { ads_routing } : {}), mailing_list, ...(warning ? { warning } : {}) };
       }));
 
       // ── Step 10: Receipt ────────────────────────────────────────────────────

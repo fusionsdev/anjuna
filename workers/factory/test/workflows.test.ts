@@ -1029,6 +1029,36 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       expect(f.applied).toHaveLength(1);
     });
 
+    it("render fills the legal pages from the revision profile and the public brand name", async () => {
+      const f = await fixture();
+      const enc = new TextEncoder();
+      await env.ARTIFACTS.put(`${f.id}/site.zip`, zip(new Map([
+        ["index.html", enc.encode('<h1 class="brand-logo">Example</h1>')],
+        ["terms/index.html", enc.encode('<p><span data-legal="brand_name">x</span> <span data-legal="contact.phone">x</span> <span data-legal="disclosures.apr_max">x</span></p>')],
+      ])));
+      await env.FACTORY.prepare("UPDATE brand_revisions SET config_json=? WHERE revision_id=?").bind(JSON.stringify({
+        profile: { contact: { phone: "+1 555 0100" }, disclosures: { apr_max: 35.99 }, copy: { brand_name: "Harbor Funding" } },
+      }), f.revision).run();
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      const rendered = unzip(new Uint8Array(await (await env.ARTIFACTS.get(`renders/${f.brand}/${f.revision}.zip`))!.arrayBuffer()));
+      const terms = DEC.decode([...rendered].find(([path]) => /terms\/index\.html$/.test(path))![1]);
+      expect(terms).toContain(">Harbor Funding<");
+      expect(terms).toContain(">+1 555 0100<");
+      expect(terms).toContain(">35.99%<");
+    });
+
+    it("render falls back to the brand name when the profile has no copy.brand_name", async () => {
+      const f = await fixture();
+      await env.ARTIFACTS.put(`${f.id}/site.zip`, zip(new Map([
+        ["index.html", new TextEncoder().encode('<h1 class="brand-logo">Example</h1>')],
+        ["terms/index.html", new TextEncoder().encode('<p><span data-legal="brand_name">x</span></p>')],
+      ])));
+      await runInstall(f);
+      const rendered = unzip(new Uint8Array(await (await env.ARTIFACTS.get(`renders/${f.brand}/${f.revision}.zip`))!.arrayBuffer()));
+      expect(DEC.decode([...rendered].find(([path]) => /terms\/index\.html$/.test(path))![1])).toContain(">Example<");
+    });
+
     it("a first install without profile.ads makes no ads routing call", async () => {
       const f = await fixture();
       await runInstall(f);
@@ -1052,26 +1082,51 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
       expect((await syncReceipt(f.install))!.output).toMatchObject({ state: "applied", applied_revision_id: next, mailing_list: { state: "created", list_id: 900 } });
     });
 
-    it("a listmonk failure fails sync_runtime with a clear message after its retries and queues the rollback", async () => {
+    it("a listmonk failure never blocks go-live: the install finishes with a warning and the tenant list fallback", async () => {
       const f = await fixture();
-      f.settings.listHttp.push(...Array(REMOTE_STEP_RETRY_CONFIG.retries.limit + 1).fill(502));
-      await runInstall(f);
-      expect(await f.installRow()).toEqual({ status: "failed" });
-      expect(await syncReceipt(f.install)).toEqual({ status: "failed", output: { error: "Mailing list: listmonk list was not created: listmonk POST list failed: 502 (502)" } });
-      expect(f.listCalls).toHaveLength(REMOTE_STEP_RETRY_CONFIG.retries.limit + 1);
-      expect(f.compensation).toHaveLength(1);
-      expect(await env.FACTORY.prepare("SELECT error FROM installs WHERE install_id=?").bind(f.install).first())
-        .toEqual({ error: "Error: Mailing list: listmonk list was not created: listmonk POST list failed: 502 (502)" });
-    });
-
-    it("a transient listmonk failure retries the step and the brand gets exactly one list", async () => {
-      const f = await fixture();
+      await withProfile(f);
       f.settings.listHttp.push(502);
       const s = steps();
       await runInstall(f, s);
       expect(await f.installRow()).toEqual({ status: "ready" });
-      expect(s.attempts.get("sync_runtime")).toBe(2);
-      expect((await syncReceipt(f.install))!.output).toMatchObject({ mailing_list: { state: "created", list_id: 900 } });
+      expect(await f.brandRow()).toEqual({ status: "live", current_revision_id: f.revision });
+      // One attempt, no step retry, no rollback.
+      expect(s.attempts.get("sync_runtime")).toBe(1);
+      expect(f.listCalls).toHaveLength(1);
+      expect(f.compensation).toHaveLength(0);
+      expect(await syncReceipt(f.install)).toEqual({ status: "ok", output: {
+        ads_routing: { copied: ["google_ads_account", "google_conversion_action", "adkit_project"], kept: [] },
+        mailing_list: { state: "fallback", list_id: null },
+        warning: "Mailing list: listmonk list was not created: listmonk POST list failed: 502 (502)",
+      } });
+      expect(f.adsRouted).toHaveLength(1);
+
+      // The next install of the brand (a redeploy) tries again and creates the list.
+      const next = `redeploy-${f.id}`;
+      const again = `install-again-${f.id}`;
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) SELECT ?,brand_id,2,template_version_id,form_artifact_id,config_json,'owner',? FROM brand_revisions WHERE revision_id=?")
+        .bind(next, now, f.revision).run();
+      await env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,from_revision_id,to_revision_id,status,started_by,started_at) VALUES (?,?,'upgrade',?,?,'queued','owner',?)")
+        .bind(again, f.brand, f.revision, next, now).run();
+      await runInstall({ ...f, params: { install_id: again, brand_id: f.brand, revision_id: next } });
+      expect(await env.FACTORY.prepare("SELECT status FROM installs WHERE install_id=?").bind(again).first()).toEqual({ status: "ready" });
+      expect(await syncReceipt(again)).toMatchObject({ status: "ok", output: { mailing_list: { state: "created", list_id: 900 } } });
+      expect((await syncReceipt(again))!.output).not.toHaveProperty("warning");
+      expect(f.listCalls).toHaveLength(2);
+      // An upgrade never copies ads routing.
+      expect(f.adsRouted).toHaveLength(1);
+    });
+
+    it("a mailing-list transport failure is a warning too", async () => {
+      const f = await fixture();
+      const real = f.bindings.CORE_LIFECYCLE as unknown as { fetch(request: Request): Promise<Response> };
+      (f.bindings as unknown as { CORE_LIFECYCLE: unknown }).CORE_LIFECYCLE = { fetch: async (request: Request) => {
+        if (new URL(request.url).pathname.endsWith("/mailing-list")) throw new Error("socket closed");
+        return real.fetch(request);
+      } };
+      await runInstall(f);
+      expect(await f.installRow()).toEqual({ status: "ready" });
+      expect((await syncReceipt(f.install))!.output).toMatchObject({ mailing_list: { state: "fallback", list_id: null }, warning: "Mailing list: Core lifecycle request failed (503)" });
     });
 
     it("a re-run of sync_runtime after its work succeeded finds the stored list and adds none", async () => {
