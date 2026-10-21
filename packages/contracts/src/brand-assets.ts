@@ -50,6 +50,13 @@ export const BrandAssetBody = z.strictObject({
 });
 export type BrandAssetBody = z.infer<typeof BrandAssetBody>;
 
+/** The contracts build has no DOM or Node types (see lifecycle.ts), so the few web globals used here are described by hand. */
+const web = globalThis as unknown as {
+  TextDecoder: new (label: "utf-8", options: { fatal: boolean; ignoreBOM: boolean }) => { decode(bytes: Uint8Array): string };
+  btoa(data: string): string;
+  atob(data: string): string;
+};
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const startsWith = (bytes: Uint8Array, prefix: number[]) => bytes.length >= prefix.length && prefix.every((value, index) => bytes[index] === value);
 
@@ -87,7 +94,7 @@ export function checkBrandAssetBytes(kind: BrandAssetKind, bytes: Uint8Array): B
   if (startsWith(bytes, [0x00, 0x00, 0x01, 0x00]) && bytes.length >= 6 && (bytes[4]! | (bytes[5]! << 8)) > 0) return { ok: true, content_type: "image/x-icon" };
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes).trimStart();
+    text = new web.TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes).trimStart();
   } catch {
     return { ok: false, code: "unsupported_type", message: "Use a PNG, SVG or ICO file." };
   }
@@ -115,11 +122,11 @@ export function brandInitialSvg(name: string): string {
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
+  return web.btoa(binary);
 }
 
 export function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(base64);
+  const binary = web.atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
