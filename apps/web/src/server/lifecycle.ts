@@ -16,10 +16,12 @@ import {
   type CoreListError,
   type CoreListErrorCode,
   type InstallOperation,
+  type GetBrandResponse,
 } from "@anjuna/contracts";
 import { z } from "zod";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
+import { callCore } from "./core.js";
 import { authorizePanel } from "./panel-roles.js";
 import { queueInstallRetry } from "./retry-install.js";
 import { latestUpgrade } from "./upgrade-outcomes.js";
@@ -335,6 +337,23 @@ async function checklist(request: Request, env: Env, ctx: AdminRequestContext, b
   return json(200, { brand_id: brandId, item, evidence });
 }
 
+const GLOBAL_POSTBACK_ACTOR = "system:global-postback";
+
+/** The tenant postback token covers a brand with no token of its own, so LeadsGate needs no entry for it. Computed per read, never stored. */
+async function globalPostbackRow(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Record<string, unknown> | null> {
+  if (!BrandId.safeParse(brandId).success) return null;
+  try {
+    const result = await callCore(env, ctx, { endpoint: "getBrand", params: { id: brandId } });
+    if (result.status !== 200 || (result.body as GetBrandResponse).brand.postback_token !== "global") return null;
+  } catch { return null; }
+  const at = new Date().toISOString();
+  return {
+    item: "leadsgate_postbacks",
+    evidence: { brand_id: brandId, item: "leadsgate_postbacks", actor_id: GLOBAL_POSTBACK_ACTOR, verified_at: at },
+    confirmed_by: GLOBAL_POSTBACK_ACTOR, confirmed_role: "system", confirmed_at: at,
+  };
+}
+
 type FactoryBrandRow = Record<string, unknown> & { brand_id: string; account: string; current_revision_id: string | null };
 
 class CoreListFailure extends Error {
@@ -482,7 +501,13 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
     const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all();
-    return json(200, { brand_id: brandId, checklist: results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined })) });
+    const rows: Array<Record<string, unknown>> = results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined }));
+    const computed = rows.some((r) => r.item === "leadsgate_postbacks") ? null : await globalPostbackRow(env, ctx, brandId);
+    if (computed) {
+      rows.push(computed);
+      rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
+    }
+    return json(200, { brand_id: brandId, checklist: rows });
   }
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {
