@@ -69,7 +69,7 @@
     "BETTER_AUTH_URL": "https://app.aduplift.ai",
     "MOCK_CORE": "0",
     "DEFAULT_ACCOUNT": "aduplift",
-    "DEFAULT_AID": "10001",
+    "DEFAULT_AID": "13119",
     "DEFAULT_PREPOP_BASE": "/apply",
     "DEFAULT_FORM_ROUTE": "/request",
     "DEFAULT_AMOUNT_BUCKETS": "[350,500,750,1000,1500,1750,2000,3000,3250,4500,5000]",

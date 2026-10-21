@@ -15,4 +15,12 @@ describe("owner-reviewed factory tenant bindings (no deployment)", () => {
     expect(config.services[0].entrypoint).toBe("FactoryLifecycleService");
     expect(config.compatibility_flags).toContain("global_fetch_strictly_public");
   });
+
+  // Each tenant is its own LeadsGate account; a wrong default aid sends every new brand's leads elsewhere.
+  it.each([[aduplift, "13119"], [maimax, "17244"]] as const)("uses the real LeadsGate aid for $name in factory and panel", (tenant, aid) => {
+    expect(tenant.leadsGateAid).toBe(aid);
+    const web = JSON.parse(readFileSync(new URL(`../../apps/web/wrangler.deploy.${tenant.name}.jsonc`, import.meta.url), "utf8")
+      .replace(/^\s*\/\/.*$/gm, ""));
+    expect(web.vars.DEFAULT_AID).toBe(aid);
+  });
 });
