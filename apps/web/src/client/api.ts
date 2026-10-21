@@ -1,10 +1,13 @@
-import { BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
+import { BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, UpdateBrandDraftResponse } from "@anjuna/contracts";
+import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
 import type {
   AdminRole,
   AlertsReportResponse,
   AuditEntry,
   BrandConfig,
   BrandPatchRequest,
+  BrandProfile,
+  UpdateBrandDraftRequest,
   BrandPatchResponse,
   BrandStatusChangeResponse,
   BrandSummary,
@@ -107,8 +110,13 @@ export const api = {
   setRole: (id: string, role: AdminRole) => request<unknown>("PATCH", `/api/users/${encodeURIComponent(id)}`, { role }),
   lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[]; core_error?: CoreListError | null }>("GET", "/api/lifecycle/brands"),
   lifecycleBrand: (id: string) => request<{ brand: LifecycleBrandSummary }>("GET", `/api/lifecycle/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
-  createDraft: (body: Omit<CreateBrandDraftRequest, "brand_id" | "account" | "hostname"> & { domain: string; keyword_default: string; template_version_id: string; name?: string }) =>
-    request<{ brand: { brand_id: string }; revision: { revision_id: string } }>("POST", "/api/brands/drafts", body),
+  createDraft: (body: Omit<CreateBrandDraftRequest, "brand_id" | "account" | "hostname"> & { domain: string; keyword_default: string; template_version_id: string; name?: string; profile?: BrandProfile }) =>
+    request<unknown>("POST", "/api/brands/drafts", body).then((result) => WizardDraft.parse({ ...(result as object), ...(body.profile ? { profile: body.profile } : {}) })),
+  updateDraft: (brandId: string, body: UpdateBrandDraftRequest) => request<unknown>("PATCH", `/api/brands/${encodeURIComponent(brandId)}/draft`, body).then((result) => UpdateBrandDraftResponse.parse(result)),
+  wizardDraft: (brandId: string) => request<unknown>("GET", `/api/wizard/drafts/${encodeURIComponent(brandId)}`).then((result) => WizardDraft.parse(result)),
+  wizardDefaults: () => request<unknown>("GET", "/api/wizard/defaults").then((result) => WizardDefaultsResponse.parse(result)),
+  zoneCheck: (domain: string, brandId?: string) => request<unknown>("POST", "/api/wizard/zone-check", { domain, ...(brandId ? { brand_id: brandId } : {}) }).then((result) => ZoneCheckResponse.parse(result)),
+  duplicateBrand: (brandId: string, body: DuplicateBrandRequest) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/duplicate`, body).then((result) => DuplicateBrandResponse.parse(result)),
   install: (brandId: string, revisionId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/install`, revisionId ? { revision_id: revisionId } : {}),
   rollbackLifecycle: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/rollback`, {}),
   redeploy: (brandId: string, formArtifactId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/redeploy`, formArtifactId ? { form_artifact_id: formArtifactId } : {}),

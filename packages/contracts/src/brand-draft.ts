@@ -7,7 +7,7 @@ import { z } from "zod";
 import { isBrandClean, BrandName } from "./common.js";
 import { AdkitProject, GoogleAdsAccount, GoogleConversionAction } from "./admin-api.js";
 import { cleanKeyword } from "./runtime-config.js";
-import { SiteBrandName, SiteDescription, SiteTitle, siteTextValue } from "./site-text.js";
+import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { TEMPLATE_RULES } from "./template.js";
 import { V1_UNSUPPORTED_STATES } from "./v1.js";
 
@@ -81,21 +81,22 @@ const Ads = z.strictObject({
   microsoft_ads_account: z.string().regex(/^\d{6,12}$/, "Invalid microsoft_ads_account").optional(),
 });
 
-/** Limits of the optional page copy that the site-text contract does not cover. */
-export const COPY_LIMITS = { h1: 100, cta: 40, sub: 200 } as const;
+/** Storage cap of the optional h1, cta and sub strings. Their copy rules (limits, the {{keyword}} marker) belong to the copy validator. */
+export const COPY_TEXT_MAX = 200;
 
 /**
  * Page copy typed at draft time. brand_name, site_title and site_description are the runtime site-text
  * fields under the same names and validators. A missing key means the template default.
- * h1, cta and sub are optional extra copy for the copy step (and the copy assistant) to fill.
+ * h1, cta and sub are optional plain one-line strings for the copy step (and the copy assistant) to fill:
+ * stored as typed, a {{keyword}} marker included. This schema only keeps them safe to store.
  */
 const Copy = z.strictObject({
   brand_name: SiteBrandName.optional(),
   site_title: SiteTitle.optional(),
   site_description: SiteDescription.optional(),
-  h1: siteTextValue(COPY_LIMITS.h1).optional(),
-  cta: siteTextValue(COPY_LIMITS.cta).optional(),
-  sub: siteTextValue(COPY_LIMITS.sub).optional(),
+  h1: profileText(COPY_TEXT_MAX).optional(),
+  cta: profileText(COPY_TEXT_MAX).optional(),
+  sub: profileText(COPY_TEXT_MAX).optional(),
 });
 
 /** Every group is optional: a draft may carry any subset. */

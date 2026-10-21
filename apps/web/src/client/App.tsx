@@ -10,11 +10,12 @@ import { BuilderKeysScreen } from "./screens/BuilderKeys";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
 
-type View = "brands" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
+type View = "brands" | "new-brand" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [wizardRequest, setWizardRequest] = useState(0);
   const [view, setView] = useState<View>(() => (window.location.hash.startsWith("#templates") ? "templates" : "brands"));
 
   const refresh = useCallback(async () => {
@@ -40,6 +41,7 @@ export function App() {
 
   const nav: { id: View; label: string; show: boolean }[] = [
     { id: "brands", label: "แบรนด์ (Brands)", show: true },
+    { id: "new-brand", label: "แบรนด์ใหม่ (New brand)", show: true },
     { id: "templates", label: "เทมเพลต (Templates)", show: true },
     { id: "funnel", label: "รายงานฟันเนล (Funnel)", show: true },
     { id: "alerts", label: "การแจ้งเตือน (Alerts)", show: true },
@@ -57,7 +59,7 @@ export function App() {
           {nav
             .filter((n) => n.show)
             .map((n) => (
-              <button key={n.id} className={view === n.id ? "nav active" : "nav"} onClick={() => setView(n.id)}>
+              <button key={n.id} className={view === n.id ? "nav active" : "nav"} onClick={() => { if (n.id === "new-brand") { setView("brands"); setWizardRequest((count) => count + 1); } else setView(n.id); }}>
                 {n.label}
               </button>
             ))}
@@ -77,7 +79,7 @@ export function App() {
         </div>
       </aside>
       <main className="content">
-        {view === "brands" && <BrandLifecycle me={me} />}
+        {view === "brands" && <BrandLifecycle me={me} wizardRequest={wizardRequest} />}
         {view === "templates" && <TemplatesScreen me={me} />}
         {view === "builder-keys" && <BuilderKeysScreen me={me} />}
         {view === "funnel" && <FunnelScreen />}

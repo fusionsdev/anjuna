@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BRAND_NAME_PATTERN, LifecycleBrandSummary, type BrandConfig, type InstallWithReceipts } from "@anjuna/contracts";
+import { LifecycleBrandSummary, type BrandConfig, type InstallWithReceipts } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
@@ -34,11 +34,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const lastBody = (path: string) => requests.filter((r) => r.path === path && r.method === "PATCH").at(-1)?.body;
 const history = (installs: unknown[]) => routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
 const detail = (install: InstallWithReceipts) => routes.set(`GET /api/installs/${install.install_id}`, () => json(install));
-const nameLabel = "ชื่อแบรนด์ (Brand name)";
-const domainLabel = "โดเมน (Domain)";
-const keywordLabel = "คีย์เวิร์ด (Keyword)";
-const templateLabel = "เวอร์ชันเทมเพลต (Sealed template version)";
-const createDraftName = "สร้างแบรนด์ (Create draft)";
 const installName = "ติดตั้ง (Install)";
 const rollbackName = "ย้อนกลับ (Rollback)";
 const retryName = "ลองใหม่ (Retry)";
@@ -70,7 +65,6 @@ beforeEach(() => {
   requests = [];
   routes = new Map<string, Handler>([
     ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
-    ["GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-1", name: "Starter", version: 1, status: "sealed" }] })],
     ["GET /api/lifecycle/brands", () => json({ brands: lifecycleRows })],
     ["GET /api/brands", () => json({ brands: runtimeAvailable ? [{
       brand_id: config.brand_id, hostnames: config.hostnames, status: config.status,
@@ -121,158 +115,10 @@ describe("mounted lifecycle UI with API responses", () => {
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
   });
 
-  it("lets an Employee choose a sealed template, create a draft and start Install", async () => {
-    lifecycleRows = [];
-    runtimeAvailable = false;
-    routes.set("POST /api/brands/drafts", () => {
-      lifecycleRows = [{ ...brand, status: "draft", current_revision_id: "rev-new" }];
-      return json({ brand: { brand_id: "brand-a" }, revision: { revision_id: "rev-new" } }, 201);
-    });
-    routes.set("POST /api/brands/brand-a/install", () => json({ install_id: "new-install" }, 201));
-    detail({ ...failed, install_id: "new-install", revision_id: "rev-new", status: "running", runtime_sync_status: "running" });
-    render(<BrandLifecycle me={employee} />);
-    const select = screen.getByRole("combobox", { name: templateLabel });
-    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
-    expect(within(select).getAllByRole("option")).toHaveLength(2);
-    expect(screen.queryByRole("textbox", { name: templateLabel })).toBeNull();
-    fireEvent.change(screen.getByRole("textbox", { name: nameLabel }), { target: { value: "New Brand" } });
-    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "new-brand.test" } });
-    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
-    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(select, { target: { value: "tv-1" } });
-    fireEvent.click(screen.getByRole("button", { name: createDraftName }));
-    fireEvent.click(await screen.findByRole("button", { name: installName }));
-    expect((await screen.findAllByText("new-install", { selector: "code" })).length).toBeGreaterThan(0);
-    expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ name: "New Brand", domain: "new-brand.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
-    expect(requests.find((r) => r.path === "/api/brands/brand-a/install")?.body).toEqual({ revision_id: "rev-new" });
-    expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
-    expect(screen.queryByRole("heading", { name: /Upgrade-all/ })).toBeNull();
-  });
-
-  it("offers exactly one create button and requires a brand name before submitting", async () => {
-    routes.set("POST /api/brands/drafts", () => json({ brand: { brand_id: "brand-a" }, revision: { revision_id: "rev-new" } }, 201));
-    render(<BrandLifecycle me={employee} />);
-    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
-    expect(screen.getAllByRole("button", { name: /Create draft/ })).toHaveLength(1);
-    const create = screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement;
-    const name = screen.getByRole("textbox", { name: nameLabel }) as HTMLInputElement;
-    expect(name.required).toBe(true);
-    expect(name.maxLength).toBe(60);
-    expect(name.placeholder).toBe("Level Lending");
-    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "maple.test" } });
-    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
-    fireEvent.change(screen.getByRole("combobox", { name: templateLabel }), { target: { value: "tv-1" } });
-    expect(create.disabled).toBe(true);
-    fireEvent.change(name, { target: { value: "   " } });
-    expect(create.disabled).toBe(true);
-    fireEvent.change(name, { target: { value: "  Maple Cash  " } });
-    expect(create.disabled).toBe(false);
-    fireEvent.click(create);
-    await waitFor(() => expect(requests.find((r) => r.path === "/api/brands/drafts")?.body).toEqual({ name: "Maple Cash", domain: "maple.test", keyword_default: "Quick Loan", template_version_id: "tv-1" }));
-    await waitFor(() => expect(name.value).toBe(""));
-    expect(create.disabled).toBe(true);
-  });
-
-  it("blocks duplicate draft submissions and permits retry after failure", async () => {
-    let finishDraft!: (response: Response) => void;
-    routes.set("POST /api/brands/drafts", () => new Promise<Response>((resolve) => { finishDraft = resolve; }));
-    render(<BrandLifecycle me={employee} />);
-    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
-    const brandName = screen.getByRole("textbox", { name: nameLabel });
-    const domain = screen.getByRole("textbox", { name: domainLabel });
-    const keyword = screen.getByRole("textbox", { name: keywordLabel });
-    const select = screen.getByRole("combobox", { name: templateLabel });
-    fireEvent.change(brandName, { target: { value: "Pending Brand" } });
-    fireEvent.change(domain, { target: { value: "pending.test" } });
-    fireEvent.change(keyword, { target: { value: "Quick Loan" } });
-    fireEvent.change(select, { target: { value: "tv-1" } });
-    const createButton = screen.getByRole("button", { name: createDraftName });
-    fireEvent.click(createButton);
-
-    expect(createButton).toHaveProperty("disabled", true);
-    fireEvent.click(createButton);
-    // Enter can submit a form without clicking the disabled button.
-    fireEvent.submit(domain.closest("form")!);
-    expect(requests.filter((request) => request.path === "/api/brands/drafts")).toHaveLength(1);
-
-    await act(async () => { finishDraft(json({ error: "internal" }, 500)); });
-    await waitFor(() => expect(createButton).toHaveProperty("disabled", false));
-    expect(brandName).toHaveProperty("value", "Pending Brand");
-    expect(domain).toHaveProperty("value", "pending.test");
-    expect(keyword).toHaveProperty("value", "Quick Loan");
-    expect(select).toHaveProperty("value", "tv-1");
-    routes.set("POST /api/brands/drafts", () => json({ error: "internal" }, 500));
-    fireEvent.click(createButton);
-    await waitFor(() => expect(requests.filter((request) => request.path === "/api/brands/drafts")).toHaveLength(2));
-    await waitFor(() => expect(createButton).toHaveProperty("disabled", false));
-  });
-
-  it("blocks draft creation when no sealed templates exist", async () => {
-    routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
-    render(<BrandLifecycle me={employee} />);
-    await screen.findByText(/ยังไม่มี sealed template/);
-    expect(screen.getByRole("combobox", { name: templateLabel }).hasAttribute("disabled")).toBe(true);
-    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("reports template load failure and recovers on Refresh", async () => {
-    routes.set("GET /api/templates/sealed", () => json({ error: "internal" }, 500));
-    render(<BrandLifecycle me={employee} />);
-    await screen.findByText(/โหลด sealed templates ไม่สำเร็จ/);
-    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
-    routes.set("GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-2", name: "Fresh", version: 2, status: "sealed" }] }));
-    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
-    await screen.findByRole("option", { name: "Fresh · v2 (tv-2)" });
-    expect(screen.queryByText(/โหลด sealed templates ไม่สำเร็จ/)).toBeNull();
-  });
-
   it("hides Rollback from Employees on a live brand", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "renderable.test" });
     expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
-  });
-
-  it("rejects the entire template response if it includes an unsealed version", async () => {
-    // SealedTemplatesResponse rejects the whole payload, rather than filtering
-    // individual rows. Even the sealed row must not appear after this load error.
-    routes.set("GET /api/templates/sealed", () => json({ templates: [
-      { template_version_id: "tv-1", name: "Starter", version: 1, status: "sealed" },
-      { template_version_id: "tv-draft", name: "Unapproved", version: 2, status: "draft" },
-    ] }));
-    render(<BrandLifecycle me={employee} />);
-    await screen.findByText(/โหลด sealed templates ไม่สำเร็จ/);
-    const select = screen.getByRole("combobox", { name: templateLabel });
-    expect(within(select).getAllByRole("option")).toHaveLength(1);
-    expect(screen.queryByRole("option", { name: /Unapproved/ })).toBeNull();
-    expect(screen.queryByRole("option", { name: /Starter/ })).toBeNull();
-    expect((screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement).disabled).toBe(true);
-    expect(requests.some((request) => request.path === "/api/brands/drafts")).toBe(false);
-  });
-
-  it("clears a removed template selection on Refresh before allowing another draft", async () => {
-    render(<BrandLifecycle me={employee} />);
-    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
-    const select = screen.getByRole("combobox", { name: templateLabel });
-    const create = screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement;
-    fireEvent.change(screen.getByRole("textbox", { name: nameLabel }), { target: { value: "Refresh Brand" } });
-    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "refresh.test" } });
-    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
-    fireEvent.change(select, { target: { value: "tv-1" } });
-    expect(create.disabled).toBe(false);
-
-    routes.set("GET /api/templates/sealed", () => json({ templates: [
-      { template_version_id: "tv-2", name: "Fresh", version: 2, status: "sealed" },
-    ] }));
-    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
-    expect(create.disabled).toBe(true);
-    await screen.findByRole("option", { name: "Fresh · v2 (tv-2)" });
-    expect(select).toHaveProperty("value", "");
-    expect(screen.queryByRole("option", { name: "Starter · v1 (tv-1)" })).toBeNull();
-    expect(create.disabled).toBe(true);
-    fireEvent.click(create);
-    expect(requests.some((request) => request.path === "/api/brands/drafts")).toBe(false);
-    fireEvent.change(select, { target: { value: "tv-2" } });
-    expect(create.disabled).toBe(false);
   });
 
   it("loads API rows and opens working runtime pause, keyword, buckets, A/B and gate controls", async () => {
@@ -392,29 +238,6 @@ describe("mounted lifecycle UI with API responses", () => {
     const item = await screen.findByRole("button", { name: /renderable.test/ });
     expect(within(item).getByText("renderable.test").tagName).toBe("B");
     expect((await screen.findByRole("heading", { name: "renderable.test" })).textContent).toBe("renderable.test");
-  });
-
-  it("validates the brand name on the client with the shared rule and keeps a short hint", async () => {
-    render(<BrandLifecycle me={employee} />);
-    await screen.findByRole("option", { name: "Starter · v1 (tv-1)" });
-    const name = screen.getByRole("textbox", { name: nameLabel }) as HTMLInputElement;
-    const create = screen.getByRole("button", { name: createDraftName }) as HTMLButtonElement;
-    fireEvent.change(screen.getByRole("textbox", { name: domainLabel }), { target: { value: "maple.test" } });
-    fireEvent.change(screen.getByRole("textbox", { name: keywordLabel }), { target: { value: "Quick Loan" } });
-    fireEvent.change(screen.getByRole("combobox", { name: templateLabel }), { target: { value: "tv-1" } });
-    expect(name.pattern).toBe(BRAND_NAME_PATTERN);
-    expect(name.getAttribute("aria-describedby")).toBeTruthy();
-    expect(document.getElementById(name.getAttribute("aria-describedby")!)!.textContent).toBe("ตัวอักษร ตัวเลข ช่องว่าง และ & . ' - ไม่เกิน 60 ตัว (Letters, digits, space, & . ' -, up to 60)");
-    for (const bad of ["Lead_Cash", "x".repeat(61), "Anjuna Loans", "-Lead"]) {
-      fireEvent.change(name, { target: { value: bad } });
-      expect(create.disabled, bad).toBe(true);
-      expect(name.getAttribute("aria-invalid"), bad).toBe("true");
-    }
-    expect(screen.getByRole("alert").textContent).toBe("ชื่อแบรนด์ไม่ถูกต้อง (Invalid brand name)");
-    fireEvent.change(name, { target: { value: "Smith & Sons" } });
-    expect(name.validity.patternMismatch).toBe(false);
-    expect(name.getAttribute("aria-invalid")).toBe("false");
-    expect(create.disabled).toBe(false);
   });
 
   it("renders a factory-only draft from the API and does not offer runtime config", async () => {

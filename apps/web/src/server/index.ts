@@ -32,6 +32,7 @@ import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleTemplateRoute } from "./templates.js";
+import { handleWizardRoute } from "./wizard.js";
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -107,6 +108,9 @@ async function route(
 
   const lifecycle = await handleLifecycleRoute(request, env, url, path, ctx);
   if (lifecycle) return lifecycle;
+
+  const wizard = await handleWizardRoute(request, env, path, ctx);
+  if (wizard) return wizard;
 
   const templates = await handleTemplateRoute(request, env, path, ctx, email);
   if (templates) return templates;

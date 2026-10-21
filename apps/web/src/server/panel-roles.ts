@@ -18,6 +18,14 @@ export const PANEL_ROLE_TABLE = {
   createBrand: "employee",
   /** Plan: "Install a brand" is employee and owner. */
   installBrand: "employee",
+  /**
+   * Tracking ids on a draft (profile.ads: Google Ads account, conversion action, AdKit project, Microsoft Ads account).
+   * An employee may set them before install. Raise this to "owner" and the wizard shows them read-only to an
+   * employee and the draft routes refuse an employee who changes them. A live brand's money routing stays owner only.
+   */
+  setDraftTracking: "employee",
+  /** A duplicate is a new draft, so it needs the same role as creating one. */
+  duplicateBrand: "employee",
   /** Plan: "Upgrade all brands" is owner only. */
   upgradeAll: "owner",
   recoverBrand: "owner",
