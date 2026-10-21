@@ -74,12 +74,12 @@ export async function call(path: string, opts: CallOpts = {}): Promise<Response>
   const headers = new Headers(opts.headers);
   if (opts.cookie) headers.set("cookie", opts.cookie);
   if (!headers.has("origin")) headers.set("origin", ORIGIN);
-  if (opts.body !== undefined) headers.set("content-type", "application/json");
+  if (opts.body !== undefined && !(opts.body instanceof FormData)) headers.set("content-type", "application/json");
   return worker.fetch(
     new Request(`${opts.origin ?? ORIGIN}${path}`, {
       method: opts.method ?? "GET",
       headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: opts.body === undefined ? undefined : opts.body instanceof FormData ? opts.body : JSON.stringify(opts.body),
     }),
     opts.env ?? makeEnv(),
   );

@@ -17,6 +17,7 @@ import type {
   FunnelReportResponse,
   MailingStatusResponse,
   TemplateImportRequest,
+  TemplateZipImportRequest,
 } from "@anjuna/contracts";
 
 export interface Me {
@@ -66,8 +67,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined || body instanceof FormData ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
   });
   const data: unknown = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, data as ApiError["body"]);
@@ -82,6 +83,13 @@ export const api = {
   template: (id: string) => request<unknown>("GET", `/api/templates/${encodeURIComponent(id)}`).then((body) => TemplateDetailResponse.parse(body)),
   approveTemplate: (id: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, {}).then((body) => TemplateApproveResponse.parse(body)),
   importTemplate: (body: TemplateImportRequest) => request<unknown>("POST", "/api/templates/import", body).then((result) => TemplateSubmitResult.parse(result)),
+  importTemplateZip: (fields: TemplateZipImportRequest, file: File) => {
+    const body = new FormData();
+    body.set("template_name", fields.template_name);
+    body.set("template_id", fields.template_id);
+    body.set("file", file);
+    return request<unknown>("POST", "/api/templates/import-zip", body).then((result) => TemplateSubmitResult.parse(result));
+  },
   sealedTemplates: () => request<unknown>("GET", "/api/templates/sealed").then((body) => SealedTemplatesResponse.parse(body)),
   me: () => request<{ user: Me }>("GET", "/api/me").then((r) => r.user),
   signIn: (email: string, password: string) => request<unknown>("POST", "/api/auth/sign-in/email", { email, password }),

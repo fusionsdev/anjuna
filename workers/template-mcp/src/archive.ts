@@ -5,12 +5,9 @@
  */
 import { unzipSync } from "fflate";
 
-export const LIMITS = {
-  maxArchiveBytes: 30 * 1024 * 1024,
-  maxFiles: 2000,
-  maxFileBytes: 10 * 1024 * 1024,
-  maxTotalBytes: 100 * 1024 * 1024,
-} as const;
+import { TEMPLATE_ZIP_LIMITS } from "@anjuna/contracts";
+
+export const LIMITS = TEMPLATE_ZIP_LIMITS;
 
 export type FileMap = Map<string, Uint8Array>;
 

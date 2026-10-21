@@ -3,6 +3,7 @@ import { ruleDisposition } from "@anjuna/template-cert/policy";
 import type { TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "../api";
+import { TemplateZipImport } from "./TemplateZipImport";
 
 const statusLabel: Record<TemplateReviewStatus, string> = {
   checking: "กำลังตรวจ (Checking)",
@@ -80,6 +81,7 @@ export function TemplatesScreen({ me }: { me: Me }) {
     <>
       <h1>เทมเพลต (Templates)</h1>
       {msg && <div className={msg.kind === "ok" ? "ok" : "error"} role="status">{msg.text}</div>}
+      <div className="template-imports">
       <section className="card">
         <div className="form-inline">
           <h2>นำเข้าจาก URL (Import from URL)</h2>
@@ -87,24 +89,28 @@ export function TemplatesScreen({ me }: { me: Me }) {
           <input aria-label="ชื่อเทมเพลต (Template name)" placeholder="ชื่อเทมเพลต (Template name)" maxLength={128} value={form.template_name} onChange={(e) => setForm({ ...form, template_name: e.target.value })} />
           <button className="primary" disabled={busy || !form.url.trim() || !form.template_name.trim()} onClick={() => void importUrl()}>นำเข้า (Import)</button>
         </div>
-        {imported && <SubmitOutcome result={imported} />}
       </section>
-      <table className="table clickable">
-        <thead>
-          <tr><th>เทมเพลต (Template)</th><th>เวอร์ชัน (Version)</th><th>สถานะ (Status)</th><th>ส่งโดย (Submitted by)</th><th>เวลา (Created)</th></tr>
-        </thead>
-        <tbody>
-          {(templates ?? []).map((t) => (
-            <tr key={t.template_version_id} className={t.template_version_id === selected ? "selected" : undefined} onClick={() => setSelected(t.template_version_id)}>
-              <td>{t.name}</td>
-              <td>v{t.version}</td>
-              <td><span className={`pill ${statusPill[t.status]}`}>{statusLabel[t.status]}</span></td>
-              <td>{t.submitted_by_label ?? "-"}</td>
-              <td className="muted small">{t.created_at}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <TemplateZipImport busy={busy} onBusy={(value) => {
+        setBusy(value);
+        if (value) { setMsg(null); setImported(null); }
+      }} onError={(e) => setMsg({ kind: "err", text: errorText(e) })} onResult={async (r) => {
+        setImported(r);
+        if (r.template_version_id) setSelected(r.template_version_id);
+        await load();
+      }} />
+      </div>
+      {imported && <SubmitOutcome result={imported} />}
+      <div className="template-cards">
+        {(templates ?? []).map((t) => (
+          <button type="button" key={t.template_version_id} className="card template-card" aria-pressed={t.template_version_id === selected} onClick={() => setSelected(t.template_version_id)}>
+            {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name} (Template preview)`} loading="lazy" /> : <span className="template-placeholder muted">ไม่มีภาพตัวอย่าง (No preview)</span>}
+            <span className="row split"><strong>{t.name}</strong><span>v{t.version}</span></span>
+            <span className={`pill ${statusPill[t.status]}`}>{statusLabel[t.status]}</span>
+            <span>แบรนด์ที่ใช้ (Brands using): {t.brands_using}</span>
+            <span className="muted small">ส่งโดย (Submitted by) {t.submitted_by_label ?? "-"} · {t.created_at}</span>
+          </button>
+        ))}
+      </div>
       {templates?.length === 0 && <p className="muted">ยังไม่มีเทมเพลต (No templates yet)</p>}
       {detail && <TemplateDetail me={me} detail={detail} busy={busy} onApprove={() => void approve(detail.template.template_version_id)} />}
     </>

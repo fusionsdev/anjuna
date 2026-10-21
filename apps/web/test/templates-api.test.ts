@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { TemplateDetailResponse, TemplateListResponse } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
@@ -32,6 +32,93 @@ beforeEach(async () => {
 const me = async (cookie: string) => ((await (await call("/api/me", { cookie })).json()) as { user: { id: string } }).user.id;
 
 describe("templates API", () => {
+  afterEach(async () => {
+    // The counting test adds brands and versions that later list assertions must not see.
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("DELETE FROM brand_revisions WHERE form_artifact_id = 'fa-count'"),
+      env.FACTORY.prepare("DELETE FROM brands WHERE account = 'test' AND brand_id IN ('live', 'paused', 'old', 'unused', 'other')"),
+      env.FACTORY.prepare("DELETE FROM form_artifacts WHERE form_artifact_id = 'fa-count'"),
+      env.FACTORY.prepare("DELETE FROM template_versions WHERE template_version_id IN ('tv-bolt-2', 'tv-unrelated')"),
+      env.FACTORY.prepare("DELETE FROM templates WHERE template_id = 'unrelated'"),
+    ]);
+  });
+
+  it("counts distinct non-retired brands across all template versions", async () => {
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at) VALUES ('tv-bolt-2', 'tpl-bolt', 2, 'sha-second', 'k2', 'draft', 'u', ?1)").bind(NOW),
+      env.FACTORY.prepare("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('unrelated', 'Unrelated', 'astro', 'u', ?1)").bind(NOW),
+      env.FACTORY.prepare("INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at) VALUES ('tv-unrelated', 'unrelated', 1, 'sha-other', 'k3', 'draft', 'u', ?1)").bind(NOW),
+      env.FACTORY.prepare("INSERT INTO form_artifacts (form_artifact_id, git_sha, r2_key, manifest_sha256, created_at) VALUES ('fa-count', 'git-count', 'forms/count', 'manifest', ?1)").bind(NOW),
+    ]);
+    for (const [id, status] of [["live", "live"], ["paused", "paused"], ["old", "retired"], ["unused", "draft"], ["other", "live"]]) {
+      await env.FACTORY.prepare("INSERT INTO brands (brand_id, name, account, domain, status, created_by, created_at, updated_at) VALUES (?1, ?1, 'test', ?2, ?3, 'u', ?4, ?4)")
+        .bind(id, `${id}.test`, status, NOW).run();
+    }
+    for (const [id, brand, version, revision] of [
+      ["r1", "live", "tv-bolt-1", 1], ["r2", "live", "tv-bolt-2", 2], ["r3", "paused", "tv-bolt-1", 1],
+      ["r4", "old", "tv-bolt-1", 1], ["r5", "other", "tv-unrelated", 1],
+    ]) {
+      await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id, brand_id, revision, template_version_id, form_artifact_id, config_json, created_by, created_at) VALUES (?1, ?2, ?3, ?4, 'fa-count', '{}', 'u', ?5)")
+        .bind(id, brand, revision, version, NOW).run();
+    }
+    const { templates } = TemplateListResponse.parse(await (await call("/api/templates", { cookie: employee })).json());
+    expect(templates.filter((t) => t.template_id === "tpl-bolt").map((t) => t.brands_using)).toEqual([2, 2]);
+    expect(templates.find((t) => t.template_version_id === "tv-bolt-2")).toMatchObject({ thumbnail_url: null });
+    expect(templates.find((t) => t.template_id === "unrelated")).toMatchObject({ brands_using: 1, thumbnail_url: null });
+  });
+
+  it("imports ZIP for owner and employee with session identity and an editable slug", async () => {
+    const sent: FormData[] = [];
+    const TEMPLATE_MCP = { fetch: async (req: Request) => {
+      expect(req.url).toBe("https://template-mcp/submit-zip");
+      sent.push(await req.formData());
+      return Response.json({ status: "awaiting_approval", template_version_id: "tv_custom_v1", version: 1, sha256: "b".repeat(64), dashboard_url: null, issues: [], warnings: [], text_defaults: null, similarity: null, next_step: "Submitted." });
+    } } as unknown as Fetcher;
+    const form = () => {
+      const body = new FormData();
+      body.set("template_name", "Harbor");
+      body.set("template_id", "custom-slug");
+      body.set("file", new Blob(["zip forwarded unchanged"]), "site.zip");
+      body.set("created_by", "forged-user");
+      body.set("submitted_by", JSON.stringify({ key_id: "forged-key", label: "forged" }));
+      return body;
+    };
+    const testEnv = makeEnv({ TEMPLATE_MCP });
+    expect((await call("/api/templates/import-zip", { method: "POST", body: form(), env: testEnv })).status).toBe(401);
+    expect(sent).toHaveLength(0);
+    for (const [cookie, email] of [[owner, "owner@example.test"], [employee, "emp1@example.test"]] as const) {
+      expect((await call("/api/templates/import-zip", { cookie, method: "POST", body: form(), env: testEnv })).status).toBe(200);
+      const payload = sent.at(-1)!;
+      expect(payload.get("template_id")).toBe("custom-slug");
+      expect(payload.get("created_by")).toBe(await me(cookie));
+      expect(JSON.parse(String(payload.get("submitted_by")))).toEqual({ key_id: null, label: email });
+      expect(await (payload.get("file") as Blob).text()).toBe("zip forwarded unchanged");
+    }
+  });
+
+  it("validates ZIP multipart and maps missing binding, service 422 and transport errors", async () => {
+    const form = () => {
+      const body = new FormData();
+      body.set("template_name", "Harbor"); body.set("template_id", "harbor");
+      body.set("file", new Blob(["zip"]), "site.zip");
+      return body;
+    };
+    const postZip = (body: unknown, testEnv = makeEnv()) => call("/api/templates/import-zip", { cookie: employee, method: "POST", body, env: testEnv });
+    expect((await postZip({})).status).toBe(422);
+    const invalid = form(); invalid.set("template_id", "../evil");
+    expect((await postZip(invalid)).status).toBe(422);
+    const missing = form(); missing.delete("file");
+    expect((await postZip(missing)).status).toBe(422);
+    expect((await postZip(form())).status).toBe(502);
+    const tooLarge = form(); tooLarge.set("file", new Blob([new Uint8Array(30 * 1024 * 1024 + 1)]), "big.zip");
+    expect((await postZip(tooLarge)).status).toBe(422);
+    const err = { error: "needs_build", message: "Upload the built dist folder" };
+    const rejected = await postZip(form(), makeEnv({ TEMPLATE_MCP: { fetch: async () => Response.json(err, { status: 422 }) } as unknown as Fetcher }));
+    expect([rejected.status, await rejected.json()]).toEqual([422, err]);
+    expect((await postZip(form(), makeEnv({ TEMPLATE_MCP: { fetch: async () => { throw new Error("offline"); } } as unknown as Fetcher }))).status).toBe(502);
+    expect((await postZip(form(), makeEnv({ TEMPLATE_MCP: { fetch: async () => Response.json({ ok: true }) } as unknown as Fetcher }))).status).toBe(502);
+  });
+
   it("lists every version with its review status for owner and employee", async () => {
     expect((await call("/api/templates")).status).toBe(401);
     for (const cookie of [owner, employee]) {
@@ -41,6 +128,7 @@ describe("templates API", () => {
       expect(templates.find((t) => t.template_version_id === "tv-bolt-1")).toEqual({
         template_version_id: "tv-bolt-1", template_id: "tpl-bolt", name: "Bolt Harbor", version: 1, status: "awaiting_approval",
         submitted_by_label: "Somchai (bolt.new)", created_at: NOW, sealed_at: null,
+        thumbnail_url: "/api/templates/tv-bolt-1/screenshots/desktop", brands_using: 0,
       });
     }
   });

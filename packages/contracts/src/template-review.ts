@@ -69,6 +69,8 @@ export const TemplateVersionSummary = z.strictObject({
   submitted_by_label: z.string().nullable(),
   created_at: Stamp,
   sealed_at: Stamp.nullable(),
+  thumbnail_url: z.string().nullable().default(null),
+  brands_using: z.number().int().nonnegative().default(0),
 });
 export type TemplateVersionSummary = z.infer<typeof TemplateVersionSummary>;
 

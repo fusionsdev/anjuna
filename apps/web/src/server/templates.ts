@@ -1,12 +1,13 @@
 /**
  * Templates screen API: versions from the factory D1, screenshots from R2, Approve through the factory
- * Worker (it seals with the owner's user id), Import from URL through the template MCP service binding.
+ * Worker (it seals with the owner's user id), URL and ZIP imports through the template MCP service binding.
  */
 import {
   TEMPLATE_VERSION_REVIEW_STATUS,
   TemplateApproveResponse,
   TemplateDetailResponse,
   TemplateImportRequest,
+  TemplateZipImportRequest,
   TemplateListResponse,
   TemplateSubmitResult,
   SiteTextDefaultsResponse,
@@ -18,6 +19,7 @@ import {
 } from "@anjuna/contracts";
 import type { Env } from "./env.js";
 import { decodePathSegment } from "./lifecycle.js";
+import { readZipForm } from "./zip-form.js";
 import { authorizePanel } from "./panel-roles.js";
 
 const json = (status: number, body: unknown): Response =>
@@ -34,9 +36,17 @@ interface VersionRow {
   submitted_by_label: string | null;
   created_at: string;
   sealed_at: string | null;
+  has_thumbnail: number;
+  brands_using: number;
 }
 
-const SUMMARY_COLUMNS = "v.template_version_id, v.template_id, t.name, v.version, v.status, v.submitted_by_label, v.created_at, v.sealed_at";
+const SUMMARY_COLUMNS = `v.template_version_id, v.template_id, t.name, v.version, v.status, v.submitted_by_label, v.created_at, v.sealed_at,
+  EXISTS(SELECT 1 FROM certifications c WHERE c.template_version_id = v.template_version_id
+    AND c.check_name = 'screenshot_desktop' AND c.result = 'pass' AND c.artifact_r2_key IS NOT NULL) AS has_thumbnail,
+  (SELECT COUNT(DISTINCT b.brand_id) FROM brands b
+    JOIN brand_revisions r ON r.brand_id = b.brand_id
+    JOIN template_versions used ON used.template_version_id = r.template_version_id
+    WHERE b.status != 'retired' AND used.template_id = v.template_id) AS brands_using`;
 
 const summary = (row: VersionRow) => ({
   template_version_id: row.template_version_id,
@@ -47,6 +57,8 @@ const summary = (row: VersionRow) => ({
   submitted_by_label: row.submitted_by_label,
   created_at: row.created_at,
   sealed_at: row.sealed_at,
+  thumbnail_url: row.has_thumbnail ? `/api/templates/${encodeURIComponent(row.template_version_id)}/screenshots/desktop` : null,
+  brands_using: row.brands_using,
 });
 
 function parseJson(text: string | null): unknown {
@@ -73,6 +85,38 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
        ORDER BY v.created_at DESC, v.template_version_id LIMIT 200`,
     ).all<VersionRow>();
     return json(200, TemplateListResponse.parse({ templates: results.map(summary) }));
+  }
+
+  if (path === "/api/templates/import-zip" && method === "POST") {
+    if (!authorizePanel("importTemplate", ctx.actor_role).ok) return forbidden("employee");
+    let form: FormData;
+    try {
+      form = await readZipForm(request);
+    } catch (error) {
+      return json(422, { error: "invalid", message: error instanceof Error ? error.message : "Invalid ZIP upload" });
+    }
+    const parsed = TemplateZipImportRequest.safeParse({ template_id: form.get("template_id"), template_name: form.get("template_name") });
+    if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })) });
+    if (!env.TEMPLATE_MCP) return json(502, { error: "template_import_unavailable", message: "Template MCP binding is missing" });
+    // Rebuild the payload so identity and extra fields cannot be supplied by the browser.
+    const payload = new FormData();
+    payload.set("template_id", parsed.data.template_id);
+    payload.set("template_name", parsed.data.template_name);
+    payload.set("file", form.get("file") as File);
+    payload.set("submitted_by", JSON.stringify({ key_id: null, label: email }));
+    payload.set("created_by", ctx.actor_id);
+    let response: Response;
+    try {
+      response = await env.TEMPLATE_MCP.fetch(new Request("https://template-mcp/submit-zip", { method: "POST", body: payload }));
+    } catch {
+      return json(502, { error: "template_import_unavailable", message: "Template MCP transport failed" });
+    }
+    const body = await response.json().catch(() => null);
+    if (response.ok) {
+      const result = TemplateSubmitResult.safeParse(body);
+      return result.success ? json(200, result.data) : json(502, { error: "bad_gateway" });
+    }
+    return json(response.status === 422 ? 422 : 502, body ?? { error: "template_import_unavailable" });
   }
 
   if (path === "/api/templates/import" && method === "POST") {
