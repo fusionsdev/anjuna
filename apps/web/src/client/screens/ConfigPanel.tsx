@@ -4,6 +4,7 @@ import {
   type BrandConfig, type BrandPatchRequest, type FlowGateMode, type TemplateTextDefaults,
 } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
+import { replaceTemplateBrand } from "../../shared/site-text-preview";
 import { ApiError, api, type Me } from "../api";
 
 /** The UI hides what the role cannot do; the server enforces it regardless. */
@@ -285,20 +286,6 @@ const SITE_FIELDS: Array<{ field: SiteField; source: keyof TemplateTextDefaults;
   { field: "site_title", source: "title", label: "ชื่อหน้า (Page title)", max: SITE_TEXT_LIMITS.title, schema: SiteTitle },
   { field: "site_description", source: "description", label: "คำอธิบาย (Meta description)", max: SITE_TEXT_LIMITS.description, schema: SiteDescription },
 ];
-
-const WORD_CHAR = /^[\p{L}\p{N}]$/u;
-/**
- * The brand Worker's replacement of the template brand name in an unedited title, on plain text: whole words only,
- * so "Max" leaves "Maximum" unchanged.
- */
-function replaceTemplateBrand(text: string, from: string | null | undefined, to: string): string {
-  if (!from || from === to) return text;
-  const chars = [...from];
-  const before = WORD_CHAR.test(chars[0] ?? "") ? "(?<![\\p{L}\\p{N}])" : "";
-  const after = WORD_CHAR.test(chars.at(-1) ?? "") ? "(?![\\p{L}\\p{N}])" : "";
-  const literal = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(`${before}${literal}${after}`, "gu"), () => to);
-}
 
 /**
  * Brand name, page title and meta description, editable per brand. The brand name defaults to the brand's display name

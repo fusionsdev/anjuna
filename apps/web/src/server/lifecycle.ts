@@ -23,6 +23,7 @@ import {
   type GetBrandResponse,
 } from "@anjuna/contracts";
 import { z } from "zod";
+import { DraftDomain } from "../shared/wizard.js";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
 import { callCore } from "./core.js";
@@ -44,7 +45,7 @@ const Artifact = z.strictObject({
   manifest_sha256: z.string().regex(/^[0-9a-f]{64}$/i, "Must be 64 hex characters").transform((value) => value.toLowerCase()).optional(),
 });
 const Draft = z.strictObject({
-  domain: z.string().min(1).max(253).transform((value) => value.toLowerCase().replace(/\.$/, "")).refine((value) => !value.startsWith("www."), "Use the apex domain, not a www hostname").refine((value) => /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/.test(value), "Must be a valid apex domain"),
+  domain: DraftDomain,
   keyword_default: BrandDraftKeyword, template_version_id: Id,
   name: BrandName.optional(),
   profile: BrandProfile.optional(),
@@ -80,7 +81,7 @@ async function activeLifecycleOperation(db: Db, brandId: string): Promise<{ inst
     .bind(brandId).first<{ install_id: string; kind: string; status: string }>();
 }
 
-function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: string; form_route: string; amount_buckets: number[]; payload_version: string } | null {
+export function tenantDefaults(env: Env): { account: string; aid: string; prepop_base: string; form_route: string; amount_buckets: number[]; payload_version: string } | null {
   const account = env.DEFAULT_ACCOUNT?.trim();
   const aid = env.DEFAULT_AID?.trim();
   const prepop = env.DEFAULT_PREPOP_BASE?.trim();
@@ -129,10 +130,11 @@ async function dispatch(
   return json(201, { install_id: installId, brand_id: brandId, status: "running", workflow: body });
 }
 
-async function createDraft(request: Request, env: Env, ctx: AdminRequestContext): Promise<Response> {
+export async function createDraft(request: Request, env: Env, ctx: AdminRequestContext): Promise<Response> {
   const parsed = Draft.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
   const { domain, keyword_default, template_version_id, profile } = parsed.data;
+  if (profile?.ads && !authorizePanel("setDraftTracking", ctx.actor_role).ok) return forbidden(ctx.actor_role);
   const name = parsed.data.name ?? domain.split(".")[0]!.replaceAll("-", " ");
   if (parsed.data.name === undefined && (!isBrandClean(name) || name.length > 60)) {
     const message = isBrandClean(name) ? "ชื่อแบรนด์ที่สร้างจากโดเมนยาวเกิน 60 ตัวอักษร กรุณาระบุชื่อแบรนด์" : "ชื่อแบรนด์มีคำที่ไม่อนุญาต";
@@ -168,10 +170,10 @@ const DRAFT_EDIT_GATE = `EXISTS (
     SELECT 1 FROM brands b JOIN brand_revisions r ON r.brand_id = b.brand_id
     WHERE b.brand_id = ?1 AND b.status IN ('draft','failed') AND r.revision_id = ?2 AND r.template_version_id = ?3 AND r.config_json = ?4)
   AND NOT EXISTS (SELECT 1 FROM installs WHERE brand_id = ?1 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running'))`;
-const PROFILE_GROUPS = ["contact", "disclosures", "ads"] as const;
+const PROFILE_GROUPS = ["contact", "disclosures", "copy", "ads"] as const;
 
 /** The profile stored on a revision's config_json. Undefined when absent or not a valid profile. */
-function storedProfile(configJson: string): BrandProfile | undefined {
+export function storedProfile(configJson: string): BrandProfile | undefined {
   try {
     const parsed = BrandProfile.safeParse((JSON.parse(configJson) as { profile?: unknown } | null)?.profile);
     return parsed.success ? parsed.data : undefined;
@@ -209,6 +211,7 @@ async function updateDraft(request: Request, env: Env, ctx: AdminRequestContext,
   }
   if (body.keyword_default !== undefined) config.keyword_default = body.keyword_default;
   const before = storedProfile(revision.config_json);
+  if (body.profile !== undefined && JSON.stringify(body.profile.ads ?? null) !== JSON.stringify(before?.ads ?? null) && !authorizePanel("setDraftTracking", ctx.actor_role).ok) return forbidden(ctx.actor_role);
   if (body.profile !== undefined) config.profile = body.profile;
 
   // Key names only: the audit row never carries the contact or disclosure text itself.

@@ -118,6 +118,33 @@ describe("BrandProfile", () => {
   });
 });
 
+describe("BrandProfile copy", () => {
+  const copy = (over: Record<string, unknown>) => ({ copy: over });
+  it("accepts the three site-text fields and the optional h1, cta and sub", () => {
+    expect(ok(copy({}))).toBe(true);
+    expect(ok(copy({ brand_name: "Maple Cash", site_title: "Maple Cash | Funding", site_description: "Check your options.", h1: "Cash when you need it", cta: "Check my rate", sub: "No impact on your credit score." }))).toBe(true);
+  });
+  it("reuses the site-text validators for the three site-text fields", () => {
+    expect(ok(copy({ brand_name: "a".repeat(81) }))).toBe(false);
+    expect(ok(copy({ site_title: "a".repeat(71) }))).toBe(false);
+    expect(ok(copy({ site_description: "a".repeat(161) }))).toBe(false);
+    expect(ok(copy({ site_title: 'Say "hi"' }))).toBe(false);
+  });
+  it("stores h1, cta and sub as plain one-line strings, a {{keyword}} marker included", () => {
+    expect(ok(copy({ h1: "{{keyword}} in minutes", cta: "Check my rate", sub: 'No "hard" pull' }))).toBe(true);
+    expect(ok(copy({ h1: "<b>Hi</b>" }))).toBe(false);
+    expect(ok(copy({ h1: "line one\nline two" }))).toBe(false);
+    expect(ok(copy({ h1: "a".repeat(200) }))).toBe(true);
+    expect(ok(copy({ sub: "a".repeat(201) }))).toBe(false);
+    expect(ok(copy({ cta: "" }))).toBe(false);
+  });
+  it("refuses forbidden platform strings and unknown keys", () => {
+    expect(ok(copy({ brand_name: "Anjuna Cash" }))).toBe(false);
+    expect(ok(copy({ h1: "Aurum cash" }))).toBe(false);
+    expect(ok(copy({ headline: "x" }))).toBe(false);
+  });
+});
+
 describe("BRAND_PROFILE_DEFAULTS", () => {
   it("is a valid profile with 3 to 36 months, 35.99 APR and the global unsupported states", () => {
     expect(BrandProfile.parse(BRAND_PROFILE_DEFAULTS)).toEqual({

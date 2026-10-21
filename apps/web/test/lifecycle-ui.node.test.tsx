@@ -171,15 +171,14 @@ describe("lifecycle state reducer", () => {
 describe("BrandLifecycle SSR", () => {
   it("renders Thai labels with technical terms, receipts, checklist, and owner upgrade controls", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "owner", email: "owner@example.test", role: "owner" }} />);
-    expect(html).toContain("สร้างแบรนด์");
-    expect(html).toContain("ชื่อแบรนด์ (Brand name)");
-    expect(html).toContain("โดเมน (Domain)");
-    expect(html).toContain("คีย์เวิร์ด (Keyword)");
-    expect(html).toContain("เวอร์ชันเทมเพลต (Sealed template version)");
+    expect(html).toContain("แบรนด์ใหม่ (New brand)");
     expect(html).toContain("การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold");
     expect(html).toContain("อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)");
     expect(html).toContain("อัปเกรดแบบ canary ก่อน");
-    expect(html.match(/Create draft/g)).toHaveLength(1);
+    // The create form moved into the wizard: the list screen holds one button that opens it.
+    expect(html.match(/New brand/g)).toHaveLength(1);
+    expect(html).not.toContain("Create draft");
+    expect(html).not.toContain("Sealed template version");
   });
 
   it("does not render upgrade-all for employees", () => {

@@ -93,3 +93,14 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .template-card > img, .template-placeholder { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border-radius: 6px; background: var(--bg); }
 .template-placeholder { display: grid; place-items: center; }
 @media (max-width: 760px) { .template-imports { grid-template-columns: 1fr; } }
+
+/* Brand wizard */
+.wizard-steps { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 12px 0 20px; }
+.wizard-steps li { padding: 6px 10px; border-radius: 6px; background: var(--bg); color: var(--muted); font-size: 13px; }
+.wizard-steps li.active { background: var(--accent); color: #fff; font-weight: 600; }
+.wizard-steps li.done { color: var(--fg); }
+.wizard-panel { display: grid; gap: 12px; }
+.wizard-field { display: grid; gap: 4px; }
+.wizard-field label { display: grid; gap: 4px; }
+.wizard-nav { margin-top: 20px; justify-content: space-between; }
+.wizard-preview { width: 100%; height: 520px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }

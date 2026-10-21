@@ -259,6 +259,8 @@ describe("role table coverage", () => {
       deleteBrand: "owner",
       createBrand: "employee",
       installBrand: "employee",
+      setDraftTracking: "employee",
+      duplicateBrand: "employee",
       upgradeAll: "owner",
       recoverBrand: "owner",
       redeployBrand: "owner",
