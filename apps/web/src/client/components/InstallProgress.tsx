@@ -26,12 +26,12 @@ export function progressSteps(install: InstallWithReceipts): Array<{ step: strin
   return INSTALL_PROGRESS_STEPS.filter((s) => firstInstall || s.step !== "provision_runtime");
 }
 
-export function stepStates(install: InstallWithReceipts): Array<{ step: string; label: string; state: StepState; error?: string }> {
+export function stepStates(install: InstallWithReceipts): Array<{ step: string; label: string; state: StepState; error?: string; warning?: string }> {
   const active = install.status === "queued" || install.status === "running";
   let runningMarked = false;
   return progressSteps(install).map(({ step, label }) => {
     const receipt = install.receipts.find((r) => r.step === step);
-    if (receipt?.status === "ready") return { step, label, state: "done" as const };
+    if (receipt?.status === "ready") return { step, label, state: "done" as const, ...(receipt.warning ? { warning: receipt.warning } : {}) };
     if (receipt?.status === "failed") return { step, label, state: "failed" as const, ...(receipt.error ? { error: receipt.error } : {}) };
     if (receipt?.status === "queued") return { step, label, state: "skipped" as const };
     if (active && !runningMarked) { runningMarked = true; return { step, label, state: "running" as const }; }
@@ -55,6 +55,13 @@ const KNOWN_ERRORS: Array<{ code: string; pattern: RegExp; message: string }> = 
   { code: "core_refused", pattern: /Core lifecycle request failed \(4\d\d\)|Core runtime is not ready|Core credential account mismatch/i, message: "Core ปฏิเสธคำขอ ติดต่อ Owner (Core refused the request. Contact the Owner.)" },
   { code: "cloudflare_api", pattern: /failed: HTTP \d{3}|\(HTTP \d{3}\)|Asset upload failed/i, message: "Cloudflare API ล้มเหลว กด Retry (A Cloudflare API call failed. Retry.)" },
 ];
+
+/** A step that finished with a fallback. Only the mailing list has one today. */
+export function installWarningMessage(raw: string): string {
+  return /^Mailing list:/i.test(raw)
+    ? "สร้างรายชื่ออีเมลของแบรนด์ไม่สำเร็จ ลีดเข้ารายชื่อหลักของ tenant แทน การติดตั้งครั้งถัดไปจะลองสร้างใหม่ (The brand's mailing list could not be created. Leads go to the tenant list; the next install tries again.)"
+    : "ขั้นตอนนี้เสร็จแต่มีคำเตือน (This step finished with a warning.)";
+}
 
 export const GENERIC_STEP_ERROR = "ขั้นตอนนี้ล้มเหลว กด Retry เพื่อลองใหม่ (This step failed. Press Retry to try again.)";
 
@@ -92,6 +99,10 @@ export function InstallProgress({ install, canRetry, onRetry }: { install: Insta
       const failure = s.state === "failed" ? installErrorMessage(s.error) : null;
       return <li key={s.step} className={`progress-step ${s.state}`} data-step={s.step}>
         <span>{s.label}</span> <span className={`pill ${s.state}`}>{stateLabel[s.state]}</span>
+        {s.warning && <div role="status" className="warn">
+          <span>{installWarningMessage(s.warning)}</span>
+          <details><summary>รายละเอียด (Details)</summary><code>{s.warning}</code></details>
+        </div>}
         {failure && <div role="alert" className="error">
           <span>{failure.message}</span>
           {!failure.known && s.error && <details><summary>รายละเอียด (Details)</summary><code>{s.error}</code></details>}

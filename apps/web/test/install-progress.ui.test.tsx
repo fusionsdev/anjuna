@@ -81,6 +81,18 @@ describe("InstallProgress failure messages", () => {
   });
 });
 
+describe("InstallProgress warnings", () => {
+  it("shows the mailing-list fallback on a finished step as a warning, not a failure", () => {
+    const raw = "Mailing list: listmonk list was not created: listmonk POST list failed: 502 (502)";
+    const install = { ...base, status: "ready" as const, runtime_sync_status: "ready" as const, receipts: [...ready(ALL.filter((s) => s !== "sync_runtime")), { step: "sync_runtime", status: "ready" as const, warning: raw }] };
+    render(<InstallProgress install={install} canRetry={false} onRetry={() => undefined} />);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Leads go to the tenant list; the next install tries again.");
+    expect(screen.getByRole("status").textContent).toContain(raw);
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("11");
+  });
+});
+
 describe("BrandLifecycle detail", () => {
   const brand = { brand_id: "brand-a", account: "a", hostnames: ["brand.example"], status: "failed" as const, current_revision_id: null, bundle_form_version: "form@1", payload_version: "2026-01", runtime_sync_status: "failed" as const };
   const owner = { id: "o", email: "o@example.test", role: "owner" as const };

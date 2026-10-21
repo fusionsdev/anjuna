@@ -330,6 +330,8 @@ export const InstallReceipt = z.strictObject({
   step: z.string().min(1).max(64),
   status: z.enum(["queued", "running", "ready", "failed"]),
   error: z.string().max(500).optional(),
+  /** A step that finished but fell back, e.g. the brand's listmonk list could not be created and the tenant list is used. */
+  warning: z.string().max(500).optional(),
 });
 
 /**

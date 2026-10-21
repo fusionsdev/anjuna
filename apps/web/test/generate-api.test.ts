@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { InstallWithReceipts } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let employee: string;
@@ -112,6 +113,19 @@ describe("POST /api/brands/:id/generate", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: "lifecycle_operation_active", active_install_id: "rb-1", active_kind: "rollback" });
     expect(f.dispatched).toEqual([]);
+  });
+});
+
+describe("install detail", () => {
+  it("passes a step warning through next to the status", async () => {
+    const brandId = await draft("warning-detail.example");
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES ('ins-warn',?1,'install','ready','employee',?2)").bind(brandId, new Date().toISOString()),
+      env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES ('ins-warn','sync_runtime','ok',?1,?2)")
+        .bind(JSON.stringify({ mailing_list: { state: "fallback", list_id: null }, warning: "Mailing list: listmonk down (502)" }), new Date().toISOString()),
+    ]);
+    const response = await call("/api/installs/ins-warn", { cookie: employee });
+    expect(InstallWithReceipts.parse(await response.json()).receipts).toEqual([{ step: "sync_runtime", status: "ready", warning: "Mailing list: listmonk down (502)" }]);
   });
 });
 
