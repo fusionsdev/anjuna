@@ -12,8 +12,9 @@ The buyer is LeadsGate. V1 hands the visitor to LeadsGate with a prepop redirect
 
 1. **Handoff is prepop redirect only.** Core builds the LeadsGate prepop URL with V1 `buildUserRedirect` in `prepop_redirect` mode (lead fields as GET params, `aid`, `click_id` = `lead_id` without hyphens). There is **no server-side post** of the lead to LeadsGate and **no `LEADSGATE_ENDPOINT`** setting.
 2. **The browser never receives the prepop URL in JSON.** `/api/leads` returns `redirect_url = <formRoute>/provider?c=<continuation>`. The brand Worker resolves the opaque continuation in core and answers with a 302 to the prepop URL and `Referrer-Policy: no-referrer`. An unknown or expired continuation returns 302 to `/`.
-3. **Postback goes to core.** LeadsGate calls `GET https://core.aduplift.ai/api/postback?token&cid&payout&lead_id&type` (Sold and Reject entries per brand domain).
-   - `token` is a per-brand postback secret; a mismatch returns 401.
+3. **Postback goes to core.** LeadsGate calls `GET https://core.aduplift.ai/api/postback?token&cid&payout&lead_id&type` (Sold and Reject entries).
+   - `token` is the tenant postback secret (`POSTBACK_TOKEN` on that tenant's core, V1 parity, owner decision 2026-10-21). A per-brand token minted in the panel is also accepted for that brand only. Any other token returns 401.
+   - LeadsGate holds one global postback entry per LeadsGate account (aid). A new brand needs no LeadsGate postback setup.
    - `payout` is parsed as a number; invalid or negative becomes 0; it is **clamped to 230** (USD, V1 `MAX_PAYOUT_USD`).
    - Every accepted postback is written to `postback_events`.
    - Every `soldLead` postback with payout > 0 (after the 230 clamp) also inserts a `conversion_uploads` row, idempotent per lead, whether or not the lead has a click ID. This is V1 parity (owner decision 2026-10-02, overriding the click-ID condition in brief CO-3).
@@ -30,7 +31,7 @@ The page forwards only shared `BUYER_FIELDS` and the attribution aliases, with f
 ## Consequences
 
 - One money path, identical to V1 in behavior; drain and AdKit need no code change.
-- LeadsGate configuration per brand is an owner checklist item (FA-4): postback entries pointing at core and a "Test sold" that creates a `postback_events` row.
+- LeadsGate configuration is an owner checklist item (FA-4): one global postback entry per LeadsGate account pointing at that tenant's core, and a "Test sold" per brand that creates a `postback_events` row.
 - Revenue per conversion cannot exceed 230 even if LeadsGate sends more; raising it is a deliberate code change.
 - Leads without a click ID still get a `conversion_uploads` row, so revenue is recorded; the drain / Google Ads side simply cannot upload them.
 - Real LeadsGate and drain calls are owner-gated (Wave 4); tests use fakes.
