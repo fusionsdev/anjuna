@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/client/App";
 import { TemplatesScreen } from "../src/client/screens/Templates";
+import { strToU8, zipSync } from "fflate";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
@@ -10,6 +11,7 @@ const SPA = "This site renders with JavaScript. Ask bolt.new to make it static H
 const summary = {
   template_version_id: "tv-bolt-1", template_id: "tpl-bolt", name: "Bolt Harbor", version: 1, status: "awaiting_approval",
   submitted_by_label: "Somchai (bolt.new)", created_at: STAMP, sealed_at: null,
+  thumbnail_url: "/api/templates/tv-bolt-1/screenshots/desktop", brands_using: 3,
 };
 const detail = {
   template: { ...summary, sha256: "a".repeat(64), sealed_by: null, text_defaults: { brand_name: "Harbor", title: "Harbor | Funding", description: "Check options." } },
@@ -38,7 +40,7 @@ beforeEach(() => {
   ]);
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
-    requests.push({ method, path: input, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    requests.push({ method, path: input, body: init?.body instanceof FormData ? init.body : init?.body ? JSON.parse(String(init.body)) : undefined });
     const handler = routes.get(`${method} ${input}`);
     if (!handler) throw new Error(`Unexpected test HTTP request: ${method} ${input}`);
     return handler(init);
@@ -47,6 +49,76 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.location.hash = ""; });
 
 describe("Templates screen", () => {
+  const zipFile = (entries: Record<string, string>) => {
+    const bytes = zipSync(Object.fromEntries(Object.entries(entries).map(([path, text]) => [path, strToU8(text)])));
+    const file = new File([new Uint8Array(bytes)], "site.zip", { type: "application/zip" });
+    // jsdom's File has no arrayBuffer; keep detection real and supply the browser method.
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array(bytes).buffer });
+    return file;
+  };
+
+  it("shows screenshot cards, status and brands-using count", async () => {
+    render(<TemplatesScreen me={owner} />);
+    expect(await screen.findByRole("img", { name: "ตัวอย่าง Bolt Harbor (Template preview)" })).toBeTruthy();
+    expect(screen.getByText("แบรนด์ที่ใช้ (Brands using): 3")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Bolt Harbor/ }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it.each([
+    ["astro", { "dist/index.html": "<h1>Hello</h1>", "dist/_astro/site.css": "h1{}" }],
+    ["bolt_static", { "index.html": "<h1>Hello</h1>" }],
+    ["vite_react", { "index.html": '<script type="module" src="/assets/index.js"></script>', "assets/index.js": "built" }],
+  ] as const)("renders detected type %s before upload", async (type, entries) => {
+    render(<TemplatesScreen me={employee} />);
+    fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [zipFile(entries)] } });
+    expect(await screen.findByText(`ชนิดที่ตรวจพบ (Detected type): ${type}`)).toBeTruthy();
+    expect(requests.some((r) => r.path === "/api/templates/import-zip")).toBe(false);
+  });
+
+  it("generates an editable slug and sends the ZIP as multipart", async () => {
+    routes.set("POST /api/templates/import-zip", () => json({
+      status: "duplicate", template_version_id: "tv-bolt-1", version: 1, sha256: "a".repeat(64), dashboard_url: null,
+      issues: [], warnings: [], text_defaults: null, similarity: null, next_step: "Already submitted.",
+    }));
+    render(<TemplatesScreen me={employee} />);
+    fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต ZIP (ZIP template name)"), { target: { value: "Harbor Funding" } });
+    const id = screen.getByLabelText("รหัสเทมเพลต (Template ID)") as HTMLInputElement;
+    expect(id.value).toBe("harbor-funding");
+    fireEvent.change(id, { target: { value: "my-custom-id" } });
+    fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต ZIP (ZIP template name)"), { target: { value: "Harbor New" } });
+    expect(id.value).toBe("my-custom-id");
+    fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [zipFile({ "index.html": "<h1>Hello</h1>" })] } });
+    await screen.findByText("ชนิดที่ตรวจพบ (Detected type): bolt_static");
+    fireEvent.click(screen.getByRole("button", { name: "นำเข้า ZIP (Import ZIP)" }));
+    expect(await screen.findByText("ซ้ำกับเวอร์ชันเดิม (Duplicate)")).toBeTruthy();
+    const body = requests.find((r) => r.path === "/api/templates/import-zip")!.body as FormData;
+    expect(body.get("template_id")).toBe("my-custom-id");
+    expect(body.get("template_name")).toBe("Harbor New");
+    expect((body.get("file") as File).name).toBe("site.zip");
+  });
+
+  it("rejects a source project locally and disables upload", async () => {
+    render(<TemplatesScreen me={employee} />);
+    fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [zipFile({ "package.json": "{}", "src/main.tsx": "source" })] } });
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "อัปโหลดโฟลเดอร์ dist ที่ build แล้ว (Upload the built dist folder)");
+    expect(screen.getByRole("button", { name: "นำเข้า ZIP (Import ZIP)" })).toHaveProperty("disabled", true);
+    expect(requests.some((r) => r.path === "/api/templates/import-zip")).toBe(false);
+  });
+
+  it("ignores a previous file's detection after selection changes", async () => {
+    let finish!: (buffer: ArrayBuffer) => void;
+    const oldBytes = zipSync({ "index.html": strToU8("<h1>Old</h1>") });
+    const delayed = new File(["pending"], "old.zip");
+    Object.defineProperty(delayed, "arrayBuffer", { value: () => new Promise<ArrayBuffer>((resolve) => { finish = resolve; }) });
+    render(<TemplatesScreen me={employee} />);
+    fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [delayed] } });
+    fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [zipFile({ "index.html": "<h1>New</h1>", "_astro/new.css": "h1{}" })] } });
+    await screen.findByText("ชนิดที่ตรวจพบ (Detected type): astro");
+    await act(async () => { finish(new Uint8Array(oldBytes).buffer); });
+    expect(screen.getByText("ชนิดที่ตรวจพบ (Detected type): astro")).toBeTruthy();
+  });
+
   it("lists versions with their review status and shows the detail", async () => {
     render(<TemplatesScreen me={owner} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));

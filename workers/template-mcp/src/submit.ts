@@ -7,6 +7,8 @@ import { zipSync } from "fflate";
 import { z } from "zod";
 import {
   TEMPLATE_VERSION_REVIEW_STATUS,
+  detectTemplateZip,
+  templateZipRoot,
   type TemplateSubmitIssue,
   type TemplateSubmitResult,
   type TemplateTextDefaults,
@@ -131,6 +133,17 @@ async function certifyAndReport(
     similarity: extra.similarity,
     next_step: waiting ? NEXT_WAITING : NEXT_REJECTED,
   });
+}
+
+/** ZIP imports use exactly the finish_upload pipeline after safe archive reading. */
+export async function submitTemplateZip(env: Env, request: Omit<SubmitRequest, "files"> & { zip: Uint8Array }): Promise<SubmitResult> {
+  const files = templateZipRoot(readZip(request.zip));
+  try {
+    detectTemplateZip(files);
+  } catch (error) {
+    throw new InputError("needs_build", error instanceof Error ? error.message : "Upload the built dist folder");
+  }
+  return submitTemplate(env, { ...request, files });
 }
 
 export async function submitTemplate(env: Env, request: SubmitRequest): Promise<SubmitResult> {

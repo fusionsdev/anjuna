@@ -11,5 +11,6 @@ export * from "./admin-api.js";
 export * from "./lifecycle.js";
 export * from "./site-text.js";
 export * from "./template-review.js";
+export * from "./template-zip.js";
 export * from "./builder-keys.js";
 export * from "./brand-draft.js";
