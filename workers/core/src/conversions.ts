@@ -116,6 +116,30 @@ export async function handleConversionsPending(request: Request, env: Env): Prom
   return new Response(encodePendingResponse({ conversions: results }), { headers: V1_JSON_HEADERS });
 }
 
+/**
+ * The drain's BRAND_ROUTING_JSON, built from the panel-edited brand_runtime columns. Keys are
+ * brand_id, which drain.mjs matches against the pending row's `brand` (= leads.brand). A brand
+ * without both account and conversion action is left out, so the drain skips its rows.
+ */
+export async function handleConversionsRouting(request: Request, env: Env): Promise<Response> {
+  if (!await drainAuthorized(request, env)) return json({ status: "invalid", message: "Unauthorized" }, 401);
+  const { results } = await env.LEADS.prepare(`
+    SELECT brand_id, google_ads_account, google_conversion_action, adkit_project FROM brand_runtime
+    WHERE google_ads_account IS NOT NULL AND google_conversion_action IS NOT NULL
+    ORDER BY brand_id`).all<{
+    brand_id: string; google_ads_account: string; google_conversion_action: string; adkit_project: string | null;
+  }>();
+  const routing: Record<string, { account: string; conversionAction: string; project?: string }> = {};
+  for (const row of results) {
+    routing[row.brand_id] = {
+      account: row.google_ads_account,
+      conversionAction: row.google_conversion_action,
+      ...(row.adkit_project ? { project: row.adkit_project } : {}),
+    };
+  }
+  return json(routing);
+}
+
 export async function handleConversionsAck(request: Request, env: Env): Promise<Response> {
 
   if (!await drainAuthorized(request, env)) return json({ status: "invalid", message: "Unauthorized" }, 401);

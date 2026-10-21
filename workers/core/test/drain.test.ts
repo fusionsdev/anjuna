@@ -105,3 +105,60 @@ describe("unmodified V1 drain.mjs against Miniflare core", () => {
     });
   });
 });
+
+describe("GET /api/conversions/routing (BRAND_ROUTING_JSON served by core)", () => {
+  const routing = () => h.request("/api/conversions/routing", { headers: { Authorization: `Bearer ${DRAIN_TOKEN}` } });
+  const setRoute = (brand: string, account: string | null, action: string | null, project: string | null = null) =>
+    h.db.prepare(`UPDATE brand_runtime SET google_ads_account = ?1, google_conversion_action = ?2, adkit_project = ?3
+      WHERE brand_id = ?4`).bind(account, action, project, brand).run();
+
+  it("returns 401 with the pending route's body when the token is missing or wrong", async () => {
+    for (const authorization of ["", "Bearer wrong"]) {
+      const response = await h.request("/api/conversions/routing", { headers: { Authorization: authorization } });
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe(fixtureText("drain/unauthorized.response.json"));
+    }
+  });
+
+  it("maps brand_id to account and action, omits a null project, and drops half-filled rows", async () => {
+    for (const id of ["brand-a", "brand-b", "brand-c", "brand-d", "brand-e"]) await h.seedBrand(id, `token-${id}`);
+    await setRoute("brand-a", "4811219623", "7754587837", "proj_a");
+    await setRoute("brand-b", "1234567890", "42");
+    await setRoute("brand-c", "1234567890", null);
+    await setRoute("brand-d", null, "42");
+    const response = await routing();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("application/json; charset=utf-8");
+    expect(await response.json()).toEqual({
+      "brand-a": { account: "4811219623", conversionAction: "7754587837", project: "proj_a" },
+      "brand-b": { account: "1234567890", conversionAction: "42" },
+    });
+  });
+
+  it("returns an empty object when no brand has a route", async () => {
+    await h.seedBrand("brand-a");
+    expect(await (await routing()).text()).toBe("{}");
+  });
+
+  it("feeds the unmodified V1 drain, which resolves the row through the per-brand map", async () => {
+    await h.seedBrand("brand-a");
+    await setRoute("brand-a", "4811219623", "7754587837");
+    await h.seedLead("lead-routed", "routed1", "brand-a");
+    await h.db.prepare("UPDATE leads SET status = 'soldLead' WHERE lead_id = 'lead-routed'").run();
+    await h.seedConversion("lead-routed", { gclid: "routed-gclid" });
+    const map = await (await routing()).text();
+    const run = await runRealDrain(h, { BRAND_ROUTING_JSON: map, DRAIN_VALIDATE_ONLY: "true" });
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.stdout).toContain("[routing] per-brand routing active for 1 brand key(s)");
+    // The route resolved, so the drain went on to call adkit. The harness PATH has no adkit, so
+    // the spawn fails; an unrouted row would be SKIPPED with "no route for brand=" instead.
+    expect(run.stdout).toContain("validate-only: uploaded=0 failed=1 skipped=0");
+    expect(run.stdout).toMatch(/fail: lead-routed .*adkit.*ENOENT/);
+    expect(run.stdout).not.toContain("no route");
+
+    // Control: the same row under an empty map is skipped as unrouted.
+    const unrouted = await runRealDrain(h, { BRAND_ROUTING_JSON: "{}", DRAIN_VALIDATE_ONLY: "true" });
+    expect(unrouted.stdout).toContain("SKIP: lead-routed no route for brand=brand-a hostname=brand-a.example");
+  });
+});

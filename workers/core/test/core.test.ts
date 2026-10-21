@@ -42,6 +42,7 @@ describe("skeleton and authentication", () => {
     for (const [method, path] of [
       ["GET", "/"], ["GET", "/unknown"], ["GET", "/api/health/"], ["POST", "/api/health"],
       ["PUT", "/api/postback"], ["POST", "/api/conversions/pending"], ["GET", "/api/conversions/ack"],
+      ["POST", "/api/conversions/routing"], ["PUT", "/api/conversions/routing"],
       ["GET", "/api/conversions/unknown"], ["POST", "/rpc/test"], ["GET", "/rpc/submitLead"],
       ["POST", "/api/leads"], ["GET", "/admin/brands"], ["GET", "/admin/anything"],
     ]) {
@@ -103,8 +104,8 @@ describe("skeleton and authentication", () => {
     expect(row!.rotated_at).toBeTruthy();
   });
 
-  it.each(["", "Bearer wrong", "Basic wrong"])("rejects both drain routes with auth %s", async (authorization) => {
-    for (const [path, method] of [["pending", "GET"], ["ack", "POST"]]) {
+  it.each(["", "Bearer wrong", "Basic wrong"])("rejects every drain route with auth %s", async (authorization) => {
+    for (const [path, method] of [["pending", "GET"], ["ack", "POST"], ["routing", "GET"]]) {
       const response = await h.request(`/api/conversions/${path}?token=${DRAIN_TOKEN}`, {
         method, headers: { Authorization: authorization },
       });
