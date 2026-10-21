@@ -11,6 +11,80 @@ Reference implementations:
 - Astro: `packages/template-astro-starter` (recommended; start every new template from it).
 - React (vinext / Next.js static export, Vite SPA): `packages/keyword-slot-react`.
 
+## Render-time copy and legal data (FUS-361)
+
+The factory exposes `fillCopy(draft, deps) -> Promise<{copy, issues}>` in
+`workers/factory/src/copy-fill.ts`. The draft has `brand_name`, `keyword_default`,
+and optional `copy: {h1, cta, sub}`. Only absent, null, empty or whitespace-only
+fields are eligible for filling. Nonempty employee text is preserved byte for byte.
+There is currently no AI binding. Without `deps.generate`, a deterministic template
+supplies copy. An injected adapter receives only the brand name, default keyword,
+keyword marker and requested fields; it returns an object with plain-text values.
+Adapters must be called during installation/rendering, never per visitor.
+
+`validateCopy(copy, keywordDefault)` is exported from `@anjuna/contracts` and returns
+field/code/message issues. H1 must contain exactly one `{{keyword}}` token. This is
+the plain-text representation of the existing KeywordSlot, not HTML from the AI.
+Use `renderCopyH1(copy.h1, keyword_default)` for the single H1's inner HTML: it escapes
+text and emits exactly one `<span data-kw>default keyword</span>`. Continue inserting
+CTA and subheading as escaped text. Site title/description settings do not map to H1.
+The existing runtime KeywordSlot handling remains unchanged.
+
+Limits: H1 **140 visible characters** after default-keyword expansion, CTA **40**,
+subheading **240**. All fields must be nonempty single-line plain text, without HTML,
+control characters or double quotes. Only H1 accepts the keyword token. No other
+placeholders, Personal Loan wording, platform names, generated brand IDs, analytics
+keys or Sentry DSNs are accepted. Every proposed fill is validated together with the
+employee's text. On any issue the entire proposed fill is discarded and the original
+copy is returned. Adapter failure returns a readable issue; it does not silently use
+the fallback. Callers must resolve issues before rendering or saving generated copy.
+
+### Legal placeholders
+
+`renderBrand(templateFiles, formFiles, brandId, revisionId, {brand_name, profile})`
+fills explicit legal slots from the revision's `config_json.profile.contact` and
+`.disclosures`. Pass the public brand/company display name as `brand_name`, never an
+internal ID. The existing four-argument call remains valid and uses missing-value text.
+The install caller owns loading this data; the renderer performs no database or network calls.
+
+The starter currently has reviewed-copy placeholders rather than structured legal
+slots. Builders opt in by replacing those placeholders with the following markup on
+`terms/index.html` and `disclosures/index.html` (flat `terms.html` / `disclosures.html`
+and leading `/` are also supported):
+
+```html
+<p>Service operator: <span data-legal="brand_name">Not provided.</span></p>
+<p>Address: <span data-legal="contact.address">Not provided.</span></p>
+<p>Email: <span data-legal="contact.email">Not provided.</span></p>
+<p>Phone: <span data-legal="contact.phone">Not provided.</span></p>
+<p>Maximum APR: <span data-legal="disclosures.apr_max">Not provided.</span></p>
+<p>Repayment term: <span data-legal="disclosures.term_range">Not provided.</span></p>
+<p>Representative example: <span data-legal="disclosures.representative_example">Not provided.</span></p>
+<p>Unsupported states: <span data-legal="disclosures.unsupported_states">Not provided.</span></p>
+```
+
+Each placeholder must be a standalone `span` containing text only, with no nested
+slots. Unknown keys and other element types fail rendering. Values are escaped text,
+never HTML, URLs, attributes, scripts or CSS. No replacement occurs in other pages or
+in legal pages without these slots. Reviewed surrounding legal wording remains intact.
+
+| Slot | Rendered value |
+|---|---|
+| `brand_name` | Public company/brand display name supplied by the caller. |
+| `contact.address`, `contact.email`, `contact.phone` | The corresponding profile text. |
+| `disclosures.apr_max` | Supplied APR plus `%`; zero remains `0%`. |
+| `disclosures.term_min_months`, `disclosures.term_max_months` | Supplied integer plus ` months`. |
+| `disclosures.term_range` | `min–max months`, only when both bounds are supplied. |
+| `disclosures.representative_example` | The operator's supplied example, without calculated figures. |
+| `disclosures.unsupported_states` | Supplied state codes separated by commas. |
+
+Missing values render `Not provided. Contact the service operator for details.`
+No APR, term, example or state defaults are invented. Invalid supplied profile data
+fails validation. Rendering still checks source bytes and final output with
+`assertCleanBrandBytes`. Legal fill uses revision data only; the resulting static bytes
+are identical for every visitor. Privacy and do-not-sell pages are still required and
+remain reviewed template content.
+
 ## 1. What you hand over
 
 - **Static output only (TP-1).** Deliver the built `dist/` folder (zipped). Anjuna never builds templates and never runs template server code.

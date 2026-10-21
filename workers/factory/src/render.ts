@@ -1,10 +1,50 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { unzipSync, zipSync } from "fflate";
+import { BrandProfile, TEMPLATE_RULES } from "@anjuna/contracts";
 
 export type FileMap = Map<string, Uint8Array>;
 
 const ENC = new TextEncoder();
 const DEC = new TextDecoder();
+
+/** Pass the revision's config_json.profile and the brand's public display name, never its ID. */
+export interface LegalRenderData {
+  brand_name?: string;
+  profile?: BrandProfile;
+}
+
+/** Static text-node slots in terms/disclosures. Missing profile values never use product defaults. */
+async function fillLegalPage(bytes: Uint8Array, data: LegalRenderData): Promise<Uint8Array> {
+  const profile = BrandProfile.parse(data.profile ?? {});
+  const contact = profile.contact ?? {};
+  const disclosures = profile.disclosures ?? {};
+  const missing = "Not provided. Contact the service operator for details.";
+  const text = (value: string | undefined) => value?.trim() || missing;
+  const slots: Record<string, string> = {
+    brand_name: text(data.brand_name),
+    "contact.address": text(contact.address),
+    "contact.email": text(contact.email),
+    "contact.phone": text(contact.phone),
+    "disclosures.apr_max": disclosures.apr_max === undefined ? missing : `${disclosures.apr_max}%`,
+    "disclosures.term_min_months": disclosures.term_min_months === undefined ? missing : `${disclosures.term_min_months} months`,
+    "disclosures.term_max_months": disclosures.term_max_months === undefined ? missing : `${disclosures.term_max_months} months`,
+    "disclosures.term_range": disclosures.term_min_months === undefined || disclosures.term_max_months === undefined
+      ? missing : `${disclosures.term_min_months}–${disclosures.term_max_months} months`,
+    "disclosures.representative_example": text(disclosures.representative_example),
+    "disclosures.unsupported_states": disclosures.unsupported_states?.length ? disclosures.unsupported_states.join(", ") : missing,
+  };
+  // Use a parser, not string substitution: values can only replace text inside an explicit span.
+  const html = await new HTMLRewriter().on("[data-legal]", { element(element) {
+    const key = element.getAttribute("data-legal") ?? "";
+    if (element.tagName !== "span" || !Object.hasOwn(slots, key)) {
+      throw new Error("Legal placeholders must be spans with a documented data-legal key.");
+    }
+    const value = slots[key]!;
+    if (TEMPLATE_RULES.forbiddenWording.test(value)) throw new Error("Legal text contains forbidden wording.");
+    element.setInnerContent(value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"), { html: true });
+  } }).transform(new Response(DEC.decode(bytes))).text();
+  return ENC.encode(html);
+}
 
 /** Derive an 8-char hex salt unique per (brandId, revisionId). */
 async function deriveSalt(brandId: string, revisionId: string): Promise<string> {
@@ -56,6 +96,7 @@ export async function renderBrand(
   formFiles: FileMap,
   brandId: string,
   revisionId: string,
+  legal: LegalRenderData = {},
 ): Promise<{ files: FileMap; saltPrefix: string }> {
   const salt = await deriveSalt(brandId, revisionId);
 
@@ -74,8 +115,11 @@ export async function renderBrand(
 
   const merged: FileMap = new Map();
 
-  // Add template files unchanged.
-  for (const [path, bytes] of templateFiles) merged.set(path, bytes);
+  // Fill only explicit legal-page slots, once per render. Existing templates without slots stay byte-identical.
+  for (const [path, bytes] of templateFiles) {
+    const legalPage = /^\/?(?:terms|disclosures)(?:\/index)?\.html?$/i.test(path);
+    merged.set(path, legalPage && /data-legal/i.test(DEC.decode(bytes)) ? await fillLegalPage(bytes, legal) : bytes);
+  }
 
   // Add form files, renaming chunks and rewriting references.
   for (const [path, bytes] of formFiles) {
