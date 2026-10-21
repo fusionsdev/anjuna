@@ -233,6 +233,9 @@ describe("role table coverage", () => {
       aid: "30003",
       prepop_base: "https://prepop.example/table",
       drain_key: "brand_table",
+      google_ads_account: "4811219623",
+      google_conversion_action: "7754587837",
+      adkit_project: "proj-table",
       rotate_postback_token: true,
     };
     const rows = ADMIN_ROLE_TABLE.filter((r) => r.field_group !== null);

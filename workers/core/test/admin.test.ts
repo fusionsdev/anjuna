@@ -246,6 +246,9 @@ describe("AdminService contract", () => {
       ["aid", "10002"],
       ["prepop_base", "https://prepop.example/new"],
       ["drain_key", "brand_new"],
+      ["google_ads_account", "1234567890"],
+      ["google_conversion_action", "7754587837"],
+      ["adkit_project", "proj-a"],
       ["rotate_postback_token", true],
       ["unknown_field", "closed"],
     ];
@@ -447,5 +450,48 @@ describe("postback token state with a tenant-wide token", () => {
     const covered = GetBrandResponse.parse(await (await g.admin("/admin/brands/brand-c", owner)).json());
     expect([own.brand.postback_token, covered.brand.postback_token]).toEqual(["set", "global"]);
     expect(JSON.stringify(covered)).not.toContain("g".repeat(40));
+  });
+});
+
+describe("drain route through the admin API", () => {
+  const save = (context: AdminRequestContext, patch: unknown) =>
+    h.admin("/admin/brands/brand-b", context, { method: "PATCH", body: JSON.stringify(patch) });
+  const route = { google_ads_account: "4811219623", google_conversion_action: "7754587837", adkit_project: "proj_b-1" };
+
+  it("lets the owner set, audit and clear the route; validates every field", async () => {
+    const before = await auditCount();
+    const ok = await save(owner, route);
+    expect(ok.status).toBe(200);
+    expect(BrandPatchResponse.parse(await ok.json())).toMatchObject({
+      changed: ["google_ads_account", "google_conversion_action", "adkit_project"], brand: route,
+    });
+    expect(await auditCount()).toBe(before + 1);
+    const audit = await h.factory.prepare("SELECT action, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .first<{ action: string; before_json: string; after_json: string }>();
+    expect(audit!.action).toBe("brand.update");
+    expect(JSON.parse(audit!.before_json)).toEqual({ google_ads_account: null, google_conversion_action: null, adkit_project: null });
+    expect(JSON.parse(audit!.after_json)).toEqual(route);
+
+    for (const bad of [{ google_ads_account: "481-121-9623" }, { google_ads_account: "481121962" },
+      { google_conversion_action: "77x" }, { adkit_project: "a/b" }]) {
+      expect((await save(owner, bad)).status, JSON.stringify(bad)).toBe(422);
+    }
+    const cleared = await save(owner, { adkit_project: null });
+    expect(BrandPatchResponse.parse(await cleared.json()).brand).toMatchObject({ ...route, adkit_project: null });
+    const brand = GetBrandResponse.parse(await (await h.admin("/admin/brands/brand-b", employee)).json()).brand;
+    expect(brand).toMatchObject({ ...route, adkit_project: null });
+  });
+
+  it("refuses an employee patch of the route and leaves the row unchanged", async () => {
+    const stored = () => h.db.prepare(
+      "SELECT google_ads_account, google_conversion_action, adkit_project, updated_at FROM brand_runtime WHERE brand_id = 'brand-b'",
+    ).first();
+    const before = await stored();
+    const auditBefore = await auditCount();
+    const denied = await save(employee, { google_ads_account: "1111111111" });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ error: "forbidden_role", denied_fields: ["google_ads_account"] });
+    expect(await stored()).toEqual(before);
+    expect(await auditCount()).toBe(auditBefore);
   });
 });

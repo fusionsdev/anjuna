@@ -3,7 +3,7 @@ import { handleAdminRequest } from "./admin/index.js";
 import { analyticsRoutes } from "./analytics.js";
 import { authenticateAccount } from "./auth.js";
 import { handleScheduled } from "./cron.js";
-import { handleConversionsAck, handleConversionsPending } from "./conversions.js";
+import { handleConversionsAck, handleConversionsPending, handleConversionsRouting } from "./conversions.js";
 import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 import { handlePostback } from "./postback.js";
@@ -30,6 +30,9 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       }
       if (pathname === "/api/conversions/ack" && request.method === "POST") {
         return handleConversionsAck(request, env);
+      }
+      if (pathname === "/api/conversions/routing" && request.method === "GET") {
+        return handleConversionsRouting(request, env);
       }
       // Brand Worker calls: /rpc/* and /analytics/*, both behind the per-account credential.
       const rpc = request.method !== "POST" ? undefined

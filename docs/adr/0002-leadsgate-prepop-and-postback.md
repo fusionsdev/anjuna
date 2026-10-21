@@ -28,6 +28,12 @@ The default prepop base is `/apply` on the brand domain. This page hosts the Lea
 
 The page forwards only shared `BUYER_FIELDS` and the attribution aliases, with fixed `template: "fresh"` applied last (audit C-02). Public brand settings do not carry `aid`, so the page accepts a digits-only URL `aid`, which core sets from trusted `brand_runtime.aid`. This validates its format; it does not authenticate a manually substituted numeric ID.
 
+## 2026-10-21 — Drain routing served by core
+
+The per-brand Google Ads route (account, conversion action, optional AdKit project) moved from a hand-edited `BRAND_ROUTING_JSON` on the VPS into `brand_runtime` (migration 0012). The owner edits it in the panel's money section; employees cannot. Core serves it at `GET /api/conversions/routing` with the drain token, as `{"<brand_id>": {"account", "conversionAction", "project"?}}`. A brand without both account and conversion action is left out, so the drain skips its rows and leaves them pending.
+
+`drain.mjs` is unchanged byte-for-byte. `scripts/drain/refresh-routing.mjs` writes the map to `routing.json` before each run, and `run.sh` (maimax cron) or `scheduler.mjs` (hstgr Docker) passes it as `BRAND_ROUTING_JSON`. A failed refresh keeps the last good file. An empty map is never exported, so a VPS on legacy single-account mode keeps it until a brand is routed. The `drain_route` checklist item ticks itself when core holds a complete route.
+
 ## Consequences
 
 - One money path, identical to V1 in behavior; drain and AdKit need no code change.

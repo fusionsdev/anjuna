@@ -20,6 +20,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0009_continuation_applicant.sql",
   "0010_zip_lookup_seed.sql",
   "0011_brand_site_text.sql",
+  "0012_brand_drain_route.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
@@ -115,6 +116,10 @@ export interface BrandRuntimeRow {
   brand_name: string | null;
   site_title: string | null;
   site_description: string | null;
+  /** Google Ads drain route from the control panel; null = not routed (the drain skips the brand). */
+  google_ads_account: string | null;
+  google_conversion_action: string | null;
+  adkit_project: string | null;
   created_at: string;
   updated_at: string;
 }

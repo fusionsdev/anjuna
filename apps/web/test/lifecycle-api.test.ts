@@ -673,6 +673,77 @@ describe("truthful lifecycle BFF", () => {
   });
 });
 
+describe("drain_route checklist computed from the core route", () => {
+  const draft = async (domain: string) => {
+    const response = await post(employee, "/api/brands/drafts", { domain, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    return (await response.json() as { brand: { brand_id: string } }).brand.brand_id;
+  };
+  const coreWith = (route: Record<string, string | null> | Error | number) => {
+    const paths: string[] = [];
+    const core = { fetch: async (request: Request) => {
+      paths.push(new URL(request.url).pathname);
+      if (route instanceof Error) throw route;
+      if (typeof route === "number") return Response.json({ error: "not_found", resource: "brand", request_id: "req_x" }, { status: route });
+      const brandId = decodeURIComponent(new URL(request.url).pathname.split("/").at(-1)!);
+      return Response.json({ brand: { ...brandFixture.brand, brand_id: brandId, google_ads_account: null, google_conversion_action: null, adkit_project: null, ...route } });
+    } } as unknown as Fetcher;
+    return { paths, env: makeEnv({ MOCK_CORE: "0", CORE: core }) };
+  };
+  const checklist = async (brandId: string, testEnv: ReturnType<typeof makeEnv>) => {
+    const response = await call(`/api/brands/${brandId}/checklist`, { cookie: employee, env: testEnv });
+    expect(response.status).toBe(200);
+    return (await response.json() as { checklist: Array<Record<string, unknown>> }).checklist;
+  };
+
+  it("ticks drain_route from core when account and conversion action are set, without a D1 write", async () => {
+    const brandId = await draft("route-set.example");
+    const core = coreWith({ google_ads_account: "4811219623", google_conversion_action: "7754587837" });
+    expect(await checklist(brandId, core.env)).toEqual([{
+      item: "drain_route",
+      evidence: { brand_id: brandId, item: "drain_route", actor_id: "system", verified_at: brandFixture.brand.updated_at },
+      confirmed_by: "system", confirmed_role: "system", confirmed_at: brandFixture.brand.updated_at,
+    }]);
+    expect(core.paths).toEqual([`/admin/brands/${brandId}`]);
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM brand_checklist WHERE brand_id=?1").bind(brandId).first()).toEqual({ n: 0 });
+  });
+
+  it("adds no row when the route is half-filled or core fails", async () => {
+    const brandId = await draft("route-missing.example");
+    const routes: Array<Record<string, string> | number | Error> = [
+      { google_ads_account: "4811219623" }, { google_conversion_action: "7754587837" }, 404, 500, new Error("transport"),
+    ];
+    for (const route of routes) {
+      expect(await checklist(brandId, coreWith(route).env), String(route)).toEqual([]);
+    }
+  });
+
+  it("keeps a stored drain_route attestation over the computed one", async () => {
+    const brandId = await draft("route-attested.example");
+    expect((await post(employee, `/api/brands/${brandId}/checklist`, { item: "drain_route" })).status).toBe(200);
+    const rows = await checklist(brandId, coreWith({ google_ads_account: "4811219623", google_conversion_action: "7754587837" }).env);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ item: "drain_route", confirmed_role: "employee" });
+  });
+
+  it("serves the drain_route and leadsgate_postbacks rows from one getBrand call", async () => {
+    const brandId = await draft("route-and-postback.example");
+    const core = coreWith({ google_ads_account: "4811219623", google_conversion_action: "7754587837", postback_token: "global" });
+    const rows = await checklist(brandId, core.env);
+    expect(rows.map((row) => [row.item, row.confirmed_by])).toEqual([["drain_route", "system"], ["leadsgate_postbacks", "system:global-postback"]]);
+    expect(core.paths).toEqual([`/admin/brands/${brandId}`]);
+  });
+
+  it("does not call core when both computed items are attested", async () => {
+    const brandId = await draft("route-all-attested.example");
+    for (const item of ["drain_route", "leadsgate_postbacks"]) {
+      expect((await post(employee, `/api/brands/${brandId}/checklist`, { item })).status).toBe(200);
+    }
+    const core = coreWith({ google_ads_account: "4811219623", google_conversion_action: "7754587837", postback_token: "global" });
+    expect((await checklist(brandId, core.env)).map((row) => row.confirmed_role)).toEqual(["employee", "employee"]);
+    expect(core.paths).toEqual([]);
+  });
+});
+
  describe("Owner recovery API", () => {
    it("refuses Employees before dispatch and forwards the authenticated Owner identity", async () => {
      const requests: Array<Record<string, unknown>> = [];

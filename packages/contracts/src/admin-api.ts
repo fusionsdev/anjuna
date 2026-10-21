@@ -140,6 +140,13 @@ export const PrepopBase = z
 /** Key in the drain's BRAND_ROUTING_JSON. An identifier, not a credential. */
 export const DrainKey = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid drain_key");
 
+/** Google Ads customer id the drain uploads this brand's gclid conversions to: 10 digits, no dashes. */
+export const GoogleAdsAccount = z.string().regex(/^\d{10}$/, "Invalid google_ads_account");
+/** Google Ads conversion action id (type upload_clicks). */
+export const GoogleConversionAction = z.string().regex(/^\d{1,20}$/, "Invalid google_conversion_action");
+/** AdKit project that owns the Google Ads account (the drain's `--project`). */
+export const AdkitProject = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid adkit_project");
+
 const Day = z.iso.date();
 const Timestamp = z.iso.datetime();
 const Count = z.number().int().min(0);
@@ -196,6 +203,10 @@ export const BrandConfig = z.strictObject({
   aid: LeadsGateAid,
   prepop_base: PrepopBase,
   drain_key: DrainKey,
+  /** Drain route served by GET /api/conversions/routing. Null = not set; the drain skips the brand. */
+  google_ads_account: GoogleAdsAccount.nullable(),
+  google_conversion_action: GoogleConversionAction.nullable(),
+  adkit_project: AdkitProject.nullable(),
   postback_token: PostbackTokenState,
   created_at: Timestamp,
   /** Pass back as `expected_updated_at` on PATCH for optimistic concurrency (409 when stale). */
@@ -220,6 +231,9 @@ export const BRAND_PATCH_FIELDS = [
   "aid",
   "prepop_base",
   "drain_key",
+  "google_ads_account",
+  "google_conversion_action",
+  "adkit_project",
   "rotate_postback_token",
 ] as const;
 export type BrandPatchField = (typeof BRAND_PATCH_FIELDS)[number];
@@ -239,6 +253,10 @@ export const BrandPatchRequest = z
     aid: LeadsGateAid.optional(),
     prepop_base: PrepopBase.optional(),
     drain_key: DrainKey.optional(),
+    /** Null clears the drain route field. */
+    google_ads_account: GoogleAdsAccount.nullable().optional(),
+    google_conversion_action: GoogleConversionAction.nullable().optional(),
+    adkit_project: AdkitProject.nullable().optional(),
     rotate_postback_token: z.literal(true).optional(),
     /** `BrandConfig.updated_at` the editor loaded. Stale -> 409 conflict. */
     expected_updated_at: Timestamp.optional(),
@@ -701,7 +719,7 @@ export const BRAND_PATCH_FIELD_GROUPS = {
   },
   money_routing: {
     min_role: "owner",
-    fields: ["aid", "prepop_base", "drain_key", "rotate_postback_token"],
+    fields: ["aid", "prepop_base", "drain_key", "google_ads_account", "google_conversion_action", "adkit_project", "rotate_postback_token"],
     plan_action: "Set LeadsGate aid, postback token, drain key, prepop base",
   },
 } as const satisfies Record<string, { min_role: AdminRole; fields: readonly BrandPatchField[]; plan_action: string }>;
