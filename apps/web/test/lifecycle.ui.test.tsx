@@ -17,6 +17,7 @@ const initialConfig: BrandConfig = {
   form_version: "form@abcdef1", keyword_default: "Quick Loan", brand_name: null, site_title: null, site_description: null, amount_buckets: [100, 500],
   ab_config: { experiment_id: "exp-1", variants: [{ id: "lite_v1", weight: 50 }, { id: "full_v1", weight: 50 }] },
   flow_gate_mode: "param", aid: "123", prepop_base: "https://buyer.example/apply", drain_key: "brand-a",
+  google_ads_account: null, google_conversion_action: null, adkit_project: null,
   postback_token: "set", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z",
 };
 const failed: InstallWithReceipts = {

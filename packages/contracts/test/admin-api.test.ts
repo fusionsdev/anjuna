@@ -125,6 +125,21 @@ describe("authorize()", () => {
     expect(BrandPatchRequest.safeParse({ brand_name: null }).success).toBe(true);
   });
 
+  it("drain route fields are owner-only, validated, and clearable with null", () => {
+    const route = { google_ads_account: "1234567890", google_conversion_action: "7754587837", adkit_project: "proj_A-1" };
+    expect(BrandPatchRequest.safeParse(route).success).toBe(true);
+    expect(BrandPatchRequest.safeParse({ google_ads_account: null, google_conversion_action: null, adkit_project: null }).success).toBe(true);
+    for (const bad of [
+      { google_ads_account: "123-456-7890" }, { google_ads_account: "123456789" }, { google_ads_account: "12345678901" },
+      { google_conversion_action: "" }, { google_conversion_action: "1".repeat(21) }, { google_conversion_action: "12a" },
+      { adkit_project: "" }, { adkit_project: "a b" }, { adkit_project: "p".repeat(65) },
+    ]) expect(BrandPatchRequest.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    expect(authorize("patchBrand", "owner", route).ok).toBe(true);
+    const r = authorize("patchBrand", "employee", route);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.denied_fields).toEqual(["google_ads_account", "google_conversion_action", "adkit_project"]);
+  });
+
   it("owner-only PATCH fields are rejected for an employee, each one listed", () => {
     const employeeFields: string[] = ["keyword_default", "brand_name", "site_title", "site_description"];
     const ownerOnly = BRAND_PATCH_FIELDS.filter((f) => !employeeFields.includes(f));

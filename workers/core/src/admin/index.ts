@@ -50,6 +50,9 @@ interface BrandRow {
   brand_name: string | null;
   site_title: string | null;
   site_description: string | null;
+  google_ads_account: string | null;
+  google_conversion_action: string | null;
+  adkit_project: string | null;
   created_at: string;
   updated_at: string;
   form_version?: string | null;
@@ -223,6 +226,9 @@ function brandConfig(row: BrandRow, globalPostback = false): BrandConfig {
     aid: row.aid,
     prepop_base: row.prepop_base,
     drain_key: row.drain_key,
+    google_ads_account: row.google_ads_account,
+    google_conversion_action: row.google_conversion_action,
+    adkit_project: row.adkit_project,
     postback_token: row.postback_token_hash ? "set" : globalPostback ? "global" : "not_set",
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -239,7 +245,8 @@ function brandColumns(includeFormVersion: boolean, table = ""): string {
   const columns = [
     "brand_id", "account", "hostnames", "drain_key", "postback_token_hash", "aid",
     "prepop_base", "amount_buckets", "flow_gate_mode", "paused", "ab_config_json",
-    "keyword_default", "brand_name", "site_title", "site_description", "created_at", "updated_at",
+    "keyword_default", "brand_name", "site_title", "site_description",
+    "google_ads_account", "google_conversion_action", "adkit_project", "created_at", "updated_at",
     ...(includeFormVersion ? ["form_version"] : []),
   ];
   return columns.map((column) => `${prefix}${column} AS ${column}`).join(", ");
@@ -379,6 +386,10 @@ async function patchBrand(
     ["aid", "aid", patch.aid, before.aid, patch.aid],
     ["prepop_base", "prepop_base", patch.prepop_base, before.prepop_base, patch.prepop_base],
     ["drain_key", "drain_key", patch.drain_key, before.drain_key, patch.drain_key],
+    ["google_ads_account", "google_ads_account", patch.google_ads_account, before.google_ads_account, patch.google_ads_account],
+    ["google_conversion_action", "google_conversion_action", patch.google_conversion_action,
+      before.google_conversion_action, patch.google_conversion_action],
+    ["adkit_project", "adkit_project", patch.adkit_project, before.adkit_project, patch.adkit_project],
   ];
   for (const [field, column, requested, old, stored] of candidates) {
     if (requested !== undefined && !equalJson(requested, old)) {
