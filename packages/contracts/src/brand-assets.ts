@@ -87,7 +87,7 @@ export function checkBrandAssetBytes(kind: BrandAssetKind, bytes: Uint8Array): B
   if (startsWith(bytes, [0x00, 0x00, 0x01, 0x00]) && bytes.length >= 6 && (bytes[4]! | (bytes[5]! << 8)) > 0) return { ok: true, content_type: "image/x-icon" };
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).trimStart();
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes).trimStart();
   } catch {
     return { ok: false, code: "unsupported_type", message: "Use a PNG, SVG or ICO file." };
   }

@@ -1,9 +1,10 @@
 import {
-  ANALYTICS_LIMITS, CLICK_PARAM_KEYS, CLICK_TRIGGER_KEYS, HANDOFF_TTL_SECONDS, FormLeadPayload, OpaqueToken, Keyword,
+  ANALYTICS_LIMITS, BRAND_ASSET_PATHS, CLICK_PARAM_KEYS, CLICK_TRIGGER_KEYS, HANDOFF_TTL_SECONDS, FormLeadPayload, OpaqueToken, Keyword,
   LeadsRpc, cleanKeyword, encodeRuntimeConfig, isBrandClean,
   type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
 } from "@anjuna/contracts";
 import { assignVariant, type Assignment } from "./assignment.js";
+import { assetResponse, createAssetCache, initialResponse } from "./brand-assets.js";
 import { APPLY_HTML } from "./apply.js";
 import { BrandSettings, LEGAL_PATHS, STATIC_FILES, STATIC_PREFIXES, type BrandConfigSource, type BrandWorkerConfig } from "./config.js";
 import { CoreError, withCoreTimeout, type AnalyticsKind, type CoreResult, type SubmitContext } from "./core-client.js";
@@ -139,7 +140,7 @@ function analyticsAccepted(kind: AnalyticsKind): Response {
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }
 
-async function handle(request: Request, config: BrandWorkerConfig, settings: BrandSettings): Promise<Response> {
+async function handle(request: Request, config: BrandWorkerConfig, settings: BrandSettings, assetFor: ReturnType<typeof createAssetCache>): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   if (url.hostname === `www.${settings.hostname}`) {
@@ -155,13 +156,27 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   const provider = path === `${settings.formRoute}/provider`;
   const complete = path === `${settings.formRoute}/complete`;
   const apply = path === "/apply" || path === "/apply/";
-  const staticAsset = STATIC_FILES.some((file) => path === file) || STATIC_PREFIXES.some((prefix) => path.startsWith(prefix) && path.length > prefix.length);
+  const assetKind = Object.hasOwn(BRAND_ASSET_PATHS, path) ? BRAND_ASSET_PATHS[path as keyof typeof BRAND_ASSET_PATHS] : null;
+  const staticAsset = assetKind !== null || STATIC_FILES.some((file) => path === file) || STATIC_PREFIXES.some((prefix) => path.startsWith(prefix) && path.length > prefix.length);
   const proxy = proxyRoute(path, settings);
   const allowed = (read && (path === "/" || path === "/go" || legal || form || provider || complete || apply || staticAsset || path === "/api/zip" || path === "/api/health")) ||
     (request.method === "POST" && (path === "/api/leads" || proxy));
   if (!allowed) return notFound();
   if (settings.paused && !staticAsset) {
     return new Response(PAUSE_HTML, { status: 503, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "retry-after": "300" } });
+  }
+  if (assetKind) {
+    // The brand's uploaded file, else (favicon paths) the template's own static file, else the generated initial letter.
+    // `/favicon.svg` serves an uploaded favicon only when it is an SVG. Nothing here depends on the visitor.
+    const stored = await assetFor(config, settings, assetKind);
+    const wrongType = stored !== null && path === "/favicon.svg" && stored.contentType !== "image/svg+xml";
+    if (stored && !wrongType) return assetResponse(stored.bytes, stored.contentType);
+    if (assetKind === "favicon") {
+      const response = await config.assets.fetch(new Request(new URL(path, url.origin), { method: request.method }));
+      if (response.status === 200 || response.status === 304) return response;
+      await response.body?.cancel();
+    }
+    return wrongType ? notFound() : initialResponse(effectiveSiteText(settings).brand);
   }
   if (staticAsset) {
     const response = await config.assets.fetch(new Request(new URL(path, url.origin), { method: request.method }));
@@ -299,9 +314,10 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
 export function createBrandWorker(source: BrandConfigSource): { fetch(request: Request): Promise<Response> } {
   if (typeof source !== "function") BrandSettings.parse(source);
   const settingsFor = createSettingsCache();
+  const assetFor = createAssetCache();
   return { async fetch(request) {
     const config = typeof source === "function" ? await source() : source;
-    const response = await handle(request, config, await settingsFor(config));
+    const response = await handle(request, config, await settingsFor(config), assetFor);
     if (request.method !== "HEAD") return response;
     await response.body?.cancel();
     return new Response(null, { status: response.status, headers: response.headers });

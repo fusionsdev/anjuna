@@ -50,3 +50,12 @@ it("asset router runs www page navigations through the apex redirect", async () 
   expect(response.status, await response.text()).toBe(301);
   expect(response.headers.get("location")).toBe("https://example.com/request?requested_amount=750&zip=60601");
 });
+
+it("asset router runs the Worker for the favicon and logo paths, which serve the brand's own file", async () => {
+  for (const route of ["/favicon.ico", "/favicon.svg", "/brand/logo"]) {
+    const response = await mf.dispatchFetch(`https://example.com${route}`);
+    expect(response.headers.get("x-runtime-invoked"), route).toBe("yes");
+    expect([response.status, response.headers.get("content-type")], route).toEqual([200, "image/svg+xml"]);
+    expect(await response.text(), route).toContain(">E</text>");
+  }
+});

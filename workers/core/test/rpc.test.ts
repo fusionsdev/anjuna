@@ -91,6 +91,33 @@ describe("brandSettings site text", () => {
   });
 });
 
+describe("brandAsset", () => {
+  const body = Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").toString("base64");
+  async function storeAsset(brand: string, kind: string, contentType = "image/svg+xml", base64 = body) {
+    await h.factory.prepare("INSERT OR IGNORE INTO brands (brand_id, name, account, domain, status, created_by, created_at, updated_at) VALUES (?1, 'Name', 'account-a', ?2, 'live', 'u1', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')")
+      .bind(brand, `${brand}.example`).run();
+    await h.factory.prepare("INSERT OR REPLACE INTO brand_assets (brand_id, kind, content_type, byte_length, sha256, body_base64, updated_by, updated_at) VALUES (?1, ?2, ?3, 10, ?4, ?5, 'u1', '2026-01-01T00:00:00.000Z')")
+      .bind(brand, kind, contentType, "e".repeat(64), base64).run();
+  }
+  beforeEach(async () => { await h.factory.batch([h.factory.prepare("DELETE FROM brand_assets"), h.factory.prepare("DELETE FROM brands")]); });
+
+  it("returns the stored favicon or logo of the brand and nothing for another brand or kind", async () => {
+    await storeAsset("brand-a", "favicon");
+    const found = await rpc("brandAsset", { brand_id: "brand-a", kind: "favicon" });
+    expect([found.status, await found.json()]).toEqual([200, { content_type: "image/svg+xml", sha256: "e".repeat(64), body_base64: body }]);
+    const otherKind = await rpc("brandAsset", { brand_id: "brand-a", kind: "logo" });
+    expect([otherKind.status, await otherKind.json()]).toEqual([404, { error: "not_found" }]);
+    const otherBrand = await rpc("brandAsset", { brand_id: "brand-c", kind: "favicon" });
+    expect([otherBrand.status, await otherBrand.json()]).toEqual([404, { error: "not_found" }]);
+  });
+
+  it("serves a row that no longer fits the contract as missing and rejects a bad kind", async () => {
+    await storeAsset("brand-a", "logo", "image/png", "not base64!");
+    expect((await rpc("brandAsset", { brand_id: "brand-a", kind: "logo" })).status).toBe(404);
+    expect((await rpc("brandAsset", { brand_id: "brand-a", kind: "banner" })).status).toBe(400);
+  });
+});
+
 describe("V1 lead path", () => {
   it.each([false, true])("stores validated lite/full (%s), trusted identity, evidence, attribution and outbox", async (full) => {
     const input = submit(payload(full));

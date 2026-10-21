@@ -11,7 +11,7 @@
     "binding": "ASSETS",
     "html_handling": "none",
     "not_found_handling": "404-page",
-    "run_worker_first": ["/*", "!/_f/assets/*", "!/assets/*", "!/_astro/*", "!/favicon.ico", "!/favicon.svg"]
+    "run_worker_first": ["/*", "!/_f/assets/*", "!/assets/*", "!/_astro/*"]
   },
   "vars": {
     "BRAND_CONFIG": "{\"brand_id\":\"b-000001\",\"hostname\":\"example.com\",\"brand\":\"Example Brand\",\"formRoute\":\"/request\",\"amount_buckets\":[500,750,1000,1750,3000,5000]}"

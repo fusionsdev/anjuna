@@ -1,6 +1,7 @@
 import { LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest } from "@anjuna/contracts";
 import { ownsBrand } from "../auth.js";
 import type { RpcHandler } from "../index.js";
+import { brandAsset } from "./assets.js";
 import { json } from "../http.js";
 import { recordClick, zip } from "./clicks.js";
 import { resolveContinuation } from "./continuations.js";
@@ -62,6 +63,7 @@ function handler<M extends LeadsRpcMethod>(method: M): RpcHandler {
         case "issueHandoff": return await issueHandoff(parsed.data as LeadsRpcRequest<"issueHandoff">, env, brand);
         case "verifyHandoff": return await verifyHandoff(parsed.data as LeadsRpcRequest<"verifyHandoff">, env);
         case "brandSettings": return json(publicSettings(brand, (parsed.data as LeadsRpcRequest<"brandSettings">).include_site_text === true));
+        case "brandAsset": return await brandAsset(parsed.data as LeadsRpcRequest<"brandAsset">, env);
         default: return json({ error: "not_found" }, 404);
       }
     } catch {
