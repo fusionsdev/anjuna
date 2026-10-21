@@ -279,6 +279,20 @@ describe("Anjuna additions", () => {
       await expect(insert({ brand_id: "brand-text-4", brand_name: "" })).rejects.toThrow(/CHECK constraint failed/);
     });
 
+    it("stores the per-brand drain route and enforces its shape", async () => {
+      await insert({ brand_id: "brand-route", google_ads_account: "1234567890", google_conversion_action: "7754587837", adkit_project: "proj_A-1" });
+      expect(await env.DB.prepare("SELECT google_ads_account, google_conversion_action, adkit_project FROM brand_runtime WHERE brand_id = 'brand-route'").first())
+        .toEqual({ google_ads_account: "1234567890", google_conversion_action: "7754587837", adkit_project: "proj_A-1" });
+      await insert({ brand_id: "brand-route-null" });
+      expect(await env.DB.prepare("SELECT google_ads_account, google_conversion_action, adkit_project FROM brand_runtime WHERE brand_id = 'brand-route-null'").first())
+        .toEqual({ google_ads_account: null, google_conversion_action: null, adkit_project: null });
+      await expect(insert({ brand_id: "brand-route-2", google_ads_account: "123-456-7890" })).rejects.toThrow(/CHECK constraint failed/);
+      await expect(insert({ brand_id: "brand-route-3", google_ads_account: "123456789" })).rejects.toThrow(/CHECK constraint failed/);
+      await expect(insert({ brand_id: "brand-route-4", google_conversion_action: "" })).rejects.toThrow(/CHECK constraint failed/);
+      await expect(insert({ brand_id: "brand-route-5", google_conversion_action: "12a" })).rejects.toThrow(/CHECK constraint failed/);
+      await expect(insert({ brand_id: "brand-route-6", adkit_project: "a b" })).rejects.toThrow(/CHECK constraint failed/);
+    });
+
     it("stores a brand with defaults param gate and not paused", async () => {
       await insert();
       const row = await env.DB
