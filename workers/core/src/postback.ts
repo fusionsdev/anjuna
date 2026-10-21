@@ -4,6 +4,7 @@ import {
 import { hashesEqual, sha256 } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
+import { globalPostbackDigest } from "./postback-token.js";
 
 interface PostbackLead {
   lead_id: string;
@@ -18,6 +19,8 @@ export async function handlePostback(request: Request, env: Env): Promise<Respon
     .replace(/^Bearer\s+/i, "")).trim();
   if (!token) return unauthorized();
   const digest = await sha256(token);
+  const globalDigest = await globalPostbackDigest(env);
+  const isGlobal = globalDigest !== null && hashesEqual(digest, globalDigest);
   // leads.brand is the trusted brand_id stored by core (T6c); buyer lead_id is never a join key.
   const lead = await env.LEADS.prepare(`
     SELECT l.lead_id, l.tracking_json, b.postback_token_hash
@@ -26,8 +29,8 @@ export async function handlePostback(request: Request, env: Env): Promise<Respon
   `).bind(v1Clean(query.cid, 128)).first<PostbackLead>();
 
   if (lead) {
-    if (!hashesEqual(digest, lead.postback_token_hash)) return unauthorized();
-  } else {
+    if (!isGlobal && !hashesEqual(digest, lead.postback_token_hash)) return unauthorized();
+  } else if (!isGlobal) {
     // V1 authenticates even malformed/unmatched callbacks before returning 400/ignored.
     // With no lead to identify a brand, require a configured brand token, but never write.
     const { results } = await env.LEADS.prepare(
