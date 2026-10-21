@@ -1,5 +1,6 @@
 import {
-  BRAND_PATCH_FIELD_GROUPS, SITE_TEXT_LIMITS, SiteBrandName, SiteDescription, SiteTitle, roleAtLeast,
+  AdkitProject, BRAND_PATCH_FIELD_GROUPS, GoogleAdsAccount, GoogleConversionAction, SITE_TEXT_LIMITS,
+  SiteBrandName, SiteDescription, SiteTitle, roleAtLeast,
   type BrandConfig, type BrandPatchRequest, type FlowGateMode, type TemplateTextDefaults,
 } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
@@ -193,22 +194,53 @@ function BucketsSection({ brand, onSave }: { brand: BrandConfig; onSave: (b: num
   );
 }
 
+type RouteField = "google_ads_account" | "google_conversion_action" | "adkit_project";
+/** Drain route served to the VPS drain as BRAND_ROUTING_JSON. Empty input clears the field (null). */
+const ROUTE_FIELDS: { field: RouteField; label: string; schema: typeof GoogleAdsAccount }[] = [
+  { field: "google_ads_account", label: "บัญชี Google Ads (Google Ads account)", schema: GoogleAdsAccount },
+  { field: "google_conversion_action", label: "รหัส conversion action (Conversion action)", schema: GoogleConversionAction },
+  { field: "adkit_project", label: "โปรเจกต์ AdKit (AdKit project)", schema: AdkitProject },
+];
+
 function MoneySection({ brand, onSave, onRotate }: { brand: BrandConfig; onSave: (m: BrandPatchRequest) => void; onRotate: () => void }) {
   const [aid, setAid] = useState(brand.aid);
   const [prepop, setPrepop] = useState(brand.prepop_base);
   const [drain, setDrain] = useState(brand.drain_key);
+  const [route, setRoute] = useState<Record<RouteField, string>>({
+    google_ads_account: brand.google_ads_account ?? "",
+    google_conversion_action: brand.google_conversion_action ?? "",
+    adkit_project: brand.adkit_project ?? "",
+  });
+  const routeValue = (field: RouteField) => route[field].trim() || null;
+  const routeInvalid = ROUTE_FIELDS.filter(({ field, schema }) => routeValue(field) !== null && !schema.safeParse(routeValue(field)).success);
   return (
     <Section title="เส้นทางเงิน (Money-path, Owner เท่านั้น)">
       <label>รหัส LeadsGate (LeadsGate aid)<input value={aid} onChange={(e) => setAid(e.target.value)} /></label>
       <label>URL ฐาน prepop (Prepop base)<input value={prepop} onChange={(e) => setPrepop(e.target.value)} /></label>
       <label>คีย์ drain (Drain key)<input value={drain} onChange={(e) => setDrain(e.target.value)} /></label>
+      {ROUTE_FIELDS.map(({ field, label }) => (
+        <label key={field}>
+          {label}
+          <input
+            value={route[field]}
+            aria-invalid={routeInvalid.some((f) => f.field === field) || undefined}
+            onChange={(e) => setRoute({ ...route, [field]: e.target.value })}
+          />
+        </label>
+      ))}
+      {routeInvalid.length > 0 && (
+        <div className="error small">บัญชี 10 หลักไม่มีขีด, conversion action เป็นตัวเลข, โปรเจกต์ใช้ A-Z 0-9 _ - (Account 10 digits, action digits, project A-Z 0-9 _ -)</div>
+      )}
       <button
         className="primary"
+        disabled={routeInvalid.length > 0}
         onClick={() =>
           onSave({
             ...(aid !== brand.aid && { aid }),
             ...(prepop !== brand.prepop_base && { prepop_base: prepop }),
             ...(drain !== brand.drain_key && { drain_key: drain }),
+            ...Object.fromEntries(ROUTE_FIELDS.map(({ field }) => [field, routeValue(field)])
+              .filter(([field, value]) => value !== brand[field as RouteField])),
           })
         }
       >

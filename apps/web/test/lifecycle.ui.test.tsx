@@ -54,6 +54,10 @@ const saveAbName = "บันทึก A/B (Save A/B)";
 const flowGateSection = "เกตของโฟลว์ (Flow gate)";
 const closeName = "ปิด (Close)";
 const rotateName = "หมุนโทเคน (Rotate token)";
+const accountLabel = "บัญชี Google Ads (Google Ads account)";
+const actionLabel = "รหัส conversion action (Conversion action)";
+const projectLabel = "โปรเจกต์ AdKit (AdKit project)";
+const moneySection = "เส้นทางเงิน (Money-path, Owner เท่านั้น)";
 const openRuntimeConfig = async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
 };
@@ -313,6 +317,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(panel).queryByRole("textbox", { name: bucketsLabel })).toBeNull();
     expect(within(panel).queryByRole("combobox")).toBeNull();
     expect(within(panel).queryByRole("button", { name: rotateName })).toBeNull();
+    for (const label of [accountLabel, actionLabel, projectLabel]) expect(within(panel).queryByRole("textbox", { name: label })).toBeNull();
     expect(within(panel).queryByRole("heading", { name: rollbackName })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /Rollback/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /เริ่มอัปเกรดทุกแบรนด์/ })).toBeNull();
@@ -328,7 +333,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", rollbackName, "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
     ]);
-    for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)"]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
+    for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)", accountLabel, actionLabel, projectLabel]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
     expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();
     expect(within(panel).getByText(/โทเคน postback \(Postback token\):/)).toBeDefined();
     // Every button reads Thai first with the English term in parentheses.
@@ -339,6 +344,33 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(modal).getByRole("heading", { name: "โทเคน postback ใหม่ (New postback token)" })).toBeDefined();
     expect(within(modal).getByRole("button", { name: "คัดลอก (Copy)" })).toBeDefined();
     expect(within(modal).getByRole("button", { name: closeName })).toBeDefined();
+  });
+
+  it("lets the Owner set, validate and clear the Google Ads drain route", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await openRuntimeConfig();
+    const panel = await screen.findByRole("complementary", { name: configLabel });
+    await within(panel).findByRole("heading", { name: moneySection });
+    const money = section(panel, moneySection);
+    const save = money.getByRole("button", { name: saveName }) as HTMLButtonElement;
+    const account = money.getByRole("textbox", { name: accountLabel });
+    fireEvent.change(account, { target: { value: "481-121-9623" } });
+    expect(save.disabled).toBe(true);
+    expect(account.getAttribute("aria-invalid")).toBe("true");
+    fireEvent.change(account, { target: { value: "4811219623" } });
+    fireEvent.change(money.getByRole("textbox", { name: actionLabel }), { target: { value: " 7754587837 " } });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(lastBody("/api/brands/brand-a")).toEqual({
+      google_ads_account: "4811219623", google_conversion_action: "7754587837", expected_updated_at: initialConfig.updated_at,
+    }));
+    await waitFor(() => expect(config.google_ads_account).toBe("4811219623"));
+    const after = section(screen.getByRole("complementary", { name: configLabel }), moneySection);
+    await waitFor(() => expect((after.getByRole("textbox", { name: accountLabel }) as HTMLInputElement).value).toBe("4811219623"));
+    fireEvent.change(after.getByRole("textbox", { name: accountLabel }), { target: { value: "" } });
+    fireEvent.click(after.getByRole("button", { name: saveName }));
+    await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ google_ads_account: null }));
+    expect(lastBody("/api/brands/brand-a")).not.toHaveProperty("google_conversion_action");
   });
 
   it("shows the brand name in the list and the detail header with the hostname as secondary text", async () => {
