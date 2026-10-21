@@ -32,7 +32,7 @@ The page forwards only shared `BUYER_FIELDS` and the attribution aliases, with f
 
 The per-brand Google Ads route (account, conversion action, optional AdKit project) moved from a hand-edited `BRAND_ROUTING_JSON` on the VPS into `brand_runtime` (migration 0012). The owner edits it in the panel's money section; employees cannot. Core serves it at `GET /api/conversions/routing` with the drain token, as `{"<brand_id>": {"account", "conversionAction", "project"?}}`. A brand without both account and conversion action is left out, so the drain skips its rows and leaves them pending.
 
-`drain.mjs` is unchanged byte-for-byte. `scripts/drain/refresh-routing.mjs` writes the map to `routing.json` before each run, and `run.sh` (maimax cron) or `scheduler.mjs` (hstgr Docker) passes it as `BRAND_ROUTING_JSON`. A failed refresh keeps the last good file. The `drain_route` checklist item ticks itself when core holds a complete route.
+`drain.mjs` is unchanged byte-for-byte. `scripts/drain/refresh-routing.mjs` writes the map to `routing.json` before each run, and `run.sh` (maimax cron) or `scheduler.mjs` (hstgr Docker) passes it as `BRAND_ROUTING_JSON`. A failed refresh keeps the last good file. An empty map is never exported, so a VPS on legacy single-account mode keeps it until a brand is routed. The `drain_route` checklist item ticks itself when core holds a complete route.
 
 ## Consequences
 
