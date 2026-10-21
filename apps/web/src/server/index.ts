@@ -30,6 +30,7 @@ import type { Env } from "./env.js";
 import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
+import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleTemplateRoute } from "./templates.js";
 import { handleWizardRoute } from "./wizard.js";
@@ -117,6 +118,9 @@ async function route(
 
   const builderKeys = await handleBuilderKeyRoute(request, env, path, ctx);
   if (builderKeys) return builderKeys;
+
+  const brandEdit = await handleBrandEditRoute(request, env, path, ctx);
+  if (brandEdit) return brandEdit;
 
   if (path === "/api/me" && method === "GET") {
     return json(200, { user: { id: ctx.actor_id, email, role: ctx.actor_role } });

@@ -35,6 +35,12 @@ export const PANEL_ROLE_TABLE = {
   listTemplates: "employee",
   importTemplate: "employee",
   approveTemplate: "owner",
+  /** The edit page of a live brand: template version and tracking ids, read-only for an employee. */
+  viewBrandEdit: "employee",
+  /** Logo and favicon of a brand: like site text, an employee may upload and remove them. */
+  editBrandAssets: "employee",
+  /** Microsoft Ads account of a live brand (config/profile only, the drain does not read it): a money-path field, Owner only. */
+  setBrandMicrosoftAds: "owner",
   /** Builder keys for the template MCP: list and create are employee and owner; revoke is owner only. */
   viewBuilderKeys: "employee",
   manageBuilderKeys: "owner",

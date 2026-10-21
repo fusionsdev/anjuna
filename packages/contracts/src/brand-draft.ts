@@ -74,11 +74,14 @@ const Disclosures = z
     }
   });
 
+/** Microsoft Ads account number: 6 to 12 digits. Informational: the drain does not read it. */
+export const MicrosoftAdsAccount = z.string().regex(/^\d{6,12}$/, "Invalid microsoft_ads_account");
+
 const Ads = z.strictObject({
   google_ads_account: GoogleAdsAccount.optional(),
   google_conversion_action: GoogleConversionAction.optional(),
   adkit_project: AdkitProject.optional(),
-  microsoft_ads_account: z.string().regex(/^\d{6,12}$/, "Invalid microsoft_ads_account").optional(),
+  microsoft_ads_account: MicrosoftAdsAccount.optional(),
 });
 
 /** Storage cap of the optional h1, cta and sub strings. Their copy rules (limits, the {{keyword}} marker) belong to the copy validator. */
