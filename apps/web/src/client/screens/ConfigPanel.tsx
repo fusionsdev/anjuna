@@ -1,22 +1,34 @@
 import {
-  AdkitProject, BRAND_PATCH_FIELD_GROUPS, GoogleAdsAccount, GoogleConversionAction, SITE_TEXT_LIMITS,
+  AdkitProject, BRAND_PATCH_FIELD_GROUPS, GoogleAdsAccount, GoogleConversionAction, MicrosoftAdsAccount, SITE_TEXT_LIMITS,
   SiteBrandName, SiteDescription, SiteTitle, roleAtLeast,
   type BrandConfig, type BrandPatchRequest, type FlowGateMode, type TemplateTextDefaults,
 } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
+import type { BrandEditState } from "../../shared/brand-edit";
 import { replaceTemplateBrand } from "../../shared/site-text-preview";
+import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import { ApiError, api, type Me } from "../api";
+import { BrandAssetsSection, TemplateVersionSection } from "./BrandEditSections";
 
 /** The UI hides what the role cannot do; the server enforces it regardless. */
 const can = (me: Me, group: keyof typeof BRAND_PATCH_FIELD_GROUPS) => roleAtLeast(me.role, BRAND_PATCH_FIELD_GROUPS[group].min_role);
 
-/** brandName: the display name typed at brand creation (brands.name), which the brand Worker serves when no brand name was edited. */
-export function ConfigPanel({ me, brandId, brandName, onClose, onChanged }: { me: Me; brandId: string; brandName?: string; onClose: () => void; onChanged: () => void }) {
+/**
+ * brandName: the display name typed at brand creation (brands.name), which the brand Worker serves when no brand name was edited.
+ * onOperationStarted: a redeploy or rollback was accepted; the lifecycle view follows it from there.
+ */
+export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOperationStarted }: { me: Me; brandId: string; brandName?: string; onClose: () => void; onChanged: () => void; onOperationStarted?: (installId: string) => void }) {
   const [brand, setBrand] = useState<BrandConfig | null>(null);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [defaults, setDefaults] = useState<TemplateTextDefaults | null>(null);
   useEffect(() => { void api.siteTextDefaults(brandId).then((r) => setDefaults(r.defaults), () => setDefaults(null)); }, [brandId]);
+
+  // The template version and Microsoft Ads account of the current revision: Owner fields.
+  const [edit, setEdit] = useState<BrandEditState | null | undefined>(undefined);
+  const isOwner = roleAtLeast(me.role, PANEL_ROLE_TABLE.redeployBrand);
+  const loadEdit = useCallback(() => api.brandEdit(brandId).then(setEdit, () => setEdit(null)), [brandId]);
+  useEffect(() => { if (isOwner) void loadEdit(); }, [isOwner, loadEdit]);
 
   const load = useCallback(() => api.brand(brandId).then(setBrand, (e) => setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ" })), [brandId]);
   useEffect(() => void load(), [load]);
@@ -65,15 +77,33 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged }: { me
           onSave={(patch) => save(patch, "บันทึกข้อความหน้าเว็บแล้ว (Site text saved)")} />
       )}
 
-      {me.role === "owner" && <Section title="ย้อนกลับ (Rollback)">
-        <button
-          onClick={() => void act(() => api.rollback(brandId), "")}
-          title="เร็ว ๆ นี้ (coming with T10)"
-        >
-          ย้อนกลับเป็นเวอร์ชันก่อนหน้า (Rollback) <span className="badge">เร็ว ๆ นี้ (coming with T10)</span>
-        </button>
-        <p className="muted small">ยังเป็น placeholder: ปุ่มนี้จะทำงานจริงเมื่อ factory Workflows (T10) พร้อม</p>
-      </Section>}
+      {roleAtLeast(me.role, PANEL_ROLE_TABLE.editBrandAssets) && <BrandAssetsSection key={`a${brandId}`} brandId={brandId} brandName={brandName ?? brand.hostnames[0]!} />}
+
+      {isOwner && <>
+        <Section title="ย้อนกลับ (Rollback)">
+          <button
+            onClick={async () => {
+              if (!window.confirm("ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า? (Roll the brand back to its previous version.)")) return;
+              const started = await act(() => api.rollbackLifecycle(brandId), "เริ่มย้อนกลับแล้ว ดูสถานะในหน้า Lifecycle (Rollback started, follow it in the lifecycle view)");
+              if (started) onOperationStarted?.(started.install_id);
+            }}
+          >
+            ย้อนกลับเป็นเวอร์ชันก่อนหน้า (Rollback)
+          </button>
+        </Section>
+        <TemplateVersionSection
+          key={`t${edit?.template_version_id ?? "?"}`}
+          currentId={edit?.template_version_id ?? null}
+          onChange={async (target) => {
+            if (!window.confirm(`ย้ายแบรนด์นี้ไปเทมเพลต ${target.name} v${target.version} และติดตั้งใหม่? (Move this brand to ${target.name} v${target.version} and redeploy. If a step fails it rolls back to the current version.)`)) return false;
+            const started = await act(() => api.redeploy(brandId, undefined, target.template_version_id), "เริ่มติดตั้งใหม่แล้ว ดูสถานะในหน้า Lifecycle (Redeploy started, follow it in the lifecycle view)");
+            if (!started) return false;
+            onOperationStarted?.(started.install_id);
+            await loadEdit();
+            return true;
+          }}
+        />
+      </>}
 
       {can(me, "ab_weights") && <AbSection key={`ab${brand.updated_at}`} brand={brand} onSave={(ab) => save({ ab_config: ab })} />}
       {can(me, "amount_buckets") && <BucketsSection key={`b${brand.updated_at}`} brand={brand} onSave={(b) => save({ amount_buckets: b })} />}
@@ -87,8 +117,10 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged }: { me
       )}
       {can(me, "money_routing") && (
         <MoneySection
-          key={`m${brand.updated_at}`}
+          key={`m${brand.updated_at}${edit ? edit.microsoft_ads_account ?? "-" : "?"}`}
           brand={brand}
+          microsoft={edit ? edit.microsoft_ads_account : undefined}
+          onSaveMicrosoft={async (account) => { if (await act(() => api.setMicrosoftAds(brandId, account), "บันทึกบัญชี Microsoft Ads แล้ว (Microsoft Ads account saved)")) await loadEdit(); }}
           onSave={(m) => save(m)}
           onRotate={async () => {
             if (!window.confirm("หมุน (rotate) postback token? ต้องอัปเดต URL ใน LeadsGate ทันที")) return;
@@ -203,7 +235,11 @@ const ROUTE_FIELDS: { field: RouteField; label: string; schema: typeof GoogleAds
   { field: "adkit_project", label: "โปรเจกต์ AdKit (AdKit project)", schema: AdkitProject },
 ];
 
-function MoneySection({ brand, onSave, onRotate }: { brand: BrandConfig; onSave: (m: BrandPatchRequest) => void; onRotate: () => void }) {
+/** microsoft: undefined while it loads or when it could not be read; null = not set. It lives in the brand profile, not in core, so the drain never reads it. */
+function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: { brand: BrandConfig; microsoft: string | null | undefined; onSave: (m: BrandPatchRequest) => void; onSaveMicrosoft: (account: string | null) => void; onRotate: () => void }) {
+  const [ms, setMs] = useState(microsoft ?? "");
+  const msValue = ms.trim() === "" ? null : ms.trim();
+  const msInvalid = msValue !== null && !MicrosoftAdsAccount.safeParse(msValue).success;
   const [aid, setAid] = useState(brand.aid);
   const [prepop, setPrepop] = useState(brand.prepop_base);
   const [drain, setDrain] = useState(brand.drain_key);
@@ -247,6 +283,24 @@ function MoneySection({ brand, onSave, onRotate }: { brand: BrandConfig; onSave:
       >
         บันทึก (Save)
       </button>
+      <label>
+        บัญชี Microsoft Ads (Microsoft Ads account)
+        <input
+          value={ms}
+          inputMode="numeric"
+          disabled={microsoft === undefined}
+          aria-invalid={msInvalid || undefined}
+          placeholder={microsoft === undefined ? "ไม่สามารถอ่านค่าได้ (Not available)" : "6–12 หลัก (6 to 12 digits)"}
+          onChange={(e) => setMs(e.target.value)}
+        />
+      </label>
+      {msInvalid && <div className="error small">ต้องเป็นเลข 6 ถึง 12 หลัก (6 to 12 digits)</div>}
+      <div className="row split">
+        <span className="muted small">เก็บในโปรไฟล์แบรนด์ ไม่ส่งให้ drain (Stored in the brand profile, the drain does not read it)</span>
+        <button className="primary" disabled={microsoft === undefined || msInvalid || msValue === microsoft} onClick={() => onSaveMicrosoft(msValue)}>
+          บันทึกบัญชี Microsoft Ads (Save Microsoft Ads account)
+        </button>
+      </div>
       <div className="row split">
         <span>โทเคน postback (Postback token): <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว (เฉพาะเว็บนี้)" : brand.postback_token === "global" ? "ใช้ postback กลาง (global)" : "ยังไม่ได้ตั้งค่า"}</b></span>
         <button className="danger" onClick={onRotate}>หมุนโทเคน (Rotate token)</button>

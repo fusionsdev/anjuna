@@ -2,6 +2,7 @@
  * Short Thai + English error text for the wizard: one message per validation error and per server error.
  * The contracts keep their own English messages for the API; the employee sees these.
  */
+import { COPY_KEYWORD_MARKER, COPY_LIMITS, type CopyField, type CopyIssue } from "@anjuna/contracts";
 import { ApiError } from "../api";
 import type { FieldKey } from "./steps";
 
@@ -72,6 +73,24 @@ export function describeIssue(field: FieldKey, issue: IssueLike): string {
       return `ยาวเกินไป สูงสุด ${String(issue.maximum)} ตัวอักษร (Too long, at most ${String(issue.maximum)} characters)`;
     }
     return FORMAT[field] ?? `ข้อมูลไม่ถูกต้อง (Invalid): ${message}`;
+  })();
+  return `${label}: ${text}`;
+}
+
+/** One finding of validateCopy for the h1, cta or sub field, in Thai and English. The contract's own message stays in the API. */
+export function describeCopyIssue(field: CopyField, issue: CopyIssue): string {
+  const label = FIELD_LABEL[field];
+  const text = (() => {
+    switch (issue.code) {
+      case "plain_text": return 'ใช้ข้อความบรรทัดเดียว ห้ามมี < > " (One line of plain text, no < > ")';
+      case "length": return `ยาวเกิน ${COPY_LIMITS[field]} ตัวอักษรที่มองเห็น (More than ${COPY_LIMITS[field]} visible characters)`;
+      case "forbidden_wording": return 'ห้ามใช้คำว่า "personal loan" (Do not use the words "personal loan")';
+      case "brand_clean": return "มีคำหรือรหัสที่ไม่อนุญาต (Contains a forbidden word or key)";
+      case "keyword_slot": return field === "h1"
+        ? `ใส่ ${COPY_KEYWORD_MARKER} หนึ่งครั้งพอดี และห้ามมี { } อย่างอื่น (Use ${COPY_KEYWORD_MARKER} exactly once, no other { } placeholders)`
+        : "ห้ามมี { } (No placeholders)";
+      default: return `ข้อมูลไม่ถูกต้อง (Invalid): ${issue.message}`;
+    }
   })();
   return `${label}: ${text}`;
 }

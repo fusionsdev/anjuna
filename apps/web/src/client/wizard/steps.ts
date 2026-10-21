@@ -2,9 +2,9 @@
  * Brand wizard model: the six steps, the form, per-step validation against the shared contracts, the profile
  * groups each step saves, and which step a saved draft resumes at. Pure functions, no React.
  */
-import { BRAND_PROFILE_DEFAULTS, BrandDraftKeyword, BrandName, BrandProfile } from "@anjuna/contracts";
+import { BRAND_PROFILE_DEFAULTS, BrandDraftKeyword, BrandName, BrandProfile, COPY_KEYWORD_MARKER, COPY_LIMITS, cleanKeyword, validateCopy, type CopyField } from "@anjuna/contracts";
 import { DraftDomain, type WizardDraft } from "../../shared/wizard";
-import { describeIssue, requiredText } from "./messages";
+import { describeCopyIssue, describeIssue, requiredText } from "./messages";
 
 export const STEPS = ["brand", "product", "template", "copy", "tracking", "review"] as const;
 export type StepId = (typeof STEPS)[number];
@@ -130,6 +130,30 @@ function profileErrors(profile: BrandProfile): FieldErrors {
   return errors;
 }
 
+const COPY_FIELD_NAMES = Object.keys(COPY_LIMITS) as CopyField[];
+
+/**
+ * The page copy rules (validateCopy, the same check the install runs) for the h1, cta and sub the employee filled in.
+ * An empty field is allowed: it is filled at Generate. A field with several findings shows them together.
+ */
+export function copyFieldErrors(f: WizardForm): FieldErrors {
+  const errors: FieldErrors = {};
+  const messages: Partial<Record<CopyField, string[]>> = {};
+  const issues = validateCopy({ h1: f.h1, cta: f.cta, sub: f.sub }, cleanKeyword(f.keyword) ?? "");
+  for (const issue of issues) {
+    if (issue.field === "keyword_default" || issue.field === "adapter" || issue.code === "required" || f[issue.field].trim() === "") continue;
+    (messages[issue.field] ??= []).push(describeCopyIssue(issue.field, issue));
+  }
+  for (const field of COPY_FIELD_NAMES) if (messages[field]) errors[field] = messages[field]!.join(" · ");
+  return errors;
+}
+
+/** Characters a visitor sees: the h1's {{keyword}} marker counts as the keyword it becomes. */
+export function visibleCopyLength(f: WizardForm, field: CopyField): number {
+  const value = f[field].trim();
+  return field === "h1" ? value.replaceAll(COPY_KEYWORD_MARKER, cleanKeyword(f.keyword) ?? "").length : value.length;
+}
+
 export interface ValidateContext {
   /** The draft exists: its domain is fixed and no longer validated. */
   hasDraft: boolean;
@@ -170,7 +194,7 @@ export function validateStep(step: StepId, f: WizardForm, ctx: ValidateContext):
       if (!ctx.templates.some((t) => t.template_version_id === f.template_version_id)) errors.template_version_id = requiredText("template_version_id");
       return errors;
     case "copy":
-      return profileErrors({ copy: copyOf(f) });
+      return { ...profileErrors({ copy: copyOf(f) }), ...copyFieldErrors(f) };
     case "tracking":
       return ctx.canEditTracking ? profileErrors({ ads: adsOf(f) }) : {};
     case "review":

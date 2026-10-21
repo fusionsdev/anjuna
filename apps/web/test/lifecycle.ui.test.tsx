@@ -74,6 +74,14 @@ beforeEach(() => {
     ["GET /api/brands/brand-a", () => json({ brand: config })],
     ["GET /api/brands/brand-a/site-text", () => json({ brand_id: "brand-a", defaults: null })],
     ["GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: [] })],
+    ["GET /api/brands/brand-a/assets", () => json({ brand_id: "brand-a", assets: [] })],
+    ["GET /api/brands/brand-a/edit", () => json({ brand_id: "brand-a", status: "live", template_version_id: "tv-1", microsoft_ads_account: null })],
+    ["GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-1", name: "Harbor", version: 1, status: "sealed" }] })],
+    ["GET /api/funnel", () => json({ from: "2026-09-29T00:00:00.000Z", to: "2026-10-06T00:00:00.000Z", rows: [
+      { brand: "brand-a", keyword: "Quick Cash", variant: "a", clicks: 20, go_count: 0, form_views: 0, submits: 0, sold: 0, revenue: 0, submit_rate: null, sold_rate: null },
+      { brand: "brand-a", keyword: null, variant: null, clicks: 5, go_count: 0, form_views: 0, submits: 0, sold: 0, revenue: 0, submit_rate: null, sold_rate: null },
+      { brand: "brand-z", keyword: null, variant: null, clicks: 99, go_count: 0, form_views: 0, submits: 0, sold: 0, revenue: 0, submit_rate: null, sold_rate: null },
+    ] })],
     ["PATCH /api/brands/brand-a", (init) => {
       const { expected_updated_at: _, ...patch } = JSON.parse(String(init?.body));
       config = { ...config, ...patch, updated_at: `2026-10-06T00:00:${String(requests.length).padStart(2, "0")}Z` };
@@ -86,7 +94,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     requests.push({ method, path: input, body: init?.body ? JSON.parse(String(init.body)) : {} });
-    const handler = routes.get(`${method} ${input}`);
+    // The funnel query carries timestamps: route it by path.
+    const handler = routes.get(`${method} ${input.startsWith("/api/funnel?") ? "/api/funnel" : input}`);
     if (!handler) throw new Error(`Unexpected test HTTP request: ${method} ${input}`);
     return handler(init);
   }));
@@ -177,7 +186,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("button", { name: pauseName });
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", rollbackName, "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
+      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", "โลโก้และไอคอน (Logo and favicon)", rollbackName, "เวอร์ชันเทมเพลต (Template version, Owner เท่านั้น)", "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
     ]);
     for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)", accountLabel, actionLabel, projectLabel]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
     expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();
@@ -432,4 +441,55 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   await screen.findByText("recovery-1");
   await screen.findByRole("button", { name: installName });
   expect(screen.queryByRole("button", { name: recoverName })).toBeNull();
+});
+
+describe("7-day stats row in the brands list", () => {
+  const cells = (group: HTMLElement) => [...group.querySelectorAll("span")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim());
+  /** The two sources load apart, so wait for the row to settle on the expected numbers. */
+  const expectStats = async (name: RegExp | string, expected: string[]) => {
+    const group = await screen.findByRole("group", { name });
+    await waitFor(() => expect(cells(group)).toEqual(expected));
+  };
+  
+  const draft = () => LifecycleBrandSummary.parse({
+    brand_id: "brand-draft", name: "Draft Co", account: "test-account", hostnames: ["draft.test"], status: "draft", current_revision_id: null,
+    runtime_sync_status: "queued", bundle_form_version: null, payload_version: null,
+  });
+
+  it("shows clicks from the funnel report and leads, sold and pending from the brand list, for that brand only", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await expectStats(/สถิติ 7 วัน \(7-day stats\) renderable.test/, ["คลิก (Clicks) 25", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
+    const query = requests.find((r) => r.path.startsWith("/api/funnel?"))!.path;
+    const params = new URLSearchParams(query.split("?")[1]);
+    expect(Date.parse(params.get("to")!) - Date.parse(params.get("from")!)).toBeGreaterThanOrEqual(7 * 24 * 60 * 60 * 1000);
+    expect(params.has("brand")).toBe(false);
+  });
+
+  it("shows a listed brand with no click rows as 0 clicks, and a brand core does not list as unknown, never 0", async () => {
+    lifecycleRows = [structuredClone(brand), draft()];
+    routes.set("GET /api/funnel", () => json({ from: "2026-09-29T00:00:00.000Z", to: "2026-10-06T00:00:00.000Z", rows: [] }));
+    render(<BrandLifecycle me={employee} />);
+    await expectStats(/renderable.test/, ["คลิก (Clicks) 0", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
+    await expectStats(/Draft Co/, ["คลิก (Clicks) —", "ลีด (Leads) —", "ขายได้ (Sold) —", "รอผล (Pending) —"]);
+  });
+
+  it("shows every number as unknown when both sources fail, and clicks alone when only the funnel fails", async () => {
+    routes.set("GET /api/funnel", () => json({ error: "bad_gateway" }, 502));
+    render(<BrandLifecycle me={employee} />);
+    await expectStats(/renderable.test/, ["คลิก (Clicks) —", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
+    expect(requests.filter((r) => r.path.startsWith("/api/funnel?"))).toHaveLength(1);
+    cleanup();
+    runtimeAvailable = false;
+    routes.set("GET /api/brands", () => json({ error: "bad_gateway" }, 502));
+    render(<BrandLifecycle me={employee} />);
+    await expectStats(/renderable.test/, ["คลิก (Clicks) —", "ลีด (Leads) —", "ขายได้ (Sold) —", "รอผล (Pending) —"]);
+    expect(requests.filter((r) => r.path === "/api/brands")).not.toHaveLength(0);
+  });
+
+  it("marks an unknown number with a No data title", async () => {
+    routes.set("GET /api/funnel", () => json({ error: "forbidden_role", required_role: "owner" }, 403));
+    render(<BrandLifecycle me={employee} />);
+    await expectStats(/renderable.test/, ["คลิก (Clicks) —", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
+    expect(screen.getByTitle("ไม่มีข้อมูล (No data)").textContent).toContain("—");
+  });
 });

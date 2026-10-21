@@ -4,6 +4,7 @@ import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { InstallProgress } from "../components/InstallProgress";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
+import { BrandStatsRow, brandStats, useWeekFunnel } from "./BrandStatsRow";
 import { BrandWizard } from "./BrandWizard";
 import { ConfigPanel } from "./ConfigPanel";
 import { UpgradeOutcomes } from "./UpgradeOutcomes";
@@ -64,6 +65,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const operationGeneration = useRef(0);
+  const weekFunnel = useWeekFunnel(refresh);
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
@@ -277,7 +279,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       <div className="section">
         <button className="primary" onClick={() => setWizard({})}>แบรนด์ใหม่ (New brand)</button>
       </div>
-      <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <button key={brand.brand_id} className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><span><b>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</span><span>{statusLabel[brand.status] ?? brand.status}</span></button>)}</div>
+      <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <div key={brand.brand_id} className="lifecycle-brand-item"><button className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><span><b>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</span><span>{statusLabel[brand.status] ?? brand.status}</span></button><BrandStatsRow name={brand.name ?? brand.hostnames[0] ?? brand.brand_id} stats={brandStats(brand.brand_id, runtimeError ? null : runtimeBrands, weekFunnel)} /></div>)}</div>
       <p className="muted small">การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold</p>
     </section>
     {selected && <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />}
@@ -292,7 +294,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       <p>สถิติ 7 วัน · ลีด (Leads): {runtimeBrand.stats_7d.leads} · ขายได้ (Sold): {runtimeBrand.stats_7d.sold} · รอผล (Pending): {runtimeBrand.stats_7d.pending}</p>
       <button onClick={() => setConfigBrandId(runtimeBrand.brand_id)}>ตั้งค่าแบรนด์ (Runtime config)</button>
     </section>}
-    {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} />}
+    {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
     {me.role === "owner" && <section className="card upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {me.role === "owner" && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
   </div>;
