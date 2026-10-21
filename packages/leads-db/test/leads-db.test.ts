@@ -293,6 +293,15 @@ describe("Anjuna additions", () => {
       await expect(insert({ brand_id: "brand-route-6", adkit_project: "a b" })).rejects.toThrow(/CHECK constraint failed/);
     });
 
+    it("stores the per-brand listmonk list id: null by default, a positive integer otherwise", async () => {
+      await insert({ brand_id: "brand-list" });
+      expect(await env.DB.prepare("SELECT listmonk_list_id FROM brand_runtime WHERE brand_id = 'brand-list'").first()).toEqual({ listmonk_list_id: null });
+      await insert({ brand_id: "brand-list-2", listmonk_list_id: 42 });
+      expect(await env.DB.prepare("SELECT listmonk_list_id FROM brand_runtime WHERE brand_id = 'brand-list-2'").first()).toEqual({ listmonk_list_id: 42 });
+      await expect(insert({ brand_id: "brand-list-3", listmonk_list_id: 0 })).rejects.toThrow(/CHECK constraint failed/);
+      await expect(insert({ brand_id: "brand-list-4", listmonk_list_id: "list-7" })).rejects.toThrow(/CHECK constraint failed/);
+    });
+
     it("stores a brand with defaults param gate and not paused", async () => {
       await insert();
       const row = await env.DB

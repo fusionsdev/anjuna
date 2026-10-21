@@ -1,15 +1,21 @@
 import {
   ApplyRuntimeRequest,
+  InstallAdsRoutingRequest,
+  InstallMailingListRequest,
   adminContextFromHeaders,
   RuntimeStateRequest,
   RuntimeListRequest,
   type RuntimeListResponse,
   VerifySoldLeadRequest,
   type AdminRequestContext,
+  type AdsRoutingField,
   type ApplyRuntimeResponse,
+  type InstallAdsRoutingResponse,
+  type InstallMailingListResponse,
   type RuntimeStateResponse,
   type VerifySoldLeadResponse,
 } from "@anjuna/contracts";
+import { ListmonkClient, ensureBrandList } from "@anjuna/mailing";
 import { authenticateAccount } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
@@ -172,6 +178,77 @@ async function runtimeList(env: Env, account: string): Promise<Response> {
   return json(response);
 }
 
+const ADS_FIELDS: readonly AdsRoutingField[] = ["google_ads_account", "google_conversion_action", "adkit_project"];
+type AdsRoute = Record<AdsRoutingField, string | null>;
+
+/**
+ * Install step sync_runtime: copies the draft's ads routing into brand_runtime columns that are NULL. A non-NULL column was set
+ * by the owner (control panel) and is kept. The conversion action is written only when the route's account is the draft's
+ * account, so the drain never pairs one Google Ads account with another account's action. Compare-and-set on the three
+ * columns read, so an owner edit that lands between the read and the write is never overwritten.
+ */
+async function installAdsRouting(request: Request, env: Env, account: string): Promise<Response> {
+  const parsed = InstallAdsRoutingRequest.safeParse(await body(request));
+  if (!parsed.success) return bad("Invalid ads routing request");
+  const input = parsed.data;
+  if (input.account !== account) return forbidden("Credential account does not match request account");
+  const ads = input.ads;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const row = await env.LEADS.prepare("SELECT account, google_ads_account, google_conversion_action, adkit_project FROM brand_runtime WHERE brand_id = ?1")
+      .bind(input.brand_id).first<AdsRoute & { account: string }>();
+    if (!row) return conflict("Brand runtime is missing");
+    if (row.account !== account) return forbidden("Brand belongs to another account");
+    const nextAccount = row.google_ads_account ?? ads.google_ads_account ?? null;
+    const next: AdsRoute = {
+      google_ads_account: nextAccount,
+      google_conversion_action: row.google_conversion_action
+        ?? (ads.google_ads_account !== undefined && nextAccount === ads.google_ads_account ? ads.google_conversion_action ?? null : null),
+      adkit_project: row.adkit_project ?? ads.adkit_project ?? null,
+    };
+    const copied = ADS_FIELDS.filter((field) => row[field] === null && next[field] !== null);
+    const kept = ADS_FIELDS.filter((field) => ads[field] !== undefined && !copied.includes(field));
+    const response: InstallAdsRoutingResponse = { copied, kept };
+    if (copied.length === 0) return json(response);
+    const at = now();
+    const update = await env.LEADS.prepare(`UPDATE brand_runtime SET google_ads_account = ?1, google_conversion_action = ?2, adkit_project = ?3, updated_at = ?4
+        WHERE brand_id = ?5 AND google_ads_account IS ?6 AND google_conversion_action IS ?7 AND adkit_project IS ?8`)
+      .bind(next.google_ads_account, next.google_conversion_action, next.adkit_project, at, input.brand_id,
+        row.google_ads_account, row.google_conversion_action, row.adkit_project).run();
+    if (update.meta.changes !== 1) continue;
+    const pick = (route: AdsRoute) => Object.fromEntries(copied.map((field) => [field, route[field]]));
+    await env.FACTORY.prepare(`INSERT INTO audit_log
+        (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+      VALUES ('system', 'system', 'lifecycle.runtime.ads_routing', 'brand_runtime', ?1, ?2, ?3, ?4)`)
+      .bind(input.brand_id, JSON.stringify(pick(row)), JSON.stringify({ ...pick(next), install_id: input.install_id }), at).run();
+    return json(response);
+  }
+  return conflict("Brand runtime ads routing changed during the install; retry");
+}
+
+/** Install step sync_runtime: the brand's own listmonk list, named after its apex host and tagged with its brand id. */
+async function installMailingList(request: Request, env: Env, account: string): Promise<Response> {
+  const parsed = InstallMailingListRequest.safeParse(await body(request));
+  if (!parsed.success) return bad("Invalid mailing list request");
+  const input = parsed.data;
+  if (input.account !== account) return forbidden("Credential account does not match request account");
+  const row = await env.LEADS.prepare("SELECT account, hostnames, listmonk_list_id FROM brand_runtime WHERE brand_id = ?1")
+    .bind(input.brand_id).first<{ account: string; hostnames: string; listmonk_list_id: number | null }>();
+  if (!row) return conflict("Brand runtime is missing");
+  if (row.account !== account) return forbidden("Brand belongs to another account");
+  if (row.listmonk_list_id) return json({ state: "stored", list_id: row.listmonk_list_id } satisfies InstallMailingListResponse);
+  const lists = env.LISTMONK_URL && env.LISTMONK_USER && env.LISTMONK_TOKEN
+    ? new ListmonkClient(env.LISTMONK_URL, env.LISTMONK_USER, env.LISTMONK_TOKEN) : null;
+  if (!lists) return json({ state: "not_configured", list_id: null } satisfies InstallMailingListResponse);
+  const name = (JSON.parse(row.hostnames) as string[])[0] ?? input.brand_id;
+  try {
+    const result = await ensureBrandList(env.LEADS, lists, { brand_id: input.brand_id, name });
+    return json({ state: result.source, list_id: result.list_id } satisfies InstallMailingListResponse);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return json({ error: "listmonk_failed", message: `listmonk list was not created: ${message}`.slice(0, 300) }, 502);
+  }
+}
+
 export async function handleFactoryLifecycleRequest(request: Request, env: Env): Promise<Response> {
   const account = await authenticateAccount(request, env);
   if (!account) return unauthorized();
@@ -179,6 +256,8 @@ export async function handleFactoryLifecycleRequest(request: Request, env: Env):
   if (request.method !== "POST") return notFound();
   if (pathname.endsWith("/runtime")) return applyRuntime(request, env, account);
   if (pathname.endsWith("/runtime-state")) return runtimeState(request, env, account);
+  if (pathname.endsWith("/ads-routing")) return installAdsRouting(request, env, account);
+  if (pathname.endsWith("/mailing-list")) return installMailingList(request, env, account);
   return notFound();
 }
 async function verifySold(request: Request, env: Env, context: AdminRequestContext): Promise<Response> {

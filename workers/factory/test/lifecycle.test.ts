@@ -147,7 +147,7 @@ describe("factory lifecycle order and readiness", () => {
   it("preserves validate → rollback → render → upload → deploy → attach → smoke order", () => {
     expect(installStepOrder(false)).toEqual([
       "validate", "save_rollback", "render", "upload_assets", "upload_script", "deploy",
-      "provision_runtime", "attach_domains", "smoke", "receipt",
+      "provision_runtime", "attach_domains", "smoke", "sync_runtime", "receipt",
     ]);
     expect(installStepOrder(true)).toEqual([
       "validate", "save_rollback", "render", "upload_assets", "upload_script", "deploy",

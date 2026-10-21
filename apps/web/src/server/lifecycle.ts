@@ -27,7 +27,8 @@ import { DraftDomain } from "../shared/wizard.js";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
 import { callCore } from "./core.js";
-import { drainRouteRow } from "./drain-route-checklist.js";
+import { drainRouteRow, smokeFinalUrlRow } from "./drain-route-checklist.js";
+import { generateBrand } from "./generate.js";
 import { authorizePanel } from "./panel-roles.js";
 import { queueInstallRetry } from "./retry-install.js";
 import { latestUpgrade } from "./upgrade-outcomes.js";
@@ -557,6 +558,12 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
       ? json(502, { error: "core_list_failed", code: result.core_error.code, message: result.core_error.message })
       : json(404, { error: "not_found", resource: "brand" });
   }
+  m = path.match(/^\/api\/brands\/([^/]+)\/generate$/);
+  if (m && method === "POST") {
+    const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
+    return generateBrand(request, env, ctx, brandId, startInstall);
+  }
   m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|recover|redeploy|checklist)$/);
   if (m && method === "POST") {
     const brandId = decodePathSegment(m[1]!);
@@ -612,6 +619,8 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all();
     const rows: Array<Record<string, unknown>> = results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined }));
     const open = (item: string) => !rows.some((r) => r.item === item);
+    const finalUrl = open("final_url") ? await smokeFinalUrlRow(env.FACTORY, brandId) : null;
+    if (finalUrl) rows.push(finalUrl);
     // One getBrand read serves every computed row; a stored attestation always wins.
     const brand = open("leadsgate_postbacks") || open("drain_route") ? await coreBrand(env, ctx, brandId) : null;
     if (brand) {
@@ -619,11 +628,9 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
         open("leadsgate_postbacks") ? globalPostbackRow(brand, brandId) : null,
         open("drain_route") ? drainRouteRow(brand) : null,
       ].filter((row): row is Record<string, unknown> => row !== null);
-      if (computed.length > 0) {
-        rows.push(...computed);
-        rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
-      }
+      rows.push(...computed);
     }
+    rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
     return json(200, { brand_id: brandId, checklist: rows });
   }
   m = path.match(/^\/api\/installs\/([^/]+)$/);

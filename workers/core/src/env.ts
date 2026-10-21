@@ -12,11 +12,11 @@ export interface Env {
   PARTNER_LIST_VERSION?: string;
   /** Private panel lifecycle request account context, supplied by the tenant's BFF binding. */
   LIFECYCLE_ACCOUNT?: string;
-  /** Mailing cron (CO-7). All four are Worker secrets; the cron skips cleanly until they are set. */
+  /** Mailing cron (CO-7). Worker secrets; the cron skips cleanly until URL, USER and TOKEN are set. The install workflow uses them to create each brand's list. */
   LISTMONK_URL?: string;
   LISTMONK_USER?: string;
   LISTMONK_TOKEN?: string;
-  /** JSON object: {"<brand_id>": <listmonk list id>}. */
+  /** Optional fallback, JSON object {"<brand_id>": <listmonk list id>}, for brands without brand_runtime.listmonk_list_id. */
   LISTMONK_LIST_MAP?: string;
   /** Analytics forward (ADR-0004). Worker secrets; without them core accepts and drops that kind. */
   POSTHOG_KEY?: string;

@@ -111,7 +111,7 @@ export function validateInstallInputs(input: InstallPreflightInput): InstallPref
 export function installStepOrder(existingInstall: boolean): string[] {
   return existingInstall
     ? [...INSTALL_MUTATION_STEPS.slice(0, 8), "sync_runtime", "receipt"]
-    : [...INSTALL_MUTATION_STEPS.slice(0, 6), "provision_runtime", "attach_domains", "smoke", "receipt"];
+    : [...INSTALL_MUTATION_STEPS.slice(0, 6), "provision_runtime", "attach_domains", "smoke", "sync_runtime", "receipt"];
 }
 
 export function shouldMarkReady(evidence: { smoke: boolean; runtime: boolean }): boolean {

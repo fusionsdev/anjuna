@@ -370,7 +370,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
     detail({ ...running, status: "ready", runtime_sync_status: "ready", receipts: [{ step: "sync_runtime", status: "ready" }] });
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-    expect(screen.getByText("sync_runtime")).toBeDefined();
+    expect(screen.getByText(/Sync runtime, ads, mailing list/)).toBeDefined();
     expect(screen.getByRole("button", { name: rollbackName })).toBeDefined();
     const reads = requests.filter((r) => r.path === "/api/installs/active-1").length;
     await act(async () => { await vi.advanceTimersByTimeAsync(9000); });

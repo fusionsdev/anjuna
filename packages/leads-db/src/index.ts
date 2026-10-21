@@ -21,6 +21,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0010_zip_lookup_seed.sql",
   "0011_brand_site_text.sql",
   "0012_brand_drain_route.sql",
+  "0013_brand_listmonk_list.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
@@ -120,6 +121,8 @@ export interface BrandRuntimeRow {
   google_ads_account: string | null;
   google_conversion_action: string | null;
   adkit_project: string | null;
+  /** listmonk list the mailing cron sends this brand's leads to; null = the tenant LISTMONK_LIST_MAP fallback. */
+  listmonk_list_id: number | null;
   created_at: string;
   updated_at: string;
 }

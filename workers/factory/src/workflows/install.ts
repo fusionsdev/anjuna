@@ -1,13 +1,13 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
-import { ANALYTICS_FORWARD_PATHS } from "@anjuna/contracts";
+import { ANALYTICS_FORWARD_PATHS, BrandProfile, type ApplyRuntimeResponse, type InstallMailingListResponse } from "@anjuna/contracts";
 import {
   attachCustomDomain, assetContentType, blockingDnsRecords, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
   getZone, uploadScript,
 } from "../cf-api.js";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
 import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, stepErrorText } from "../receipt.js";
-import { CoreLifecycleClient } from "../core-lifecycle-client.js";
+import { CoreLifecycleClient, CoreLifecycleError } from "../core-lifecycle-client.js";
 import {
   LOCAL_STEP_RETRY_CONFIG, REMOTE_STEP_RETRY_CONFIG, VALIDATE_RETRY_CONFIG, failFast, instanceState, receiptInRetriedStep, stepReceipt,
 } from "../step-receipt.js";
@@ -61,8 +61,8 @@ interface FormArtifactRow {
  * FA-1: Install a brand onto Cloudflare.
  *
  * Steps (each records a receipt for idempotency, with the retry rule of receiptInRetriedStep):
- *   validate → save_rollback → render → upload_assets → upload_script →
- *   deploy → attach_domains → smoke → receipt
+ *   validate → save_rollback → render → upload_assets → upload_script → [provision_runtime, first install] →
+ *   deploy → attach_domains → smoke → sync_runtime → receipt
  *
  * On any step failure, the rollback step fires automatically.
  */
@@ -354,26 +354,47 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           const state = previous_revision_id
             ? await new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN).runtimeState({ brand_id, account })
             : null;
-          return smokeBrand(hostnames, { paused: state?.state === "applied" && state.paused });
+          const paused = state?.state === "applied" && state.paused;
+          const result = await smokeBrand(hostnames, { paused });
+          // The checklist's final_url row is computed from this: the live brand URL answered with its landing page.
+          return paused ? result : { ...result, final_url: `https://${hostnames[0]}/` };
         });
       });
 
-      if (previous_revision_id) {
-        // Re-run: Core answers a repeated install_id with a noop and changes nothing (workers/core/src/lifecycle.ts, applyRuntime).
-        await step.do("sync_runtime", REMOTE_STEP_RETRY_CONFIG, async (ctx) => stepReceipt(db, install_id, "sync_runtime", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
-          const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+      // ── Step 9: Sync runtime ───────────────────────────────────────────────
+      // Runs on every install. A live brand's install applies the new revision to Core here (a first install did that in
+      // provision_runtime). A first install copies the draft's ads routing into Core, and every install makes sure the brand
+      // has its own listmonk list. Re-run: Core answers a repeated install_id with a noop (workers/core/src/lifecycle.ts,
+      // applyRuntime), writes ads routing only into NULL columns, and answers a stored list id without calling listmonk.
+      await step.do("sync_runtime", REMOTE_STEP_RETRY_CONFIG, async (ctx) => stepReceipt(db, install_id, "sync_runtime", REMOTE_STEP_RETRY_CONFIG, ctx, async () => {
+        const client = new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN);
+        let result: ApplyRuntimeResponse | undefined;
+        if (previous_revision_id) {
           mutationStarted = true;
-          const result = await client.applyRuntime({
+          result = await client.applyRuntime({
             install_id, brand_id, account, hostnames,
             expected_revision_id: previous_revision_id, target_revision_id: revision_id,
             actor_id: "system", actor_role: "owner", initial_runtime,
           });
           await client.verifyRuntime(brand_id, account, revision_id, install_id);
-          return result;
-        }));
-      }
+        }
+        // First install only: after go-live the owner manages the route in the control panel, and a column the owner
+        // cleared on purpose must stay clear through a later redeploy or upgrade.
+        const ads = previous_revision_id ? null : await draftAds(db, revision_id);
+        const ads_routing = ads ? await client.adsRouting({ install_id, brand_id, account, ads }) : undefined;
+        let mailing_list: InstallMailingListResponse;
+        try {
+          // listmonk may answer slower than Core's own 3 s budget: two calls (find, then create).
+          mailing_list = await new CoreLifecycleClient(this.env.CORE_LIFECYCLE, this.env.CORE_TOKEN, 15_000)
+            .mailingList({ install_id, brand_id, account });
+        } catch (err) {
+          if (err instanceof CoreLifecycleError) throw new CoreLifecycleError(`Mailing list: ${err.message}`, err.deterministic);
+          throw err;
+        }
+        return { ...result, ...(ads_routing ? { ads_routing } : {}), mailing_list };
+      }));
 
-      // ── Step 9: Receipt ────────────────────────────────────────────────────
+      // ── Step 10: Receipt ────────────────────────────────────────────────────
       // Re-run: sets the same brand and install columns again; only installed_at moves.
       await step.do("receipt", LOCAL_STEP_RETRY_CONFIG, async (ctx) => {
         return stepReceipt(db, install_id, "receipt", LOCAL_STEP_RETRY_CONFIG, ctx, async () => {
@@ -450,6 +471,26 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
       });
     }
   }
+}
+
+/**
+ * The draft's Google Ads routing (`profile.ads` in the revision config), without microsoft_ads_account: brand_runtime
+ * has no column for it, so it stays in the revision config. Null when the draft sets none of the three fields.
+ */
+async function draftAds(db: D1Database, revisionId: string) {
+  const revision = await db.prepare("SELECT config_json FROM brand_revisions WHERE revision_id = ?").bind(revisionId).first<{ config_json: string }>();
+  if (!revision) throw new NonRetryableError(`Revision ${revisionId} not found`);
+  const raw = (JSON.parse(revision.config_json) as { profile?: { ads?: unknown } }).profile?.ads;
+  if (raw === undefined) return null;
+  const parsed = BrandProfile.shape.ads.safeParse(raw);
+  if (!parsed.success || !parsed.data) throw new NonRetryableError("Draft ads routing (profile.ads) is invalid");
+  const { google_ads_account, google_conversion_action, adkit_project } = parsed.data;
+  const ads = {
+    ...(google_ads_account ? { google_ads_account } : {}),
+    ...(google_conversion_action ? { google_conversion_action } : {}),
+    ...(adkit_project ? { adkit_project } : {}),
+  };
+  return Object.keys(ads).length > 0 ? ads : null;
 }
 
 /** Base64 for asset uploads, chunked so large files do not overflow the argument limit. */

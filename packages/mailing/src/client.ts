@@ -6,6 +6,15 @@ export interface ListmonkSubscriber {
   attribs?: Record<string, any>;
 }
 
+export interface ListmonkList {
+  id: number;
+  name: string;
+  tags?: string[];
+}
+
+/** The two list calls the install workflow needs; tests pass a fake. */
+export type ListmonkLists = Pick<ListmonkClient, "findLists" | "createList">;
+
 export class ListmonkClient {
   constructor(
     private readonly url: string,
@@ -80,6 +89,27 @@ export class ListmonkClient {
       throw new Error(`listmonk PATCH failed: ${res.status} ${await res.text()}`);
     }
     const json = await res.json() as any;
+    return json.data;
+  }
+
+  /** Lists whose name matches `name` exactly. listmonk's `query` is a substring search, so the exact match is done here. */
+  async findLists(name: string): Promise<ListmonkList[]> {
+    const params = new URLSearchParams({ query: name, per_page: "100" });
+    const res = await this.fetchApi(`/api/lists?${params.toString()}`);
+    if (!res.ok) throw new Error(`listmonk GET lists failed: ${res.status}`);
+    const json = await res.json() as { data?: { results?: ListmonkList[] } };
+    return (json?.data?.results ?? []).filter((list) => list.name === name);
+  }
+
+  /** A private, single opt-in list: subscribers come from the lead form with recorded consent. */
+  async createList(payload: { name: string; tags: string[] }): Promise<ListmonkList> {
+    const res = await this.fetchApi(`/api/lists`, {
+      method: "POST",
+      body: JSON.stringify({ name: payload.name, type: "private", optin: "single", tags: payload.tags }),
+    });
+    if (!res.ok) throw new Error(`listmonk POST list failed: ${res.status}`);
+    const json = await res.json() as { data?: ListmonkList };
+    if (!json?.data || !Number.isInteger(json.data.id) || json.data.id <= 0) throw new Error("listmonk POST list returned no list id");
     return json.data;
   }
 

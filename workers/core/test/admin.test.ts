@@ -399,7 +399,7 @@ describe("mailing status with LISTMONK_* set", () => {
     expect(MailingStatusResponse.parse(await mailing.json()).external_sync).toBe("configured");
   });
 
-  it("stays not_configured when the list map is missing, matching the cron skip", async () => {
+  it("reports configured without a list map: each brand has its own list and the map is only a fallback", async () => {
     const local = await createHarness({
       listmonk: {
         LISTMONK_URL: "https://listmonk.example",
@@ -410,7 +410,7 @@ describe("mailing status with LISTMONK_* set", () => {
     try {
       const mailing = await local.admin("/admin/mailing", employee);
       expect(mailing.status).toBe(200);
-      expect(MailingStatusResponse.parse(await mailing.json()).external_sync).toBe("not_configured");
+      expect(MailingStatusResponse.parse(await mailing.json()).external_sync).toBe("configured");
     } finally {
       await local.mf.dispose();
     }
