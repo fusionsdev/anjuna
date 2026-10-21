@@ -5,6 +5,7 @@ import { UpgradeAllWorkflow, upgradeWorkflowId } from "./workflows/upgrade-all.j
 import { isQueuedCompensationInstall, rejectQueuedInstall, setInstallStatus } from "./receipt.js";
 import { recoverBrand } from "./workflows/recover.js";
 import { parseSealRequest, sealTemplate } from "./seal.js";
+import { parseZoneCheckRequest, zoneCheck } from "./zone-check.js";
 
 export { InstallBrandWorkflow, RollbackBrandWorkflow, UpgradeAllWorkflow };
 
@@ -89,6 +90,17 @@ export default {
       if (!input) return Response.json({ ok: false, error: "invalid", message: "template_version_id, sealed_by and sealed_role are required" }, { status: 400 });
       const outcome = await sealTemplate(env, input);
       return Response.json(outcome.body, { status: outcome.status });
+    }
+
+    // POST /zone-check  { domain, brand_id? }  (control panel wizard; read-only, never touches DNS)
+    if (url.pathname === "/zone-check") {
+      const input = parseZoneCheckRequest(await request.json().catch(() => null));
+      if (!input) return Response.json({ ok: false, error: "invalid", message: "domain must be a lowercase apex domain" }, { status: 400 });
+      try {
+        return Response.json(await zoneCheck(env.CF_API_TOKEN, env.CF_ACCOUNT_ID, input.domain, input.brand_id));
+      } catch (error) {
+        return Response.json({ ok: false, error: "cloudflare_error", message: error instanceof Error ? error.message : String(error) }, { status: 502 });
+      }
     }
 
     return new Response("Not Found", { status: 404 });

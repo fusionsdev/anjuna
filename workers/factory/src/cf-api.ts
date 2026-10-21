@@ -37,7 +37,7 @@ async function responseJson<T>(res: Response, context: string, allowEmpty = fals
   }
 }
 
-async function cfFetch<T>(
+export async function cfFetch<T>(
   token: string,
   method: string,
   path: string,
@@ -62,6 +62,8 @@ export interface ZoneInfo {
   id: string;
   name: string;
   status: "active" | "pending" | "initializing" | "moved" | "deleted" | "deactivated" | "read only";
+  /** Cloudflare name servers assigned to the zone. Read by the wizard zone pre-check only. */
+  name_servers?: string[];
 }
 
 /**
