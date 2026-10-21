@@ -9,7 +9,7 @@ const config: TenantConfig = {
   accountId: "6cb8500c35210800451bd9a535482850",
   coreDomain: "core.aduplift.ai",
   appDomain: "app.aduplift.ai",
-  leadsGateAid: "10001",
+  leadsGateAid: "13119",
   prepopBase: "/apply",
   brandDefaults: {
     account: "aduplift",
