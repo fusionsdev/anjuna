@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BRAND_PROFILE_DEFAULTS, BrandProfile } from "@anjuna/contracts";
 import type { WizardDraft } from "../src/shared/wizard";
 import {
-  STEPS, adsOf, contactOf, copyOf, disclosuresOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep,
+  STEPS, adsOf, contactOf, copyFieldErrors, copyOf, disclosuresOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep, visibleCopyLength,
   type FieldKey, type WizardForm,
 } from "../src/client/wizard/steps";
 
@@ -107,6 +107,34 @@ describe("validateStep template, copy and tracking", () => {
   });
   it("keeps h1, cta and sub to plain one-line text", () => {
     expect(fieldsOf("copy", valid({ h1: "<b>Hi</b>", cta: "a".repeat(201) }))).toEqual(["cta", "h1"]);
+  });
+  it("runs validateCopy on the filled h1, cta and sub and leaves empty ones alone", () => {
+    expect(copyFieldErrors(valid())).toEqual({});
+    expect(copyFieldErrors(valid({ cta: "Check my rate" }))).toEqual({});
+    expect(Object.keys(copyFieldErrors(valid({ h1: "No slot here", cta: "Say <b>hi</b>", sub: "Ask about a personal loan" }))).sort()).toEqual(["cta", "h1", "sub"]);
+    expect(errorsOf("copy", valid({ h1: "No slot here" })).h1).toMatch(/\{\{keyword\}\}/);
+  });
+  it("names each rule in Thai and English: slot, wording, plain text, brand clean and length", () => {
+    const one = (over: Partial<WizardForm>, field: "h1" | "cta" | "sub") => copyFieldErrors(valid(over))[field]!;
+    for (const message of [
+      one({ h1: "Two {{keyword}} and {{keyword}}" }, "h1"),
+      one({ h1: "{{keyword}} {other}" }, "h1"),
+      one({ sub: "A personal loan for you" }, "sub"),
+      one({ cta: 'Say "hi"' }, "cta"),
+      one({ sub: "Powered by Anjuna" }, "sub"),
+      one({ cta: "a".repeat(41) }, "cta"),
+      one({ sub: "a {b} c" }, "sub"),
+    ]) expect(bilingual(message), message).toBe(true);
+    expect(one({ cta: "a".repeat(41) }, "cta")).toContain("40");
+    expect(one({ sub: "Powered by Anjuna" }, "sub")).not.toContain("Anjuna");
+  });
+  it("counts the keyword in the h1 length, like the install does", () => {
+    expect(visibleCopyLength(valid({ h1: "{{keyword}} now" }), "h1")).toBe("Quick Loan now".length);
+    expect(visibleCopyLength(valid({ cta: " Go " }), "cta")).toBe(2);
+    expect(copyFieldErrors(valid({ h1: `${"a".repeat(131)} {{keyword}}` })).h1).toContain("140");
+  });
+  it("does not report the keyword as a copy error: the Brand step owns it", () => {
+    expect(copyFieldErrors(valid({ keyword: "", h1: "{{keyword}} in minutes" }))).toEqual({});
   });
   it("checks tracking ids with the admin validators when the role may set them", () => {
     expect(fieldsOf("tracking", valid({ google_ads_account: "123-456-7890", google_conversion_action: "abc", adkit_project: "has space", microsoft_ads_account: "12345" }))).toEqual(["adkit_project", "google_ads_account", "google_conversion_action", "microsoft_ads_account"]);

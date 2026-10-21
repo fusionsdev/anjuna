@@ -61,6 +61,11 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .upgrade-outcomes code { overflow-wrap: anywhere; }
 .lifecycle-brand-list { display: grid; gap: 6px; }
 .lifecycle-brand { display: flex; justify-content: space-between; text-align: left; gap: 12px; background: transparent; border: 1px solid var(--line); }
+.lifecycle-brand-item { display: grid; gap: 4px; }
+.brand-stats { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 4px 4px; font-size: 0.85em; }
+.asset-row { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line); }
+.asset-row:first-of-type { border-top: 0; }
+.asset-preview { width: 40px; height: 40px; object-fit: contain; border-radius: 6px; background: var(--bg); }
 .lifecycle-brand.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0; }
 .status-grid div { display: grid; gap: 4px; padding: 10px; background: var(--bg); border-radius: 6px; }

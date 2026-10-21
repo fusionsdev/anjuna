@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  AbConfig, AmountBuckets, BrandId, FlowGateMode, FormRoute, Hostname, ProxyPaths, RuntimeConfig,
+  AbConfig, AmountBuckets, BRAND_ASSET_PATHS, BrandId, FlowGateMode, FormRoute, Hostname, ProxyPaths, RuntimeConfig,
   SiteBrandName, SiteDescription, SiteTitle, TemplateTextDefaults, isBrandClean,
 } from "@anjuna/contracts";
 import type { CoreClient, FetchBinding } from "./core-client.js";
@@ -9,8 +9,13 @@ export const LEGAL_PATHS = ["/privacy", "/terms", "/disclosures", "/do-not-sell"
 export const STATIC_PREFIXES = ["/_f/assets/", "/assets/", "/_astro/"] as const;
 export const STATIC_FILES = ["/favicon.ico", "/favicon.svg"] as const;
 
-/** Catch unknown routes in the Worker, excluding only certified public asset directories. */
-export const RUN_WORKER_FIRST = ["/*", ...STATIC_PREFIXES.map((path) => `!${path}*`), ...STATIC_FILES.map((path) => `!${path}`)];
+/**
+ * Catch unknown routes in the Worker, excluding only certified public asset directories. The favicon files are not
+ * excluded: the Worker serves the brand's own favicon there (see brand-assets.ts).
+ */
+export const RUN_WORKER_FIRST = ["/*", ...STATIC_PREFIXES.map((path) => `!${path}*`)];
+/** Every public file path, including the brand's logo. No route or proxy may take one of these. */
+const ASSET_FILES = Object.keys(BRAND_ASSET_PATHS);
 
 export const BrandSettings = z.object({
   brand_id: BrandId,
@@ -32,7 +37,7 @@ export const BrandSettings = z.object({
   ab_config: AbConfig.nullable().default(null),
   proxies: ProxyPaths.default({ posthog: "/_t", sentry: "/_e" }),
 }).superRefine((settings, ctx) => {
-  if ([...STATIC_PREFIXES.map((prefix) => prefix.slice(0, -1)), ...STATIC_FILES].some((path) => settings.formRoute === path || settings.formRoute.startsWith(`${path}/`))) {
+  if ([...STATIC_PREFIXES.map((prefix) => prefix.slice(0, -1)), ...ASSET_FILES].some((path) => settings.formRoute === path || settings.formRoute.startsWith(`${path}/`))) {
     ctx.addIssue({ code: "custom", path: ["formRoute"], message: "Form route collides with public assets" });
   }
   if (settings.ab_config && (!isBrandClean(settings.ab_config.experiment_id) ||
@@ -40,7 +45,7 @@ export const BrandSettings = z.object({
     ctx.addIssue({ code: "custom", path: ["ab_config"], message: "Experiment identifiers must be brand clean" });
   }
   const paths = Object.values(settings.proxies).filter((path): path is string => path !== undefined);
-  const reserved = ["/go", "/apply", "/api", "/_f", "/assets", "/_astro", ...LEGAL_PATHS, ...STATIC_FILES, settings.formRoute];
+  const reserved = ["/go", "/apply", "/api", "/_f", "/assets", "/_astro", ...LEGAL_PATHS, ...ASSET_FILES, settings.formRoute];
   const overlaps = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
   for (const path of paths) {
     if (path.endsWith("/") || path.includes("//") || !isBrandClean(path) || reserved.some((item) => overlaps(path, item))) {

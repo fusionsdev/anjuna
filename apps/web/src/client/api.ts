@@ -1,4 +1,5 @@
-import { BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, UpdateBrandDraftResponse } from "@anjuna/contracts";
+import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, UpdateBrandDraftResponse } from "@anjuna/contracts";
+import { BrandEditState } from "../shared/brand-edit";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
 import type {
   AdminRole,
@@ -57,7 +58,22 @@ export class ApiError extends Error {
       case "invalid":
         return `ข้อมูลไม่ถูกต้อง: ${this.body.issues?.map((i) => `${i.path} ${i.message}`).join("; ") ?? ""}`;
       case "not_implemented":
-        return "ยังไม่พร้อมใช้งาน (coming with T10)";
+        return "ยังไม่พร้อมใช้งาน (not implemented)";
+      case "invalid_asset":
+        return ({
+          too_large: "ไฟล์ใหญ่เกินกำหนด (The file is too large)",
+          empty: "ไฟล์ว่างเปล่า (The file is empty)",
+          file_required: "ยังไม่ได้เลือกไฟล์ (No file was sent)",
+          unsupported_type: "ใช้ไฟล์ PNG, SVG หรือ ICO เท่านั้น (Use a PNG, SVG or ICO file)",
+          unsafe_svg: "SVG มีสคริปต์หรือลิงก์ไปไฟล์อื่น ให้ส่งออกเป็น SVG ธรรมดา (The SVG has scripts or outside references)",
+          brand_clean: "ไฟล์มีชื่อแพลตฟอร์ม หรือชื่อ/โดเมนของแบรนด์อื่น ลบออกแล้วอัปโหลดใหม่ (The file names the platform or another brand)",
+        } as Record<string, string>)[(this.body as { code?: string }).code ?? ""] ?? "ไฟล์ไม่ถูกต้อง (Invalid file)";
+      case "template_not_sealed":
+        return "เทมเพลตนี้ยังไม่ได้อนุมัติ (The template is not approved)";
+      case "template_unchanged":
+        return "แบรนด์ใช้เทมเพลตนี้อยู่แล้ว (The brand already runs this template)";
+      case "lifecycle_operation_active":
+        return "กำลังติดตั้งแบรนด์นี้อยู่ (An install is already running for this brand)";
       case "not_found":
         return "ไม่พบข้อมูล";
       default:
@@ -103,7 +119,6 @@ export const api = {
   patchBrand: (id: string, body: BrandPatchRequest) => request<BrandPatchResponse>("PATCH", `/api/brands/${encodeURIComponent(id)}`, body),
   setStatus: (id: string, action: "pause" | "resume") =>
     request<BrandStatusChangeResponse>("POST", `/api/brands/${encodeURIComponent(id)}/${action}`, {}),
-  rollback: (id: string) => request<unknown>("POST", `/api/brands/${encodeURIComponent(id)}/rollback`, {}),
   audit: () => request<{ entries: AuditEntry[]; next_cursor: string | null }>("GET", "/api/audit?limit=100"),
   users: () => request<{ users: PanelUser[] }>("GET", "/api/users").then((r) => r.users),
   createUser: (u: { email: string; name: string; password: string; role: AdminRole }) => request<unknown>("POST", "/api/users", u),
@@ -121,7 +136,16 @@ export const api = {
   generate: (brandId: string) => request<{ install_id: string; brand_id: string; status: string; idempotent?: boolean }>("POST", `/api/brands/${encodeURIComponent(brandId)}/generate`, {}),
   install: (brandId: string, revisionId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/install`, revisionId ? { revision_id: revisionId } : {}),
   rollbackLifecycle: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/rollback`, {}),
-  redeploy: (brandId: string, formArtifactId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/redeploy`, formArtifactId ? { form_artifact_id: formArtifactId } : {}),
+  redeploy: (brandId: string, formArtifactId?: string, templateVersionId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/redeploy`, { ...(formArtifactId ? { form_artifact_id: formArtifactId } : {}), ...(templateVersionId ? { template_version_id: templateVersionId } : {}) }),
+  brandEdit: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/edit`).then((result) => BrandEditState.parse(result)),
+  setMicrosoftAds: (brandId: string, account: string | null) => request<{ brand_id: string; microsoft_ads_account: string | null; changed: boolean }>("PATCH", `/api/brands/${encodeURIComponent(brandId)}/microsoft-ads`, { microsoft_ads_account: account }),
+  brandAssets: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/assets`).then((result) => BrandAssetListResponse.parse(result)),
+  uploadBrandAsset: (brandId: string, kind: BrandAssetKind, file: File) => {
+    const body = new FormData();
+    body.set("file", file);
+    return request<unknown>("PUT", `/api/brands/${encodeURIComponent(brandId)}/assets/${kind}`, body).then((result) => BrandAssetSummary.parse((result as { asset: unknown }).asset));
+  },
+  deleteBrandAsset: (brandId: string, kind: BrandAssetKind) => request<unknown>("DELETE", `/api/brands/${encodeURIComponent(brandId)}/assets/${kind}`),
   recover: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/recover`, {}),
   retryInstall: (installId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/installs/${encodeURIComponent(installId)}/retry`, {}),
   installDetail: (installId: string) => request<InstallWithReceipts>("GET", `/api/installs/${encodeURIComponent(installId)}`),

@@ -51,8 +51,8 @@ const Draft = z.strictObject({
   name: BrandName.optional(),
   profile: BrandProfile.optional(),
 });
-// Absent form_artifact_id keeps the form the brand runs.
-const Redeploy = z.strictObject({ form_artifact_id: Id.optional() });
+// Absent form_artifact_id keeps the form the brand runs; absent template_version_id keeps its template version.
+const Redeploy = z.strictObject({ form_artifact_id: Id.optional(), template_version_id: Id.optional() });
 // The artifact rule shared by draft creation, the redeploy choice and the "newer form" offer: the tenant's payload version
 // (bound as ?1) and a form@ bundle id.
 const COMPATIBLE_FORM = "payload_version = ?1 AND bundle_form_version GLOB 'form@*'";
@@ -316,6 +316,8 @@ export function installOperation(kind: string, brandId: string, toRevisionId: st
 // current revision, which lets the existing Workflow upload the current runtime bundle again.
 // With form_artifact_id the copy carries that artifact instead, so the brand moves to a newer registered form;
 // the install Workflow stays the authority on it (validateInstallInputs) and a rollback returns to the old revision.
+// With template_version_id the copy carries that sealed template version and its text defaults (withTextDefaults, as upgrade-all does),
+// so the owner moves one live brand to another template through the same install Workflow, rollback included.
 async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ status: string; current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
@@ -330,6 +332,22 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
     if (!artifact) return json(422, { error: "form_artifact_not_found" });
     if (!artifact.compatible) return json(422, { error: "form_artifact_incompatible", message: "Form artifact does not match the tenant payload version" });
   }
+  const templateVersionId = parsed.data.template_version_id ?? null;
+  // The new config is computed from the config read here; the insert below is gated on that config still being current,
+  // so a profile edit that lands in between is refused instead of lost.
+  let newConfig: string | null = null;
+  let readConfig: string | null = null;
+  if (templateVersionId) {
+    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+      .bind(templateVersionId).first<{ template_version_id: string; text_defaults_json: string | null }>();
+    if (!template) return json(422, { error: "template_not_sealed" });
+    const current = await env.FACTORY.prepare("SELECT r.template_version_id, r.config_json FROM brand_revisions r WHERE r.revision_id = ?1")
+      .bind(brand.current_revision_id).first<{ template_version_id: string; config_json: string }>();
+    if (!current) return json(422, { error: "revision_missing" });
+    if (current.template_version_id === templateVersionId) return json(422, { error: "template_unchanged", message: "The brand already runs this template version" });
+    readConfig = current.config_json;
+    newConfig = withTextDefaults(current.config_json, template.text_defaults_json);
+  }
   const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const revisionId = `${brandId}_redeploy_${installId}`;
   const now = new Date().toISOString();
@@ -337,13 +355,14 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
   // that revision exists, so a refused request leaves neither row and a double click claims one install.
   const [revisionClaim, installClaim] = await env.FACTORY.batch([
     env.FACTORY.prepare(`INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at)
-      SELECT ?1,?2,(SELECT MAX(revision) + 1 FROM brand_revisions WHERE brand_id = ?2),r.template_version_id,COALESCE(?5,r.form_artifact_id),r.config_json,?3,?4
+      SELECT ?1,?2,(SELECT MAX(revision) + 1 FROM brand_revisions WHERE brand_id = ?2),COALESCE(?6,r.template_version_id),COALESCE(?5,r.form_artifact_id),COALESCE(?7,r.config_json),?3,?4
       FROM brands b JOIN brand_revisions r ON r.revision_id = b.current_revision_id
       WHERE b.brand_id = ?2 AND b.status = 'live'
+      AND (?8 IS NULL OR r.config_json = ?8)
       AND NOT EXISTS (
         SELECT 1 FROM installs
         WHERE brand_id = ?2 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running')
-      )`).bind(revisionId, brandId, ctx.actor_id, now, formArtifactId),
+      )`).bind(revisionId, brandId, ctx.actor_id, now, formArtifactId, templateVersionId, newConfig, readConfig),
     env.FACTORY.prepare(`INSERT INTO installs
       (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at)
       SELECT ?1,?2,'upgrade','queued',b.current_revision_id,?3,?4,?5,?6
@@ -353,9 +372,10 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
   if (revisionClaim!.meta.changes !== 1 || installClaim!.meta.changes !== 1) {
     const active = await activeLifecycleOperation(env.FACTORY, brandId);
     if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
+    if (readConfig !== null) return json(409, { error: "conflict", message: "The brand changed while the template was being chosen; reload and try again" });
     return json(409, { error: "lifecycle_operation_active", message: "Lifecycle operation claim was not admitted" });
   }
-  await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId, ...(formArtifactId ? { form_artifact_id: formArtifactId } : {}) });
+  await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId, ...(formArtifactId ? { form_artifact_id: formArtifactId } : {}), ...(templateVersionId ? { template_version_id: templateVersionId } : {}) });
   return dispatch(env, ctx, installId, brandId, "/install", { install_id: installId, brand_id: brandId, revision_id: revisionId, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }
 

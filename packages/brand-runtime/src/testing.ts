@@ -1,16 +1,18 @@
-import { AnalyticsForwardRequest, HANDOFF_TTL_SECONDS, LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest, type BrandSettingsResponse } from "@anjuna/contracts";
+import { AnalyticsForwardRequest, HANDOFF_TTL_SECONDS, LeadsRpc, type BrandAssetBody, type BrandAssetKind, type LeadsRpcMethod, type LeadsRpcRequest, type BrandSettingsResponse } from "@anjuna/contracts";
 import { CoreError, type AnalyticsRequest, type CoreClient, type CoreResult } from "./core-client.js";
 
 /** In-memory fake: no network, crypto signing, persistence, or provider calls. */
 export class MockCoreClient implements CoreClient {
   readonly calls: { [M in LeadsRpcMethod]: LeadsRpcRequest<M>[] } = {
-    recordClick: [], submitLead: [], resolveContinuation: [], zip: [], issueHandoff: [], verifyHandoff: [], brandSettings: [],
+    recordClick: [], submitLead: [], resolveContinuation: [], zip: [], issueHandoff: [], verifyHandoff: [], brandSettings: [], brandAsset: [],
   };
   readonly analytics: AnalyticsRequest[] = [];
   readonly continuations = new Map<string, string>();
   readonly handoffs = new Map<string, { brand_id: string; requested_amount: number; zip: string; expires_at: string }>();
   failure: Error | null = null;
   settings: BrandSettingsResponse | null = null;
+  /** The favicon or logo core would return per kind. A kind without an entry answers 404. */
+  readonly assets: Partial<Record<BrandAssetKind, BrandAssetBody>> = {};
   private sequence = 0;
 
   private record<M extends LeadsRpcMethod>(method: M, body: LeadsRpcRequest<M>) {
@@ -28,6 +30,12 @@ export class MockCoreClient implements CoreClient {
     this.record("brandSettings", body);
     if (!this.settings) throw new CoreError(404);
     return { status: 200, data: this.settings };
+  }
+  async brandAsset(body: LeadsRpcRequest<"brandAsset">): Promise<CoreResult<"brandAsset">> {
+    this.record("brandAsset", body);
+    const asset = this.assets[body.kind];
+    if (!asset) throw new CoreError(404);
+    return { status: 200, data: asset };
   }
   async submitLead(body: LeadsRpcRequest<"submitLead">): Promise<CoreResult<"submitLead">> {
     this.record("submitLead", body);

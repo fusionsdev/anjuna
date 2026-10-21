@@ -304,6 +304,30 @@ describe("resume", () => {
     expect(sent("GET", "/api/wizard/drafts/brand_new")).toHaveLength(1);
   });
 
+  it("shows the copy rules inline for a filled field, holds Next on them and leaves empty fields alone", async () => {
+    resume({ contact: CONTACT, disclosures: DISCLOSURES });
+    await heading("เทมเพลต (Template)");
+    next();
+    await heading("ข้อความ (Copy)");
+    expect(screen.queryByRole("alert")).toBeNull();
+    fill("หัวข้อหลัก H1 (Headline)", "Fast cash for you");
+    expect((await screen.findByRole("alert")).textContent).toMatch(/exactly once/);
+    fill("ปุ่ม CTA (Button text)", 'Say "hi"');
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
+    expect(screen.getByText(/One line of plain text/)).toBeTruthy();
+    const saved = patches().length;
+    next();
+    expect(screen.getByRole("heading", { level: 2, name: "ข้อความ (Copy)" })).toBeTruthy();
+    expect(patches()).toHaveLength(saved);
+    fill("หัวข้อหลัก H1 (Headline)", "{{keyword}} in minutes");
+    fill("ปุ่ม CTA (Button text)", "Check my rate");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(/^21\/140/)).toBeTruthy();
+    next();
+    await heading("ติดตามผล (Tracking)");
+    expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, disclosures: DISCLOSURES, copy: { h1: "{{keyword}} in minutes", cta: "Check my rate" } } });
+  });
+
   it("fills the form from the saved profile and the template of the draft, and saves with PATCH", async () => {
     resume({ contact: CONTACT, disclosures: { ...DISCLOSURES, term_max_months: 48 } });
     await heading("เทมเพลต (Template)");

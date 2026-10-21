@@ -15,3 +15,4 @@ export * from "./template-zip.js";
 export * from "./builder-keys.js";
 export * from "./brand-draft.js";
 export * from "./copy.js";
+export * from "./brand-assets.js";

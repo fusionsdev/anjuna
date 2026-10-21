@@ -1,8 +1,8 @@
 /** The body of each wizard step. All state lives in BrandWizard; these are controlled inputs. */
-import { SITE_TEXT_LIMITS, COPY_TEXT_MAX, type TemplateTextDefaults, type TemplateVersionSummary } from "@anjuna/contracts";
+import { COPY_KEYWORD_MARKER, COPY_LIMITS, COPY_TEXT_MAX, SITE_TEXT_LIMITS, type CopyField, type TemplateTextDefaults, type TemplateVersionSummary } from "@anjuna/contracts";
 import type { WizardDefaultsResponse, ZoneCheckResponse } from "../../shared/wizard";
 import { FIELD_LABEL } from "./messages";
-import type { FieldErrors, FieldKey, WizardForm } from "./steps";
+import { copyFieldErrors, visibleCopyLength, type FieldErrors, type FieldKey, type WizardForm } from "./steps";
 
 export interface FieldsProps {
   form: WizardForm;
@@ -126,13 +126,20 @@ const COPY_FIELDS: Array<{ field: FieldKey; max: number; source?: keyof Template
   { field: "sub", max: COPY_TEXT_MAX },
 ];
 
+/** The h1, cta and sub: checked as the employee types, with the same rules the install applies. */
+const isPageCopy = (field: FieldKey): field is CopyField => Object.hasOwn(COPY_LIMITS, field);
+
 export function CopyPanel({ form, errors, set, templateText }: FieldsProps & { templateText: TemplateTextDefaults | null }) {
+  // Findings of a filled field show at once; the Next button repeats them. An empty field is not a finding.
+  const shown = { ...copyFieldErrors(form), ...errors };
   return (
     <div className="wizard-panel">
-      <p className="muted small">เว้นว่าง = ใช้ข้อความจากเทมเพลต (Leave blank to use the template text)</p>
+      <p className="muted small">เว้นว่าง = ใช้ข้อความจากเทมเพลต (Leave blank to use the template text) · H1, CTA และข้อความรองที่เว้นว่างจะถูกเติมตอนสร้างเว็บไซต์ (Empty H1, CTA and sub are filled at Generate)</p>
       {COPY_FIELDS.map(({ field, max, source }) => {
         const fallback = field === "brand_name" ? form.name.trim() || templateText?.brand_name : source ? templateText?.[source] : null;
-        return <Field key={field} field={field} form={form} errors={errors} set={set} maxLength={max} placeholder={fallback ?? undefined} hint={`${form[field].trim().length}/${max}${fallback ? ` · ค่าเริ่มต้น (Default): ${fallback}` : ""}`} />;
+        const count = isPageCopy(field) ? `${visibleCopyLength(form, field)}/${COPY_LIMITS[field]}` : `${form[field].trim().length}/${max}`;
+        const slot = field === "h1" ? ` · ใส่ ${COPY_KEYWORD_MARKER} หนึ่งครั้ง (Put ${COPY_KEYWORD_MARKER} once)` : "";
+        return <Field key={field} field={field} form={form} errors={shown} set={set} maxLength={max} placeholder={fallback ?? undefined} hint={`${count}${slot}${fallback ? ` · ค่าเริ่มต้น (Default): ${fallback}` : ""}`} />;
       })}
     </div>
   );
