@@ -83,6 +83,13 @@ jobs:
           echo "${{ secrets.DRAIN_TOKEN }}"          | bun x wrangler secret put DRAIN_TOKEN          --config workers/core/wrangler.deploy.aduplift.jsonc
           echo "${{ secrets.POSTBACK_TOKEN_SALT }}"  | bun x wrangler secret put POSTBACK_TOKEN_SALT  --config workers/core/wrangler.deploy.aduplift.jsonc
 
+      - name: Set postback token (aduplift)
+        env:
+          POSTBACK_TOKEN: ${{ secrets.POSTBACK_TOKEN }}
+        run: |
+          [ -z "$POSTBACK_TOKEN" ] && echo "POSTBACK_TOKEN not set, keeping the current core secret" && exit 0
+          printf '%s' "$POSTBACK_TOKEN" | bun x wrangler secret put POSTBACK_TOKEN --config workers/core/wrangler.deploy.aduplift.jsonc
+
       - name: Set listmonk secrets (aduplift)
         env:
           LISTMONK_URL: ${{ secrets.LISTMONK_URL }}
@@ -189,6 +196,13 @@ jobs:
         run: |
           echo "${{ secrets.MAIMAX_DRAIN_TOKEN }}"         | bun x wrangler secret put DRAIN_TOKEN         --config workers/core/wrangler.deploy.maimax.jsonc
           echo "${{ secrets.MAIMAX_POSTBACK_TOKEN_SALT }}" | bun x wrangler secret put POSTBACK_TOKEN_SALT --config workers/core/wrangler.deploy.maimax.jsonc
+
+      - name: Set postback token (maimax)
+        env:
+          POSTBACK_TOKEN: ${{ secrets.MAIMAX_POSTBACK_TOKEN }}
+        run: |
+          [ -z "$POSTBACK_TOKEN" ] && echo "MAIMAX_POSTBACK_TOKEN not set, keeping the current core secret" && exit 0
+          printf '%s' "$POSTBACK_TOKEN" | bun x wrangler secret put POSTBACK_TOKEN --config workers/core/wrangler.deploy.maimax.jsonc
 
       - name: Set listmonk secrets (maimax)
         env:
