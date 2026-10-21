@@ -124,7 +124,7 @@ export const AmountBuckets = z
 export const FormVersion = z.string().regex(/^[A-Za-z0-9._@-]{1,64}$/, "Invalid form version");
 
 /** The only thing anyone outside core ever learns about the postback token. */
-export const PostbackTokenState = z.enum(["set", "not_set"]);
+export const PostbackTokenState = z.enum(["set", "not_set", "global"]);
 export type PostbackTokenState = z.infer<typeof PostbackTokenState>;
 
 /** LeadsGate affiliate id. */
