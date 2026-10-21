@@ -29,6 +29,7 @@ import {
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
+import { globalPostbackDigest } from "../postback-token.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 
 const JSON_BODY_LIMIT = 32 * 1024;
@@ -205,7 +206,7 @@ function parseJson(text: string | null): unknown {
   return text === null ? null : JSON.parse(text);
 }
 
-function brandConfig(row: BrandRow): BrandConfig {
+function brandConfig(row: BrandRow, globalPostback = false): BrandConfig {
   return {
     brand_id: row.brand_id,
     account: row.account,
@@ -222,7 +223,7 @@ function brandConfig(row: BrandRow): BrandConfig {
     aid: row.aid,
     prepop_base: row.prepop_base,
     drain_key: row.drain_key,
-    postback_token: row.postback_token_hash ? "set" : "not_set",
+    postback_token: row.postback_token_hash ? "set" : globalPostback ? "global" : "not_set",
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -318,7 +319,8 @@ async function getBrand(
 ): Promise<Response> {
   const row = await getBrandRow(env.LEADS, brandId);
   if (!row) return adminError(context, { error: "not_found", resource: "brand" });
-  return json({ brand: brandConfig(row) });
+  const globalPostback = (await globalPostbackDigest(env)) !== null;
+  return json({ brand: brandConfig(row, globalPostback) });
 }
 
 function equalJson(left: unknown, right: unknown): boolean {
@@ -353,7 +355,8 @@ async function patchBrand(
 
   const row = await getBrandRow(env.LEADS, brandId);
   if (!row) return adminError(context, { error: "not_found", resource: "brand" });
-  const before = brandConfig(row);
+  const globalPostback = (await globalPostbackDigest(env)) !== null;
+  const before = brandConfig(row, globalPostback);
   if (patch.expected_updated_at !== undefined && patch.expected_updated_at !== row.updated_at) {
     return adminError(context, {
       error: "conflict",
@@ -439,7 +442,7 @@ async function patchBrand(
   if (!updated) throw new Error("Updated brand disappeared");
 
   const response: BrandPatchResponse = {
-    brand: brandConfig(updated),
+    brand: brandConfig(updated, globalPostback),
     changed: changes.map((change) => change.field),
     audit_id: auditId,
     ...(issuedPostbackToken ? { issued_postback_token: issuedPostbackToken } : {}),

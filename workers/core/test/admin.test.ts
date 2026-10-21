@@ -430,3 +430,22 @@ describe("site text through the admin API", () => {
     expect(brand).toMatchObject({ brand_name: "Quick Funds", site_title: null, site_description: "Compare funding options from lending partners." });
   });
 });
+
+describe("postback token state with a tenant-wide token", () => {
+  let g: Harness;
+  beforeAll(async () => {
+    g = await createHarness({ bindings: { POSTBACK_TOKEN: "g".repeat(40) } });
+    await g.seedBrand("brand-a", "own", "main");
+    await g.seedBrand("brand-c", "unused", "main");
+    await g.db.prepare("UPDATE brand_runtime SET amount_buckets = '[500,1000]'").run();
+    await g.db.prepare("UPDATE brand_runtime SET postback_token_hash = NULL WHERE brand_id = 'brand-c'").run();
+  });
+  afterAll(async () => { await g?.mf.dispose(); });
+
+  it("reports global for a brand without its own token and set for one with it", async () => {
+    const own = GetBrandResponse.parse(await (await g.admin("/admin/brands/brand-a", owner)).json());
+    const covered = GetBrandResponse.parse(await (await g.admin("/admin/brands/brand-c", owner)).json());
+    expect([own.brand.postback_token, covered.brand.postback_token]).toEqual(["set", "global"]);
+    expect(JSON.stringify(covered)).not.toContain("g".repeat(40));
+  });
+});

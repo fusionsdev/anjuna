@@ -215,7 +215,7 @@ function MoneySection({ brand, onSave, onRotate }: { brand: BrandConfig; onSave:
         บันทึก (Save)
       </button>
       <div className="row split">
-        <span>โทเคน postback (Postback token): <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว" : "ยังไม่ได้ตั้งค่า"}</b></span>
+        <span>โทเคน postback (Postback token): <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว (เฉพาะเว็บนี้)" : brand.postback_token === "global" ? "ใช้ postback กลาง (global)" : "ยังไม่ได้ตั้งค่า"}</b></span>
         <button className="danger" onClick={onRotate}>หมุนโทเคน (Rotate token)</button>
       </div>
     </Section>

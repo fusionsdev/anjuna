@@ -2,6 +2,8 @@ export interface Env {
   LEADS: D1Database;
   FACTORY: D1Database;
   DRAIN_TOKEN?: string;
+  /** Tenant-wide LeadsGate postback token (Worker secret). Accepted for every brand of this core. */
+  POSTBACK_TOKEN?: string;
   HANDOFF_KEY?: string;
   HANDOFF_KEY_ID?: string;
   FORM_SITE_ID?: string;

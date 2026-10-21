@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { InstallWithReceipts, LifecycleBrandSummary, SealedTemplatesResponse } from "@anjuna/contracts";
+import { ChecklistEvidence, InstallWithReceipts, LifecycleBrandSummary, SealedTemplatesResponse } from "@anjuna/contracts";
+import brandFixture from "@anjuna/contracts/fixtures/admin/brand.get.response.json";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
@@ -691,3 +692,61 @@ describe("truthful lifecycle BFF", () => {
      expect(requests[0]!.started_by).not.toBe("forged");
    });
  });
+
+describe("checklist with the tenant postback token", () => {
+  type Row = { item: string; evidence: unknown; confirmed_by: string; confirmed_role: string };
+  const draft = async (domain: string) => {
+    const response = await post(employee, "/api/brands/drafts", { domain, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    return (await response.json() as { brand: { brand_id: string } }).brand.brand_id;
+  };
+  const coreWith = (outcome: string | (() => never)) => makeEnv({
+    MOCK_CORE: undefined,
+    CORE: { fetch: async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      expect(path).toMatch(/^\/admin\/brands\/[^/]+$/);
+      if (typeof outcome !== "string") outcome();
+      return Response.json({ brand: { ...brandFixture.brand, brand_id: decodeURIComponent(path.split("/").pop()!), postback_token: outcome } });
+    } } as unknown as Fetcher,
+  });
+  const read = async (brandId: string, testEnv: ReturnType<typeof makeEnv>) => {
+    const response = await call(`/api/brands/${brandId}/checklist`, { cookie: employee, env: testEnv });
+    expect(response.status).toBe(200);
+    return (await response.json() as { checklist: Row[] }).checklist;
+  };
+
+  it("ticks leadsgate_postbacks for a brand the global token covers, without writing it", async () => {
+    const brandId = await draft("global-postback.example");
+    for (const item of ["drain_route", "final_url"]) {
+      expect((await post(employee, `/api/brands/${brandId}/checklist`, { item })).status).toBe(200);
+    }
+    const sold = { fetch: async () => Response.json({ verified: true, event_id: "event-global", event_at: "2026-10-21T00:00:00.000Z" }) } as unknown as Fetcher;
+    expect((await call(`/api/brands/${brandId}/checklist`, { cookie: employee, method: "POST", body: { item: "test_sold", lead_id: "lead-global" }, env: makeEnv({ CORE_LIFECYCLE: sold }) })).status).toBe(200);
+    const rows = await read(brandId, coreWith("global"));
+    expect(rows.map((row) => row.item)).toEqual(["drain_route", "final_url", "leadsgate_postbacks", "test_sold"]);
+    const computed = rows[2]!;
+    expect(computed).toMatchObject({ confirmed_by: "system:global-postback", confirmed_role: "system" });
+    expect(ChecklistEvidence.parse(computed.evidence)).toMatchObject({ brand_id: brandId, item: "leadsgate_postbacks", actor_id: "system:global-postback" });
+    expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM brand_checklist WHERE brand_id=?1 AND item='leadsgate_postbacks'").bind(brandId).first()).toEqual({ n: 0 });
+  });
+
+  it.each(["set", "not_set"])("leaves leadsgate_postbacks open when the token state is %s", async (state) => {
+    const brandId = await draft(`postback-${state.replace("_", "-")}.example`);
+    expect(await read(brandId, coreWith(state))).toEqual([]);
+  });
+
+  it("leaves leadsgate_postbacks open when core fails", async () => {
+    const brandId = await draft("postback-core-down.example");
+    expect(await read(brandId, coreWith(() => { throw new Error("transport"); }))).toEqual([]);
+    const notFound = { fetch: async () => Response.json({ error: "not_found", resource: "brand" }, { status: 404 }) } as unknown as Fetcher;
+    expect(await read(brandId, makeEnv({ MOCK_CORE: undefined, CORE: notFound }))).toEqual([]);
+  });
+
+  it("keeps a stored attestation over the computed one", async () => {
+    const brandId = await draft("postback-stored.example");
+    expect((await post(employee, `/api/brands/${brandId}/checklist`, { item: "leadsgate_postbacks" })).status).toBe(200);
+    const rows = await read(brandId, coreWith("global"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ item: "leadsgate_postbacks", confirmed_role: "employee" });
+    expect(rows[0]!.confirmed_by).not.toBe("system:global-postback");
+  });
+});
