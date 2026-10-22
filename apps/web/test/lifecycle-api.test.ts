@@ -387,6 +387,48 @@ describe("truthful lifecycle BFF", () => {
     }
   });
 
+  it.each([
+    { label: "rollback receipt and compensate row", compensateRow: true, rollbackOutput: (id: string) => JSON.stringify({ compensation_install_id: `compensate-${id}`, triggered_rollback: "workflow_started" }), copied: 0 },
+    { label: "rollback receipt only", compensateRow: false, rollbackOutput: (id: string) => JSON.stringify({ compensation_install_id: `compensate-${id}`, triggered_rollback: "workflow_started" }), copied: 0 },
+    { label: "compensate row only", compensateRow: true, rollbackOutput: () => null, copied: 0 },
+    { label: "rollback receipt says compensation not_required", compensateRow: false, rollbackOutput: () => '{"compensation":"not_required"}', copied: 9 },
+  ])("retry copies the ok prefix only without compensation evidence: $label", async ({ label, compensateRow, rollbackOutput, copied }) => {
+    const slug = label.replace(/[^a-z]+/g, "-");
+    const draft = await post(employee, "/api/brands/drafts", { domain: `compensated-${slug}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
+    expect(draft.status).toBe(201);
+    const { brand } = await draft.json() as { brand: { brand_id: string } };
+    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const source = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
+    const sourceId = source!.install_id;
+    const now = new Date().toISOString();
+    const okSteps = ["validate", "save_rollback", "render", "upload_assets", "upload_script", "provision_runtime", "deploy", "attach_domains", "smoke"];
+    const receipts: Array<[string, string, string]> = [
+      ...okSteps.map((step): [string, string, string] => [step, "ok", "{}"]),
+      ["sync_runtime", "failed", '{"error":"ads routing 503"}'],
+    ];
+    const rollback = rollbackOutput(sourceId);
+    if (rollback) receipts.push(["rollback", "ok", rollback]);
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("UPDATE brands SET status='failed',current_revision_id=NULL WHERE brand_id=?").bind(brand.brand_id),
+      env.FACTORY.prepare("UPDATE installs SET status='failed' WHERE install_id=?").bind(sourceId),
+      ...receipts.map(([step, status, output]) => env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?,?,?,?,?)")
+        .bind(sourceId, step, status, output, now)),
+      ...(compensateRow ? [env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?,?,'rollback','rolled_back','system',?)")
+        .bind(`compensate-${sourceId}`, brand.brand_id, now)] : []),
+    ]);
+    const dispatched: Array<{ install_id: string }> = [];
+    const factory = { async fetch(request: Request) { dispatched.push(await request.json() as { install_id: string }); return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const response = await call(`/api/installs/${sourceId}/retry`, { cookie: employee, method: "POST", env: makeEnv({ FACTORY_WORKER: factory }) });
+    expect(response.status).toBe(201);
+    expect(dispatched).toHaveLength(1);
+    const retryId = dispatched[0]!.install_id;
+    expect(retryId).not.toBe(sourceId);
+    const successor = (await env.FACTORY.prepare("SELECT step FROM install_receipts WHERE install_id=? ORDER BY id").bind(retryId).all<{ step: string }>()).results.map((r) => r.step);
+    expect(successor).toEqual(copied === 0 ? [] : okSteps);
+    expect(successor).toHaveLength(copied);
+    expect((await env.FACTORY.prepare("SELECT count(*) AS n FROM install_receipts WHERE install_id=?").bind(sourceId).first<{ n: number }>())?.n).toBe(receipts.length);
+  });
+
   it.each([false, true])("blocks retry of an original install requiring recovery before mutation (terminal receipt=%s)", async (terminalReceipt) => {
     const draft = await post(employee, "/api/brands/drafts", { domain: `retained-retry-${terminalReceipt}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(draft.status).toBe(201);
