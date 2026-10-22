@@ -1,6 +1,6 @@
 import type { AdminRequestContext } from "@anjuna/contracts";
 
-/** Queue one retry and preserve only the successful prefix of an uncompensated attempt. */
+/** Queue one retry. Copy the successful prefix only when no compensation undid it. */
 export async function queueInstallRetry(
   db: D1Database, sourceId: string, ctx: AdminRequestContext,
 ): Promise<string | null> {
@@ -31,14 +31,19 @@ export async function queueInstallRetry(
   // The receipt copy must commit atomically with the claim: a crash between claim and copy
   // would leave the successor without its validated prefix and silently re-run the
   // successful steps. OR IGNORE keeps it harmless when a concurrent claim already won.
+  // A compensation (installs row or ok rollback receipt naming it) detached domains and
+  // paused or redeployed the runtime, so those ok receipts no longer hold: copy nothing.
   const statements = [claim, audit];
   if (terminal) {
     statements.push(db.prepare(`INSERT OR IGNORE INTO install_receipts (install_id,step,status,output_json,created_at)
       SELECT ?,step,status,output_json,created_at FROM install_receipts
       WHERE install_id=? AND status='ok' AND step!='rollback'
         AND id < COALESCE((SELECT MIN(id) FROM install_receipts WHERE install_id=? AND status='failed'),9223372036854775807)
-        AND EXISTS (SELECT 1 FROM installs WHERE install_id=?)`)
-      .bind(retryId, sourceId, sourceId, retryId));
+        AND EXISTS (SELECT 1 FROM installs WHERE install_id=?)
+        AND NOT EXISTS (SELECT 1 FROM installs WHERE install_id='compensate-' || ?)
+        AND NOT EXISTS (SELECT 1 FROM install_receipts r WHERE r.install_id=? AND r.step='rollback' AND r.status='ok'
+          AND CASE WHEN json_valid(r.output_json) THEN json_extract(r.output_json,'$.compensation_install_id') IS NOT NULL ELSE 0 END)`)
+      .bind(retryId, sourceId, sourceId, retryId, sourceId, sourceId));
   }
   const [claimed] = await db.batch(statements);
   if (claimed!.meta.changes !== 1) return null;
