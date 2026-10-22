@@ -12,24 +12,30 @@ export function MailingScreen() {
 
   return (
     <>
-      <h1>สถานะเมล (Mailing)</h1>
+      <div style={{ marginBottom: 18 }}>
+        <h1 aria-label="สถานะเมล (Mailing)">รายชื่ออีเมล</h1>
+        <p className="hint">ลีดที่ยินยอมรับข่าวสาร · สถานะการส่งเข้า listmonk</p>
+      </div>
       {error ? (
-        <div className="error">{error}</div>
+        <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{error}</div>
       ) : !status ? (
-        <div className="muted">กำลังโหลด…</div>
+        <div className="hint" role="status">กำลังโหลด…</div>
       ) : (
         <>
-          <p className={status.external_sync === "configured" ? "ok" : "warn"}>
-            {status.external_sync === "configured"
-              ? "ตั้งค่า LISTMONK แล้ว หน้านี้แสดงจำนวนใน mailing_outbox และไม่ได้เรียก listmonk"
-              : "ยังไม่ได้ตั้งค่า LISTMONK แสดงจำนวนใน mailing_outbox และไม่ได้เรียก listmonk"}
-          </p>
-          <div className="stat-grid">
-            <section className="section"><h3>รอส่ง</h3><p className="num">{status.counts.pending}</p></section>
-            <section className="section"><h3>ส่งแล้ว</h3><p className="num">{status.counts.sent}</p></section>
-            <section className="section"><h3>ข้าม</h3><p className="num">{status.counts.skipped}</p></section>
-            <section className="section"><h3>หยุดส่ง</h3><p className="num">{status.counts.dead}</p></section>
+          <div className="ledger" style={{ marginBottom: 16 }}>
+            <section className="cell"><h2 className="k">รอส่งเข้า listmonk</h2><p className="v">{status.counts.pending}</p></section>
+            <section className="cell"><h2 className="k">ส่งแล้ว</h2><p className="v pos">{status.counts.sent}</p></section>
+            <section className="cell"><h2 className="k">ข้าม</h2><p className="v">{status.counts.skipped}</p></section>
+            <section className="cell"><h2 className="k">หยุดส่ง</h2><p className="v neg">{status.counts.dead}</p></section>
           </div>
+          <section className="panel">
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+              <h2>การเชื่อมต่อ listmonk</h2>
+              <span className={`pill ${status.external_sync === "configured" ? "p-live" : "p-warn"}`}>{status.external_sync === "configured" ? "ตั้งค่าแล้ว" : "ยังไม่ตั้งค่า"}</span>
+            </div>
+            <p className="hint">จำนวนจากคิวส่งอีเมลในระบบ ยังไม่ใช่จำนวนสมาชิกใน listmonk</p>
+            <p className="hint" style={{ marginTop: 8 }}>เบอร์โทรเก็บเป็นข้อมูลเท่านั้น ระบบไม่ส่ง SMS หรือโทรออก</p>
+          </section>
         </>
       )}
     </>

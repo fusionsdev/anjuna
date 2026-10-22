@@ -6,12 +6,12 @@ import { ApiError, api, type Me } from "../api";
 import { TemplateZipImport } from "./TemplateZipImport";
 
 const statusLabel: Record<TemplateReviewStatus, string> = {
-  checking: "กำลังตรวจ (Checking)",
-  rejected: "ไม่ผ่าน (Rejected)",
-  awaiting_approval: "รออนุมัติ (Awaiting approval)",
-  approved: "อนุมัติแล้ว (Approved)",
+  checking: "กำลังตรวจ",
+  rejected: "ไม่ผ่าน",
+  awaiting_approval: "รออนุมัติ",
+  approved: "ใช้ได้",
 };
-const statusPill: Record<TemplateReviewStatus, string> = { checking: "", rejected: "alert", awaiting_approval: "warn", approved: "ok" };
+const statusPill: Record<TemplateReviewStatus, string> = { checking: "p-blue", rejected: "p-bad", awaiting_approval: "p-warn", approved: "p-live" };
 
 const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? e.thai) : "ไม่สำเร็จ");
 
@@ -33,6 +33,8 @@ export function TemplatesScreen({ me }: { me: Me }) {
   const [form, setForm] = useState({ url: "", template_name: "" });
   const [imported, setImported] = useState<TemplateSubmitResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState<TemplateReviewStatus | "all">("all");
+  const visibleTemplates = (templates ?? []).filter((t) => filter === "all" || t.status === filter);
 
   const load = useCallback(() => api.templates().then((r) => setTemplates(r.templates), (e) => setMsg({ kind: "err", text: errorText(e) })), []);
   useEffect(() => void load(), [load]);
@@ -79,17 +81,19 @@ export function TemplatesScreen({ me }: { me: Me }) {
 
   return (
     <>
-      <h1>เทมเพลต (Templates)</h1>
-      {msg && <div className={msg.kind === "ok" ? "ok" : "error"} role="status">{msg.text}</div>}
-      <div className="template-imports">
-      <section className="card">
-        <div className="form-inline">
-          <h2>นำเข้าจาก URL (Import from URL)</h2>
-          <input aria-label="URL ของเว็บที่เผยแพร่ (Published URL)" placeholder="https://…" type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
-          <input aria-label="ชื่อเทมเพลต (Template name)" placeholder="ชื่อเทมเพลต (Template name)" maxLength={128} value={form.template_name} onChange={(e) => setForm({ ...form, template_name: e.target.value })} />
-          <button className="primary" disabled={busy || !form.url.trim() || !form.template_name.trim()} onClick={() => void importUrl()}>นำเข้า (Import)</button>
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginBottom: 18 }}>
+        <div>
+          <h1 aria-label="เทมเพลต (Templates)">เทมเพลต</h1>
+          <p className="hint">{templates ? `${templates.filter((t) => t.status === "awaiting_approval").length} รายการรอ Owner อนุมัติ` : "กำลังโหลด…"}</p>
         </div>
-      </section>
+        <div className="seg" role="group" aria-label="กรองสถานะเทมเพลต" style={{ flexWrap: "wrap" }}>
+          {([
+            ["all", "ทั้งหมด"], ["approved", "ใช้ได้"], ["awaiting_approval", "รออนุมัติ"], ["rejected", "ไม่ผ่าน"], ["checking", "กำลังตรวจ"],
+          ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
+        </div>
+      </div>
+      {msg && <div className={msg.kind === "ok" ? "note pos" : "note neg"} style={{ background: msg.kind === "ok" ? "var(--moneybg)" : "var(--badbg)", color: msg.kind === "ok" ? "var(--money)" : "var(--bad)" }} role="status">{msg.text}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))", gap: 16, marginBottom: 16 }}>
       <TemplateZipImport busy={busy} onBusy={(value) => {
         setBusy(value);
         if (value) { setMsg(null); setImported(null); }
@@ -98,20 +102,44 @@ export function TemplatesScreen({ me }: { me: Me }) {
         if (r.template_version_id) setSelected(r.template_version_id);
         await load();
       }} />
+      <section className="panel" style={{ display: "grid", gap: 10, alignContent: "start" }}>
+        <h2>นำเข้าจาก URL</h2>
+        <label>ลิงก์หน้าเว็บที่เผยแพร่แล้ว
+          <input aria-label="URL ของเว็บที่เผยแพร่ (Published URL)" placeholder="https://pastel-lending.bolt.host" type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+        </label>
+        <label>ชื่อเทมเพลต
+          <input aria-label="ชื่อเทมเพลต (Template name)" placeholder="Pastel Lending" maxLength={128} value={form.template_name} onChange={(e) => setForm({ ...form, template_name: e.target.value })} />
+        </label>
+        <button className="btn pri" aria-label="นำเข้า (Import)" style={{ justifySelf: "start" }} disabled={busy || !form.url.trim() || !form.template_name.trim()} onClick={() => void importUrl()}>นำเข้า</button>
+        <p className="hint">กฎที่บล็อกมี 4 ข้อ: ชื่อแบรนด์อื่น, script ภายนอก, ปุ่มต้องไป /go, หน้ากฎหมายครบ 4 หน้า</p>
+      </section>
       </div>
       {imported && <SubmitOutcome result={imported} />}
-      <div className="template-cards">
-        {(templates ?? []).map((t) => (
-          <button type="button" key={t.template_version_id} className="card template-card" aria-pressed={t.template_version_id === selected} onClick={() => setSelected(t.template_version_id)}>
-            {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name} (Template preview)`} loading="lazy" /> : <span className="template-placeholder muted">ไม่มีภาพตัวอย่าง (No preview)</span>}
-            <span className="row split"><strong>{t.name}</strong><span>v{t.version}</span></span>
-            <span className={`pill ${statusPill[t.status]}`}>{statusLabel[t.status]}</span>
-            <span>แบรนด์ที่ใช้ (Brands using): {t.brands_using}</span>
-            <span className="muted small">ส่งโดย (Submitted by) {t.submitted_by_label ?? "-"} · {t.created_at}</span>
-          </button>
-        ))}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 14 }}>
+        {visibleTemplates.map((t) => {
+          const currentDetail = detail?.template.template_version_id === t.template_version_id ? detail : null;
+          const warnings = currentDetail?.checks.flatMap((c) => [...checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn"), ...checkWarnings(c.details, "import_warnings")]) ?? [];
+          const status = currentDetail?.template.status ?? t.status;
+          return (
+            <article key={t.template_version_id} className="panel" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column", borderColor: t.template_version_id === selected ? "var(--money)" : "var(--line)" }}>
+              <button type="button" aria-pressed={t.template_version_id === selected} onClick={() => setSelected(t.template_version_id)} style={{ border: 0, padding: 0, background: "transparent", color: "var(--ink)", textAlign: "left", width: "100%", flex: 1 }}>
+                {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name} (Template preview)`} loading="lazy" style={{ width: "100%", aspectRatio: "16 / 10", objectFit: "cover", display: "block", borderBottom: "1px solid var(--line)" }} /> : <span className="hint" style={{ display: "grid", placeItems: "center", aspectRatio: "16 / 10", background: "var(--paper)", borderBottom: "1px solid var(--line)" }}>ไม่มีภาพตัวอย่าง (No preview)</span>}
+                <span style={{ display: "grid", gap: 6, padding: "12px 14px" }}>
+                  <span style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}><strong style={{ fontWeight: 500 }}>{t.name}</strong><span>v{t.version}</span></span>
+                  <span><span className={`pill ${statusPill[status]}`}>{statusLabel[status]}</span></span>
+                  <span className="hint">แบรนด์ที่ใช้ (Brands using): {t.brands_using}</span>
+                  {warnings.length > 0 && <span className="amb">คำเตือน {warnings.length} ข้อ ไม่บล็อก</span>}
+                  {!currentDetail && <span className="hint">ดูผลตรวจและคำเตือน</span>}
+                  <span className="hint">ส่งโดย {t.submitted_by_label ?? "-"} · {t.created_at}</span>
+                </span>
+              </button>
+              {me.role === "owner" && status === "awaiting_approval" && <button type="button" className="btn pri" style={{ margin: "0 14px 12px", alignSelf: "start" }} aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => void approve(t.template_version_id)}>อนุมัติ</button>}
+            </article>
+          );
+        })}
       </div>
-      {templates?.length === 0 && <p className="muted">ยังไม่มีเทมเพลต (No templates yet)</p>}
+      {templates?.length === 0 && <p className="hint">ยังไม่มีเทมเพลต (No templates yet)</p>}
+      {templates && templates.length > 0 && visibleTemplates.length === 0 && <p className="hint">ไม่มีเทมเพลตในสถานะนี้</p>}
       {detail && <TemplateDetail me={me} detail={detail} busy={busy} onApprove={() => void approve(detail.template.template_version_id)} />}
     </>
   );
@@ -125,7 +153,7 @@ function checkWarnings(details: unknown, key: "warning_issues" | "import_warning
 
 function Warnings({ issues }: { issues: TemplateSubmitIssue[] }) {
   if (!issues.length) return null;
-  return <div className="warn" role="note" aria-label="คำเตือน (Warnings)">
+  return <div className="note" role="note" aria-label="คำเตือน (Warnings)">
     <b>คำเตือน (Warnings)</b>
     <ul>{issues.map((issue, i) => <li key={i}><code>{issue.rule}</code> {issue.file ? issue.file + ": " : ""}{issue.message}{" "}<span>{issue.fix}</span></li>)}</ul>
   </div>;
@@ -139,36 +167,36 @@ function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: Templ
   const warnings = detail.checks.flatMap((c) => checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn"));
   const importWarnings = detail.checks.flatMap((c) => checkWarnings(c.details, "import_warnings"));
   return (
-    <section className="card section" aria-label="รายละเอียดเทมเพลต (Template detail)">
-      <div className="row split">
+    <section className="panel" style={{ marginTop: 16 }} aria-label="รายละเอียดเทมเพลต (Template detail)">
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
         <h2>{`${t.name} · v${t.version}`}</h2>
         <span className={`pill ${statusPill[t.status]}`}>{statusLabel[t.status]}</span>
       </div>
-      <p className="muted small">{t.template_version_id} · ส่งโดย (Submitted by) {t.submitted_by_label ?? "-"} · <code>{t.sha256.slice(0, 12)}</code></p>
-      <div className="template-shots">
+      <p className="hint">{t.template_version_id} · ส่งโดย (Submitted by) {t.submitted_by_label ?? "-"} · <code>{t.sha256.slice(0, 12)}</code></p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 16, marginBlock: 16 }}>
         {(["desktop", "mobile"] as const).map((viewport) =>
           detail.screenshots[viewport]
-            ? <img key={viewport} src={detail.screenshots[viewport]!} alt={`ภาพหน้าจอ ${viewport} (${viewport} screenshot)`} />
-            : <p key={viewport} className="muted">{`ไม่มีภาพ ${viewport} (No ${viewport} screenshot)`}</p>)}
+            ? <img key={viewport} style={{ maxWidth: "100%", maxHeight: 480, objectFit: "contain" }} src={detail.screenshots[viewport]!} alt={`ภาพหน้าจอ ${viewport} (${viewport} screenshot)`} />
+            : <p key={viewport} className="hint">{`ไม่มีภาพ ${viewport} (No ${viewport} screenshot)`}</p>)}
       </div>
       <h3>ผลการตรวจ (Checks)</h3>
       <ul>
         {detail.checks.map((c) => {
           const advisory = checkWarnings(c.details).length > 0 || checkWarnings(c.details, "import_warnings").length > 0 || (c.result === "fail" && ruleDisposition(c.check_name) === "warn");
           const blocking = c.result === "fail" && ruleDisposition(c.check_name) === "block";
-          return <li key={c.check_name}><span className={`pill ${blocking ? "alert" : advisory ? "warn" : "ok"}`}>{blocking ? "fail" : advisory ? "คำเตือน (Warning)" : "pass"}</span> {c.check_name}</li>;
+          return <li key={c.check_name}><span className={`pill ${blocking ? "p-bad" : advisory ? "p-warn" : "p-live"}`}>{blocking ? "fail" : advisory ? "คำเตือน (Warning)" : "pass"}</span> {c.check_name}</li>;
         })}
       </ul>
       <Warnings issues={[...warnings, ...importWarnings]} />
-      {similarity && <p className="small">ความคล้าย (Similarity): {similarity}</p>}
+      {similarity && <p className="hint">ความคล้าย (Similarity): {similarity}</p>}
       <h3>ข้อความเริ่มต้น (Text defaults)</h3>
-      <div className="status-grid">
-        <div><span className="muted small">ชื่อแบรนด์ (Brand name)</span><b>{defaults?.brand_name ?? "-"}</b></div>
-        <div><span className="muted small">ชื่อหน้า (Page title)</span><b>{defaults?.title ?? "-"}</b></div>
-        <div><span className="muted small">คำอธิบาย (Meta description)</span><b>{defaults?.description ?? "-"}</b></div>
+      <div className="ledger" style={{ marginBlock: 12 }}>
+        <div className="cell"><span className="k" style={{ display: "block" }}>ชื่อแบรนด์ (Brand name)</span><b>{defaults?.brand_name ?? "-"}</b></div>
+        <div className="cell"><span className="k" style={{ display: "block" }}>ชื่อหน้า (Page title)</span><b>{defaults?.title ?? "-"}</b></div>
+        <div className="cell"><span className="k" style={{ display: "block" }}>คำอธิบาย (Meta description)</span><b>{defaults?.description ?? "-"}</b></div>
       </div>
       {me.role === "owner" && t.status === "awaiting_approval" && (
-        <button className="primary" disabled={busy} onClick={onApprove}>อนุมัติ (Approve)</button>
+        <button className="btn pri" disabled={busy} onClick={onApprove}>อนุมัติ (Approve)</button>
       )}
     </section>
   );
@@ -177,12 +205,12 @@ function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: Templ
 function SubmitOutcome({ result }: { result: TemplateSubmitResult }) {
   const title = result.status === "awaiting_approval" ? "ส่งแล้ว รออนุมัติ (Awaiting approval)" : result.status === "duplicate" ? "ซ้ำกับเวอร์ชันเดิม (Duplicate)" : "ไม่ผ่าน (Rejected)";
   return (
-    <div className={result.status === "rejected" ? "error" : "ok"} role="status">
+    <div className={result.status === "rejected" ? "note neg" : "note pos"} style={{ background: result.status === "rejected" ? "var(--badbg)" : "var(--moneybg)", color: result.status === "rejected" ? "var(--bad)" : "var(--money)" }} role="status">
       <b>{title}</b>
       <p>{result.next_step}</p>
       <Warnings issues={result.warnings} />
       {result.issues.length > 0 && (
-        <ul>{result.issues.map((issue, i) => <li key={i}><code>{issue.rule}</code> {issue.file ? `${issue.file}: ` : ""}{issue.message}{" "}<span className="muted">{issue.fix}</span></li>)}</ul>
+        <ul>{result.issues.map((issue, i) => <li key={i}><code>{issue.rule}</code> {issue.file ? `${issue.file}: ` : ""}{issue.message}{" "}<span className="hint">{issue.fix}</span></li>)}</ul>
       )}
     </div>
   );

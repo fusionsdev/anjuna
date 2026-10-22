@@ -14,18 +14,20 @@ export function AuditScreen({ me }: { me: Me }) {
 
   return (
     <>
-      <h1>ประวัติการเปลี่ยนแปลง (Audit log)</h1>
-      <p className="muted">{me.role === "owner" ? "แสดงทุกรายการ" : "แสดงเฉพาะรายการของคุณ"}</p>
-      {error && <div className="error">{error}</div>}
+      <h1 aria-label="ประวัติการเปลี่ยนแปลง (Audit log)">ประวัติการแก้ไข</h1>
+      <p className="hint">ทุกการเปลี่ยนแปลงในระบบ ใครทำ ทำอะไร เมื่อไหร่</p>
+      <p className="hint">{me.role === "owner" ? "แสดงทุกรายการ" : "แสดงเฉพาะรายการของคุณ"}</p>
+      {error && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>{error}</div>}
       {!entries ? (
-        <div className="muted">กำลังโหลด…</div>
+        <div className="hint">กำลังโหลด…</div>
       ) : (
-        <table className="table">
+        <section className="panel" style={{ marginTop: 16 }}><div className="tw"><table>
           <thead>
             <tr>
               <th>เวลา</th>
-              <th>ผู้ทำ</th>
-              <th>Action</th>
+              <th>ผู้ใช้</th>
+              <th>สิทธิ์</th>
+              <th>สิ่งที่ทำ</th>
               <th>เป้าหมาย</th>
               <th>เดิม</th>
               <th>ใหม่</th>
@@ -36,7 +38,10 @@ export function AuditScreen({ me }: { me: Me }) {
               <tr key={e.id}>
                 <td>{fmt(e.at)}</td>
                 <td>
-                  <span className={`pill ${e.actor_role}`}>{e.actor_role}</span> <span className="small muted">{e.actor_id}</span>
+                  <span style={{ overflowWrap: "anywhere" }}>{e.actor_id}</span>
+                </td>
+                <td>
+                  <span className={`pill ${e.actor_role === "owner" ? "p-blue" : "p-mute"}`}>{e.actor_role === "owner" ? "Owner" : e.actor_role === "employee" ? "พนักงาน" : e.actor_role}</span>
                 </td>
                 <td>
                   <code>{e.action}</code>
@@ -44,17 +49,17 @@ export function AuditScreen({ me }: { me: Me }) {
                 <td>
                   {e.target.type}:{e.target.id}
                 </td>
-                <td className="small">{short(e.old)}</td>
-                <td className="small">{short(e.new)}</td>
+                <td className="hint" style={{ minWidth: 180, overflowWrap: "anywhere" }}>{short(e.old)}</td>
+                <td className="hint" style={{ minWidth: 180, overflowWrap: "anywhere" }}>{short(e.new)}</td>
               </tr>
             ))}
             {entries.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted">ยังไม่มีรายการ</td>
+                <td colSpan={7} className="hint">ยังไม่มีรายการ</td>
               </tr>
             )}
           </tbody>
-        </table>
+        </table></div></section>
       )}
     </>
   );
