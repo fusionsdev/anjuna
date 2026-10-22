@@ -1,0 +1,27 @@
+/* Home screen only. The shared console classes (.panel .ledger .cell .k .v .btn .seg .row .dot .note .hint .pos .neg .amb .blue) come from styles.css. */
+.home-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.home-head h1 { margin: 0; font-size: 22px; line-height: 1.3; font-weight: 500; }
+.home-sub { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.home-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.home-stack { display: flex; flex-direction: column; gap: 16px; }
+.home-grid2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; }
+.home-ptitle { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.home-ptitle h2 { margin: 0; font-size: 16px; font-weight: 500; }
+.home-flow, .home-drops { display: grid; grid-template-columns: repeat(var(--stages, 6), minmax(0, 1fr)); gap: 6px; }
+.home-flow { align-items: end; margin-top: 12px; }
+.home-drops { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.home-stage { display: flex; flex-direction: column; gap: 4px; }
+.home-bar { border-radius: 6px 6px 2px 2px; background: var(--money); }
+.home-stage.paid .home-bar { background: var(--spend); }
+.home-stage.leak .home-bar { background: var(--leak); }
+.home-stage.gap .home-bar { background: var(--line); }
+.home-n { margin: 0; font-size: 16px; font-weight: 500; }
+.home-l { margin: 0; font-size: 11px; color: var(--muted); }
+.home-item { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.home-item:first-of-type { border-top: 0; }
+.home-item .t { flex: 1; min-width: 0; }
+.home-item .t span { display: block; color: var(--muted); font-size: 12px; }
+@media (max-width: 760px) {
+  .home-grid2 { grid-template-columns: 1fr; }
+  .home-flow, .home-drops { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
