@@ -39,12 +39,12 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
 
   return (
     <>
-      <h1>คีย์ Builder (Builder keys)</h1>
-      <p className="muted">คีย์สำหรับเชื่อม bolt.new กับ template MCP หนึ่งคนต่อหนึ่งคีย์ คีย์แสดงในตารางตลอด (One key per staff member; the key stays visible here)</p>
-      {msg && <div className="error">{msg}</div>}
-      <table className="table">
+      <h1 aria-label="คีย์ Builder (Builder keys)">คีย์ Builder</h1>
+      <p className="hint">ให้ bolt.new ส่งเทมเพลตเข้ามาตรวจได้เอง · หนึ่งคนต่อหนึ่งคีย์ · คีย์แสดงในตารางตลอด</p>
+      {msg && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>{msg}</div>}
+      <section className="panel" style={{ marginTop: 16 }}><div className="tw"><table>
         <thead>
-          <tr><th>ชื่อคีย์ (Label)</th><th>คีย์ (Key)</th><th>สร้างเมื่อ (Created)</th><th>ใช้ล่าสุด (Last used)</th><th>สถานะ (Status)</th><th /></tr>
+          <tr><th>ชื่อ</th><th>คีย์</th><th>สร้างเมื่อ</th><th>ใช้ล่าสุด</th><th>สถานะ</th><th /></tr>
         </thead>
         <tbody>
           {(keys ?? []).map((k) => (
@@ -53,22 +53,22 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
               <td>
                 {k.secret ? (
                   <>
-                    <code>{k.secret}</code>{" "}
-                    <button aria-label={`คัดลอกคีย์ ${k.label} (Copy)`} onClick={() => void copy(k)}>
+                    <code style={{ display: "inline-block", maxWidth: "min(100%, 30ch)", overflowWrap: "anywhere", padding: "2px 6px", border: "1px solid var(--line)", borderRadius: 6, background: "var(--paper)", fontSize: 12 }}>{k.secret}</code>{" "}
+                    <button className="btn" aria-label={`คัดลอกคีย์ ${k.label} (Copy)`} onClick={() => void copy(k)}>
                       {copiedId === k.key_id ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}
                     </button>
                   </>
                 ) : (
-                  <span className="muted small">ไม่ได้เก็บไว้ สร้างคีย์ใหม่ (Not stored, create a new key)</span>
+                  <span className="hint">ไม่ได้เก็บไว้ สร้างคีย์ใหม่ (Not stored, create a new key)</span>
                 )}
               </td>
-              <td className="muted small">{k.created_at}</td>
-              <td className="muted small">{k.last_used_at ?? "ยังไม่เคยใช้ (Never)"}</td>
-              <td><span className={`pill ${k.revoked_at ? "alert" : "ok"}`}>{k.revoked_at ? "ยกเลิกแล้ว (Revoked)" : "ใช้งาน (Active)"}</span></td>
+              <td className="hint">{k.created_at}</td>
+              <td className="hint">{k.last_used_at ?? "ยังไม่เคยใช้ (Never)"}</td>
+              <td><span className={`pill ${k.revoked_at ? "p-mute" : "p-live"}`}>{k.revoked_at ? "ยกเลิกแล้ว (Revoked)" : "ใช้งาน (Active)"}</span></td>
               <td>
                 {me.role === "owner" && !k.revoked_at && (
                   <button
-                    className="danger"
+                    className="btn neg"
                     aria-label={`ยกเลิกคีย์ ${k.label} (Revoke)`}
                     onClick={() => { if (window.confirm(`ยกเลิกคีย์ ${k.label}? bolt.new ที่ใช้คีย์นี้จะเชื่อมต่อไม่ได้ทันที`)) void run(() => api.revokeBuilderKey(k.key_id)); }}
                   >
@@ -79,12 +79,12 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
             </tr>
           ))}
         </tbody>
-      </table>
-      <div className="card form-inline">
-        <h2>สร้างคีย์ใหม่ (New key)</h2>
-        <input aria-label="ชื่อคีย์ (Key label)" placeholder="เช่น Somchai (bolt.new)" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} />
+      </table></div></section>
+      <div className="panel" style={{ display: "flex", flexWrap: "wrap", alignItems: "end", gap: 12, marginTop: 16 }}>
+        <h2 style={{ flexBasis: "100%" }}>สร้างคีย์ใหม่</h2>
+        <label style={{ flex: "1 1 220px" }}>ชื่อคีย์<input aria-label="ชื่อคีย์ (Key label)" placeholder="เช่น Somchai (bolt.new)" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} /></label>
         <button
-          className="primary"
+          className="btn pri"
           disabled={!label.trim()}
           onClick={() => void run(async () => {
             await api.createBuilderKey(label.trim());

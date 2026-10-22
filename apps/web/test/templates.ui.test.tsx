@@ -61,7 +61,7 @@ describe("Templates screen", () => {
     render(<TemplatesScreen me={owner} />);
     expect(await screen.findByRole("img", { name: "ตัวอย่าง Bolt Harbor (Template preview)" })).toBeTruthy();
     expect(screen.getByText("แบรนด์ที่ใช้ (Brands using): 3")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Bolt Harbor/ }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: /Bolt Harbor/, pressed: false }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByRole("table")).toBeNull();
   });
 
@@ -126,7 +126,7 @@ describe("Templates screen", () => {
     expect(screen.getByText("ไม่มีภาพ mobile (No mobile screenshot)")).toBeTruthy();
     expect(screen.getByText(/PASS: no sealed templates/)).toBeTruthy();
     expect(screen.getByText("Harbor | Funding")).toBeTruthy();
-    expect(screen.getAllByText("รออนุมัติ (Awaiting approval)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("รออนุมัติ").length).toBeGreaterThan(0);
   });
 
   it("shows stored lint, similarity and screenshot warnings in yellow", async () => {
@@ -139,7 +139,7 @@ describe("Templates screen", () => {
     render(<TemplatesScreen me={owner} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
     const warnings = await screen.findByRole("note", { name: "คำเตือน (Warnings)" });
-    expect(warnings.classList.contains("warn")).toBe(true);
+    expect(warnings.classList.contains("note")).toBe(true);
     for (const message of ["Email input advisory.", "Host badge removed.", "Similar layout.", "Mobile screenshot unavailable."]) expect(warnings.textContent).toContain(message);
     expect(screen.getAllByText("คำเตือน (Warning)")).toHaveLength(3);
     expect(screen.getByRole("button", { name: "อนุมัติ (Approve)" })).toBeTruthy();
@@ -151,7 +151,7 @@ describe("Templates screen", () => {
     ] }));
     render(<TemplatesScreen me={owner} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
-    expect((await screen.findByText("fail")).classList.contains("alert")).toBe(true);
+    expect((await screen.findByText("fail")).classList.contains("p-bad")).toBe(true);
     expect(screen.queryByRole("button", { name: "อนุมัติ (Approve)" })).toBeNull();
   });
 
@@ -241,7 +241,7 @@ describe("Templates screen", () => {
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
     fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));
     const warnings = await screen.findByRole("note", { name: "คำเตือน (Warnings)" });
-    expect(warnings.classList.contains("warn")).toBe(true);
+    expect(warnings.classList.contains("note")).toBe(true);
     expect(warnings.textContent).toContain("Similar copy needs review.");
     expect(warnings.textContent).toContain("Discuss the copy.");
   });

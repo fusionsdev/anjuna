@@ -1,5 +1,5 @@
 import type { AlertsReportResponse } from "@anjuna/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ApiError, api } from "../api";
 
 const LABEL: Record<string, string> = {
@@ -8,8 +8,24 @@ const LABEL: Record<string, string> = {
   alert: "ผิดปกติ",
 };
 
-function StatePill({ state }: { state: "ok" | "warn" | "alert" }) {
-  return <span className={`pill ${state}`}>{LABEL[state]}</span>;
+const STATE_STYLE = { ok: "p-live", warn: "p-warn", alert: "p-bad" };
+const STATE_COLOR = { ok: "var(--money)", warn: "var(--leak)", alert: "var(--bad)" };
+
+function AlertRow({ state, title, detail, children }: { state: "ok" | "warn" | "alert"; title: string; detail: string; children: ReactNode }) {
+  return (
+    <div className="row" style={{ flexWrap: "wrap" }}>
+      <span className="dot" aria-hidden="true" style={{ background: STATE_COLOR[state] }} />
+      <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+        <h3>{title}</h3>
+        <p className="hint">{detail}</p>
+      </div>
+      <span className={`pill ${STATE_STYLE[state]}`}>{LABEL[state]}</span>
+      <details style={{ maxWidth: "100%" }}>
+        <summary className="btn" aria-label={`ดูรายละเอียด: ${title}`} style={{ cursor: "pointer" }}>ดูรายละเอียด</summary>
+        <div className="hint" style={{ marginTop: 8, overflowWrap: "anywhere" }}>{children}</div>
+      </details>
+    </div>
+  );
 }
 
 export function AlertsScreen() {
@@ -22,34 +38,42 @@ export function AlertsScreen() {
 
   return (
     <>
-      <h1>การแจ้งเตือน (Alerts)</h1>
+      <div style={{ marginBottom: 18 }}>
+        <h1 aria-label="การแจ้งเตือน (Alerts)">การแจ้งเตือน</h1>
+        <p className="hint">ตรวจสถานะและเรื่องที่ต้องจัดการ</p>
+      </div>
       {error ? (
-        <div className="error">{error}</div>
+        <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{error}</div>
       ) : !report ? (
-        <div className="muted">กำลังโหลด…</div>
+        <div className="hint" role="status">กำลังโหลด…</div>
       ) : (
-        <div className="stat-grid">
-          <section className="section">
-            <h3>คอนเวอร์ชันค้าง</h3>
-            <StatePill state={report.conversion_stalled.state} />
-            <p className="small muted">ค้าง {report.conversion_stalled.detail.stuck_count} รายการ เกิน {report.conversion_stalled.detail.max_hours} ชม.</p>
+        <>
+          <section className="panel" aria-label="รายการแจ้งเตือน">
+            <AlertRow state={report.conversion_stalled.state} title="คอนเวอร์ชันค้าง" detail={`ค้าง ${report.conversion_stalled.detail.stuck_count} รายการ เกิน ${report.conversion_stalled.detail.max_hours} ชม.`}>
+              {report.conversion_stalled.detail.oldest_created_at ? `รายการเก่าสุด ${new Date(report.conversion_stalled.detail.oldest_created_at).toLocaleString("th-TH", { hour12: false })}` : "ไม่มีรายการค้าง"}
+            </AlertRow>
+            <AlertRow state={report.brands_without_postbacks.state} title="แบรนด์ไม่มีโพสต์แบ็ก" detail={`${report.brands_without_postbacks.detail.brands.length} แบรนด์ ใน ${report.brands_without_postbacks.detail.window_hours} ชม.`}>
+              {report.brands_without_postbacks.detail.brands.length ? <ul>{report.brands_without_postbacks.detail.brands.map((b) => <li key={b.brand}>{b.brand} · {b.leads} ลีด</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
+            </AlertRow>
+            <AlertRow state={report.submit_error_rate.state} title="อัตราส่งฟอร์มผิดพลาด" detail={`${report.submit_error_rate.detail.samples.length} แบรนด์เกินเกณฑ์`}>
+              {report.submit_error_rate.detail.samples.length ? <ul>{report.submit_error_rate.detail.samples.map((b) => <li key={b.brand}>{b.brand} · ผิดพลาด {b.errors} · ส่งฟอร์ม {b.submits} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
+            </AlertRow>
+            <AlertRow state={report.reject_rate.state} title="อัตราปฏิเสธ" detail={`${report.reject_rate.detail.brands.length} แบรนด์เกินเกณฑ์`}>
+              {report.reject_rate.detail.brands.length ? <ul>{report.reject_rate.detail.brands.map((b) => <li key={b.brand}>{b.brand} · ปฏิเสธ {b.rejected} จาก {b.decided} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
+            </AlertRow>
+            <p className="hint">ข้อมูล ณ {new Date(report.generated_at).toLocaleString("th-TH", { hour12: false })}</p>
           </section>
-          <section className="section">
-            <h3>แบรนด์ไม่มีโพสต์แบ็ก</h3>
-            <StatePill state={report.brands_without_postbacks.state} />
-            <p className="small muted">{report.brands_without_postbacks.detail.brands.length} แบรนด์ ใน {report.brands_without_postbacks.detail.window_hours} ชม.</p>
+          <section className="panel" style={{ marginTop: 16 }} aria-label="เกณฑ์แจ้งเตือน">
+            <h2>เกณฑ์แจ้งเตือน</h2>
+            <p className="hint">ค่าปัจจุบัน · อ่านอย่างเดียว</p>
+            <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 12, marginBottom: 0 }}>
+              <div><dt className="k">conversion ค้างส่ง Google เกิน (ชั่วโมง)</dt><dd style={{ margin: 0 }}>{report.conversion_stalled.detail.max_hours}</dd></div>
+              <div><dt className="k">แบรนด์ไม่มีโพสต์แบ็กในช่วง (ชั่วโมง)</dt><dd style={{ margin: 0 }}>{report.brands_without_postbacks.detail.window_hours}</dd></div>
+              <div><dt className="k">อัตราส่งฟอร์มผิดพลาด (%)</dt><dd style={{ margin: 0 }}>เตือน {(report.submit_error_rate.detail.warn_at * 100).toLocaleString("th-TH")}% · ผิดปกติ {(report.submit_error_rate.detail.alert_at * 100).toLocaleString("th-TH")}%</dd><dd className="hint" style={{ margin: 0 }}>ใน {report.submit_error_rate.detail.window_hours} ชั่วโมง</dd></div>
+              <div><dt className="k">อัตรา reject (%)</dt><dd style={{ margin: 0 }}>เตือน {(report.reject_rate.detail.warn_at * 100).toLocaleString("th-TH")}% · ผิดปกติ {(report.reject_rate.detail.alert_at * 100).toLocaleString("th-TH")}%</dd><dd className="hint" style={{ margin: 0 }}>ใน {report.reject_rate.detail.window_hours} ชั่วโมง</dd></div>
+            </dl>
           </section>
-          <section className="section">
-            <h3>อัตราส่งฟอร์มผิดพลาด</h3>
-            <StatePill state={report.submit_error_rate.state} />
-            <p className="small muted">{report.submit_error_rate.detail.samples.length} แบรนด์เกินเกณฑ์</p>
-          </section>
-          <section className="section">
-            <h3>อัตราปฏิเสธ</h3>
-            <StatePill state={report.reject_rate.state} />
-            <p className="small muted">{report.reject_rate.detail.brands.length} แบรนด์เกินเกณฑ์</p>
-          </section>
-        </div>
+        </>
       )}
     </>
   );
