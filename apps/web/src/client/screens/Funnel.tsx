@@ -2,6 +2,7 @@ import type { FunnelReportResponse, TrafficBreakdownResponse, TrafficDimension, 
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { ApiError, api } from "../api";
+import { RiskPanel } from "./RiskPanel";
 
 const periods: Array<[TrafficPeriod, string]> = [["today", "วันนี้"], ["7d", "7 วัน"], ["30d", "30 วัน"]];
 const tabs = { source: "แหล่งที่มา", domain: "โดเมน", device: "อุปกรณ์", browser: "Browser" } as const;
@@ -158,7 +159,7 @@ export function FunnelScreen() {
       </>}
     </section>
 
-    {/* RiskPanel slot: C6 supplies ./RiskPanel; no import until that file exists. */}
+    <RiskPanel period={period} canExport={owner} />
 
     <section className="panel" style={{ marginTop: 16 }}>
       <h2>แยกตามคีย์เวิร์ดและ A/B</h2>

@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrafficBreakdownResponse } from "@anjuna/contracts";
+import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.json";
 import { biggestLeak, FunnelScreen } from "../src/client/screens/Funnel";
 
 const from = "2026-10-22T00:00:00.000Z";
@@ -30,6 +31,7 @@ beforeEach(() => {
     if (url.pathname === "/api/spend") return json(spendStatus === 200 ? { brands: [{ brand_id: "brand-a", clicks: 200 }] } : { error: "not_found" }, spendStatus);
     if (url.pathname === "/api/funnel") return json({ from, to, rows: empty ? [] : [reportRow, { ...reportRow, variant: "b", sold: 3 }] });
     if (url.pathname === "/api/traffic/breakdown") return json(trafficStatus === 200 ? traffic(url.searchParams.get("period") as TrafficBreakdownResponse["period"], url.searchParams.get("by") as TrafficBreakdownResponse["by"]) : { error: "internal" }, trafficStatus);
+    if (url.pathname === "/api/traffic/risk") return json(trafficRisk);
     throw new Error(`Unexpected fetch ${input}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -71,6 +73,12 @@ describe("Funnel screen", () => {
     expect(cells[3]!.textContent).toBe("—");
     expect(cells[7]!.textContent).toBe("ลีด หลุด 75%");
   });
+  it("shows the click risk panel for the selected period", async () => {
+    render(<FunnelScreen />);
+    expect(await screen.findByRole("region", { name: "คะแนนความเสี่ยงของคลิก" })).toBeTruthy();
+    expect(requests).toContain("/api/traffic/risk?period=today");
+  });
+
   it("never requests spend or shows revenue to an employee", async () => {
     role = "employee";
     render(<FunnelScreen />);
