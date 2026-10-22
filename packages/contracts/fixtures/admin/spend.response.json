@@ -1,0 +1,10 @@
+{
+  "period": "7d",
+  "from": "2026-09-26",
+  "to": "2026-10-02",
+  "totals": { "cost": 412.37, "clicks": 318, "impressions": 9120 },
+  "brands": [
+    { "brand_id": "brand-a", "cost": 301.12, "clicks": 240, "impressions": 6400, "updated_at": "2026-10-02T09:05:00.000Z" },
+    { "brand_id": "brand-b", "cost": 111.25, "clicks": 78, "impressions": 2720, "updated_at": "2026-10-02T09:05:00.000Z" }
+  ]
+}

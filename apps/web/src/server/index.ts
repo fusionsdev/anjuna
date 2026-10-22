@@ -299,6 +299,13 @@ async function route(
     return fromCore(await callCore(env, ctx, { endpoint: "mailingStatus" }));
   }
 
+  // Ad spend (FUS-368): owner only, so an employee never receives money figures.
+  if (path === "/api/spend" && method === "GET") {
+    const g = authorize("spendReport", ctx.actor_role);
+    if (!g.ok) return forbidden(g.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "spendReport", query: url.searchParams }));
+  }
+
   return notFound("route", rid);
 }
 

@@ -32,6 +32,7 @@ import {
   ListBrandsResponse,
   MailingStatusResponse,
   matchAdminRoute,
+  SpendReportResponse,
   type AdminEndpoint,
   type AdminRole,
 } from "../src/index.js";
@@ -63,6 +64,7 @@ describe("golden fixtures validate", () => {
     ["funnel.response.json", FunnelReportResponse],
     ["alerts.response.json", AlertsReportResponse],
     ["mailing.response.json", MailingStatusResponse],
+    ["spend.response.json", SpendReportResponse],
     ["error.unauthorized.json", AdminError],
     ["error.forbidden-role.endpoint.json", AdminError],
     ["error.forbidden-role.fields.json", AdminError],
@@ -93,6 +95,7 @@ describe("golden fixtures validate", () => {
     expect(AdminApi.funnelReport.response.safeParse(fixture(A("funnel.response.json"))).success).toBe(true);
     expect(AdminApi.alertsReport.response.safeParse(fixture(A("alerts.response.json"))).success).toBe(true);
     expect(AdminApi.mailingStatus.response.safeParse(fixture(A("mailing.response.json"))).success).toBe(true);
+    expect(AdminApi.spendReport.response.safeParse(fixture(A("spend.response.json"))).success).toBe(true);
   });
 
   it("every error code maps to the agreed HTTP status", () => {
@@ -212,6 +215,7 @@ describe("secrets never appear in GET fixtures", () => {
     "funnel.response.json",
     "alerts.response.json",
     "mailing.response.json",
+    "spend.response.json",
   ];
   const SECRET_KEY = /(hash|secret|password|api_?key|credential|dsn)/i;
   const rotated = fixture<{ issued_postback_token: string }>(A("brand.patch.response.rotate.json")).issued_postback_token;
@@ -277,6 +281,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "Set LeadsGate aid, postback token, drain key, prepop base", employee: "no", covered_by: ["patch:money_routing"] },
   { action: "View individual leads with PII", employee: "no", covered_by: ["getLead"] },
   { action: "View audit log", employee: "own", covered_by: ["listAudit"] },
+  { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport"] },
 ];
 const PLAN_ROWS_OUT_OF_SCOPE = [
   "Add a brand (domain + keyword) and run install", // T10
@@ -363,9 +368,10 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/funnel")).toEqual({ endpoint: "funnelReport", params: {} });
     expect(matchAdminRoute("GET", "/admin/alerts")).toEqual({ endpoint: "alertsReport", params: {} });
     expect(matchAdminRoute("GET", "/admin/mailing")).toEqual({ endpoint: "mailingStatus", params: {} });
+    expect(matchAdminRoute("GET", "/admin/spend")).toEqual({ endpoint: "spendReport", params: {} });
     expect(matchAdminRoute("DELETE", "/admin/brands/brand-a")).toBeNull();
     expect(matchAdminRoute("POST", "/admin/brands/brand-a/rollback")).toBeNull();
-    expect(ADMIN_ENDPOINTS).toHaveLength(11);
+    expect(ADMIN_ENDPOINTS).toHaveLength(12);
   });
 });
 
