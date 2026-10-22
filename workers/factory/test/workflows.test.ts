@@ -6,6 +6,7 @@ import { ANALYTICS_FORWARD_PATHS, ApplyRuntimeRequest, InstallAdsRoutingRequest,
 import { InstallBrandWorkflow, type InstallParams } from "../src/workflows/install";
 import { RollbackBrandWorkflow, type RollbackParams } from "../src/workflows/rollback";
 import factory from "../src/index";
+import { compensatedInstallSql } from "@anjuna/factory-db";
 import { setInstallStatus } from "../src/receipt";
 import { UpgradeAllWorkflow, upgradeInstallId, type UpgradeAllParams } from "../src/workflows/upgrade-all";
 import { REMOTE_STEP_RETRY_CONFIG } from "../src/step-receipt";
@@ -20,7 +21,7 @@ const DEC = new TextDecoder();
 // Mirror of apps/web/src/server/retry-install.ts#queueInstallRetry. The factory test
 // must not reach across package boundaries into the web Worker's server code, so the D1
 // claim + successful-prefix copy is reproduced here. The production function is exercised
-// end-to-end through the retry route in apps/web/test/lifecycle-api.test.ts.
+// end-to-end through the retry route in apps/web/test/lifecycle-api.test.ts. It uses the shared compensatedInstallSql rule.
 async function queueInstallRetry(db: D1Database, sourceId: string): Promise<string | null> {
   const terminal = await db.prepare("SELECT 1 FROM install_receipts WHERE install_id=? AND status IN ('failed','ok') LIMIT 1").bind(sourceId).first();
   const at = new Date().toISOString();
@@ -46,8 +47,9 @@ async function queueInstallRetry(db: D1Database, sourceId: string): Promise<stri
       SELECT ?,step,status,output_json,created_at FROM install_receipts
       WHERE install_id=? AND status='ok' AND step!='rollback'
         AND id < COALESCE((SELECT MIN(id) FROM install_receipts WHERE install_id=? AND status='failed'),9223372036854775807)
-        AND EXISTS (SELECT 1 FROM installs WHERE install_id=?)`)
-      .bind(retryId, sourceId, sourceId, retryId));
+        AND EXISTS (SELECT 1 FROM installs WHERE install_id=?)
+        AND NOT ${compensatedInstallSql("?")}`)
+      .bind(retryId, sourceId, sourceId, retryId, sourceId, sourceId));
   }
   const [claimed] = await db.batch(statements);
   if (claimed!.meta.changes !== 1) return null;

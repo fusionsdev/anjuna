@@ -4,6 +4,7 @@
  * set is routed without anyone attesting it. Nothing is written to D1: the row is rebuilt per read.
  */
 import { ChecklistEvidence, type BrandConfig } from "@anjuna/contracts";
+import { compensatedInstallSql } from "@anjuna/factory-db";
 
 const SMOKE_ACTOR = "system:smoke";
 
@@ -20,11 +21,12 @@ export function drainRouteRow(brand: BrandConfig): Record<string, unknown> | nul
 /**
  * Checklist item `final_url`, computed from the install smoke step: the newest smoke receipt of the brand that judged the
  * live landing page (a passed one records `final_url`; a smoke of a paused brand records none and is skipped). Ticked only
- * when that receipt passed. Nothing is written to D1.
+ * when that receipt passed. Smokes of compensated installs are skipped: the compensation removed the page they judged,
+ * so the newest remaining smoke decides, and with none left the row is null. Nothing is written to D1.
  */
 export async function smokeFinalUrlRow(db: D1Database, brandId: string): Promise<Record<string, unknown> | null> {
   const row = await db.prepare(`SELECT r.status, r.created_at FROM install_receipts r JOIN installs i ON i.install_id = r.install_id
-    WHERE i.brand_id = ?1 AND r.step = 'smoke'
+    WHERE i.brand_id = ?1 AND r.step = 'smoke' AND NOT ${compensatedInstallSql("i.install_id")}
       AND (r.status = 'failed' OR (CASE WHEN json_valid(r.output_json) THEN json_extract(r.output_json, '$.final_url') IS NOT NULL ELSE 0 END))
     ORDER BY r.created_at DESC, r.id DESC LIMIT 1`).bind(brandId).first<{ status: string; created_at: string }>();
   if (row?.status !== "ok") return null;
