@@ -60,6 +60,34 @@ describe("renderPageText", () => {
     await expect(render({ ...WIZARD_DEMO, profile: { copy: { cta: "Get Personal Loans" } } })).rejects.toThrow(/personal loan/);
   });
 
+  describe("phone text in tel: links", () => {
+    // The template's tel: href is a placeholder; the visible number differs from it.
+    const link = (inner: string) => `<a href="tel:+15550100199" class="hover:text-white transition-colors">${inner}</a>`;
+    const phone = async (page: string) => (await render(WIZARD_DEMO, { "p.html": page }))["p.html"];
+
+    it("replaces plain link text with the brand phone as typed", async () => {
+      expect(await phone(`<footer>${link("(833) 710-3200")}</footer>`))
+        .toBe(`<footer>${link("+1 (555) 010-0199")}</footer>`);
+    });
+
+    it("replaces link text after an inline svg and keeps the svg", async () => {
+      const svg = '<svg class="w-4 h-4" viewBox="0 0 24 24"><path d="M3 5h18"></path></svg>';
+      expect(await phone(`<header>${link(` ${svg} (833) 710-3200 `)}</header>`))
+        .toBe(`<header>${link(` ${svg} +1 (555) 010-0199 `)}</header>`);
+    });
+
+    it("replaces the template phone elsewhere on the page, and only that number", async () => {
+      const page = `<p>Call 555.010.0199 today.</p>${link("833-710-3200")}<p>Rate table: $1,205.40 at 36.5%. ZIP 78701 and 78701-1234.</p><p>Ref 800 555 0147</p>`;
+      expect(await phone(page)).toBe(
+        `<p>Call +1 (555) 010-0199 today.</p>${link("+1 (555) 010-0199")}<p>Rate table: $1,205.40 at 36.5%. ZIP 78701 and 78701-1234.</p><p>Ref 800 555 0147</p>`,
+      );
+    });
+
+    it("keeps non-phone text in a tel: link and text outside it", async () => {
+      expect(await phone(`${link("Call us")}<span>(833) 710-3200</span>`)).toBe(`${link("Call us")}<span>(833) 710-3200</span>`);
+    });
+  });
+
   it("resolves the template brand from text defaults, else the template display name", () => {
     expect(templateBrandName(JSON.stringify({ brand_name: "Willow Lake Lending", title: null, description: null }), "Willow v2")).toBe("Willow Lake Lending");
     expect(templateBrandName(JSON.stringify({ brand_name: null, title: null, description: null }), "Willow Lake Lending")).toBe("Willow Lake Lending");

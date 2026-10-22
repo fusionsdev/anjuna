@@ -90,8 +90,8 @@ async function templateContacts(pages: ReadonlyMap<string, string>): Promise<{ p
  *   index page: <h1> gets profile.copy.h1 through renderCopyH1 (the [data-kw] slot keeps keyword_default); the CTA
  *     form's submit button gets copy.cta; the first <p> after the H1 and before the CTA form gets copy.sub.
  *   every page: [data-contact="phone|email|address"] gets the profile value (an <a> slot gets a tel:/mailto: href);
- *     tel:/mailto: links get the profile phone/email; the template's phone numbers and emails found in those links
- *     are replaced in text; the template brand name in body text becomes <span data-brand>, and in alt/title/
+ *     tel:/mailto: links get the profile phone/email; any phone number in the text of a tel: link, and the template's
+ *     tel: numbers and mailto: emails wherever they appear in text, are replaced; the template brand name in body text becomes <span data-brand>, and in alt/title/
  *     aria-label/placeholder, meta content and JSON-LD becomes the brand name. <title>, and og:title on the index
  *     page, stay with the brand Worker, which replaces the template brand there with the live name.
  */
@@ -113,13 +113,16 @@ export async function renderPageText(pages: ReadonlyMap<string, string>, data: P
 
   /**
    * One text node or attribute value, as HTML source. `span` wraps the brand name in a [data-brand] slot; `json` is
-   * the text of a JSON-LD script.
+   * the text of a JSON-LD script. `inTelLink` marks text inside a tel: link: any phone number there is the template's
+   * visible number, whatever its tel: href says, and becomes the brand phone.
    */
-  const rewriteSource = (source: string, mode: "span" | "plain" | "json"): string => {
+  const rewriteSource = (source: string, mode: "span" | "plain" | "json", inTelLink = false): string => {
     let out = source;
     const replaceBrand = mode === "span" ? brandSpan : mode === "json" ? brandJson : brandText;
     if (replaceBrand) out = replaceBrand(out);
-    if (phoneHtml && template.phones.size) out = out.replace(PHONE_TEXT, (match) => template.phones.has(phoneDigits(match)) ? phoneHtml : match);
+    if (phoneHtml && (template.phones.size || inTelLink)) {
+      out = out.replace(PHONE_TEXT, (match) => inTelLink || template.phones.has(phoneDigits(match)) ? phoneHtml : match);
+    }
     if (emailHtml && template.emails.size) out = out.replace(EMAIL_TEXT, (match) => template.emails.has(match.toLowerCase()) ? emailHtml : match);
     return out;
   };
@@ -156,6 +159,7 @@ export async function renderPageText(pages: ReadonlyMap<string, string>, data: P
     let h1Closed = false;
     let formSeen = false;
     let subDone = false;
+    let telLink = false;
     let buffer = "";
     let rewriter = new HTMLRewriter()
       .on("script, style, title", track("skip"))
@@ -190,6 +194,14 @@ export async function renderPageText(pages: ReadonlyMap<string, string>, data: P
         if (element.tagName === "a" && key === "email") element.setAttribute("href", `mailto:${value}`);
         element.setInnerContent(value);
       } })
+      .on("a", { element(element) {
+        // Every <a> sets the flag, so a tel: link whose end tag never arrives cannot leak into later anchors.
+        telLink = phoneHtml !== null && /^tel:/i.test((element.getAttribute("href") ?? "").trim());
+        if (!telLink) return;
+        try {
+          element.onEndTag(() => { telLink = false; });
+        } catch { telLink = false; }
+      } })
       .on("a[href]", { element(element) {
         const href = (element.getAttribute("href") ?? "").trim();
         if (contact.phone && /^tel:/i.test(href)) element.setAttribute("href", `tel:${contact.phone.replace(/[^\d+]/g, "")}`);
@@ -211,7 +223,7 @@ export async function renderPageText(pages: ReadonlyMap<string, string>, data: P
         if (!chunk.lastInTextNode) { chunk.remove(); return; }
         const source = buffer;
         buffer = "";
-        const next = rewriteSource(source, depth.json > 0 ? "json" : depth.plain > 0 ? "plain" : "span");
+        const next = rewriteSource(source, depth.json > 0 ? "json" : depth.plain > 0 ? "plain" : "span", telLink && depth.json === 0);
         if (next !== source || chunk.text !== source) chunk.replace(next, { html: true });
       } });
     return rewriter.transform(new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } })).text();
