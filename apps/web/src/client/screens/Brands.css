@@ -1,0 +1,36 @@
+/* Brands screen only. The shared console classes (.panel .btn .seg .pill .p-* .tw .hint .pos .neg .blue) come from styles.css. */
+.brands-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.brands-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.brands-head h1 { margin: 0; font-size: 22px; line-height: 1.3; font-weight: 500; }
+.brands-sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.brands-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.brands-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.brands-aside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+/* Brand table: one main row per brand and a quiet row under it for the 7-day stats. */
+.brand-table .brand-pick { display: block; border: 0; background: transparent; padding: 0; text-align: left; font: inherit; color: inherit; }
+.brand-table .brand-pick b { font-weight: 500; }
+.brand-table .brand-pick:focus-visible { outline: 2px solid var(--leak); outline-offset: 2px; }
+.brand-table tr.sel td { background: var(--paper); }
+.brand-table tr.stats td { border-top: 0; padding: 0 8px 8px 0; text-align: left; }
+.brand-table .brand-stats { padding: 0; font-size: 12px; }
+.brand-table .brand-stats b { font-weight: 500; }
+
+/* Side panel of the selected brand. */
+.brand-side { border-left: 3px solid var(--money); border-radius: 0; padding-left: 14px; }
+.side-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.side-head h2 { margin: 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.side-head p { margin: 2px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+.side-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.brand-side .status-grid { margin: 12px 0; }
+.brand-side .status-grid div { background: var(--paper); }
+.brand-side .section { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 12px 0 0; margin: 12px 0 0; }
+.brand-side h3, .config-drawer h3 { font-size: 14px; font-weight: 500; }
+
+/* Config drawer opened from the side panel. */
+.drawer.config-drawer { background: var(--paper); border-left: 3px solid var(--money); }
+.config-drawer header h2 { font-size: 16px; font-weight: 500; }
+.config-drawer .section { background: var(--raised); border-color: var(--line); border-radius: 12px; }
+.brand-side .row, .config-drawer .row { padding: 0; border-top: 0; }
+
+@media (max-width: 900px) { .brands-grid { grid-template-columns: 1fr; } }

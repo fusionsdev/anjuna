@@ -31,7 +31,7 @@ export function TemplateVersionSection({ currentId, onChange }: { currentId: str
             <option value="">เลือกเทมเพลต… (Choose a template)</option>
             {options.map((t) => <option key={t.template_version_id} value={t.template_version_id}>{label(t)}</option>)}
           </select>
-          <button className="danger" disabled={!target || busy} onClick={async () => {
+          <button className="btn danger" disabled={!target || busy} onClick={async () => {
             if (!target) return;
             setBusy(true);
             try { if (await onChange(target)) setChosen(""); } finally { setBusy(false); }
