@@ -18,25 +18,28 @@ export interface LegalRenderData {
   keyword_default?: string | null;
 }
 
-/** Static text-node slots in terms/disclosures. Missing profile values never use product defaults. */
+/**
+ * Static text-node slots in terms/disclosures. A slot with no value in the profile keeps the template's own text:
+ * the template carries its APR table, term range and state list, and the lender sets the real rate at review.
+ * No product defaults are invented.
+ */
 async function fillLegalPage(bytes: Uint8Array, data: LegalRenderData): Promise<Uint8Array> {
   const profile = BrandProfile.parse(data.profile ?? {});
   const contact = profile.contact ?? {};
   const disclosures = profile.disclosures ?? {};
-  const missing = "Not provided. Contact the service operator for details.";
-  const text = (value: string | undefined) => value?.trim() || missing;
-  const slots: Record<string, string> = {
+  const text = (value: string | undefined) => value?.trim() || undefined;
+  const slots: Record<string, string | undefined> = {
     brand_name: text(data.brand_name),
     "contact.address": text(contact.address),
     "contact.email": text(contact.email),
     "contact.phone": text(contact.phone),
-    "disclosures.apr_max": disclosures.apr_max === undefined ? missing : `${disclosures.apr_max}%`,
-    "disclosures.term_min_months": disclosures.term_min_months === undefined ? missing : `${disclosures.term_min_months} months`,
-    "disclosures.term_max_months": disclosures.term_max_months === undefined ? missing : `${disclosures.term_max_months} months`,
+    "disclosures.apr_max": disclosures.apr_max === undefined ? undefined : `${disclosures.apr_max}%`,
+    "disclosures.term_min_months": disclosures.term_min_months === undefined ? undefined : `${disclosures.term_min_months} months`,
+    "disclosures.term_max_months": disclosures.term_max_months === undefined ? undefined : `${disclosures.term_max_months} months`,
     "disclosures.term_range": disclosures.term_min_months === undefined || disclosures.term_max_months === undefined
-      ? missing : `${disclosures.term_min_months}–${disclosures.term_max_months} months`,
+      ? undefined : `${disclosures.term_min_months}–${disclosures.term_max_months} months`,
     "disclosures.representative_example": text(disclosures.representative_example),
-    "disclosures.unsupported_states": disclosures.unsupported_states?.length ? disclosures.unsupported_states.join(", ") : missing,
+    "disclosures.unsupported_states": disclosures.unsupported_states?.length ? disclosures.unsupported_states.join(", ") : undefined,
   };
   // Use a parser, not string substitution: values can only replace text inside an explicit span.
   const html = await new HTMLRewriter().on("[data-legal]", { element(element) {
@@ -44,7 +47,8 @@ async function fillLegalPage(bytes: Uint8Array, data: LegalRenderData): Promise<
     if (element.tagName !== "span" || !Object.hasOwn(slots, key)) {
       throw new Error("Legal placeholders must be spans with a documented data-legal key.");
     }
-    const value = slots[key]!;
+    const value = slots[key];
+    if (value === undefined) return;
     if (TEMPLATE_RULES.forbiddenWording.test(value)) throw new Error("Legal text contains forbidden wording.");
     element.setInnerContent(value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"), { html: true });
   } }).transform(new Response(DEC.decode(bytes))).text();

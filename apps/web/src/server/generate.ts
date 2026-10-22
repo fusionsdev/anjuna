@@ -23,9 +23,9 @@ const json = (status: number, body: unknown): Response => new Response(JSON.stri
 const APEX_DOMAIN = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*\.)+[a-z]{2,}$/;
 
 /**
- * What a draft needs before Generate: an apex domain, a sealed template, a keyword, and the profile fields the legal pages
- * print (contact phone, address and email; loan term range and maximum APR). Ads routing is optional: the owner can set
- * it after go-live. Empty means the draft can install.
+ * What a draft needs before Generate: an apex domain, a sealed template, a keyword, and the contact phone, address and email
+ * the legal pages print. Term, APR and the other loan rules are not asked: the template carries its own text and the lender
+ * sets the real rate at review. Ads routing is optional: the owner can set it after go-live. Empty means the draft can install.
  */
 export function draftIssues(draft: { domain: string; template_status: string | null; keyword_default: string | null; config_json: string }): GenerateIssue[] {
   const issues: GenerateIssue[] = [];
@@ -39,14 +39,11 @@ export function draftIssues(draft: { domain: string; template_status: string | n
     issues.push({ field: "profile", message: "ข้อมูลโปรไฟล์แบรนด์ไม่ถูกต้อง (Brand profile is invalid)" });
     return issues;
   }
-  const { contact, disclosures } = parsed.data;
+  const { contact } = parsed.data;
   const required: Array<[string, unknown, string]> = [
     ["profile.contact.phone", contact?.phone, "ต้องระบุเบอร์โทรศัพท์ (Phone is required)"],
     ["profile.contact.address", contact?.address, "ต้องระบุที่อยู่ (Address is required)"],
     ["profile.contact.email", contact?.email, "ต้องระบุอีเมล (Email is required)"],
-    ["profile.disclosures.term_min_months", disclosures?.term_min_months, "ต้องระบุระยะเวลากู้ขั้นต่ำ (Minimum term is required)"],
-    ["profile.disclosures.term_max_months", disclosures?.term_max_months, "ต้องระบุระยะเวลากู้สูงสุด (Maximum term is required)"],
-    ["profile.disclosures.apr_max", disclosures?.apr_max, "ต้องระบุ APR สูงสุด (Maximum APR is required)"],
   ];
   for (const [field, value, message] of required) if (value === undefined) issues.push({ field, message });
   return issues;

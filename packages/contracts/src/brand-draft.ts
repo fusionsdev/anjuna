@@ -111,7 +111,10 @@ export const BrandProfile = z.strictObject({
 });
 export type BrandProfile = z.infer<typeof BrandProfile>;
 
-/** The only profile defaults. The panel pre-fills them, a draft stores what the employee confirms. */
+/**
+ * The only profile defaults. No screen applies them since FUS-366: the wizard no longer asks for disclosures and a template
+ * keeps its own text. Drafts saved earlier may still hold `disclosures`, so the group stays optional in BrandProfile.
+ */
 export const BRAND_PROFILE_DEFAULTS = {
   disclosures: {
     term_min_months: 3,

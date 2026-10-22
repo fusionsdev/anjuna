@@ -21,7 +21,7 @@ export const ZoneCheckResponse = z.strictObject({
 });
 export type ZoneCheckResponse = z.infer<typeof ZoneCheckResponse>;
 
-/** GET /api/wizard/defaults: the tenant values the Product step shows read-only. */
+/** GET /api/wizard/defaults: the tenant values the Review summary shows read-only. */
 export const WizardDefaultsResponse = z.strictObject({
   amount_buckets: z.array(z.number()),
   form_route: z.string(),

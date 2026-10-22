@@ -1,7 +1,7 @@
 /**
  * Routes of the brand wizard screen. Creating and editing a draft, and install, are the existing lifecycle routes;
  * these add what the wizard needs around them:
- *   GET  /api/wizard/defaults        tenant amount buckets and form route (read-only in the Product step)
+ *   GET  /api/wizard/defaults        tenant amount buckets and form route (read-only in the Review summary)
  *   POST /api/wizard/zone-check      Cloudflare zone pre-check through the factory Worker (read-only)
  *   GET  /api/wizard/drafts/:id      a draft as the wizard resumes it
  *   GET  /api/wizard/preview/:id     the draft's template rendered with its site text (iframe source)
