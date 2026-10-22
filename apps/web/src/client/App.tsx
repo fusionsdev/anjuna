@@ -10,13 +10,14 @@ import { BuilderKeysScreen } from "./screens/BuilderKeys";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
 
-type View = "brands" | "new-brand" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
+type View = "home" | "brands" | "new-brand" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [wizardRequest, setWizardRequest] = useState(0);
-  const [view, setView] = useState<View>(() => (window.location.hash.startsWith("#templates") ? "templates" : "brands"));
+  const [view, setView] = useState<View>(() => (window.location.hash.startsWith("#templates") ? "templates" : "home"));
+  const [alertCount, setAlertCount] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -29,6 +30,22 @@ export function App() {
     }
   }, []);
   useEffect(() => void refresh(), [refresh]);
+  useEffect(() => {
+    if (!me) {
+      setAlertCount(null);
+      return;
+    }
+    let cancelled = false;
+    api.alerts().then((report) => {
+      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate]
+        .filter(({ state }) => state === "warn" || state === "alert").length;
+      if (!cancelled) setAlertCount(count);
+    }).catch(() => {
+      // An unavailable report must not look like zero active alerts.
+      if (!cancelled) setAlertCount(null);
+    });
+    return () => { cancelled = true; };
+  }, [me, view]);
   // A dashboard_url opened in a tab that already holds the panel changes only the hash.
   useEffect(() => {
     const onHash = () => { if (window.location.hash.startsWith("#templates")) setView("templates"); };
@@ -39,36 +56,52 @@ export function App() {
   if (loading) return <div className="center muted">กำลังโหลด…</div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
 
-  const nav: { id: View; label: string; show: boolean }[] = [
-    { id: "brands", label: "แบรนด์ (Brands)", show: true },
-    { id: "new-brand", label: "แบรนด์ใหม่ (New brand)", show: true },
-    { id: "templates", label: "เทมเพลต (Templates)", show: true },
-    { id: "funnel", label: "รายงานฟันเนล (Funnel)", show: true },
-    { id: "alerts", label: "การแจ้งเตือน (Alerts)", show: true },
-    { id: "mailing", label: "สถานะเมล (Mailing)", show: true },
-    { id: "audit", label: "ประวัติการเปลี่ยนแปลง (Audit log)", show: true },
-    { id: "users", label: "ผู้ใช้ (Users)", show: me.role === "owner" },
-    { id: "builder-keys", label: "คีย์ Builder (Builder keys)", show: true },
+  const nav: { id: View; label: string; show: boolean; gap?: boolean }[] = [
+    { id: "home", label: "หน้าแรก", show: true },
+    { id: "brands", label: "แบรนด์", show: true },
+    { id: "new-brand", label: "สร้างแบรนด์ใหม่", show: true },
+    { id: "templates", label: "เทมเพลต", show: true },
+    { id: "funnel", label: "ฟันเนล", show: true, gap: true },
+    { id: "alerts", label: "การแจ้งเตือน", show: true },
+    { id: "mailing", label: "รายชื่ออีเมล", show: true },
+    { id: "audit", label: "ประวัติการแก้ไข", show: true, gap: true },
+    { id: "users", label: "ผู้ใช้", show: me.role === "owner" },
+    { id: "builder-keys", label: "คีย์ Builder", show: true },
   ];
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brandmark">Control Panel</div>
-        <nav>
+        <div className="brandmark"><i aria-hidden="true" />Anjuna</div>
+        <nav aria-label="เมนูหลัก">
           {nav
             .filter((n) => n.show)
             .map((n) => (
-              <button key={n.id} className={view === n.id ? "nav active" : "nav"} onClick={() => { if (n.id === "new-brand") { setView("brands"); setWizardRequest((count) => count + 1); } else setView(n.id); }}>
-                {n.label}
+              <button
+                key={n.id}
+                type="button"
+                className={`nav${n.gap ? " navgap" : ""}`}
+                aria-current={view === n.id ? "page" : undefined}
+                onClick={() => {
+                  if (n.id === "new-brand") {
+                    setView("brands");
+                    setWizardRequest((count) => count + 1);
+                  } else setView(n.id);
+                }}
+              >
+                <span>{n.label}</span>
+                {n.id === "alerts" && alertCount !== null && <b aria-label={`${alertCount} รายการที่ต้องจัดการ`}>{alertCount}</b>}
               </button>
             ))}
         </nav>
         <div className="me">
-          <div className="muted small">{me.email}</div>
-          <span className={`pill ${me.role}`}>{me.role === "owner" ? "Owner" : "Employee"}</span>
+          <div className="who">
+            <div>{me.email}</div>
+            <div>{me.role === "owner" ? "Owner" : "พนักงาน"}</div>
+          </div>
           <button
-            className="link"
+            type="button"
+            className="nav signout"
             onClick={async () => {
               await api.signOut().catch(() => undefined);
               setMe(null);
@@ -79,6 +112,13 @@ export function App() {
         </div>
       </aside>
       <main className="content">
+        {/* C3 replaces this placeholder with screens/Home.tsx when that screen lands. */}
+        {view === "home" && (
+          <>
+            <div className="head"><h1>หน้าแรก</h1></div>
+            <section className="panel"><p className="hint">เลือกเมนูเพื่อจัดการแบรนด์และดูรายงาน</p></section>
+          </>
+        )}
         {view === "brands" && <BrandLifecycle me={me} wizardRequest={wizardRequest} />}
         {view === "templates" && <TemplatesScreen me={me} />}
         {view === "builder-keys" && <BuilderKeysScreen me={me} />}
