@@ -60,5 +60,17 @@ export type AuditActorRole = (typeof AUDIT_ACTOR_ROLES)[number];
 export const CHECKLIST_ITEMS = ["drain_route", "leadsgate_postbacks", "test_sold", "final_url"] as const;
 export type ChecklistItem = (typeof CHECKLIST_ITEMS)[number];
 
+/**
+ * SQL true when the install named by `installIdExpr` was undone by an automatic compensation: a compensate-<id> install
+ * exists, or its ok rollback receipt names one. `installIdExpr` is a SQL expression such as `i.install_id` or `?`.
+ * It appears twice in the fragment, so a caller passing `?` binds the id once per occurrence.
+ * The fragment aliases its subqueries `comp` and `rb`, so callers must not use those aliases in the enclosing query.
+ */
+export function compensatedInstallSql(installIdExpr: string): string {
+  return `(EXISTS (SELECT 1 FROM installs comp WHERE comp.install_id='compensate-' || ${installIdExpr})
+    OR EXISTS (SELECT 1 FROM install_receipts rb WHERE rb.install_id=${installIdExpr} AND rb.step='rollback' AND rb.status='ok'
+      AND CASE WHEN json_valid(rb.output_json) THEN json_extract(rb.output_json,'$.compensation_install_id') IS NOT NULL ELSE 0 END))`;
+}
+
 export { sealTemplateVersionRecord } from "./seal.js";
 export type { SealFailure, SealOutcome } from "./seal.js";

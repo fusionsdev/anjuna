@@ -1,4 +1,5 @@
 import type { AdminRequestContext } from "@anjuna/contracts";
+import { compensatedInstallSql } from "@anjuna/factory-db";
 
 /** Queue one retry. Copy the successful prefix only when no compensation undid it. */
 export async function queueInstallRetry(
@@ -40,9 +41,7 @@ export async function queueInstallRetry(
       WHERE install_id=? AND status='ok' AND step!='rollback'
         AND id < COALESCE((SELECT MIN(id) FROM install_receipts WHERE install_id=? AND status='failed'),9223372036854775807)
         AND EXISTS (SELECT 1 FROM installs WHERE install_id=?)
-        AND NOT EXISTS (SELECT 1 FROM installs WHERE install_id='compensate-' || ?)
-        AND NOT EXISTS (SELECT 1 FROM install_receipts r WHERE r.install_id=? AND r.step='rollback' AND r.status='ok'
-          AND CASE WHEN json_valid(r.output_json) THEN json_extract(r.output_json,'$.compensation_install_id') IS NOT NULL ELSE 0 END)`)
+        AND NOT ${compensatedInstallSql("?")}`)
       .bind(retryId, sourceId, sourceId, retryId, sourceId, sourceId));
   }
   const [claimed] = await db.batch(statements);

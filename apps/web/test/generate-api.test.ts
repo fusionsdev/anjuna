@@ -169,4 +169,53 @@ describe("final_url checklist computed from the smoke receipt", () => {
     await smoke("ins-fu-5", brandId, "ok", { apex_status: 503 }, "2026-10-23T00:00:00.000Z");
     expect((await checklist(brandId)).map((row) => [row.item, row.confirmed_at])).toEqual([["final_url", "2026-10-22T00:00:00.000Z"]]);
   });
+
+  // A compensation removes what the compensated install's smoke judged (domains detached, or the previous Worker redeployed).
+  const compensate = (installId: string, brandId: string, at: string) => env.FACTORY.prepare(
+    "INSERT INTO installs (install_id,brand_id,kind,status,started_by,started_at) VALUES (?1,?2,'rollback','ready','system',?3)").bind(`compensate-${installId}`, brandId, at).run();
+  const rollbackReceipt = (installId: string, status: string, output: Record<string, unknown>, at: string) => env.FACTORY.prepare(
+    "INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?1,'rollback',?2,?3,?4)").bind(installId, status, JSON.stringify(output), at).run();
+  const liveSmoke = { apex_status: 200, final_url: "https://compensated.example/" };
+
+  it("skips the smoke of an install that has a compensate-<id> install", async () => {
+    const brandId = await draft("final-url-compensated-row.example");
+    await smoke("ins-fc-1", brandId, "ok", liveSmoke, "2026-10-20T00:00:00.000Z");
+    await compensate("ins-fc-1", brandId, "2026-10-20T01:00:00.000Z");
+    expect(await checklist(brandId)).toEqual([]);
+  });
+
+  it("skips the smoke of an install whose ok rollback receipt names a compensation", async () => {
+    const brandId = await draft("final-url-compensated-receipt.example");
+    await smoke("ins-fc-2", brandId, "ok", liveSmoke, "2026-10-20T00:00:00.000Z");
+    await rollbackReceipt("ins-fc-2", "ok", { compensation_install_id: "compensate-ins-fc-2", triggered_rollback: "workflow_started" }, "2026-10-20T01:00:00.000Z");
+    expect(await checklist(brandId)).toEqual([]);
+  });
+
+  it.each([
+    ["failed", JSON.stringify({ compensation_install_id: "compensate-ins-fc-n" })],
+    ["ok", JSON.stringify({ reason: "manual" })],
+    ["ok", "not json"],
+  ])("keeps the smoke when the rollback receipt is %s with output %s (no compensation named)", async (status, output) => {
+    const brandId = await draft(`final-url-not-compensated-${status}-${output.length}.example`);
+    const installId = `ins-fn-${status}-${output.length}`;
+    await smoke(installId, brandId, "ok", liveSmoke, "2026-10-20T00:00:00.000Z");
+    await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?1,'rollback',?2,?3,'2026-10-20T01:00:00.000Z')").bind(installId, status, output).run();
+    expect((await checklist(brandId)).map((row) => [row.item, row.confirmed_at])).toEqual([["final_url", "2026-10-20T00:00:00.000Z"]]);
+  });
+
+  it("keeps an earlier ok smoke when a later compensated install only has a failed smoke", async () => {
+    const brandId = await draft("final-url-compensated-failed.example");
+    await smoke("ins-fc-6", brandId, "ok", liveSmoke, "2026-10-19T00:00:00.000Z");
+    await smoke("ins-fc-7", brandId, "failed", { error: "Smoke: apex returned 500 (expected 200; cf-ray=unknown)" }, "2026-10-21T00:00:00.000Z");
+    await compensate("ins-fc-7", brandId, "2026-10-21T01:00:00.000Z");
+    expect((await checklist(brandId)).map((row) => [row.item, row.confirmed_at])).toEqual([["final_url", "2026-10-19T00:00:00.000Z"]]);
+  });
+
+  it("falls back to the newest smoke of an uncompensated install when a newer install was compensated", async () => {
+    const brandId = await draft("final-url-fallback.example");
+    await smoke("ins-fc-4", brandId, "ok", liveSmoke, "2026-10-19T00:00:00.000Z");
+    await smoke("ins-fc-5", brandId, "ok", liveSmoke, "2026-10-21T00:00:00.000Z");
+    await compensate("ins-fc-5", brandId, "2026-10-21T01:00:00.000Z");
+    expect((await checklist(brandId)).map((row) => [row.item, row.confirmed_at])).toEqual([["final_url", "2026-10-19T00:00:00.000Z"]]);
+  });
 });
