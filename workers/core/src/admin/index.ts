@@ -5,6 +5,7 @@ import {
   AuditQuery,
   BrandId,
   FunnelQuery,
+  TrafficBreakdownQuery,
   FunnelReportResponse,
   MailingStatusResponse,
   BrandPatchRequest,
@@ -31,6 +32,8 @@ import type { Env } from "../env.js";
 import { json } from "../http.js";
 import { globalPostbackDigest } from "../postback-token.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
+
+import { loadTrafficBreakdown } from "./traffic.js";
 
 const JSON_BODY_LIMIT = 32 * 1024;
 
@@ -719,6 +722,11 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   }
   if (route.endpoint === "listAudit") {
     return listAudit(new URL(request.url), env, context, endpointPermission.scope);
+  }
+  if (route.endpoint === "trafficBreakdown") {
+    const query = parseWith(TrafficBreakdownQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadTrafficBreakdown(env, query));
   }
   if (route.endpoint === "funnelReport") {
     const filter = parseWith(FunnelQuery, parseQuery(new URL(request.url)), context);

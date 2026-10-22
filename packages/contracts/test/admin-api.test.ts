@@ -267,7 +267,7 @@ describe("secrets never appear in GET fixtures", () => {
  * deletion, manage users) are listed separately and must NOT appear in the table.
  */
 const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by: (AdminEndpoint | `patch:${string}`)[] }[] = [
-  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "alertsReport", "mailingStatus"] },
+  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "trafficBreakdown", "alertsReport", "mailingStatus"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
   { action: "Edit site text", employee: "yes", covered_by: ["patch:site_text"] },
   { action: "Pause / resume a brand", employee: "yes", covered_by: ["pauseBrand", "resumeBrand"] },
@@ -365,7 +365,8 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/mailing")).toEqual({ endpoint: "mailingStatus", params: {} });
     expect(matchAdminRoute("DELETE", "/admin/brands/brand-a")).toBeNull();
     expect(matchAdminRoute("POST", "/admin/brands/brand-a/rollback")).toBeNull();
-    expect(ADMIN_ENDPOINTS).toHaveLength(11);
+    expect(matchAdminRoute("GET", "/admin/traffic/breakdown")).toEqual({ endpoint: "trafficBreakdown", params: {} });
+    expect(ADMIN_ENDPOINTS).toHaveLength(12);
   });
 });
 
