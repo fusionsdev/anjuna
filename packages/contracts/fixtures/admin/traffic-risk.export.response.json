@@ -1,0 +1,24 @@
+{
+  "rows": [
+    {
+      "gclid": "Cj0KCQjw-test-gclid-1",
+      "hostname": "brand-a.example",
+      "score": 70,
+      "signals": [
+        "known_bot_ua",
+        "timezone_geo_mismatch"
+      ],
+      "created_at": "2026-10-01T03:10:00.000Z"
+    },
+    {
+      "gclid": null,
+      "hostname": "brand-a.example",
+      "score": 50,
+      "signals": [
+        "known_bot_ua"
+      ],
+      "created_at": "2026-10-01T02:55:00.000Z"
+    }
+  ],
+  "truncated": false
+}

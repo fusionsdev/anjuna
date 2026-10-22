@@ -1,7 +1,7 @@
 import {
   ANALYTICS_LIMITS, BRAND_ASSET_PATHS, CLICK_PARAM_KEYS, CLICK_TRIGGER_KEYS, HANDOFF_TTL_SECONDS, FormLeadPayload, OpaqueToken, Keyword,
   LeadsRpc, cleanKeyword, encodeRuntimeConfig, isBrandClean,
-  type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
+  type AnalyticsVisitor, type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
 } from "@anjuna/contracts";
 import { assignVariant, type Assignment } from "./assignment.js";
 import { assetResponse, createAssetCache, initialResponse } from "./brand-assets.js";
@@ -140,6 +140,26 @@ function analyticsAccepted(kind: AnalyticsKind): Response {
   return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
 }
 
+/**
+ * Visitor facts core scores a telemetry event with (FUS-372, observe-only). The answer to the
+ * visitor never depends on them. The IP leaves this Worker only as SHA-256 of `<ip>:<brand_id>`.
+ */
+async function telemetryVisitor(request: Request, brandId: string): Promise<AnalyticsVisitor | undefined> {
+  const visitor: AnalyticsVisitor = {};
+  const userAgent = request.headers.get("user-agent")?.slice(0, 512);
+  if (userAgent) visitor.user_agent = userAgent;
+  const timezone = (request.cf as { timezone?: unknown } | undefined)?.timezone;
+  if (typeof timezone === "string" && timezone && timezone.length <= 64) visitor.edge_timezone = timezone;
+  const ip = request.headers.get("cf-connecting-ip")?.slice(0, 64);
+  if (ip) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${ip}:${brandId}`));
+    visitor.ip_hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  const click = OpaqueToken.safeParse(readCookie(request, "_vc"));
+  if (click.success) visitor.click_session_id = click.data;
+  return Object.keys(visitor).length > 0 ? visitor : undefined;
+}
+
 async function handle(request: Request, config: BrandWorkerConfig, settings: BrandSettings, assetFor: ReturnType<typeof createAssetCache>): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -190,9 +210,10 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
     try {
       if (request.headers.has("content-encoding") && request.headers.get("content-encoding") !== "identity") return json({ error: "unsupported_encoding" }, 415);
       const body = await readCappedBody(request, ANALYTICS_LIMITS[proxy.kind]);
+      const visitor = proxy.kind === "telemetry" ? await telemetryVisitor(request, settings.brand_id) : undefined;
       await withCoreTimeout(() => config.core.forwardAnalytics({
         brand_id: settings.brand_id, hostname: settings.hostname, kind: proxy.kind, path: proxy.suffix,
-        content_type: request.headers.get("content-type") ?? "text/plain", body,
+        content_type: request.headers.get("content-type") ?? "text/plain", body, ...(visitor ? { visitor } : {}),
       }), config.coreTimeoutMs);
       return analyticsAccepted(proxy.kind);
     } catch (error) {

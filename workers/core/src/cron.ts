@@ -58,7 +58,7 @@ export async function runMailing(env: Env, deps: CronDeps = {}): Promise<Mailing
   return { ran: true, batches };
 }
 
-/** Runs the four alerts as of `scheduledTime`; the notifier only hears about warn/alert states. */
+/** Runs the five alerts as of `scheduledTime`; the notifier only hears about warn/alert states. */
 export async function runAlertsCron(env: Env, scheduledTime: number, deps: CronDeps = {}): Promise<AlertsReport> {
   const report = await runAlerts(
     env.LEADS,
@@ -71,6 +71,7 @@ export async function runAlertsCron(env: Env, scheduledTime: number, deps: CronD
     report.brands_without_postbacks.state,
     report.submit_error_rate.state,
     report.reject_rate.state,
+    report.click_risk.state,
   ];
   if (states.some((state) => state !== "ok")) await (deps.notifier ?? new ConsoleNotifier()).notify(report);
   return report;

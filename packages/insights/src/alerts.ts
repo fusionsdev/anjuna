@@ -8,9 +8,16 @@
  * - brands without postbacks: a brand with leads but no postback in the last 24 hours.
  * - submit error rate      : counts come from a `SubmitErrorCountsSource` (Analytics Engine later).
  * - reject rate per brand  : `postback_events` of type rejectLead, per brand.
+ * - click risk per hostname: share of high-risk visits in `traffic_events` (FUS-372, observe-only).
  *
  * Everything here is read-only.
  */
+import {
+  CLICK_RISK_ALERT_AT,
+  CLICK_RISK_MIN_VISITS,
+  CLICK_RISK_WINDOW_HOURS,
+  HIGH_RISK_SCORE,
+} from "@anjuna/contracts";
 import { z } from "zod";
 
 const Timestamp = z.iso.datetime();
@@ -46,6 +53,9 @@ export const AlertsConfig = z.strictObject({
   reject_window_hours: z.number().positive().optional(),
   reject_warn_at: z.number().min(0).optional(),
   reject_alert_at: z.number().min(0).optional(),
+  click_risk_window_hours: z.number().positive().optional(),
+  click_risk_alert_at: z.number().min(0).max(1).optional(),
+  click_risk_min_visits: z.number().int().min(0).optional(),
 });
 export type AlertsConfig = z.infer<typeof AlertsConfig>;
 
@@ -258,6 +268,63 @@ export async function rejectRateByBrand(db: D1Database, config: AlertsConfig): P
   return { state, detail: { window_hours: windowHours, warn_at: warnAt, alert_at: alertAt, brands } };
 }
 
+// --- alert 5: click risk per hostname (FUS-372) -----------------------------------------------
+
+export const ClickRiskHostname = z.strictObject({
+  hostname: z.string().min(1),
+  visits: Count,
+  high_risk: Count,
+  rate: z.number().finite().min(0).max(1),
+});
+export type ClickRiskHostname = z.infer<typeof ClickRiskHostname>;
+
+export const ClickRiskResult = z.strictObject({
+  state: AlertState,
+  detail: z.strictObject({
+    window_hours: z.number().positive(),
+    alert_at: z.number().min(0),
+    min_visits: Count,
+    /** Hostnames at or above `alert_at` with at least `min_visits` visits, worst first. */
+    hostnames: z.array(ClickRiskHostname),
+  }),
+});
+export type ClickRiskResult = z.infer<typeof ClickRiskResult>;
+
+/**
+ * A hostname alerts when at least `alert_at` (20%) of its visits in the last `window_hours` (24)
+ * were high risk and it had at least `min_visits` (50) visits. A visit is one (session_id,
+ * hostname); it is high risk when any of its events scored HIGH_RISK_SCORE or more. The score
+ * is observe-only: this alert tells a person to look, nothing is blocked.
+ */
+export async function clickRisk(db: D1Database, config: AlertsConfig): Promise<ClickRiskResult> {
+  const windowHours = config.click_risk_window_hours ?? CLICK_RISK_WINDOW_HOURS;
+  const alertAt = config.click_risk_alert_at ?? CLICK_RISK_ALERT_AT;
+  const minVisits = config.click_risk_min_visits ?? CLICK_RISK_MIN_VISITS;
+  const from = hoursBefore(config.now, windowHours);
+
+  const { results } = await db
+    .prepare(
+      `SELECT hostname, COUNT(*) AS visits, SUM(score >= ?3) AS high_risk FROM (
+         SELECT hostname, MAX(COALESCE(risk_score, 0)) AS score
+         FROM traffic_events
+         WHERE created_at >= ?1 AND created_at < ?2 AND hostname IS NOT NULL
+         GROUP BY session_id, hostname
+       ) GROUP BY hostname`,
+    )
+    .bind(from, config.now, HIGH_RISK_SCORE)
+    .all<{ hostname: string; visits: number; high_risk: number }>();
+
+  const hostnames = results
+    .map((r) => ({ hostname: r.hostname, visits: r.visits, high_risk: r.high_risk, rate: r.visits > 0 ? r.high_risk / r.visits : 0 }))
+    .filter((h) => h.visits >= minVisits && h.rate >= alertAt)
+    .sort((a, b) => b.rate - a.rate || (a.hostname < b.hostname ? -1 : 1));
+
+  return {
+    state: hostnames.length > 0 ? "alert" : "ok",
+    detail: { window_hours: windowHours, alert_at: alertAt, min_visits: minVisits, hostnames },
+  };
+}
+
 // --- combined ---------------------------------------------------------------------------------
 
 export const AlertsReport = z.strictObject({
@@ -266,6 +333,7 @@ export const AlertsReport = z.strictObject({
   brands_without_postbacks: BrandsWithoutPostbacksResult,
   submit_error_rate: SubmitErrorRateResult,
   reject_rate: RejectRateResult,
+  click_risk: ClickRiskResult,
 });
 export type AlertsReport = z.infer<typeof AlertsReport>;
 
@@ -294,14 +362,15 @@ export class RecordingNotifier implements Notifier {
   }
 }
 
-/** Run all four alerts for one clock instant and return the combined, schema-validated report. */
+/** Run all five alerts for one clock instant and return the combined, schema-validated report. */
 export async function runAlerts(db: D1Database, sources: AlertSources, config: AlertsConfig): Promise<AlertsReport> {
   const cfg = AlertsConfig.parse(config);
-  const [conversion_stalled, brands_without_postbacks, submit_error_rate, reject_rate] = await Promise.all([
+  const [conversion_stalled, brands_without_postbacks, submit_error_rate, reject_rate, click_risk] = await Promise.all([
     conversionStalled(db, cfg),
     brandsWithoutPostbacks(db, cfg),
     submitErrorRate(sources.submitErrorCounts, cfg),
     rejectRateByBrand(db, cfg),
+    clickRisk(db, cfg),
   ]);
   return AlertsReport.parse({
     generated_at: cfg.now,
@@ -309,5 +378,6 @@ export async function runAlerts(db: D1Database, sources: AlertSources, config: A
     brands_without_postbacks,
     submit_error_rate,
     reject_rate,
+    click_risk,
   });
 }

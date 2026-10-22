@@ -8,7 +8,7 @@
  * `RpcError`. Core never reflects upstream content to the brand.
  */
 import { z } from "zod";
-import { BrandId, Hostname } from "./common.js";
+import { BrandId, Hostname, OpaqueToken } from "./common.js";
 
 export const ANALYTICS_KINDS = ["posthog", "sentry", "telemetry", "errors"] as const;
 export const AnalyticsKind = z.enum(ANALYTICS_KINDS);
@@ -35,6 +35,22 @@ function utf8Length(text: string): number {
   return bytes;
 }
 
+/**
+ * What the brand Worker saw about the visitor of a telemetry request (FUS-372). Core scores the
+ * event from it and stores only the score, the signal ids and the click session id. Every field is
+ * optional: an older brand Worker omits the object and its events score 0.
+ */
+export const AnalyticsVisitor = z.strictObject({
+  user_agent: z.string().max(512).optional(),
+  /** Cloudflare edge `request.cf.timezone`, e.g. America/Chicago. */
+  edge_timezone: z.string().max(64).optional(),
+  /** Hex SHA-256 of `<ip>:<brand_id>`; core keeps it for one hour only. The raw IP never leaves the edge. */
+  ip_hash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  /** The `_vc` click cookie, the only join from a telemetry row to its click (gclid). */
+  click_session_id: OpaqueToken.optional(),
+});
+export type AnalyticsVisitor = z.infer<typeof AnalyticsVisitor>;
+
 export const AnalyticsForwardRequest = z.strictObject({
   brand_id: BrandId,
   hostname: Hostname,
@@ -45,6 +61,8 @@ export const AnalyticsForwardRequest = z.strictObject({
   content_type: z.string().max(256).regex(/^[\x20-\x7e]*$/),
   /** The visitor's original request body, decoded as text. */
   body: z.string(),
+  /** Telemetry only. Read by core for observe-only risk scoring; it never changes a response. */
+  visitor: AnalyticsVisitor.optional(),
 }).superRefine((request, ctx) => {
   if (utf8Length(request.body) > ANALYTICS_LIMITS[request.kind]) {
     ctx.addIssue({ code: "custom", path: ["body"], message: "Body exceeds the limit for this kind" });
