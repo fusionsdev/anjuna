@@ -44,7 +44,7 @@ the fallback. Callers must resolve issues before rendering or saving generated c
 `renderBrand(templateFiles, formFiles, brandId, revisionId, {brand_name, profile})`
 fills explicit legal slots from the revision's `config_json.profile.contact` and
 `.disclosures`. Pass the public brand/company display name as `brand_name`, never an
-internal ID. The existing four-argument call remains valid and uses missing-value text.
+internal ID. The existing four-argument call remains valid and leaves every slot as the template wrote it.
 The install caller owns loading this data; the renderer performs no database or network calls.
 
 The starter currently has reviewed-copy placeholders rather than structured legal
@@ -78,8 +78,10 @@ in legal pages without these slots. Reviewed surrounding legal wording remains i
 | `disclosures.representative_example` | The operator's supplied example, without calculated figures. |
 | `disclosures.unsupported_states` | Supplied state codes separated by commas. |
 
-Missing values render `Not provided. Contact the service operator for details.`
-No APR, term, example or state defaults are invented. Invalid supplied profile data
+A slot with no value keeps the text between its tags, so the template's own APR table,
+term range, example and state list stay on the page. The brand wizard does not ask for
+APR, term, example or states; the lender sets the real rate at review. No APR, term,
+example or state defaults are invented. Invalid supplied profile data
 fails validation. Rendering still checks source bytes and final output with
 `assertCleanBrandBytes`. Legal fill uses revision data only; the resulting static bytes
 are identical for every visitor. Privacy and do-not-sell pages are still required and

@@ -129,6 +129,15 @@ describe("template version", () => {
   });
 });
 
+describe("disclosures", () => {
+  it("shows no APR, term, example or state field: the template carries its own disclosure text", async () => {
+    panel();
+    await heading(/เส้นทางเงิน/);
+    expect(screen.queryByRole("textbox", { name: /APR|term|Representative example|Unsupported states/i })).toBeNull();
+    expect(screen.queryByText(/Max APR|Representative example|Unsupported states/)).toBeNull();
+  });
+});
+
 describe("Microsoft Ads account", () => {
   const field = async () => {
     const money = await within3(/เส้นทางเงิน/);

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { BRAND_PROFILE_DEFAULTS, BrandProfile } from "@anjuna/contracts";
+import { BrandProfile } from "@anjuna/contracts";
 import type { WizardDraft } from "../src/shared/wizard";
 import {
-  STEPS, adsOf, contactOf, copyFieldErrors, copyOf, disclosuresOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep, visibleCopyLength,
+  STEPS, adsOf, contactOf, copyFieldErrors, copyOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep, visibleCopyLength,
   type FieldKey, type WizardForm,
 } from "../src/client/wizard/steps";
 
@@ -11,7 +11,7 @@ const ctx = { hasDraft: false, canEditTracking: true, templates };
 const valid = (over: Partial<WizardForm> = {}): WizardForm => ({
   ...emptyForm(),
   name: "Maple Cash", domain: "maple.test", keyword: "Quick Loan", phone: "+1 (555) 010-0199", address: "12 Main St, Austin, TX 78701", email: "help@maplecash.test",
-  representative_example: "A 12 month loan of $1,000 at 29.99% APR costs about $96 a month.", template_version_id: "tv-1",
+  template_version_id: "tv-1",
   ...over,
 });
 const errorsOf = (step: (typeof STEPS)[number], form: WizardForm, over: Partial<typeof ctx> = {}) => validateStep(step, form, { ...ctx, ...over });
@@ -20,17 +20,17 @@ const fieldsOf = (step: (typeof STEPS)[number], form: WizardForm, over: Partial<
 const bilingual = (text: string) => /[฀-๿]/.test(text) && /\([A-Za-z]/.test(text);
 
 describe("emptyForm", () => {
-  it("fills the product defaults from BRAND_PROFILE_DEFAULTS and nothing else", () => {
+  it("is blank and holds no APR, term or loan-rule field", () => {
     const form = emptyForm();
-    expect(disclosuresOf(form)).toEqual(BRAND_PROFILE_DEFAULTS.disclosures);
     expect(form.name).toBe("");
     expect(form.template_version_id).toBe("");
+    expect(Object.keys(form).filter((key) => /term|apr|example|states/.test(key))).toEqual([]);
   });
 });
 
 describe("step order", () => {
-  it("has six steps in the brief's order", () => {
-    expect(STEPS).toEqual(["brand", "product", "template", "copy", "tracking", "review"]);
+  it("has five steps: no Product step, because the template carries its own disclosures", () => {
+    expect(STEPS).toEqual(["brand", "template", "copy", "tracking", "review"]);
   });
 });
 
@@ -63,32 +63,6 @@ describe("validateStep brand", () => {
     for (const message of Object.values(errorsOf("brand", { ...emptyForm(), name: "Lead_Cash", domain: "www.x.test", keyword: "!!!", phone: "abc", email: "x" }))) {
       expect(bilingual(message!), message).toBe(true);
     }
-  });
-});
-
-describe("validateStep product", () => {
-  it("needs only the representative example on top of the defaults", () => {
-    expect(fieldsOf("product", { ...emptyForm() })).toEqual(["representative_example"]);
-    expect(errorsOf("product", valid())).toEqual({});
-  });
-  it.each<[string, Partial<WizardForm>, FieldKey]>([
-    ["a reversed term range", { term_min: "40", term_max: "12" }, "term_min"],
-    ["a term of 0 months", { term_min: "0" }, "term_min"],
-    ["a term above 120 months", { term_max: "121" }, "term_max"],
-    ["a fractional term", { term_min: "2.5" }, "term_min"],
-    ["an APR with 3 decimals", { apr_max: "35.999" }, "apr_max"],
-    ["an APR above 999.99", { apr_max: "1000" }, "apr_max"],
-    ["an APR that is not a number", { apr_max: "high" }, "apr_max"],
-    ["states without NY", { unsupported_states: "AR, VT, WV" }, "unsupported_states"],
-    ["a lowercase state", { unsupported_states: "NY, AR, VT, WV, ca" }, "unsupported_states"],
-    ["an unknown state", { unsupported_states: "NY, AR, VT, WV, ZZ" }, "unsupported_states"],
-    ["a duplicate state", { unsupported_states: "NY, AR, VT, WV, CA, CA" }, "unsupported_states"],
-    ["personal loan wording", { representative_example: "A Personal Loan of $500 costs $40" }, "representative_example"],
-  ])("refuses %s", (_name, over, field) => {
-    expect(Object.keys(errorsOf("product", valid(over)))).toEqual([field]);
-  });
-  it("accepts extra states on top of the global four", () => {
-    expect(errorsOf("product", valid({ unsupported_states: "NY, AR, VT, WV, CA" }))).toEqual({});
   });
 });
 
@@ -148,15 +122,14 @@ describe("validateStep template, copy and tracking", () => {
 
 describe("validateStep review", () => {
   it("passes a complete form and reports every step's errors otherwise", () => {
-    expect(errorsOf("review", valid({ unsupported_states: "NY, AR, VT, WV" }), { hasDraft: true })).toEqual({});
-    expect(fieldsOf("review", valid({ name: "", term_min: "0", site_title: 'x"', google_ads_account: "9", template_version_id: "" }))).toEqual(["google_ads_account", "name", "site_title", "template_version_id", "term_min"]);
+    expect(errorsOf("review", valid(), { hasDraft: true })).toEqual({});
+    expect(fieldsOf("review", valid({ name: "", site_title: 'x"', google_ads_account: "9", template_version_id: "" }))).toEqual(["google_ads_account", "name", "site_title", "template_version_id"]);
   });
   it("maps a field back to the step that holds it", () => {
     expect(stepOfField("email")).toBe(0);
-    expect(stepOfField("apr_max")).toBe(1);
-    expect(stepOfField("template_version_id")).toBe(2);
-    expect(stepOfField("cta")).toBe(3);
-    expect(stepOfField("adkit_project")).toBe(4);
+    expect(stepOfField("template_version_id")).toBe(1);
+    expect(stepOfField("cta")).toBe(2);
+    expect(stepOfField("adkit_project")).toBe(3);
   });
 });
 
@@ -166,10 +139,7 @@ describe("profile groups", () => {
     expect(contactOf(form)).toEqual({ phone: "555 010 0199", address: "12 Main St, Austin, TX 78701", email: "help@maplecash.test" });
     expect(copyOf(form)).toEqual({});
     expect(adsOf(form)).toEqual({ google_ads_account: "1234567890" });
-    expect(BrandProfile.safeParse({ contact: contactOf(form), disclosures: disclosuresOf(form), copy: copyOf(form), ads: adsOf(form) }).success).toBe(true);
-  });
-  it("turns the states text into a list and the numbers into numbers", () => {
-    expect(disclosuresOf(valid({ term_min: "6", apr_max: "29.99", unsupported_states: " NY,AR , VT,WV " }))).toMatchObject({ term_min_months: 6, apr_max: 29.99, unsupported_states: ["NY", "AR", "VT", "WV"] });
+    expect(BrandProfile.safeParse({ contact: contactOf(form), copy: copyOf(form), ads: adsOf(form) }).success).toBe(true);
   });
 });
 
@@ -183,22 +153,26 @@ describe("formFromDraft and firstIncompleteStep", () => {
   const disclosures = { term_min_months: 6, term_max_months: 48, apr_max: 29.99, representative_example: "A 12 month loan.", unsupported_states: ["NY", "AR", "VT", "WV"] as ["NY", "AR", "VT", "WV"] };
   const as = { canEditTracking: true };
 
-  it("hydrates the form from the draft and keeps the defaults for a group the draft lacks", () => {
+  it("hydrates the form from the draft and leaves a group the draft lacks blank", () => {
     const form = formFromDraft(draft({ contact, copy: { site_title: "Maple Cash | Funding" } }));
-    expect(form).toMatchObject({ name: "Maple Cash", domain: "maple.test", keyword: "Quick Loan", template_version_id: "tv-2", phone: contact.phone, site_title: "Maple Cash | Funding", term_min: "3", term_max: "36", apr_max: "35.99" });
+    expect(form).toMatchObject({ name: "Maple Cash", domain: "maple.test", keyword: "Quick Loan", template_version_id: "tv-2", phone: contact.phone, site_title: "Maple Cash | Funding", h1: "" });
+  });
+  it("loads an older draft that holds disclosures, and shows no field for them", () => {
+    const form = formFromDraft(draft({ contact, disclosures }));
+    expect(form).toEqual(formFromDraft(draft({ contact })));
   });
   it.each<[string, BrandProfile | undefined, number]>([
     ["a draft with no profile", undefined, 0],
     ["a draft with a partial contact", { contact: { phone: contact.phone } }, 0],
     ["contact only", { contact }, 1],
-    ["disclosures missing the example", { contact, disclosures: { ...disclosures, representative_example: undefined } }, 1],
-    ["contact and disclosures", { contact, disclosures }, 2],
-    ["copy saved, no tracking", { contact, disclosures, copy: {} }, 4],
-    ["everything saved", { contact, disclosures, copy: {}, ads: {} }, 5],
+    ["contact and disclosures of an older draft", { contact, disclosures }, 1],
+    ["copy saved, no tracking", { contact, copy: {} }, 3],
+    ["copy saved with disclosures of an older draft, no tracking", { contact, disclosures, copy: {} }, 3],
+    ["everything saved", { contact, copy: {}, ads: {} }, 4],
   ])("resumes %s at step index %i", (_name, profile, expected) => {
     expect(firstIncompleteStep(profile, as)).toBe(expected);
   });
   it("does not hold a role that cannot set tracking at the Tracking step", () => {
-    expect(firstIncompleteStep({ contact, disclosures, copy: {} }, { canEditTracking: false })).toBe(5);
+    expect(firstIncompleteStep({ contact, copy: {} }, { canEditTracking: false })).toBe(4);
   });
 });

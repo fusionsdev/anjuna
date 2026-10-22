@@ -1,5 +1,5 @@
 /**
- * New brand wizard: six steps with per-step validation. The first Next creates the draft, every later Next
+ * New brand wizard: five steps with per-step validation. The first Next creates the draft, every later Next
  * saves it with PATCH /api/brands/:id/draft, and Generate starts the install. A saved draft resumes at its
  * first incomplete step.
  */
@@ -9,9 +9,9 @@ import type { WizardDefaultsResponse, WizardDraft } from "../../shared/wizard";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import { api, type Me } from "../api";
 import { wizardErrorText } from "../wizard/messages";
-import { BrandPanel, CopyPanel, ProductPanel, TemplatePanel, TrackingPanel, ZoneStatus, zoneBlocks, type ZoneState } from "../wizard/StepPanels";
+import { BrandPanel, CopyPanel, TemplatePanel, TrackingPanel, ZoneStatus, zoneBlocks, type ZoneState } from "../wizard/StepPanels";
 import {
-  STEPS, STEP_LABEL, adsOf, contactOf, copyOf, disclosuresOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep,
+  STEPS, STEP_LABEL, adsOf, contactOf, copyOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep,
   type FieldErrors, type FieldKey, type WizardForm,
 } from "../wizard/steps";
 
@@ -127,8 +127,6 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
         }
         return;
       }
-      case "product":
-        return patch({ profile: { ...profile, disclosures: disclosuresOf(form) } });
       case "template":
         if (form.template_version_id !== draft!.revision.template_version_id) await patch({ template_version_id: form.template_version_id });
         return;
@@ -198,7 +196,6 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
       {!loading && !loadError && <>
         <h2>{STEP_LABEL[stepId]}</h2>
         {stepId === "brand" && <BrandPanel form={form} errors={errors} set={set} hasDraft={draft !== null} zone={zone} onCheckZone={() => void checkZone()} />}
-        {stepId === "product" && <ProductPanel form={form} errors={errors} set={set} defaults={defaults} />}
         {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} />}
         {stepId === "copy" && <CopyPanel form={form} errors={errors} set={set} templateText={templateText} />}
         {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} />}
@@ -220,7 +217,6 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function ReviewPanel({ form, templateName, defaults, zone, onCheckZone, previewSrc, canEditTracking }: { form: WizardForm; templateName: string; defaults: WizardDefaultsResponse | null; zone: ZoneState; onCheckZone: () => void; previewSrc: string | null; canEditTracking: boolean }) {
-  const states = form.unsupported_states;
   const fromTemplate = "ใช้ค่าจากเทมเพลต (Template default)";
   return (
     <div className="wizard-panel">
@@ -233,9 +229,6 @@ function ReviewPanel({ form, templateName, defaults, zone, onCheckZone, previewS
         <Row label="โทรศัพท์ (Phone)" value={form.phone} />
         <Row label="อีเมล (Email)" value={form.email} />
         <Row label="ที่อยู่ (Address)" value={form.address} />
-        <Row label="เทอม เดือน (Term, months)" value={`${form.term_min} - ${form.term_max}`} />
-        <Row label="APR สูงสุด (Max APR)" value={`${form.apr_max}%`} />
-        <Row label="รัฐที่ไม่รองรับ (Unsupported states)" value={states} />
         <Row label="ช่วงยอดเงิน (Amount buckets)" value={defaults ? defaults.amount_buckets.join(", ") : ""} />
         <Row label="เส้นทางฟอร์ม (Form route)" value={defaults?.form_route ?? ""} />
         <Row label="ชื่อแบรนด์บนเว็บ (Site brand name)" value={form.brand_name || fromTemplate} />
