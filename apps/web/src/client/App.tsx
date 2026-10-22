@@ -38,7 +38,7 @@ export function App() {
     }
     let cancelled = false;
     api.alerts().then((report) => {
-      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate]
+      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate, report.click_risk]
         .filter(({ state }) => state === "warn" || state === "alert").length;
       if (!cancelled) setAlertCount(count);
     }).catch(() => {

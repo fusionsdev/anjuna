@@ -8,6 +8,14 @@ import { api } from "../src/client/api";
 vi.mock("../src/client/screens/BrandLifecycle", () => ({
   BrandLifecycle: ({ wizardRequest }: { wizardRequest: number }) => <h1>Brands screen: {wizardRequest}</h1>,
 }));
+vi.mock("../src/client/screens/Home", () => ({
+  HomeScreen: ({ onGo }: { onGo?: (target: "funnel") => void }) => (
+    <>
+      <h1>หน้าแรก</h1>
+      <button type="button" onClick={() => onGo?.("funnel")}>Home link to funnel</button>
+    </>
+  ),
+}));
 vi.mock("../src/client/screens/Templates", () => ({ TemplatesScreen: () => <h1>Templates screen</h1> }));
 vi.mock("../src/client/screens/Funnel", () => ({ FunnelScreen: () => <h1>Funnel screen</h1> }));
 vi.mock("../src/client/screens/Alerts", () => ({ AlertsScreen: () => <h1>Alerts screen</h1> }));
@@ -24,11 +32,13 @@ const healthy: AlertsReportResponse = {
   brands_without_postbacks: { state: "ok", detail: { window_hours: 24, brands: [] } },
   submit_error_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.3, samples: [] } },
   reject_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.3, brands: [] } },
+  click_risk: { state: "ok", detail: { window_hours: 24, alert_at: 0.2, min_visits: 50, hostnames: [] } },
 };
 const attention: AlertsReportResponse = {
   ...healthy,
   conversion_stalled: { state: "alert", detail: { max_hours: 6, stuck_count: 12, oldest_created_at: "2026-10-20T00:00:00.000Z" } },
   brands_without_postbacks: { state: "warn", detail: { window_hours: 24, brands: [{ brand: "test", leads: 4 }] } },
+  click_risk: { state: "alert", detail: { window_hours: 24, alert_at: 0.2, min_visits: 50, hostnames: [{ hostname: "floatsme.com", visits: 100, high_risk: 31, rate: 0.31 }] } },
 };
 
 beforeEach(() => {
@@ -79,6 +89,13 @@ describe("Console rail", () => {
     expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
   });
 
+  it("opens the screen a Home link asks for", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Home link to funnel" }));
+    expect(await screen.findByRole("heading", { name: "Funnel screen" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "ฟันเนล" }).getAttribute("aria-current")).toBe("page");
+  });
+
   it("opens the brand wizard from Home and repeats the existing request action", async () => {
     render(<App />);
     const create = await screen.findByRole("button", { name: "สร้างแบรนด์ใหม่" });
@@ -91,9 +108,9 @@ describe("Console rail", () => {
   it("counts warn and alert categories, not affected leads or healthy categories", async () => {
     vi.mocked(api.alerts).mockResolvedValue(attention);
     render(<App />);
-    const badge = await screen.findByLabelText("2 รายการที่ต้องจัดการ");
-    expect(badge.textContent).toBe("2");
-    expect(badge.closest("button")?.textContent).toBe("การแจ้งเตือน2");
+    const badge = await screen.findByLabelText("3 รายการที่ต้องจัดการ");
+    expect(badge.textContent).toBe("3");
+    expect(badge.closest("button")?.textContent).toBe("การแจ้งเตือน3");
   });
 
   it("hides the badge when the report is unavailable and reloads on navigation", async () => {
@@ -103,7 +120,7 @@ describe("Console rail", () => {
     await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(1));
     expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "ฟันเนล" }));
-    expect(await screen.findByLabelText("2 รายการที่ต้องจัดการ")).toBeTruthy();
+    expect(await screen.findByLabelText("3 รายการที่ต้องจัดการ")).toBeTruthy();
   });
 
   it("ignores an older report that resolves after a navigation refresh", async () => {
@@ -114,7 +131,7 @@ describe("Console rail", () => {
     await screen.findByLabelText("0 รายการที่ต้องจัดการ");
     await act(async () => { finish(attention); });
     expect(screen.getByLabelText("0 รายการที่ต้องจัดการ")).toBeTruthy();
-    expect(screen.queryByLabelText("2 รายการที่ต้องจัดการ")).toBeNull();
+    expect(screen.queryByLabelText("3 รายการที่ต้องจัดการ")).toBeNull();
   });
 
   it("hides owner-only Users from employees", async () => {

@@ -1,4 +1,4 @@
-import type { AlertsReportResponse, FunnelReportResponse } from "@anjuna/contracts";
+import type { AlertsReportResponse, FunnelReportResponse, SpendReportResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api";
 import "./Home.css";
@@ -6,14 +6,8 @@ import "./Home.css";
 export type HomePeriod = "today" | "7d" | "30d";
 export type HomeTarget = "brands" | "new-brand" | "templates" | "funnel" | "alerts";
 
-/** GET /api/spend?period= (owner only). The shape is fixed by the C2 contract. */
-export interface SpendReport {
-  period: string;
-  from: string;
-  to: string;
-  totals: { cost: number; clicks: number; impressions: number };
-  brands: Array<{ brand_id: string; cost: number; clicks: number; impressions: number; updated_at: string }>;
-}
+/** GET /api/spend?period= (owner only, cost in USD; FUS-368). */
+export type SpendReport = SpendReportResponse;
 
 /** A number, `null` for data that could not be read (shown as "—"), `undefined` while it loads (shown as "…"). */
 type Value = number | null | undefined;
@@ -31,13 +25,6 @@ const shiftDay = (dayText: string, days: number): string => {
 function periodRange(period: HomePeriod): { from: string; to: string } {
   const today = new Date().toISOString().slice(0, 10);
   return { from: `${shiftDay(today, 1 - PERIOD_DAYS[period])}T00:00:00.000Z`, to: `${shiftDay(today, 1)}T00:00:00.000Z` };
-}
-
-// C2 adds `api.spend`. Until it is merged this reads as "no spend data", which the screen shows as "—".
-async function loadSpend(period: HomePeriod): Promise<SpendReport> {
-  const spend = (api as unknown as { spend?: (period: HomePeriod) => Promise<SpendReport> }).spend;
-  if (!spend) throw new Error("spend api is not available");
-  return spend(period);
 }
 
 const mark = (value: Value): string | null => (value === undefined ? "…" : value === null ? "—" : null);
@@ -149,7 +136,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     setSpend(owner ? undefined : null);
     api.funnel(periodRange(period)).then((report) => current && setFunnel(sumFunnel(report)), () => current && setFunnel(null));
     // The spend API answers 403 to an employee, so an employee never asks.
-    if (owner) loadSpend(period).then((report) => current && setSpend(spendTotals(report)), () => current && setSpend(null));
+    if (owner) api.spend(period).then((report) => current && setSpend(spendTotals(report)), () => current && setSpend(null));
     return () => { current = false; };
   }, [period, owner]);
 

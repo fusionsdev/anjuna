@@ -1,5 +1,5 @@
 /** The numbers of the brands screen: the 7-day stats row under each brand, and the per-period money columns of the table. An unknown number is "—", never 0. */
-import type { BrandSummary, FunnelReportResponse } from "@anjuna/contracts";
+import type { BrandSummary, FunnelReportResponse, SpendReportResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
@@ -61,21 +61,8 @@ export function usePeriodFunnel(period: BrandPeriod, refreshKey: number, week: F
   return period === "7d" ? week : own;
 }
 
-/** GET /api/spend?period= (owner only, cost in USD). The shape is fixed by the C2 contract (FUS-368). */
-export interface SpendReport {
-  period: string;
-  from: string;
-  to: string;
-  totals: { cost: number; clicks: number; impressions: number };
-  brands: Array<{ brand_id: string; cost: number; clicks: number; impressions: number; updated_at: string }>;
-}
-
-// C2 adds `api.spend`. Until it is merged this reads as "no spend data", which the table shows as "—".
-async function loadSpend(period: BrandPeriod): Promise<SpendReport> {
-  const spend = (api as unknown as { spend?: (period: BrandPeriod) => Promise<SpendReport> }).spend;
-  if (!spend) throw new Error("spend api is not available");
-  return spend(period);
-}
+/** GET /api/spend?period= (owner only, cost in USD; FUS-368). */
+export type SpendReport = SpendReportResponse;
 
 /** The ad spend per brand of a period. Only the Owner asks: the API answers 403 to an Employee. Null while loading or when it failed. */
 export function useSpendReport(period: BrandPeriod, enabled: boolean, refreshKey: number): SpendReport | null {
@@ -83,7 +70,7 @@ export function useSpendReport(period: BrandPeriod, enabled: boolean, refreshKey
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    loadSpend(period).then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded(null); });
+    api.spend(period).then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded(null); });
     return () => { active = false; };
   }, [period, enabled, refreshKey]);
   return enabled && loaded && loaded.period === period ? loaded.report : null;

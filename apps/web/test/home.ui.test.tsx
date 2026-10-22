@@ -29,6 +29,7 @@ const template = (id: string, status: string) => ({ template_version_id: id, tem
 
 let funnel: (from: string) => Response;
 let spend: ReturnType<typeof vi.fn>;
+const realSpend = api.spend;
 let requests: string[];
 
 beforeEach(() => {
@@ -54,7 +55,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.useRealTimers();
-  delete (api as unknown as { spend?: unknown }).spend;
+  api.spend = realSpend;
 });
 
 const ledgerValue = (label: string) => {

@@ -49,6 +49,17 @@ export function AlertsScreen() {
             <StatePill state={report.reject_rate.state} />
             <p className="small muted">{report.reject_rate.detail.brands.length} แบรนด์เกินเกณฑ์</p>
           </section>
+          <section className="section">
+            <h3>คลิกเสี่ยงสูง</h3>
+            <StatePill state={report.click_risk.state} />
+            {report.click_risk.detail.hostnames.length === 0 ? (
+              <p className="small muted">ไม่มีโดเมนที่คนเข้าเว็บได้คะแนนเสี่ยงสูงเกิน {Math.round(report.click_risk.detail.alert_at * 100)}% ใน {report.click_risk.detail.window_hours} ชม.</p>
+            ) : (
+              report.click_risk.detail.hostnames.map((h) => (
+                <p key={h.hostname} className="small">{h.hostname}: {Math.round(h.rate * 100)}% ของคนเข้าเว็บได้คะแนนเสี่ยงสูง</p>
+              ))
+            )}
+          </section>
         </div>
       )}
     </>
