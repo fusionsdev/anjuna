@@ -28,6 +28,7 @@ import { BrandId, Hostname, ExperimentId, OpaqueToken, VariantId } from "./commo
 import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
+import { SpendQuery, SpendReportResponse } from "./spend.js";
 
 // --- roles and request context ------------------------------------------------------------------
 
@@ -682,6 +683,13 @@ export const AdminApi = {
     path: "/admin/mailing",
     min_role: "employee",
     response: MailingStatusResponse,
+  },
+  spendReport: {
+    method: "GET",
+    path: "/admin/spend",
+    min_role: "owner",
+    query: SpendQuery,
+    response: SpendReportResponse,
   },
 } as const;
 export type AdminEndpoint = keyof typeof AdminApi;

@@ -9,7 +9,7 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   click_sessions: ["experiment_id", "variant", "keyword", "brand_id"],
   consent_evidence: ["consent_text_hash", "consent_brand", "gpc"],
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend"];
 
 interface ColumnInfo {
   cid: number;
@@ -114,6 +114,7 @@ describe("leads-db migrations", () => {
     expect(await userTables(env.DB)).toEqual(
       [
         "account_credentials",
+        "ad_spend",
         "brand_runtime",
         "click_sessions",
         "client_errors",
@@ -330,6 +331,36 @@ describe("Anjuna additions", () => {
       [{ brand_id: "x5", ab_config_json: "not json" }],
     ])("rejects invalid row %j", async (overrides) => {
       await expect(insert(overrides)).rejects.toThrow(/CHECK constraint failed/);
+    });
+  });
+
+  describe("ad_spend", () => {
+    const UPSERT = `INSERT INTO ad_spend (brand_id, date, hour, cost, clicks, impressions, source, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'google', ?7)
+      ON CONFLICT (brand_id, date, COALESCE(hour, -1), source)
+      DO UPDATE SET cost = excluded.cost, clicks = excluded.clicks, impressions = excluded.impressions, updated_at = excluded.updated_at`;
+    const upsert = (hour: number | null, cost: number, at = NOW) =>
+      env.DB.prepare(UPSERT).bind("brand-spend", "2026-10-21", hour, cost, 3, 90, at).run();
+    const rows = () => env.DB.prepare("SELECT hour, cost, updated_at FROM ad_spend WHERE brand_id = 'brand-spend' ORDER BY hour").all();
+
+    it("upserts one row per (brand, date, hour, source), whole-day NULL hour included", async () => {
+      await upsert(5, 1.25);
+      await upsert(null, 10);
+      await upsert(5, 2.5, "2026-10-21T06:00:00.000Z");
+      await upsert(null, 12, "2026-10-21T06:00:00.000Z");
+      expect((await rows()).results).toEqual([
+        { hour: null, cost: 12, updated_at: "2026-10-21T06:00:00.000Z" },
+        { hour: 5, cost: 2.5, updated_at: "2026-10-21T06:00:00.000Z" },
+      ]);
+    });
+
+    it.each([
+      ["hour 24", "INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('b', '2026-10-21', 24, 1, 'x')"],
+      ["negative cost", "INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('b', '2026-10-21', 1, -1, 'x')"],
+      ["timestamp date", "INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('b', '2026-10-21T00', 1, 1, 'x')"],
+      ["unknown source", "INSERT INTO ad_spend (brand_id, date, hour, cost, source, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'bing', 'x')"],
+    ])("rejects %s", async (_name, sql) => {
+      await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
     });
   });
 

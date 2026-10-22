@@ -1,0 +1,14 @@
+Notice: a newer AdKit CLI is available.
+{
+  "account": "4811219623",
+  "level": "account",
+  "breakdown": "hour",
+  "results": [
+    { "segments": { "date": "2026-10-21", "hour": 0 }, "metrics": { "costMicros": "1250000", "clicks": "3", "impressions": "120" } },
+    { "segments": { "date": "2026-10-21", "hour": 1 }, "metrics": { "costMicros": "0", "clicks": "0", "impressions": "15" } },
+    { "segments": { "date": "2026-10-21", "hour": 13 }, "metrics": { "costMicros": "4210000", "clicks": "5", "impressions": "300" } },
+    { "segments": { "date": "2026-10-21", "hour": 13 }, "metrics": { "costMicros": "790000", "clicks": "1", "impressions": "20" } },
+    { "segments": { "date": "2026-10-22" }, "metrics": { "costMicros": "990000", "clicks": "1", "impressions": "9" } },
+    { "segments": { "hour": 2 }, "metrics": { "costMicros": "10000", "clicks": "1", "impressions": "9" } }
+  ]
+}

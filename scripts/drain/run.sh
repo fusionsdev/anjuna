@@ -3,6 +3,7 @@
 #   */10 * * * * /opt/drain/run.sh >> /opt/drain/drain.log 2>&1
 # Refreshes routing.json from core, then runs the unchanged drain.mjs with it as BRAND_ROUTING_JSON.
 # A failed refresh keeps the previous routing.json. With no routing.json, or an empty map, the .env value applies.
+# After the drain, spend-sync.mjs copies ad spend into core once an hour (FUS-368), when it is present.
 set -u
 cd "$(dirname "$0")" || exit 1
 
@@ -21,4 +22,14 @@ if ROUTING="$("$NODE" routing-env.mjs routing.json)"; then
   export BRAND_ROUTING_JSON
 fi
 
-exec "$NODE" drain.mjs
+"$NODE" drain.mjs
+DRAIN_EXIT=$?
+
+# Hourly: run when spend-sync.stamp is missing or older than 55 minutes, so a */10 cron runs it once
+# an hour. The stamp is touched first: a failed sync waits for the next hour instead of every tick.
+if [ -f spend-sync.mjs ] && [ -z "$(find spend-sync.stamp -mmin -55 2>/dev/null)" ]; then
+  touch spend-sync.stamp
+  "$NODE" spend-sync.mjs || echo "[run] spend sync failed; next try in an hour" >&2
+fi
+
+exit "$DRAIN_EXIT"

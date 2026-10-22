@@ -8,6 +8,7 @@ import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 import { handlePostback } from "./postback.js";
 import { rpcRoutes } from "./rpc/index.js";
+import { handleSpendIngest } from "./spend.js";
 import { handleFactoryLifecycleRequest, handlePanelLifecycleRequest } from "./lifecycle.js";
 
 export type RpcHandler = (request: Request, env: Env, account: string) => Promise<Response>;
@@ -33,6 +34,9 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       }
       if (pathname === "/api/conversions/routing" && request.method === "GET") {
         return handleConversionsRouting(request, env);
+      }
+      if (pathname === "/api/spend/ingest" && request.method === "POST") {
+        return handleSpendIngest(request, env);
       }
       // Brand Worker calls: /rpc/* and /analytics/*, both behind the per-account credential.
       const rpc = request.method !== "POST" ? undefined

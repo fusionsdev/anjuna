@@ -20,6 +20,8 @@ import type {
   CoreListError,
   FunnelReportResponse,
   MailingStatusResponse,
+  SpendPeriod,
+  SpendReportResponse,
   TemplateImportRequest,
   TemplateZipImportRequest,
 } from "@anjuna/contracts";
@@ -160,4 +162,6 @@ export const api = {
   },
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
+  /** Owner only: an employee gets 403 forbidden_role. */
+  spend: (period: SpendPeriod) => request<SpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),
 };

@@ -7,6 +7,7 @@ import {
   FunnelQuery,
   FunnelReportResponse,
   MailingStatusResponse,
+  SpendQuery,
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
@@ -31,6 +32,7 @@ import type { Env } from "../env.js";
 import { json } from "../http.js";
 import { globalPostbackDigest } from "../postback-token.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
+import { loadSpendReport } from "../spend.js";
 
 const JSON_BODY_LIMIT = 32 * 1024;
 
@@ -732,6 +734,11 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   }
   if (route.endpoint === "mailingStatus") {
     return json(MailingStatusResponse.parse(await loadMailingStatus(env)));
+  }
+  if (route.endpoint === "spendReport") {
+    const query = parseWith(SpendQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadSpendReport(env, query.period));
   }
 
   return adminError(context, { error: "not_found", resource: "route" });

@@ -14,6 +14,7 @@ import {
   AlertsQuery,
   AuditQuery,
   FunnelQuery,
+  SpendQuery,
   adminContextFromHeaders,
   authorize,
   matchAdminRoute,
@@ -30,6 +31,7 @@ import alertsReport from "@anjuna/contracts/fixtures/admin/alerts.response.json"
 import brandsList from "@anjuna/contracts/fixtures/admin/brands.list.response.json";
 import funnelReport from "@anjuna/contracts/fixtures/admin/funnel.response.json";
 import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.json";
+import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -155,6 +157,9 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "alertsReport") {
     const q = AlertsQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "spendReport") {
+    const q = SpendQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   }
 
   // 4. field groups
@@ -265,6 +270,8 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, alertsReport);
     case "mailingStatus":
       return json(200, mailingStatus);
+    case "spendReport":
+      return json(200, { ...spendReport, period: url.searchParams.get("period") });
     default: {
       const unexpected: never = endpoint;
       return err({ error: "not_found", resource: "route", request_id: `${rid}:${String(unexpected)}` });

@@ -1,0 +1,4 @@
+[
+  { "date": "2026-10-20", "cost": 12.34, "clicks": 7, "impressions": 410 },
+  { "date": "2026-10-21", "cost": "8.5", "clicks": 4, "impressions": 230 }
+]
