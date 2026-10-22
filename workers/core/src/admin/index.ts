@@ -5,9 +5,12 @@ import {
   AuditQuery,
   BrandId,
   FunnelQuery,
+  TrafficBreakdownQuery,
   FunnelReportResponse,
   MailingStatusResponse,
   SpendQuery,
+  TrafficRiskExportQuery,
+  TrafficRiskQuery,
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
@@ -33,6 +36,9 @@ import { json } from "../http.js";
 import { globalPostbackDigest } from "../postback-token.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 import { loadSpendReport } from "../spend.js";
+import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
+
+import { loadTrafficBreakdown } from "./traffic.js";
 
 const JSON_BODY_LIMIT = 32 * 1024;
 
@@ -722,6 +728,11 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   if (route.endpoint === "listAudit") {
     return listAudit(new URL(request.url), env, context, endpointPermission.scope);
   }
+  if (route.endpoint === "trafficBreakdown") {
+    const query = parseWith(TrafficBreakdownQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadTrafficBreakdown(env, query));
+  }
   if (route.endpoint === "funnelReport") {
     const filter = parseWith(FunnelQuery, parseQuery(new URL(request.url)), context);
     if (filter instanceof Response) return filter;
@@ -739,6 +750,17 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const query = parseWith(SpendQuery, parseQuery(new URL(request.url)), context);
     if (query instanceof Response) return query;
     return json(await loadSpendReport(env, query.period));
+  }
+  if (route.endpoint === "trafficRisk") {
+    const query = parseWith(TrafficRiskQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadTrafficRisk(env, query.period));
+  }
+  if (route.endpoint === "trafficRiskExport") {
+    // Owner only: authorize() above already answered 403 forbidden_role to an employee.
+    const query = parseWith(TrafficRiskExportQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadTrafficRiskExport(env, query));
   }
 
   return adminError(context, { error: "not_found", resource: "route" });

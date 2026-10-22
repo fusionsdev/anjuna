@@ -33,6 +33,11 @@ import {
   MailingStatusResponse,
   matchAdminRoute,
   SpendReportResponse,
+  RISK_SIGNALS,
+  TrafficRiskExportQuery,
+  TrafficRiskExportResponse,
+  TrafficRiskQuery,
+  TrafficRiskResponse,
   type AdminEndpoint,
   type AdminRole,
 } from "../src/index.js";
@@ -65,6 +70,8 @@ describe("golden fixtures validate", () => {
     ["alerts.response.json", AlertsReportResponse],
     ["mailing.response.json", MailingStatusResponse],
     ["spend.response.json", SpendReportResponse],
+    ["traffic-risk.response.json", TrafficRiskResponse],
+    ["traffic-risk.export.response.json", TrafficRiskExportResponse],
     ["error.unauthorized.json", AdminError],
     ["error.forbidden-role.endpoint.json", AdminError],
     ["error.forbidden-role.fields.json", AdminError],
@@ -96,6 +103,8 @@ describe("golden fixtures validate", () => {
     expect(AdminApi.alertsReport.response.safeParse(fixture(A("alerts.response.json"))).success).toBe(true);
     expect(AdminApi.mailingStatus.response.safeParse(fixture(A("mailing.response.json"))).success).toBe(true);
     expect(AdminApi.spendReport.response.safeParse(fixture(A("spend.response.json"))).success).toBe(true);
+    expect(AdminApi.trafficRisk.response.safeParse(fixture(A("traffic-risk.response.json"))).success).toBe(true);
+    expect(AdminApi.trafficRiskExport.response.safeParse(fixture(A("traffic-risk.export.response.json"))).success).toBe(true);
   });
 
   it("every error code maps to the agreed HTTP status", () => {
@@ -271,7 +280,8 @@ describe("secrets never appear in GET fixtures", () => {
  * deletion, manage users) are listed separately and must NOT appear in the table.
  */
 const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by: (AdminEndpoint | `patch:${string}`)[] }[] = [
-  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "alertsReport", "mailingStatus"] },
+  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "trafficBreakdown", "alertsReport", "mailingStatus", "trafficRisk"] },
+  { action: "Export high-risk clicks for a refund request (FUS-372)", employee: "no", covered_by: ["trafficRiskExport"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
   { action: "Edit site text", employee: "yes", covered_by: ["patch:site_text"] },
   { action: "Pause / resume a brand", employee: "yes", covered_by: ["pauseBrand", "resumeBrand"] },
@@ -369,9 +379,12 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/alerts")).toEqual({ endpoint: "alertsReport", params: {} });
     expect(matchAdminRoute("GET", "/admin/mailing")).toEqual({ endpoint: "mailingStatus", params: {} });
     expect(matchAdminRoute("GET", "/admin/spend")).toEqual({ endpoint: "spendReport", params: {} });
+    expect(matchAdminRoute("GET", "/admin/traffic/risk")).toEqual({ endpoint: "trafficRisk", params: {} });
+    expect(matchAdminRoute("GET", "/admin/traffic/risk/export")).toEqual({ endpoint: "trafficRiskExport", params: {} });
     expect(matchAdminRoute("DELETE", "/admin/brands/brand-a")).toBeNull();
     expect(matchAdminRoute("POST", "/admin/brands/brand-a/rollback")).toBeNull();
-    expect(ADMIN_ENDPOINTS).toHaveLength(12);
+    expect(matchAdminRoute("GET", "/admin/traffic/breakdown")).toEqual({ endpoint: "trafficBreakdown", params: {} });
+    expect(ADMIN_ENDPOINTS).toHaveLength(15);
   });
 });
 
@@ -384,6 +397,24 @@ describe("schema rules", () => {
     expect(AlertsQuery.safeParse({}).success).toBe(true);
     expect(AlertsQuery.safeParse({ now: query.to }).success).toBe(true);
     expect(AlertsQuery.safeParse({ now: "invalid" }).success).toBe(false);
+  });
+
+  it("risk queries default to 7d and accept only today, 7d and 30d", () => {
+    expect(TrafficRiskQuery.parse({})).toEqual({ period: "7d" });
+    expect(TrafficRiskQuery.safeParse({ period: "30d" }).success).toBe(true);
+    expect(TrafficRiskQuery.safeParse({ period: "90d" }).success).toBe(false);
+    expect(TrafficRiskQuery.safeParse({ period: "7d", hostname: "a.example" }).success).toBe(false);
+    expect(TrafficRiskExportQuery.parse({ hostname: "brand-a.example" })).toEqual({ period: "7d", hostname: "brand-a.example" });
+    expect(TrafficRiskExportQuery.safeParse({ hostname: "Brand A" }).success).toBe(false);
+  });
+
+  it("risk signals carry the V1 weights", () => {
+    expect(RISK_SIGNALS.map((s) => [s.id, s.weight])).toEqual([
+      ["known_bot_ua", 50], ["timezone_geo_mismatch", 20], ["rapid_repeat_session", 30],
+    ]);
+    const report = fixture<Record<string, any>>(A("traffic-risk.response.json"));
+    expect(TrafficRiskResponse.safeParse({ ...report, hours: report.hours.slice(1) }).success).toBe(false);
+    expect(TrafficRiskResponse.safeParse({ ...report, signals: [{ ...report.signals[0], id: "made_up" }] }).success).toBe(false);
   });
 
   it("A/B weights must sum to 100 with unique ids", () => {

@@ -1,5 +1,5 @@
-/** The 7-day numbers under each brand of the brands list: clicks, leads, sold and pending. An unknown number is "—", never 0. */
-import type { BrandSummary, FunnelReportResponse } from "@anjuna/contracts";
+/** The numbers of the brands screen: the 7-day stats row under each brand, and the per-period money columns of the table. An unknown number is "—", never 0. */
+import type { BrandSummary, FunnelReportResponse, SpendReportResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
@@ -10,7 +10,16 @@ export interface BrandStats {
   pending: number | null;
 }
 
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+export type BrandPeriod = "today" | "7d" | "30d";
+export const BRAND_PERIODS: Array<[BrandPeriod, string]> = [["today", "วันนี้"], ["7d", "7 วัน"], ["30d", "30 วัน"]];
+const PERIOD_DAYS: Record<BrandPeriod, number> = { today: 1, "7d": 7, "30d": 30 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** UTC calendar days like the spend report: from the first day at 00:00 to the end of today, so 7d is exactly 7 days. */
+export function periodWindow(period: BrandPeriod, now: Date = new Date()): { from: string; to: string } {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return { from: new Date(today - (PERIOD_DAYS[period] - 1) * DAY_MS).toISOString(), to: new Date(today + DAY_MS).toISOString() };
+}
 
 /**
  * Leads, sold and pending come from the core brand list (stats_7d), clicks from the core funnel report, both over the last 7 days.
@@ -27,17 +36,82 @@ export function brandStats(brandId: string, runtime: BrandSummary[] | null, funn
   };
 }
 
+/** The core funnel report of a period, reloaded when `refreshKey` changes. Null while loading, when it failed, or when `period` is null. */
+function useFunnelWindow(period: BrandPeriod | null, refreshKey: number): FunnelReportResponse | null {
+  // The period travels with the report so that a report of the previous period is never shown for the new one.
+  const [loaded, setLoaded] = useState<{ period: BrandPeriod; report: FunnelReportResponse } | null>(null);
+  useEffect(() => {
+    if (!period) return;
+    let active = true;
+    void api.funnel(periodWindow(period))
+      .then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded(null); });
+    return () => { active = false; };
+  }, [period, refreshKey]);
+  return loaded && loaded.period === period ? loaded.report : null;
+}
+
 /** The core funnel report of the last 7 days for every brand, reloaded when `refreshKey` changes. Null while loading or when it failed. */
 export function useWeekFunnel(refreshKey: number): FunnelReportResponse | null {
-  const [report, setReport] = useState<FunnelReportResponse | null>(null);
+  return useFunnelWindow("7d", refreshKey);
+}
+
+/** The funnel report of the chosen period. The 7-day period reuses the stats row's report, so one request serves both. */
+export function usePeriodFunnel(period: BrandPeriod, refreshKey: number, week: FunnelReportResponse | null): FunnelReportResponse | null {
+  const own = useFunnelWindow(period === "7d" ? null : period, refreshKey);
+  return period === "7d" ? week : own;
+}
+
+/** GET /api/spend?period= (owner only, cost in USD; FUS-368). */
+export type SpendReport = SpendReportResponse;
+
+/** The ad spend per brand of a period. Only the Owner asks: the API answers 403 to an Employee. Null while loading or when it failed. */
+export function useSpendReport(period: BrandPeriod, enabled: boolean, refreshKey: number): SpendReport | null {
+  const [loaded, setLoaded] = useState<{ period: BrandPeriod; report: SpendReport } | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
-    const now = Date.now();
-    void api.funnel({ from: new Date(now - WEEK_MS).toISOString(), to: new Date(now + 60_000).toISOString() })
-      .then((result) => { if (active) setReport(result); }, () => { if (active) setReport(null); });
+    api.spend(period).then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded(null); });
     return () => { active = false; };
-  }, [refreshKey]);
-  return report;
+  }, [period, enabled, refreshKey]);
+  return enabled && loaded && loaded.period === period ? loaded.report : null;
+}
+
+/** One table row of the brands screen. Every number is null when its source did not load: "—", never 0. */
+export interface BrandMoney {
+  clicks: number | null;
+  leads: number | null;
+  spend: number | null;
+  costPerLead: number | null;
+  profit: number | null;
+}
+
+/**
+ * Clicks, leads and revenue come from the funnel report of the period (same rule as `brandStats`: known only for a brand core lists),
+ * spend from the spend report. A brand missing from the spend report was not synced, so its spend, cost per lead and profit are unknown.
+ */
+export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funnel: FunnelReportResponse | null, spend: SpendReport | null): BrandMoney {
+  const listed = runtime?.some((brand) => brand.brand_id === brandId);
+  const rows = listed && funnel ? funnel.rows.filter((row) => row.brand === brandId) : null;
+  const clicks = rows ? rows.reduce((sum, row) => sum + row.clicks, 0) : null;
+  const leads = rows ? rows.reduce((sum, row) => sum + row.submits, 0) : null;
+  const revenue = rows ? rows.reduce((sum, row) => sum + row.revenue, 0) : null;
+  const cost = spend?.brands.find((row) => row.brand_id === brandId)?.cost ?? null;
+  return {
+    clicks,
+    leads,
+    spend: cost,
+    costPerLead: cost !== null && leads ? cost / leads : null,
+    profit: cost !== null && revenue !== null ? revenue - cost : null,
+  };
+}
+
+/** Worst profit first. A brand whose profit is unknown goes last, in its original order. */
+export function sortWorstProfitFirst<T>(items: T[], profit: (item: T) => number | null): T[] {
+  return [...items].sort((a, b) => {
+    const left = profit(a);
+    const right = profit(b);
+    return left === null ? (right === null ? 0 : 1) : right === null ? -1 : left - right;
+  });
 }
 
 const CELLS: Array<{ key: keyof BrandStats; label: string }> = [

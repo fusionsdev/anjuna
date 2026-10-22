@@ -15,5 +15,9 @@
   "reject_rate": {
     "state": "ok",
     "detail": { "window_hours": 24, "warn_at": 0.1, "alert_at": 0.2, "brands": [] }
+  },
+  "click_risk": {
+    "state": "ok",
+    "detail": { "window_hours": 24, "alert_at": 0.2, "min_visits": 50, "hostnames": [] }
   }
 }

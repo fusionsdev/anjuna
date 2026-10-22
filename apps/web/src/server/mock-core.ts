@@ -15,6 +15,10 @@ import {
   AuditQuery,
   FunnelQuery,
   SpendQuery,
+  TrafficRiskExportQuery,
+  TrafficRiskQuery,
+  TrafficBreakdownQuery,
+  trafficWindow,
   adminContextFromHeaders,
   authorize,
   matchAdminRoute,
@@ -32,6 +36,8 @@ import brandsList from "@anjuna/contracts/fixtures/admin/brands.list.response.js
 import funnelReport from "@anjuna/contracts/fixtures/admin/funnel.response.json";
 import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.json";
 import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
+import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.json";
+import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -160,6 +166,16 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "spendReport") {
     const q = SpendQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "trafficRisk" || endpoint === "trafficRiskExport") {
+    const q = (endpoint === "trafficRisk" ? TrafficRiskQuery : TrafficRiskExportQuery).safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  }
+
+  if (endpoint === "trafficBreakdown") {
+    const q = TrafficBreakdownQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+    return json(200, { ...q.data, ...trafficWindow(q.data.period), timezone: "America/New_York",
+      rows: q.data.by === "hour" ? Array.from({ length: 24 }, (_, hour) => ({ key: String(hour).padStart(2, "0"), visits: 0, leads: 0 })) : [], brands: [] });
   }
 
   // 4. field groups
@@ -272,6 +288,12 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, mailingStatus);
     case "spendReport":
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
+    case "trafficRisk":
+      return json(200, trafficRisk);
+    case "trafficRiskExport": {
+      const hostname = url.searchParams.get("hostname");
+      return json(200, { ...trafficRiskExport, rows: trafficRiskExport.rows.filter((row) => !hostname || row.hostname === hostname) });
+    }
     default: {
       const unexpected: never = endpoint;
       return err({ error: "not_found", resource: "route", request_id: `${rid}:${String(unexpected)}` });

@@ -33,6 +33,7 @@ import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleTemplateRoute } from "./templates.js";
+import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleWizardRoute } from "./wizard.js";
 
 const json = (status: number, body: unknown): Response =>
@@ -281,6 +282,12 @@ async function route(
   }
 
   // --- reports: core read-only admin routes. The panel does not bind the leads D1. ---
+  if (path === "/api/traffic/breakdown" && method === "GET") {
+    const g = authorize("trafficBreakdown", ctx.actor_role);
+    if (!g.ok) return forbidden(g.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "trafficBreakdown", query: url.searchParams }));
+  }
+
   if (path === "/api/funnel" && method === "GET") {
     const g = authorize("funnelReport", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
@@ -292,6 +299,9 @@ async function route(
     if (!g.ok) return forbidden(g.error, rid);
     return fromCore(await callCore(env, ctx, { endpoint: "alertsReport", query: url.searchParams }));
   }
+
+  const trafficRisk = await handleTrafficRiskRoute(request, env, url, path, ctx);
+  if (trafficRisk) return trafficRisk;
 
   if (path === "/api/mailing" && method === "GET") {
     const g = authorize("mailingStatus", ctx.actor_role);

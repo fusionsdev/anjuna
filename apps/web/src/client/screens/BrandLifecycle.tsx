@@ -1,13 +1,14 @@
 import { type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type InstallOperation, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { InstallProgress } from "../components/InstallProgress";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
-import { BrandStatsRow, brandStats, useWeekFunnel } from "./BrandStatsRow";
+import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, sortWorstProfitFirst, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandWizard } from "./BrandWizard";
 import { ConfigPanel } from "./ConfigPanel";
 import { UpgradeOutcomes } from "./UpgradeOutcomes";
+import "./Brands.css";
 
 type InstallHistoryRow = { install_id: string; status: string; error: string | null };
 
@@ -36,6 +37,21 @@ const statusLabel: Record<string, string> = {
 const operationLabel: Record<InstallOperation, string> = {
   install: "ติดตั้ง (Install)", rollback: "ย้อนกลับ (Rollback)", upgrade: "อัปเกรดทุกแบรนด์ (Upgrade-all)", redeploy: "ติดตั้งใหม่ (Redeploy)",
 };
+
+// The pill colour of a brand status: live is money green, a failure is red, work in progress is blue, a pause or rollback is amber.
+const statusTone: Record<string, string> = {
+  live: "p-live", failed: "p-bad", rolled_back: "p-warn", installing: "p-blue", draft: "p-mute", paused: "p-warn", unmanaged: "p-mute", retired: "p-mute",
+};
+const tone = (status: string) => `pill ${statusTone[status] ?? "p-mute"}`;
+
+/** A whole number with thousands separators. An unknown number is "—". */
+const count = (value: number | null) => (value === null ? "—" : Math.round(value).toLocaleString("en-US"));
+/** Dollars: whole dollars from 100 up, cents below. An unknown amount is "—". */
+function usd(value: number | null): string {
+  if (value === null) return "—";
+  const text = Math.abs(value) >= 100 || Number.isInteger(value) ? Math.round(Math.abs(value)).toLocaleString("en-US") : Math.abs(value).toFixed(2);
+  return `${value < 0 ? "−$" : "$"}${text}`;
+}
 
 const coreListLabel: Record<CoreListErrorCode, string> = {
   core_binding_missing: "ไม่พบการเชื่อมต่อ Core lifecycle (Core lifecycle binding is missing)",
@@ -66,6 +82,11 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   const [error, setError] = useState<string | null>(null);
   const operationGeneration = useRef(0);
   const weekFunnel = useWeekFunnel(refresh);
+  const [period, setPeriod] = useState<BrandPeriod>("7d");
+  const owner = me.role === "owner";
+  const periodFunnel = usePeriodFunnel(period, refresh, weekFunnel);
+  // The spend API answers 403 to an Employee, so only the Owner asks, and only the Owner sees money columns.
+  const spend = useSpendReport(period, owner, refresh);
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
@@ -282,32 +303,81 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   // The install the wizard started is picked up by the brand's history recovery, which polls it.
   if (wizard) return <BrandWizard me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); }} />;
 
-  return <div className="lifecycle-grid">
-    <section className="card lifecycle-list">
-      <div className="row split"><h1>Lifecycle แบรนด์</h1></div>
-      {error && <div className="error" role="alert">{error}</div>}
-      <button onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช (Refresh)</button>
-      <div className="section">
-        <button className="primary" onClick={() => setWizard({})}>แบรนด์ใหม่ (New brand)</button>
+  const runtimeList = runtimeError ? null : runtimeBrands;
+  const tableRows = brands.map((brand) => ({
+    brand,
+    name: brand.name ?? brand.hostnames[0] ?? brand.brand_id,
+    money: brandMoney(brand.brand_id, runtimeList, periodFunnel, spend),
+    stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
+  }));
+  // The Owner sees the brand that loses the most first. An Employee has no profit figure and keeps the list order.
+  const sortedRows = owner ? sortWorstProfitFirst(tableRows, (row) => row.money.profit) : tableRows;
+  const columns = owner ? 7 : 4;
+
+  return <div className="brands-page">
+    <div className="brands-head">
+      <div><h1>Lifecycle แบรนด์</h1><p className="brands-sub">{brands.length} แบรนด์ เลือกแถวเพื่อดูและแก้ไข</p></div>
+      <div className="brands-actions">
+        <div className="seg" role="group" aria-label="ช่วงเวลา">{BRAND_PERIODS.map(([key, label]) => <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div>
+        <button className="btn" onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช (Refresh)</button>
+        <button className="btn pri" onClick={() => setWizard({})}>แบรนด์ใหม่ (New brand)</button>
       </div>
-      <div className="lifecycle-brand-list"><h3>สถานะ (Lifecycle status)</h3>{brands.map((brand) => <div key={brand.brand_id} className="lifecycle-brand-item"><button className={brand.brand_id === selectedId ? "lifecycle-brand selected" : "lifecycle-brand"} onClick={() => setSelectedId(brand.brand_id)}><span><b>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</span><span>{statusLabel[brand.status] ?? brand.status}</span></button><BrandStatsRow name={brand.name ?? brand.hostnames[0] ?? brand.brand_id} stats={brandStats(brand.brand_id, runtimeError ? null : runtimeBrands, weekFunnel)} /></div>)}</div>
-      <p className="muted small">การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold</p>
-    </section>
-    {selected && <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />}
-    {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); }} />}
+    </div>
+    {error && <div className="error" role="alert">{error}</div>}
     {pendingOperation?.brandId === selectedId && <p role="status">รหัสติดตั้ง (Install ID): <code>{pendingOperation.installId}</code> · กำลังติดตามสถานะ</p>}
     {installError && <p className="error" role="alert">{installError}</p>}
     {runtimeError && <p className="error" role="alert">{runtimeError}</p>}
     {coreListError && <p className="error" role="alert">{coreListLabel[coreListError.code] ?? coreListError.message}. ใช้รายการแบรนด์จาก Core ไม่ได้ จึงแสดงเฉพาะแบรนด์จาก factory (Core brand list is unavailable) กรุณารีเฟรชเพื่อลองใหม่</p>}
-    {runtimeBrand && <section className="card" aria-label="การตั้งค่าและสถิติรันไทม์ (Runtime config and statistics)">
-      <h2>การตั้งค่า runtime (Runtime config)</h2>
-      <p>สถานะ runtime: {runtimeBrand.status}</p>
-      <p>สถิติ 7 วัน · ลีด (Leads): {runtimeBrand.stats_7d.leads} · ขายได้ (Sold): {runtimeBrand.stats_7d.sold} · รอผล (Pending): {runtimeBrand.stats_7d.pending}</p>
-      <button onClick={() => setConfigBrandId(runtimeBrand.brand_id)}>ตั้งค่าแบรนด์ (Runtime config)</button>
-    </section>}
+    <div className="brands-grid">
+      <section className="panel lifecycle-list">
+        <div className="tw"><table className="brand-table">
+          <thead><tr>
+            <th>แบรนด์ (Brand)</th><th>สถานะ (Status)</th>
+            {owner && <th>ค่าโฆษณา (Spend)</th>}
+            <th>คลิก (Clicks)</th><th>ลีด (Leads)</th>
+            {owner && <><th>ต้นทุน/ลีด (Cost per lead)</th><th>กำไร (Profit)</th></>}
+          </tr></thead>
+          <tbody>
+            {sortedRows.map(({ brand, name, money, stats }) => {
+              const isSelected = brand.brand_id === selectedId;
+              const select = () => setSelectedId(brand.brand_id);
+              return <Fragment key={brand.brand_id}>
+                <tr className={isSelected ? "click sel" : "click"} onClick={select}>
+                  <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</button></td>
+                  <td><span className={tone(brand.status)}>{statusLabel[brand.status] ?? brand.status}</span></td>
+                  {owner && <td className="blue">{usd(money.spend)}</td>}
+                  <td>{count(money.clicks)}</td>
+                  <td>{count(money.leads)}</td>
+                  {owner && <>
+                    <td>{usd(money.costPerLead)}</td>
+                    <td className={money.profit === null ? undefined : money.profit < 0 ? "neg" : "pos"}>{usd(money.profit)}</td>
+                  </>}
+                </tr>
+                <tr className={isSelected ? "click sel stats" : "click stats"} onClick={select}><td colSpan={columns}><BrandStatsRow name={name} stats={stats} /></td></tr>
+              </Fragment>;
+            })}
+            {brands.length === 0 && <tr><td colSpan={columns} className="muted">ยังไม่มีแบรนด์ (No brands yet)</td></tr>}
+          </tbody>
+        </table></div>
+        <p className="muted small">การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold</p>
+        <p className="hint">{owner ? "เรียงจากกำไรน้อยที่สุดก่อน ค่าโฆษณาจาก AdKit อัปเดตทุกชั่วโมง " : ""}เครื่องหมาย — คือยังไม่มีข้อมูล</p>
+      </section>
+      <div className="brands-aside">
+        {selected
+          ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
+          : <section className="panel brand-side"><p className="muted">เลือกแบรนด์จากตารางเพื่อดูและแก้ไข</p></section>}
+        {runtimeBrand && <section className="panel" aria-label="การตั้งค่าและสถิติรันไทม์ (Runtime config and statistics)">
+          <h2>การตั้งค่า runtime (Runtime config)</h2>
+          <p>สถานะ runtime: {runtimeBrand.status}</p>
+          <p>สถิติ 7 วัน · ลีด (Leads): {runtimeBrand.stats_7d.leads} · ขายได้ (Sold): {runtimeBrand.stats_7d.sold} · รอผล (Pending): {runtimeBrand.stats_7d.pending}</p>
+          <button className="btn" onClick={() => setConfigBrandId(runtimeBrand.brand_id)}>ตั้งค่าแบรนด์ (Runtime config)</button>
+        </section>}
+      </div>
+    </div>
+    {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); }} />}
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
-    {me.role === "owner" && <section className="card upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
-    {me.role === "owner" && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
+    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
+    {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
   </div>;
 }
 
@@ -316,9 +386,9 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const actions = lifecycleMutationAvailability(brand.status, install?.status, pendingOperation, install?.recovery_required === true);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
-  return <section className="card lifecycle-detail"><div className="row split"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={`pill ${brand.status}`}>{statusLabel[brand.status] ?? brand.status}</span></div>
+  return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={tone(brand.status)}>{statusLabel[brand.status] ?? brand.status}</span></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
-    {isManaged && <div className="form-inline">{actions.install && <button className="primary" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.recover && me.role === "owner" && <button className="danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{onResumeWizard && (brand.status === "draft" || brand.status === "failed") && <button onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{onDuplicate && <button onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
+    {isManaged && <div className="side-actions">{actions.install && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button className="btn" onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.recover && me.role === "owner" && <button className="btn danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{onResumeWizard && (brand.status === "draft" || brand.status === "failed") && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
     {install && <div className="section"><h3>ความคืบหน้าการติดตั้ง (Install progress)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p><InstallProgress install={install} canRetry={actions.retry} onRetry={onRetry} /></div>}
     <div className="section"><h3>รายการตรวจ (Checklist)</h3>{checklistItems.map(({ item, label, pending }) => {
       const evidence = checklist[item];

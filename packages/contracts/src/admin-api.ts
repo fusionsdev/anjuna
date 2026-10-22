@@ -23,10 +23,12 @@
  *
  * Out of scope: rollback / install / upgrade (factory Workflows, T10).
  */
+import { TrafficBreakdownQuery, TrafficBreakdownResponse } from "./traffic.js";
 import { z } from "zod";
 import { BrandId, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
 import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
+import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, TrafficRiskResponse } from "./traffic-risk.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
 import { SpendQuery, SpendReportResponse } from "./spend.js";
 
@@ -583,6 +585,23 @@ export const AlertsReportResponse = z.strictObject({
       ),
     }),
   }),
+  /** FUS-372: hostnames whose high-risk visit share reached `alert_at` with at least `min_visits` visits. */
+  click_risk: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      window_hours: z.number().positive(),
+      alert_at: z.number().min(0),
+      min_visits: Count,
+      hostnames: z.array(
+        z.strictObject({
+          hostname: Hostname,
+          visits: Count,
+          high_risk: Count,
+          rate: z.number().finite().min(0).max(1),
+        }),
+      ),
+    }),
+  }),
 });
 export type AlertsReportResponse = z.infer<typeof AlertsReportResponse>;
 
@@ -609,6 +628,10 @@ export type MailingStatusResponse = z.infer<typeof MailingStatusResponse>;
  * sees only rows where actor_id is themselves.
  */
 export const AdminApi = {
+  trafficBreakdown: {
+    method: "GET", path: "/admin/traffic/breakdown", min_role: "employee",
+    query: TrafficBreakdownQuery, response: TrafficBreakdownResponse,
+  },
   listBrands: {
     method: "GET",
     path: "/admin/brands",
@@ -690,6 +713,22 @@ export const AdminApi = {
     min_role: "owner",
     query: SpendQuery,
     response: SpendReportResponse,
+  },
+  /** FUS-372 observe-only click risk totals. */
+  trafficRisk: {
+    method: "GET",
+    path: "/admin/traffic/risk",
+    min_role: "employee",
+    query: TrafficRiskQuery,
+    response: TrafficRiskResponse,
+  },
+  /** High-risk visits with their gclid, for a Google Ads refund request. The panel serves it as CSV. */
+  trafficRiskExport: {
+    method: "GET",
+    path: "/admin/traffic/risk/export",
+    min_role: "owner",
+    query: TrafficRiskExportQuery,
+    response: TrafficRiskExportResponse,
   },
 } as const;
 export type AdminEndpoint = keyof typeof AdminApi;

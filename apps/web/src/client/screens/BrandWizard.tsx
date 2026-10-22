@@ -180,32 +180,32 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
   const blocked = zoneBlocks(zone);
 
   return (
-    <section className="card wizard" aria-label="วิซาร์ดแบรนด์ใหม่ (New brand wizard)">
-      <div className="row split">
-        <h1>แบรนด์ใหม่ (New brand)</h1>
-        <button type="button" className="link" onClick={onClose}>ปิด (Close)</button>
+    <section className="panel" aria-label="วิซาร์ดแบรนด์ใหม่ (New brand wizard)">
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+        <h1 aria-label="แบรนด์ใหม่ (New brand)">แบรนด์ใหม่</h1>
+        <button type="button" className="btn" onClick={onClose} aria-label="ปิด (Close)">ปิด</button>
       </div>
-      <p className="muted small">บันทึกฉบับร่างทุกครั้งที่กดถัดไป (The draft is saved at each Next)</p>
-      <ol className="wizard-steps" aria-label="ขั้นตอน (Steps)">
+      <p className="hint">บันทึกฉบับร่างทุกครั้งที่กดถัดไป (The draft is saved at each Next)</p>
+      <ol style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: 0, listStyle: "none", marginBlock: 16 }} aria-label="ขั้นตอน (Steps)">
         {STEPS.map((id, index) => (
-          <li key={id} aria-current={index === step ? "step" : undefined} className={index === step ? "active" : index < step ? "done" : ""}>{index + 1}. {STEP_LABEL[id]}</li>
+          <li key={id} aria-current={index === step ? "step" : undefined} className={`pill ${index === step ? "p-blue" : index < step ? "p-live" : "p-mute"}`} style={{ padding: "4px 12px", ...(index === step ? { background: "var(--ink)", color: "var(--paper)" } : {}) }}>{index + 1}. {STEP_LABEL[id].split(" (")[0]}</li>
         ))}
       </ol>
-      {loading && <p className="muted" role="status">กำลังโหลด… (Loading)</p>}
-      {loadError && <div className="error" role="alert"><p>{loadError}</p><button type="button" onClick={() => setReload((n) => n + 1)}>ลองใหม่ (Retry)</button></div>}
+      {loading && <p className="hint" role="status">กำลังโหลด… (Loading)</p>}
+      {loadError && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert"><p>{loadError}</p><button type="button" className="btn" onClick={() => setReload((n) => n + 1)}>ลองใหม่ (Retry)</button></div>}
       {!loading && !loadError && <>
-        <h2>{STEP_LABEL[stepId]}</h2>
+        <h2 aria-label={STEP_LABEL[stepId]}>{STEP_LABEL[stepId].split(" (")[0]}</h2>
         {stepId === "brand" && <BrandPanel form={form} errors={errors} set={set} hasDraft={draft !== null} zone={zone} onCheckZone={() => void checkZone()} />}
         {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} />}
         {stepId === "copy" && <CopyPanel form={form} errors={errors} set={set} templateText={templateText} />}
         {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} />}
         {stepId === "review" && <ReviewPanel form={form} templateName={chosen ? `${chosen.name} v${chosen.version}` : templateId} defaults={defaults} zone={zone} onCheckZone={() => void checkZone()} previewSrc={draft ? `/api/wizard/preview/${encodeURIComponent(draft.brand.brand_id)}?r=${previewNonce}` : null} canEditTracking={canEditTracking} />}
-        {notice && <p className="error" role="alert">{notice}</p>}
-        <div className="row wizard-nav">
-          <button type="button" disabled={busy || step === 0} onClick={() => { setErrors({}); setNotice(null); setStep(step - 1); }}>ย้อนกลับ (Back)</button>
+        {notice && <p className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{notice}</p>}
+        <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginTop: 18 }}>
+          <button type="button" className="btn" disabled={busy || step === 0} onClick={() => { setErrors({}); setNotice(null); setStep(step - 1); }} aria-label="ย้อนกลับ (Back)">ย้อนกลับ</button>
           {stepId !== "review"
-            ? <button type="button" className="primary" disabled={busy || (stepId === "template" && templates.length === 0)} onClick={() => void next()}>ถัดไป (Next)</button>
-            : <button type="button" className="primary" disabled={busy || blocked} onClick={() => void generate()}>สร้างเว็บไซต์ (Generate)</button>}
+            ? <button type="button" className="btn pri" disabled={busy || (stepId === "template" && templates.length === 0)} onClick={() => void next()} aria-label="ถัดไป (Next)">ถัดไป</button>
+            : <button type="button" className="btn pri" disabled={busy || blocked} onClick={() => void generate()} aria-label="สร้างเว็บไซต์ (Generate)">สร้างเว็บไซต์</button>}
         </div>
       </>}
     </section>
@@ -213,15 +213,15 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
 }
 
 function Row({ label, value }: { label: string; value: string }) {
-  return <div><span className="muted small">{label}</span><b>{value || "-"}</b></div>;
+  return <div className="cell" style={{ overflowWrap: "anywhere" }}><span className="k" style={{ display: "block" }}>{label}</span><b style={{ fontWeight: 500 }}>{value || "-"}</b></div>;
 }
 
 function ReviewPanel({ form, templateName, defaults, zone, onCheckZone, previewSrc, canEditTracking }: { form: WizardForm; templateName: string; defaults: WizardDefaultsResponse | null; zone: ZoneState; onCheckZone: () => void; previewSrc: string | null; canEditTracking: boolean }) {
   const fromTemplate = "ใช้ค่าจากเทมเพลต (Template default)";
   return (
-    <div className="wizard-panel">
+    <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
       <h3>สรุป (Summary)</h3>
-      <div className="status-grid">
+      <div className="ledger" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" }}>
         <Row label="ชื่อแบรนด์ (Brand name)" value={form.name} />
         <Row label="โดเมน (Domain)" value={form.domain} />
         <Row label="คีย์เวิร์ด (Keyword)" value={form.keyword} />
@@ -241,13 +241,13 @@ function ReviewPanel({ form, templateName, defaults, zone, onCheckZone, previewS
         <Row label="โปรเจกต์ AdKit (AdKit project)" value={form.adkit_project} />
         <Row label="บัญชี Microsoft Ads (Microsoft Ads account)" value={form.microsoft_ads_account} />
       </div>
-      {!canEditTracking && <p className="muted small">Owner กำหนดค่าติดตามผล (The Owner sets the tracking ids)</p>}
+      {!canEditTracking && <p className="hint">Owner กำหนดค่าติดตามผล (The Owner sets the tracking ids)</p>}
       <h3>โซน Cloudflare (Cloudflare zone)</h3>
       <ZoneStatus zone={zone} />
-      <div className="row"><button type="button" onClick={onCheckZone} disabled={zone.state === "checking"}>ตรวจอีกครั้ง (Check again)</button></div>
-      {zoneBlocks(zone) && <p className="muted small">สร้างไม่ได้จนกว่าโซนจะพร้อม (Generate is off until the zone is ready)</p>}
+      <div className="row"><button type="button" className="btn" onClick={onCheckZone} disabled={zone.state === "checking"}>ตรวจอีกครั้ง (Check again)</button></div>
+      {zoneBlocks(zone) && <p className="hint">สร้างไม่ได้จนกว่าโซนจะพร้อม (Generate is off until the zone is ready)</p>}
       <h3>ตัวอย่างก่อนติดตั้ง (Preview before install)</h3>
-      {previewSrc && <iframe key={previewSrc} className="wizard-preview" title="ตัวอย่างหน้าเว็บ (Site preview)" sandbox="" src={previewSrc} />}
+      {previewSrc && <iframe key={previewSrc} style={{ width: "100%", height: 520, border: "1px solid var(--line)", borderRadius: 10, background: "var(--raised)" }} title="ตัวอย่างหน้าเว็บ (Site preview)" sandbox="" src={previewSrc} />}
     </div>
   );
 }

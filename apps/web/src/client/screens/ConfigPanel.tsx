@@ -58,12 +58,12 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
     <Drawer onClose={onClose} title={brand.hostnames[0]!}>
       {toast && <div className={toast.kind === "ok" ? "ok" : "error"} role="status">{toast.text}</div>}
       <p className="muted small">
-        บัญชี (Account) {brand.account} · <span className={`pill ${brand.status}`}>{brand.status}</span> · ฟอร์ม (form) <code>{brand.form_version ?? "—"}</code>
+        บัญชี (Account) {brand.account} · <span className={`pill ${brand.status === "live" ? "p-live" : "p-warn"}`}>{brand.status}</span> · ฟอร์ม (form) <code>{brand.form_version ?? "—"}</code>
       </p>
 
       <Section title="สถานะ (Pause / Resume)">
         {(brand.status !== "live" || me.role === "owner") && <button
-          className={brand.status === "live" ? "danger" : "primary"}
+          className={brand.status === "live" ? "btn warn" : "btn pri"}
           onClick={() => act(() => api.setStatus(brandId, brand.status === "live" ? "pause" : "resume"), brand.status === "live" ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว")}
         >
           {brand.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
@@ -82,6 +82,7 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
       {isOwner && <>
         <Section title="ย้อนกลับ (Rollback)">
           <button
+            className="btn"
             onClick={async () => {
               if (!window.confirm("ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า? (Roll the brand back to its previous version.)")) return;
               const started = await act(() => api.rollbackLifecycle(brandId), "เริ่มย้อนกลับแล้ว ดูสถานะในหน้า Lifecycle (Rollback started, follow it in the lifecycle view)");
@@ -139,7 +140,7 @@ function Drawer({ title, onClose, children }: { title: string; onClose: () => vo
   return (
     <div className="drawer-wrap">
       <div className="scrim" onClick={onClose} />
-      <aside className="drawer" aria-label="การตั้งค่าแบรนด์ (Brand config)">
+      <aside className="drawer config-drawer" aria-label="การตั้งค่าแบรนด์ (Brand config)">
         <header>
           <h2>{title}</h2>
           <button className="link" onClick={onClose}>ปิด (Close)</button>
@@ -165,7 +166,7 @@ function KeywordSection({ brand, onSave }: { brand: BrandConfig; onSave: (k: str
     <Section title="คีย์เวิร์ดเริ่มต้น (Keyword default)">
       <div className="row">
         <input value={v} maxLength={60} onChange={(e) => setV(e.target.value)} placeholder="ว่าง = ใช้ข้อความเริ่มต้นของ template" />
-        <button className="primary" onClick={() => onSave(v.trim() === "" ? null : v.trim())}>บันทึก (Save)</button>
+        <button className="btn pri" onClick={() => onSave(v.trim() === "" ? null : v.trim())}>บันทึก (Save)</button>
       </div>
     </Section>
   );
@@ -205,7 +206,7 @@ function AbSection({ brand, onSave }: { brand: BrandConfig; onSave: (ab: BrandCo
         ))
       )}
       <div className={sum === 100 ? "muted small" : "error"}>รวม {sum}%</div>
-      <button className="primary" disabled={sum !== 100} onClick={() => onSave({ ...ab, variants: ab.variants.map((v, i) => ({ id: v.id, weight: weights[i]! })) })}>
+      <button className="btn pri" disabled={sum !== 100} onClick={() => onSave({ ...ab, variants: ab.variants.map((v, i) => ({ id: v.id, weight: weights[i]! })) })}>
         บันทึก A/B (Save A/B)
       </button>
     </Section>
@@ -220,7 +221,7 @@ function BucketsSection({ brand, onSave }: { brand: BrandConfig; onSave: (b: num
     <Section title="ช่วงยอดเงิน (Amount buckets)">
       <div className="row">
         <input value={text} onChange={(e) => setText(e.target.value)} aria-label="ช่วงยอดเงิน (Amount buckets)" />
-        <button className="primary" disabled={!valid} onClick={() => onSave(parsed)}>บันทึก (Save)</button>
+        <button className="btn pri" disabled={!valid} onClick={() => onSave(parsed)}>บันทึก (Save)</button>
       </div>
       {!valid && <div className="error small">ใส่ตัวเลขจำนวนเต็ม เรียงจากน้อยไปมาก คั่นด้วยจุลภาค</div>}
     </Section>
@@ -269,7 +270,7 @@ function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: {
         <div className="error small">บัญชี 10 หลักไม่มีขีด, conversion action เป็นตัวเลข, โปรเจกต์ใช้ A-Z 0-9 _ - (Account 10 digits, action digits, project A-Z 0-9 _ -)</div>
       )}
       <button
-        className="primary"
+        className="btn pri"
         disabled={routeInvalid.length > 0}
         onClick={() =>
           onSave({
@@ -297,13 +298,13 @@ function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: {
       {msInvalid && <div className="error small">ต้องเป็นเลข 6 ถึง 12 หลัก (6 to 12 digits)</div>}
       <div className="row split">
         <span className="muted small">เก็บในโปรไฟล์แบรนด์ ไม่ส่งให้ drain (Stored in the brand profile, the drain does not read it)</span>
-        <button className="primary" disabled={microsoft === undefined || msInvalid || msValue === microsoft} onClick={() => onSaveMicrosoft(msValue)}>
+        <button className="btn pri" disabled={microsoft === undefined || msInvalid || msValue === microsoft} onClick={() => onSaveMicrosoft(msValue)}>
           บันทึกบัญชี Microsoft Ads (Save Microsoft Ads account)
         </button>
       </div>
       <div className="row split">
         <span>โทเคน postback (Postback token): <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว (เฉพาะเว็บนี้)" : brand.postback_token === "global" ? "ใช้ postback กลาง (global)" : "ยังไม่ได้ตั้งค่า"}</b></span>
-        <button className="danger" onClick={onRotate}>หมุนโทเคน (Rotate token)</button>
+        <button className="btn danger" onClick={onRotate}>หมุนโทเคน (Rotate token)</button>
       </div>
     </Section>
   );
@@ -319,7 +320,7 @@ function TokenModal({ token, onClose }: { token: string; onClose: () => void }) 
         <code className="token">{token}</code>
         <div className="row">
           <button
-            className="primary"
+            className="btn pri"
             onClick={async () => {
               await navigator.clipboard?.writeText(token).catch(() => undefined);
               setCopied(true);
@@ -327,7 +328,7 @@ function TokenModal({ token, onClose }: { token: string; onClose: () => void }) 
           >
             {copied ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}
           </button>
-          <button onClick={onClose}>ปิด (Close)</button>
+          <button className="btn" onClick={onClose}>ปิด (Close)</button>
         </div>
       </div>
     </div>
@@ -399,7 +400,7 @@ function SiteTextSection({ brand, brandName, defaults, onSave }: { brand: BrandC
         </div>
         <div className="preview-brand"><span className="muted small">Header / footer</span> <b>{values.brand_name.trim() || fallback(brandField) || "-"}</b></div>
       </div>
-      <button className="primary" disabled={!changed || errors.length > 0} onClick={() => onSave(patch)}>บันทึกข้อความหน้าเว็บ (Save site text)</button>
+      <button className="btn pri" disabled={!changed || errors.length > 0} onClick={() => onSave(patch)}>บันทึกข้อความหน้าเว็บ (Save site text)</button>
     </Section>
   );
 }

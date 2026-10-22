@@ -4,6 +4,7 @@ import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
 import { FunnelScreen } from "./screens/Funnel";
+import { HomeScreen } from "./screens/Home";
 import { MailingScreen } from "./screens/Mailing";
 import { SignIn } from "./screens/SignIn";
 import { BuilderKeysScreen } from "./screens/BuilderKeys";
@@ -37,7 +38,7 @@ export function App() {
     }
     let cancelled = false;
     api.alerts().then((report) => {
-      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate]
+      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate, report.click_risk]
         .filter(({ state }) => state === "warn" || state === "alert").length;
       if (!cancelled) setAlertCount(count);
     }).catch(() => {
@@ -56,6 +57,12 @@ export function App() {
   if (loading) return <div className="center muted">กำลังโหลด…</div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
 
+  const open = (id: View) => {
+    if (id === "new-brand") {
+      setView("brands");
+      setWizardRequest((count) => count + 1);
+    } else setView(id);
+  };
   const nav: { id: View; label: string; show: boolean; gap?: boolean }[] = [
     { id: "home", label: "หน้าแรก", show: true },
     { id: "brands", label: "แบรนด์", show: true },
@@ -82,12 +89,7 @@ export function App() {
                 type="button"
                 className={`nav${n.gap ? " navgap" : ""}`}
                 aria-current={view === n.id ? "page" : undefined}
-                onClick={() => {
-                  if (n.id === "new-brand") {
-                    setView("brands");
-                    setWizardRequest((count) => count + 1);
-                  } else setView(n.id);
-                }}
+                onClick={() => open(n.id)}
               >
                 <span>{n.label}</span>
                 {n.id === "alerts" && alertCount !== null && <b aria-label={`${alertCount} รายการที่ต้องจัดการ`}>{alertCount}</b>}
@@ -112,13 +114,7 @@ export function App() {
         </div>
       </aside>
       <main className="content">
-        {/* C3 replaces this placeholder with screens/Home.tsx when that screen lands. */}
-        {view === "home" && (
-          <>
-            <div className="head"><h1>หน้าแรก</h1></div>
-            <section className="panel"><p className="hint">เลือกเมนูเพื่อจัดการแบรนด์และดูรายงาน</p></section>
-          </>
-        )}
+        {view === "home" && <HomeScreen me={me} onGo={open} />}
         {view === "brands" && <BrandLifecycle me={me} wizardRequest={wizardRequest} />}
         {view === "templates" && <TemplatesScreen me={me} />}
         {view === "builder-keys" && <BuilderKeysScreen me={me} />}

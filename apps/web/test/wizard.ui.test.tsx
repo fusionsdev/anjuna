@@ -122,7 +122,7 @@ describe("per-step validation", () => {
     setup();
     await fillBrand();
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      "1. แบรนด์ (Brand)", "2. เทมเพลต (Template)", "3. ข้อความ (Copy)", "4. ติดตามผล (Tracking)", "5. ตรวจสอบ (Review)",
+      "1. แบรนด์", "2. เทมเพลต", "3. ข้อความ", "4. ติดตามผล", "5. ตรวจสอบ",
     ]);
     next();
     await heading("เทมเพลต (Template)");
@@ -147,7 +147,7 @@ describe("five-step flow to Generate", () => {
     expect(patches()).toHaveLength(0);
 
     // Step 2: only approved templates are cards, with a thumbnail and the brands-using count.
-    const cards = [...document.querySelectorAll(".template-card")];
+    const cards = [...document.querySelectorAll("button[aria-pressed]")];
     expect(cards).toHaveLength(2);
     expect(cards.map((c) => c.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
     expect(screen.queryByText(/Unapproved/)).toBeNull();

@@ -1,4 +1,5 @@
-import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, UpdateBrandDraftResponse } from "@anjuna/contracts";
+import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
+import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
 import type {
@@ -97,6 +98,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  trafficBreakdown: (period: TrafficPeriod, by: TrafficDimension) =>
+    request<unknown>("GET", `/api/traffic/breakdown?${new URLSearchParams({ period, by })}`).then((body) => TrafficBreakdownResponse.parse(body)),
   builderKeys: () => request<unknown>("GET", "/api/builder-keys").then((body) => BuilderKeyListResponse.parse(body)),
   createBuilderKey: (label: string) => request<unknown>("POST", "/api/builder-keys", { label }).then((body) => BuilderKeyCreateResponse.parse(body).key),
   revokeBuilderKey: (id: string) => request<{ key: unknown }>("POST", `/api/builder-keys/${encodeURIComponent(id)}/revoke`, {}).then((body) => BuilderKeySummary.parse(body.key)),
@@ -164,4 +167,9 @@ export const api = {
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
   /** Owner only: an employee gets 403 forbidden_role. */
   spend: (period: SpendPeriod) => request<SpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),
+  trafficRisk: (period: RiskPeriod) =>
+    request<unknown>("GET", `/api/traffic/risk?${new URLSearchParams({ period })}`).then((body) => TrafficRiskResponse.parse(body)),
+  /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */
+  trafficRiskExportUrl: (period: RiskPeriod, hostname?: string) =>
+    `/api/traffic/risk/export?${new URLSearchParams({ period, ...(hostname ? { hostname } : {}) })}`,
 };

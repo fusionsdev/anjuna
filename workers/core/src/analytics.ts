@@ -1,5 +1,6 @@
 import {
-  ANALYTICS_FORWARD_PATHS, ANALYTICS_KINDS, ANALYTICS_LIMITS, AnalyticsForwardRequest, type AnalyticsKind,
+  ANALYTICS_FORWARD_PATHS, ANALYTICS_KINDS, ANALYTICS_LIMITS, AnalyticsForwardRequest, RAPID_REPEAT_THRESHOLD, RISK_SIGNALS,
+  type AnalyticsKind, type AnalyticsVisitor, type RiskSignalId,
 } from "@anjuna/contracts";
 import { ownsBrand } from "./auth.js";
 import type { Env } from "./env.js";
@@ -96,6 +97,41 @@ function resolveOccurredAt(raw: unknown, nowMs: number): { at: string; skewed: 0
   return { at: new Date(t).toISOString(), skewed: 0 };
 }
 
+// V1 (functions/api/[[path]].ts): weak, best-effort User-Agent substrings, never a verified bot identity.
+const BOT_UA_PATTERN = /bot|crawl|spider|headless|puppeteer|phantom|slurp|bingpreview/i;
+const RISK_WEIGHTS = new Map<RiskSignalId, number>(RISK_SIGNALS.map((signal) => [signal.id, signal.weight]));
+
+/**
+ * Telemetry events from one IP hash in the current UTC hour, this one included. Rows of earlier
+ * hours are deleted in the same batch, so an IP hash lives in D1 for at most about two hours.
+ * Null when the count is unavailable: the signal is then skipped and the event still stored.
+ */
+async function eventsThisHour(env: Env, ipHash: string, nowMs: number): Promise<number | null> {
+  const hour = new Date(nowMs).toISOString().slice(0, 13);
+  try {
+    const [, bumped] = await env.LEADS.batch<{ events: number }>([
+      env.LEADS.prepare("DELETE FROM traffic_velocity WHERE hour < ?1").bind(hour),
+      env.LEADS.prepare(`INSERT INTO traffic_velocity (hour, ip_hash, events) VALUES (?1, ?2, 1)
+        ON CONFLICT (hour, ip_hash) DO UPDATE SET events = events + 1 RETURNING events`).bind(hour, ipHash),
+    ]);
+    return Number(bumped?.results[0]?.events) || null;
+  } catch { return null; }
+}
+
+/**
+ * Observe-only risk score (FUS-372), the V1 signals and weights. The result is only stored: no
+ * response, redirect or lead decision reads it (AGENTS.md rule 3). Absent visitor data fires nothing.
+ */
+async function scoreRisk(env: Env, visitor: AnalyticsVisitor | undefined, browserTimezone: string, nowMs: number) {
+  const signals: RiskSignalId[] = [];
+  if (visitor?.user_agent && BOT_UA_PATTERN.test(visitor.user_agent)) signals.push("known_bot_ua");
+  if (browserTimezone && visitor?.edge_timezone && browserTimezone !== visitor.edge_timezone) signals.push("timezone_geo_mismatch");
+  if (visitor?.ip_hash && ((await eventsThisHour(env, visitor.ip_hash, nowMs)) ?? 0) > RAPID_REPEAT_THRESHOLD) {
+    signals.push("rapid_repeat_session");
+  }
+  return { score: signals.reduce((sum, id) => sum + (RISK_WEIGHTS.get(id) ?? 0), 0), signals };
+}
+
 /** V1 handleTrafficTelemetry. Answers 204 whatever breaks: telemetry must never gate the funnel. */
 async function telemetry(request: AnalyticsForwardRequest, env: Env): Promise<Response> {
   try {
@@ -109,18 +145,20 @@ async function telemetry(request: AnalyticsForwardRequest, env: Env): Promise<Re
     const hostname = request.hostname.replace(/^www\./, "");
     const nowMs = Date.now();
     const occurred = resolveOccurredAt(body.occurred_at, nowMs);
-    // The click cookie is not forwarded, so click_session_id stays NULL.
+    const browserTimezone = clean(body.browser_timezone, 64);
+    const risk = await scoreRisk(env, request.visitor, browserTimezone, nowMs);
+    // click_session_id is the `_vc` cookie the brand Worker forwards (null from older brand Workers).
     await env.LEADS.prepare(`INSERT INTO traffic_events (
         event_type, session_id, click_session_id, hostname, brand, form_version, form_variant,
         build_id, form_step, error_code, device_class, browser_family, browser_timezone,
-        touch_capable, source, campaign, occurred_at, clock_skew, created_at
-      ) VALUES (?1,?2,NULL,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)`).bind(
-      eventType, sessionId, hostname, clean(body.brand, 40) || null, clean(body.form_version, 32) || null,
-      clean(body.form_variant, 40) || null, clean(body.build_id, 64) || "unknown", formStep,
+        touch_capable, source, campaign, occurred_at, clock_skew, created_at, risk_score, risk_signals
+      ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)`).bind(
+      eventType, sessionId, request.visitor?.click_session_id ?? null, hostname, clean(body.brand, 40) || null,
+      clean(body.form_version, 32) || null, clean(body.form_variant, 40) || null, clean(body.build_id, 64) || "unknown", formStep,
       pick(body.error_code, TRAFFIC_ERROR_CODES), pick(body.device_class, TRAFFIC_DEVICE_CLASSES),
-      pick(body.browser_family, TRAFFIC_BROWSERS), clean(body.browser_timezone, 64) || null,
+      pick(body.browser_family, TRAFFIC_BROWSERS), browserTimezone || null,
       body.touch_capable === true ? 1 : 0, clean(body.source, 64) || null, clean(body.campaign, 64) || null,
-      occurred.at, occurred.skewed, new Date(nowMs).toISOString(),
+      occurred.at, occurred.skewed, new Date(nowMs).toISOString(), risk.score, JSON.stringify(risk.signals),
     ).run();
   } catch (error) {
     // Only the error name: a D1 error can echo bound values.
