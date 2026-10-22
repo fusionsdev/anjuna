@@ -264,6 +264,7 @@ describe("App deep link", () => {
     routes.set("GET /api/brands", () => json({ brands: [], generated_at: STAMP }));
     routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "แบรนด์ (Brands)" }));
     expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
     await goTo("#other");
     expect(screen.queryByRole("heading", { name: "เทมเพลต (Templates)" })).toBeNull();

@@ -4,19 +4,20 @@ import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
 import { FunnelScreen } from "./screens/Funnel";
+import { HomeScreen } from "./screens/Home";
 import { MailingScreen } from "./screens/Mailing";
 import { SignIn } from "./screens/SignIn";
 import { BuilderKeysScreen } from "./screens/BuilderKeys";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
 
-type View = "brands" | "new-brand" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
+type View = "home" | "brands" | "new-brand" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [wizardRequest, setWizardRequest] = useState(0);
-  const [view, setView] = useState<View>(() => (window.location.hash.startsWith("#templates") ? "templates" : "brands"));
+  const [view, setView] = useState<View>(() => (window.location.hash.startsWith("#templates") ? "templates" : "home"));
 
   const refresh = useCallback(async () => {
     try {
@@ -39,7 +40,9 @@ export function App() {
   if (loading) return <div className="center muted">กำลังโหลด…</div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
 
+  const open = (id: View) => { if (id === "new-brand") { setView("brands"); setWizardRequest((count) => count + 1); } else setView(id); };
   const nav: { id: View; label: string; show: boolean }[] = [
+    { id: "home", label: "หน้าแรก (Home)", show: true },
     { id: "brands", label: "แบรนด์ (Brands)", show: true },
     { id: "new-brand", label: "แบรนด์ใหม่ (New brand)", show: true },
     { id: "templates", label: "เทมเพลต (Templates)", show: true },
@@ -59,7 +62,7 @@ export function App() {
           {nav
             .filter((n) => n.show)
             .map((n) => (
-              <button key={n.id} className={view === n.id ? "nav active" : "nav"} onClick={() => { if (n.id === "new-brand") { setView("brands"); setWizardRequest((count) => count + 1); } else setView(n.id); }}>
+              <button key={n.id} className={view === n.id ? "nav active" : "nav"} onClick={() => open(n.id)}>
                 {n.label}
               </button>
             ))}
@@ -79,6 +82,7 @@ export function App() {
         </div>
       </aside>
       <main className="content">
+        {view === "home" && <HomeScreen me={me} onGo={open} />}
         {view === "brands" && <BrandLifecycle me={me} wizardRequest={wizardRequest} />}
         {view === "templates" && <TemplatesScreen me={me} />}
         {view === "builder-keys" && <BuilderKeysScreen me={me} />}
