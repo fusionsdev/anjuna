@@ -1,5 +1,5 @@
 import { SITE_TEXT_LIMITS } from "@anjuna/contracts";
-import type { HTMLElement } from "node-html-parser";
+import { HTMLElement, TextNode, type Node } from "node-html-parser";
 import { parseHtml } from "../html.js";
 import { issue } from "../issue.js";
 import type { Check } from "../checks.js";
@@ -13,6 +13,42 @@ export const DESCRIPTION_MAX = SITE_TEXT_LIMITS.description;
 
 const squash = (text: string) => text.replace(/\s+/g, " ").trim();
 const decode = (bytes: Uint8Array) => new TextDecoder("utf-8").decode(bytes);
+
+/**
+ * The template's own brand name, read the way submit reads text defaults (template-mcp text-defaults.ts): the first
+ * [data-brand] text on index.html, else og:site_name, else the <title> before " | ".
+ */
+function templateBrandName(files: ReadonlyMap<string, Uint8Array>): string | null {
+  const index = files.get("index.html");
+  if (!index) return null;
+  const root = parseHtml(decode(index));
+  const title = squash(root.querySelector("title")?.textContent ?? "");
+  const candidates = [
+    squash(root.querySelector("[data-brand]")?.textContent ?? ""),
+    squash(root.querySelector('meta[property="og:site_name"]')?.getAttribute("content") ?? ""),
+    title.includes(" | ") ? squash(title.split(" | ")[0]!) : "",
+  ];
+  return candidates.find((value) => value.length > 0 && value.length <= SITE_TEXT_LIMITS.brand_name) ?? null;
+}
+
+/** Whole-word matches, so "Max" leaves "Maximum" alone (the brand Worker's rule). */
+function brandPattern(name: string): RegExp {
+  const word = /^[\p{L}\p{N}]$/u;
+  const chars = [...name];
+  const before = word.test(chars[0] ?? "") ? "(?<![\\p{L}\\p{N}])" : "";
+  const after = word.test(chars.at(-1) ?? "") ? "(?![\\p{L}\\p{N}])" : "";
+  return new RegExp(`${before}${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${after}`, "gu");
+}
+
+/** Mentions in body text outside [data-brand], script and style. <title> and meta belong to the brand Worker. */
+function brandTextCount(node: Node, pattern: RegExp): number {
+  if (node instanceof TextNode) return node.text.match(pattern)?.length ?? 0;
+  if (node instanceof HTMLElement) {
+    const tag = node.rawTagName?.toLowerCase();
+    if (tag === "head" || tag === "script" || tag === "style" || tag === "title" || node.hasAttribute("data-brand")) return 0;
+  }
+  return node.childNodes.reduce((sum, child) => sum + brandTextCount(child, pattern), 0);
+}
 
 /** Page text the dashboard edits: <title> and meta description on index.html, data-brand on brand name elements. */
 export const meta: Check = ({ source }) => {
@@ -52,6 +88,24 @@ export const meta: Check = ({ source }) => {
       'No element has data-brand. Put data-brand on every element whose text is the brand name (header, footer, legal pages), e.g. <a href="/" data-brand>Harbor Funding</a>, so the dashboard can change the brand name on every page.',
       'ไม่พบ data-brand กรุณาใส่ data-brand ในทุกองค์ประกอบที่แสดงชื่อแบรนด์ (header, footer, หน้า legal) เช่น <a href="/" data-brand>Harbor Funding</a> เพื่อให้แดชบอร์ดเปลี่ยนชื่อแบรนด์ได้ทุกหน้า'));
   }
+  const brandName = templateBrandName(source.files);
+  if (brandName) {
+    const counts: string[] = [];
+    let total = 0;
+    for (const [path, bytes] of source.files) {
+      if (!/\.html?$/i.test(path)) continue;
+      const count = brandTextCount(parseHtml(decode(bytes)), brandPattern(brandName));
+      if (count > 0) counts.push(`${path}: ${count}`);
+      total += count;
+    }
+    if (total > 0) {
+      const where = counts.join(", ");
+      issues.push(metaIssue("",
+        `The template brand name "${brandName}" appears ${total} time(s) outside data-brand (${where}). The install replaces it with each brand's name; wrap each mention in <span data-brand>${brandName}</span> so the page reads the same before and after.`,
+        `ชื่อแบรนด์ของเทมเพลต "${brandName}" ปรากฏ ${total} ครั้งนอก data-brand (${where}) การติดตั้งจะแทนที่ด้วยชื่อของแต่ละแบรนด์ กรุณาครอบแต่ละจุดด้วย <span data-brand>${brandName}</span>`));
+    }
+  }
+
   for (const { path, element } of slots) {
     if (element.querySelectorAll("*").length > 0) {
       issues.push(metaIssue(path,

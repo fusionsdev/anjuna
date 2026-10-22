@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anjuna/brand-runtime": "workspace:*",
     "@anjuna/contracts": "workspace:*",
     "@anjuna/factory-db": "workspace:*",
     "fflate": "^0.8.3"
