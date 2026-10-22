@@ -1,6 +1,6 @@
 /** The body of each wizard step. All state lives in BrandWizard; these are controlled inputs. */
 import { COPY_KEYWORD_MARKER, COPY_LIMITS, COPY_TEXT_MAX, SITE_TEXT_LIMITS, type CopyField, type TemplateTextDefaults, type TemplateVersionSummary } from "@anjuna/contracts";
-import type { WizardDefaultsResponse, ZoneCheckResponse } from "../../shared/wizard";
+import type { ZoneCheckResponse } from "../../shared/wizard";
 import { FIELD_LABEL } from "./messages";
 import { copyFieldErrors, visibleCopyLength, type FieldErrors, type FieldKey, type WizardForm } from "./steps";
 
@@ -71,30 +71,6 @@ export function BrandPanel({ form, errors, set, hasDraft, zone, onCheckZone }: F
       <Field field="phone" {...common} required type="tel" placeholder="+1 (555) 010-0199" />
       <Field field="address" {...common} required placeholder="12 Main St, Austin, TX 78701" />
       <Field field="email" {...common} required type="email" placeholder="help@example.com" />
-    </div>
-  );
-}
-
-export function ProductPanel({ form, errors, set, defaults }: FieldsProps & { defaults: WizardDefaultsResponse | null }) {
-  const common = { form, errors, set };
-  return (
-    <div className="wizard-panel">
-      <Field field="term_min" {...common} required inputMode="numeric" />
-      <Field field="term_max" {...common} required inputMode="numeric" />
-      <Field field="apr_max" {...common} required inputMode="decimal" />
-      <div className="wizard-field">
-        <label>
-          {FIELD_LABEL.representative_example}
-          <textarea required rows={3} maxLength={500} value={form.representative_example} aria-invalid={errors.representative_example ? true : undefined} onChange={(e) => set("representative_example", e.target.value)} />
-        </label>
-        {errors.representative_example && <p className="error small" role="alert">{errors.representative_example}</p>}
-      </div>
-      <Field field="unsupported_states" {...common} required hint="ต้องมี NY, AR, VT, WV (Must include NY, AR, VT, WV)" />
-      <section className="section" aria-label="ค่าของ tenant (Tenant defaults, read-only)">
-        <h3>ค่าของ tenant (Tenant defaults, read-only)</h3>
-        <p>ช่วงยอดเงิน (Amount buckets): <b>{defaults ? defaults.amount_buckets.join(", ") : "-"}</b></p>
-        <p>เส้นทางฟอร์ม (Form route): <b>{defaults ? defaults.form_route : "-"}</b></p>
-      </section>
     </div>
   );
 }

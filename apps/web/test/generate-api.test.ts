@@ -16,9 +16,9 @@ beforeEach(async () => {
   ]);
 });
 
+// No disclosures: the wizard no longer asks for term, APR or loan rules, and the template carries its own text.
 const profile = {
   contact: { phone: "+1 555 0100", address: "1 Main St, Dallas TX", email: "help@generate.example" },
-  disclosures: { term_min_months: 3, term_max_months: 36, apr_max: 35.99 },
 };
 
 async function draft(domain: string, withProfile: Record<string, unknown> | undefined = profile): Promise<string> {
@@ -52,6 +52,16 @@ describe("POST /api/brands/:id/generate", () => {
       .toEqual([{ kind: "install", status: "running" }]);
   });
 
+  it("installs a draft with no disclosures, and an older draft that still holds them", async () => {
+    const bare = await draft("generate-bare.example");
+    expect(JSON.parse((await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id=?1").bind(bare).first<{ config_json: string }>())!.config_json).profile.disclosures).toBeUndefined();
+    const old = await draft("generate-old.example", { ...profile, disclosures: { term_min_months: 3, term_max_months: 36, apr_max: 35.99 } });
+    const f = factory();
+    expect((await generate(bare, f.env)).status).toBe(201);
+    expect((await generate(old, f.env)).status).toBe(201);
+    expect(f.dispatched).toHaveLength(2);
+  });
+
   it("is idempotent: a second call while the install runs returns the same install id and dispatches nothing", async () => {
     const brandId = await draft("generate-twice.example");
     const f = factory();
@@ -83,10 +93,7 @@ describe("POST /api/brands/:id/generate", () => {
     expect(response.status).toBe(422);
     const body = await response.json() as { error: string; issues: Array<{ field: string; message: string }> };
     expect(body.error).toBe("draft_incomplete");
-    expect(body.issues.map((issue) => issue.field)).toEqual([
-      "profile.contact.address", "profile.contact.email",
-      "profile.disclosures.term_min_months", "profile.disclosures.term_max_months", "profile.disclosures.apr_max",
-    ]);
+    expect(body.issues.map((issue) => issue.field)).toEqual(["profile.contact.address", "profile.contact.email"]);
     expect(body.issues[0]!.message).toBe("ต้องระบุที่อยู่ (Address is required)");
     expect(f.dispatched).toEqual([]);
     expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM installs WHERE brand_id=?1").bind(brandId).first()).toEqual({ n: 0 });

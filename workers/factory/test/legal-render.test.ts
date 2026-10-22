@@ -34,24 +34,36 @@ describe("renderBrand legal fill", () => {
     expect(() => assertCleanBrandBytes(files, "brand-test")).not.toThrow();
   });
 
-  it("uses neutral missing lines for partial disclosures, preserving a zero APR", async () => {
+  it("keeps the template text of slots the profile leaves empty, preserving a zero APR", async () => {
     const data = { profile: { contact: { email: "help@harbor.example" }, disclosures: { apr_max: 0, term_min_months: 6 } } };
     const { files } = await renderBrand(site(), new Map(), "brand-test", "rev-1", data);
     const output = dec.decode(files.get("terms/index.html")!);
     expect(output).toContain(">0%</span>");
     expect(output).toContain(">6 months</span>");
     expect(output).toContain(">help@harbor.example</span>");
-    expect(output.match(/Not provided\./g)).toHaveLength(keys.length - 3);
+    expect(output.match(/\[Placeholder\]/g)).toHaveLength(keys.length - 3);
+    expect(output).not.toContain("Not provided");
     expect(output).not.toContain("35.99");
     expect(output).not.toContain("36 months");
     expect(output).not.toContain("NY, AR");
   });
 
-  it.each([undefined, {}, { profile: {} }, { profile: { disclosures: {}, contact: {} } }])("uses neutral lines for empty or absent profile: %j", async (data) => {
-    const { files } = await renderBrand(site(), new Map(), "brand-test", "rev-1", data);
-    const output = dec.decode(files.get("terms/index.html")!);
-    expect(output.match(/Not provided\./g)).toHaveLength(keys.length);
-    expect(output).not.toMatch(/\d+%|\d+ months|\[Placeholder\]/);
+  it.each([undefined, {}, { profile: {} }, { profile: { disclosures: {}, contact: {} } }])("keeps the template's own text byte for byte for an empty or absent profile: %j", async (data) => {
+    const template = site();
+    const { files } = await renderBrand(template, new Map(), "brand-test", "rev-1", data);
+    for (const path of ["terms/index.html", "/disclosures/index.html"]) {
+      expect(files.get(path)).toEqual(template.get(path));
+      expect(dec.decode(files.get(path)!)).not.toContain("Not provided");
+    }
+  });
+
+  it("keeps the template's own APR, term and state text when the draft has contact but no disclosures", async () => {
+    const own = '<p>APR <span data-legal="disclosures.apr_max">up to 35.99% APR</span></p><p>Term <span data-legal="disclosures.term_range">3 to 36 months</span></p>'
+      + '<p>Example <span data-legal="disclosures.representative_example">A $1,000 loan over 12 months.</span></p>'
+      + '<p>States <span data-legal="disclosures.unsupported_states">NY, AR, VT, WV</span></p><p>Email <span data-legal="contact.email">old@template.example</span></p>';
+    const template = new Map([["terms/index.html", enc.encode(own)]]);
+    const { files } = await renderBrand(template, new Map(), "brand-test", "rev-1", { profile: { contact: { email: "help@harbor.example" } } });
+    expect(dec.decode(files.get("terms/index.html")!)).toBe(own.replace("old@template.example", "help@harbor.example"));
   });
 
   it("escapes HTML and entity-looking strings as literal text", async () => {

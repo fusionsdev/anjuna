@@ -10,8 +10,8 @@ const owner = { id: "owner", email: "owner@example.test", role: "owner" as const
 const employee = { ...owner, id: "employee", role: "employee" as const };
 const NOW = "2026-10-22T00:00:00.000Z";
 const CONTACT = { phone: "+1 (555) 010-0199", address: "12 Main St, Austin, TX 78701", email: "help@maplecash.test" };
-const EXAMPLE = "A 12 month loan of $1,000 at 29.99% APR costs about $96 a month.";
-const DISCLOSURES = { term_min_months: 3, term_max_months: 36, apr_max: 35.99, representative_example: EXAMPLE, unsupported_states: ["NY", "AR", "VT", "WV"] };
+/** What a draft saved before FUS-366 holds. The wizard no longer writes or shows it, and keeps it when it saves. */
+const OLD_DISCLOSURES = { term_min_months: 3, term_max_months: 36, apr_max: 35.99, representative_example: "A 12 month loan of $1,000 at 29.99% APR costs about $96 a month.", unsupported_states: ["NY", "AR", "VT", "WV"] };
 const ADS = { google_ads_account: "1234567890", google_conversion_action: "555", adkit_project: "maple-ads", microsoft_ads_account: "654321" };
 const summary = (id: string, name: string, status: string, extra: object = {}) => ({
   template_version_id: id, template_id: `tpl-${id}`, name, version: 1, status, submitted_by_label: "Somchai", created_at: NOW, sealed_at: NOW,
@@ -118,46 +118,35 @@ describe("per-step validation", () => {
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(0);
   });
 
-  it("keeps the Product step until the representative example is typed", async () => {
+  it("goes from the Brand step straight to Template: no Product step and no APR, term or loan-rule field", async () => {
     setup();
     await fillBrand();
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "1. แบรนด์ (Brand)", "2. เทมเพลต (Template)", "3. ข้อความ (Copy)", "4. ติดตามผล (Tracking)", "5. ตรวจสอบ (Review)",
+    ]);
     next();
-    await heading("ผลิตภัณฑ์ (Product)");
-    next();
-    expect((await screen.findByRole("alert")).textContent).toBe("ตัวอย่างการคำนวณ (Representative example): จำเป็นต้องกรอก (Required)");
-    expect(patches()).toHaveLength(0);
+    await heading("เทมเพลต (Template)");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByText(/APR|Representative example|Unsupported states|Min term|Max term/)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "ผลิตภัณฑ์ (Product)" })).toBeNull();
   });
 });
 
-describe("six-step flow to Generate", () => {
+describe("five-step flow to Generate", () => {
   it("creates the draft on the first Next, PATCHes on every later Next, then installs the saved revision", async () => {
     const { onGenerated } = setup();
     await fillBrand();
     next();
 
     // Step 1 -> 2: one POST creates the draft with the contact, the first approved template and the typed keyword.
-    await heading("ผลิตภัณฑ์ (Product)");
+    await heading("เทมเพลต (Template)");
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(1);
     expect(sent("POST", "/api/brands/drafts")[0]!.body).toEqual({
       name: "Maple Cash", domain: "Maple.Test", keyword_default: "quick loan", template_version_id: "tv-1", profile: { contact: CONTACT },
     });
     expect(patches()).toHaveLength(0);
-    // Defaults come from BRAND_PROFILE_DEFAULTS, and the tenant values are read-only text.
-    expect(text("เทอมต่ำสุด เดือน (Min term, months)").value).toBe("3");
-    expect(text("เทอมสูงสุด เดือน (Max term, months)").value).toBe("36");
-    expect(text("APR สูงสุด % (Max APR)").value).toBe("35.99");
-    expect(text("รัฐที่ไม่รองรับ (Unsupported states)").value).toBe("NY, AR, VT, WV");
-    expect(await screen.findByText("100, 200, 300")).toBeTruthy();
-    expect(screen.getByText("/request")).toBeTruthy();
-    fireEvent.change(screen.getByRole("textbox", { name: /Representative example/ }), { target: { value: EXAMPLE } });
-    next();
 
-    // Step 2 -> 3: the PATCH carries the contact saved before plus the disclosures.
-    await heading("เทมเพลต (Template)");
-    expect(patches()).toHaveLength(1);
-    expect(patches()[0]!.body).toEqual({ profile: { contact: CONTACT, disclosures: DISCLOSURES } });
-
-    // Step 3: only approved templates are cards, with a thumbnail and the brands-using count.
+    // Step 2: only approved templates are cards, with a thumbnail and the brands-using count.
     const cards = [...document.querySelectorAll(".template-card")];
     expect(cards).toHaveLength(2);
     expect(cards.map((c) => c.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
@@ -167,10 +156,10 @@ describe("six-step flow to Generate", () => {
     fireEvent.click(screen.getByRole("button", { name: /Copperline/ }));
     next();
 
-    // Step 3 -> 4: a changed template is its own PATCH, with no profile in it.
+    // Step 2 -> 3: a changed template is its own PATCH, with no profile in it.
     await heading("ข้อความ (Copy)");
-    expect(patches()).toHaveLength(2);
-    expect(patches()[1]!.body).toEqual({ template_version_id: "tv-2" });
+    expect(patches()).toHaveLength(1);
+    expect(patches()[0]!.body).toEqual({ template_version_id: "tv-2" });
     // Template text is the placeholder of each field.
     await waitFor(() => expect(text("ชื่อหน้า (Page title)").placeholder).toBe("Harbor | Funding Options"));
     expect(text("ชื่อแบรนด์บนเว็บ (Site brand name)").placeholder).toBe("Maple Cash");
@@ -179,20 +168,25 @@ describe("six-step flow to Generate", () => {
     fill("ปุ่ม CTA (Button text)", "Check my rate");
     next();
 
-    // Step 4 -> 5.
+    // Step 3 -> 4: the profile holds the contact and the copy, and no disclosures.
     await heading("ติดตามผล (Tracking)");
-    expect(patches()).toHaveLength(3);
-    expect(patches()[2]!.body).toEqual({ profile: { contact: CONTACT, disclosures: DISCLOSURES, copy: { site_title: "Maple Cash | Quick Funding", h1: "{{keyword}} in minutes", cta: "Check my rate" } } });
+    expect(patches()).toHaveLength(2);
+    expect(patches()[1]!.body).toEqual({ profile: { contact: CONTACT, copy: { site_title: "Maple Cash | Quick Funding", h1: "{{keyword}} in minutes", cta: "Check my rate" } } });
     fill("บัญชี Google Ads (Google Ads account)", ADS.google_ads_account);
     fill("รหัส conversion action (Conversion action)", ADS.google_conversion_action);
     fill("โปรเจกต์ AdKit (AdKit project)", ADS.adkit_project);
     fill("บัญชี Microsoft Ads (Microsoft Ads account)", ADS.microsoft_ads_account);
     next();
 
-    // Step 5 -> Review: summary, zone pre-check and the preview iframe.
+    // Step 4 -> Review: summary, zone pre-check and the preview iframe.
     await heading("ตรวจสอบ (Review)");
-    expect(patches()).toHaveLength(4);
-    expect((patches()[3]!.body.profile as { ads: object }).ads).toEqual(ADS);
+    expect(patches()).toHaveLength(3);
+    expect((patches()[2]!.body.profile as { ads: object }).ads).toEqual(ADS);
+    expect(patches().every((patch) => !JSON.stringify(patch.body).includes("disclosures"))).toBe(true);
+    // The tenant values stay read-only in the summary, which lists no term, APR or state row.
+    expect(await screen.findByText("100, 200, 300")).toBeTruthy();
+    expect(screen.getByText("/request")).toBeTruthy();
+    expect(screen.queryByText(/Max APR|Term, months|Unsupported states/)).toBeNull();
     await waitFor(() => expect(sent("POST", "/api/wizard/zone-check")).toHaveLength(1));
     expect(sent("POST", "/api/wizard/zone-check")[0]!.body).toEqual({ domain: "maple.test", brand_id: "brand_new" });
     expect(await screen.findByText(/Zone maple.test is active/)).toBeTruthy();
@@ -203,9 +197,9 @@ describe("six-step flow to Generate", () => {
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }));
     await waitFor(() => expect(onGenerated).toHaveBeenCalledWith("brand_new", "ins_1"));
     expect(sent("POST", "/api/brands/brand_new/generate")[0]!.body).toEqual({});
-    // One create, four PATCHes, one install: nothing else wrote.
+    // One create, three PATCHes, one install: nothing else wrote.
     expect(requests.filter((r) => r.method !== "GET" && r.path !== "/api/wizard/zone-check").map((r) => `${r.method} ${r.path}`)).toEqual([
-      "POST /api/brands/drafts", ...Array(4).fill("PATCH /api/brands/brand_new/draft"), "POST /api/brands/brand_new/generate",
+      "POST /api/brands/drafts", ...Array(3).fill("PATCH /api/brands/brand_new/draft"), "POST /api/brands/brand_new/generate",
     ]);
   });
 
@@ -213,7 +207,7 @@ describe("six-step flow to Generate", () => {
     setup();
     await fillBrand();
     next();
-    await heading("ผลิตภัณฑ์ (Product)");
+    await heading("เทมเพลต (Template)");
     back();
     await heading("แบรนด์ (Brand)");
     expect(text("ชื่อแบรนด์ (Brand name)").value).toBe("Maple Cash");
@@ -229,11 +223,11 @@ describe("six-step flow to Generate", () => {
     setup();
     await fillBrand();
     next();
-    await heading("ผลิตภัณฑ์ (Product)");
+    await heading("เทมเพลต (Template)");
     back();
     fill("ชื่อแบรนด์ (Brand name)", "Maple Cash Co");
     next();
-    await heading("ผลิตภัณฑ์ (Product)");
+    await heading("เทมเพลต (Template)");
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(1);
     // The keyword is the one the server normalized and returned.
     expect(patches()[0]!.body).toEqual({ name: "Maple Cash Co", keyword_default: "Quick Loan", profile: { contact: CONTACT } });
@@ -249,12 +243,12 @@ describe("six-step flow to Generate", () => {
     // Retry works: the button is not stuck busy.
     routes.set("POST /api/brands/drafts", () => json(heldBody(), 201));
     next();
-    await heading("ผลิตภัณฑ์ (Product)");
+    await heading("เทมเพลต (Template)");
   });
 
   it("shows the first Generate issue when the server finds the draft incomplete", async () => {
     routes.set("POST /api/brands/brand_new/generate", () => json({ error: "draft_incomplete", issues: [{ field: "profile.contact.email", message: "ต้องระบุอีเมล (Email is required)" }] }, 422));
-    hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} });
+    hold({ contact: CONTACT, copy: {}, ads: {} });
     const { onGenerated } = setup(employee, { brandId: "brand_new" });
     await heading("ตรวจสอบ (Review)");
     await screen.findByText(/Zone maple.test is active/);
@@ -265,7 +259,7 @@ describe("six-step flow to Generate", () => {
 
   it("reports a refused install, stays on Review and allows a retry", async () => {
     routes.set("POST /api/brands/brand_new/generate", () => json({ error: "lifecycle_operation_active", active_install_id: "ins_0" }, 409));
-    hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} });
+    hold({ contact: CONTACT, copy: {}, ads: {} });
     const { onGenerated } = setup(employee, { brandId: "brand_new" });
     await heading("ตรวจสอบ (Review)");
     await screen.findByText(/Zone maple.test is active/);
@@ -294,10 +288,10 @@ describe("resume", () => {
   });
 
   it.each<[string, object | undefined, string]>([
-    ["contact saved", { contact: CONTACT }, "ผลิตภัณฑ์ (Product)"],
-    ["contact and disclosures saved", { contact: CONTACT, disclosures: DISCLOSURES }, "เทมเพลต (Template)"],
-    ["copy saved", { contact: CONTACT, disclosures: DISCLOSURES, copy: {} }, "ติดตามผล (Tracking)"],
-    ["everything saved", { contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} }, "ตรวจสอบ (Review)"],
+    ["contact saved", { contact: CONTACT }, "เทมเพลต (Template)"],
+    ["contact and the disclosures of an older draft saved", { contact: CONTACT, disclosures: OLD_DISCLOSURES }, "เทมเพลต (Template)"],
+    ["copy saved", { contact: CONTACT, copy: {} }, "ติดตามผล (Tracking)"],
+    ["everything saved", { contact: CONTACT, copy: {}, ads: {} }, "ตรวจสอบ (Review)"],
   ])("opens at the first incomplete step when %s", async (_name, profile, expected) => {
     resume(profile);
     await heading(expected);
@@ -305,7 +299,7 @@ describe("resume", () => {
   });
 
   it("shows the copy rules inline for a filled field, holds Next on them and leaves empty fields alone", async () => {
-    resume({ contact: CONTACT, disclosures: DISCLOSURES });
+    resume({ contact: CONTACT });
     await heading("เทมเพลต (Template)");
     next();
     await heading("ข้อความ (Copy)");
@@ -325,11 +319,11 @@ describe("resume", () => {
     expect(screen.getByText(/^21\/140/)).toBeTruthy();
     next();
     await heading("ติดตามผล (Tracking)");
-    expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, disclosures: DISCLOSURES, copy: { h1: "{{keyword}} in minutes", cta: "Check my rate" } } });
+    expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, copy: { h1: "{{keyword}} in minutes", cta: "Check my rate" } } });
   });
 
-  it("fills the form from the saved profile and the template of the draft, and saves with PATCH", async () => {
-    resume({ contact: CONTACT, disclosures: { ...DISCLOSURES, term_max_months: 48 } });
+  it("fills the form from the saved profile and the template of the draft, and saves with PATCH keeping the disclosures of an older draft", async () => {
+    resume({ contact: CONTACT, disclosures: { ...OLD_DISCLOSURES, term_max_months: 48 } });
     await heading("เทมเพลต (Template)");
     expect(screen.getByRole("button", { name: /Harbor/ }).getAttribute("aria-pressed")).toBe("true");
     next();
@@ -338,13 +332,14 @@ describe("resume", () => {
     await heading("ติดตามผล (Tracking)");
     next();
     await heading("ตรวจสอบ (Review)");
-    // The later PATCHes replace the profile with the saved groups kept.
-    expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, disclosures: { ...DISCLOSURES, term_max_months: 48 }, copy: {}, ads: {} } });
+    // The later PATCHes replace the profile with the saved groups kept. The older draft's disclosures are not shown and not dropped.
+    expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, disclosures: { ...OLD_DISCLOSURES, term_max_months: 48 }, copy: {}, ads: {} } });
+    expect(screen.queryByText(/Max APR|Term, months|Unsupported states/)).toBeNull();
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(0);
   });
 
   it("opens at a given step, as a duplicate does at the Brand step", async () => {
-    resume({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} }, { initialStep: 0 });
+    resume({ contact: CONTACT, copy: {}, ads: {} }, { initialStep: 0 });
     await heading("แบรนด์ (Brand)");
   });
 
@@ -362,8 +357,8 @@ describe("tracking step roles", () => {
   const original = PANEL_ROLE_TABLE.setDraftTracking;
   afterEach(() => { (PANEL_ROLE_TABLE as Record<string, string>).setDraftTracking = original; });
   const atTracking = (me: typeof owner | typeof employee) => {
-    hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: ADS });
-    setup(me, { brandId: "brand_new", initialStep: 4 });
+    hold({ contact: CONTACT, copy: {}, ads: ADS });
+    setup(me, { brandId: "brand_new", initialStep: 3 });
   };
 
   it("lets an employee type tracking ids today, because panel-roles allows it", async () => {
@@ -399,7 +394,7 @@ describe("tracking step roles", () => {
 
 describe("zone pre-check", () => {
   const atReview = async () => {
-    hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} });
+    hold({ contact: CONTACT, copy: {}, ads: {} });
     setup(employee, { brandId: "brand_new" });
     await heading("ตรวจสอบ (Review)");
   };
@@ -446,14 +441,14 @@ describe("zone pre-check", () => {
     expect(await screen.findByText(/ยังไม่ active/)).toBeTruthy();
     expect(sent("POST", "/api/wizard/zone-check")[0]!.body).toEqual({ domain: "Maple.Test" });
     next();
-    await heading("ผลิตภัณฑ์ (Product)");
+    await heading("เทมเพลต (Template)");
   });
 });
 
 describe("template step without approved templates", () => {
   it("explains it and keeps Next off", async () => {
     routes.set("GET /api/templates", () => json({ templates: [TEMPLATES[2]] }));
-    hold({ contact: CONTACT, disclosures: DISCLOSURES });
+    hold({ contact: CONTACT });
     setup(employee, { brandId: "brand_new" });
     await heading("เทมเพลต (Template)");
     expect(screen.getByRole("status").textContent).toContain("ยังไม่มีเทมเพลตที่อนุมัติ");
@@ -497,7 +492,7 @@ describe("entry points on the Lifecycle screen", () => {
   });
 
   it("starts the install from Generate and returns to the list with the brand selected", async () => {
-    hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} });
+    hold({ contact: CONTACT, copy: {}, ads: {} });
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "Maple Cash" });
     fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
@@ -522,7 +517,7 @@ describe("entry points on the Lifecycle screen", () => {
 
   it("duplicates a brand with a new domain and opens the copy at the Brand step", async () => {
     routes.set("POST /api/brands/brand_live/duplicate", () => json({ ...draftBody({ name: "Copy Cash" }), duplicated_from: "brand_live" }, 201));
-    hold({ contact: CONTACT, disclosures: DISCLOSURES, copy: {}, ads: {} });
+    hold({ contact: CONTACT, copy: {}, ads: {} });
     held.name = "Copy Cash";
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "Maple Cash" });

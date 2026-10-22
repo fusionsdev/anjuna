@@ -13,11 +13,6 @@ export const FIELD_LABEL: Record<FieldKey, string> = {
   phone: "โทรศัพท์ (Phone)",
   address: "ที่อยู่ (Address)",
   email: "อีเมล (Email)",
-  term_min: "เทอมต่ำสุด เดือน (Min term, months)",
-  term_max: "เทอมสูงสุด เดือน (Max term, months)",
-  apr_max: "APR สูงสุด % (Max APR)",
-  representative_example: "ตัวอย่างการคำนวณ (Representative example)",
-  unsupported_states: "รัฐที่ไม่รองรับ (Unsupported states)",
   template_version_id: "เทมเพลต (Template)",
   brand_name: "ชื่อแบรนด์บนเว็บ (Site brand name)",
   site_title: "ชื่อหน้า (Page title)",
@@ -46,10 +41,6 @@ const FORMAT: Partial<Record<FieldKey, string>> = {
   keyword: "ไม่มีตัวอักษรเหลือหลังจัดรูปแบบ (Nothing is left after cleanup)",
   phone: "ใช้ตัวเลข ช่องว่าง และ + - ( ) เท่านั้น ยาว 7 ถึง 20 ตัว (Digits, spaces and + - ( ) only, 7 to 20 characters)",
   email: "อีเมลไม่ถูกต้อง (Invalid email)",
-  term_min: "ต้องเป็นจำนวนเต็ม 1 ถึง 120 เดือน (Whole number, 1 to 120 months)",
-  term_max: "ต้องเป็นจำนวนเต็ม 1 ถึง 120 เดือน (Whole number, 1 to 120 months)",
-  apr_max: "ต้องเป็นตัวเลข 0 ถึง 999.99 ทศนิยมไม่เกิน 2 ตำแหน่ง (Number from 0 to 999.99, at most 2 decimals)",
-  unsupported_states: "ใช้รหัสรัฐตัวพิมพ์ใหญ่ 2 ตัว คั่นด้วยจุลภาค เช่น NY, CA (Two-letter uppercase codes separated by commas)",
   template_version_id: "เลือกเทมเพลตที่อนุมัติแล้ว (Pick an approved template)",
   google_ads_account: "ต้องเป็นเลข 10 หลักไม่มีขีด (10 digits, no dashes)",
   google_conversion_action: "ต้องเป็นตัวเลข 1 ถึง 20 หลัก (1 to 20 digits)",
@@ -65,11 +56,8 @@ export function describeIssue(field: FieldKey, issue: IssueLike): string {
     if (/forbidden platform string/i.test(message)) return "มีคำที่ไม่อนุญาต (Contains a forbidden word)";
     if (/personal loan/i.test(message)) return 'ห้ามใช้คำว่า "personal loan" (Do not use the words "personal loan")';
     if (/plain text/i.test(message)) return 'ใช้ข้อความธรรมดา ห้ามมี < > " (Plain text only, no < > ")';
-    if (/must not exceed/i.test(message)) return "เทอมต่ำสุดต้องไม่เกินเทอมสูงสุด (Min term must not exceed max term)";
-    if (/must include/i.test(message)) return `ต้องมี ${/include (.+)$/.exec(message)?.[1] ?? "รัฐที่กำหนด"} (Must include ${/include (.+)$/.exec(message)?.[1] ?? "the required states"})`;
-    if (/must be unique/i.test(message)) return "รหัสรัฐซ้ำกัน (Duplicate state code)";
     if (/www hostname/i.test(message)) return "ใช้โดเมนหลัก ไม่ใช่ www (Use the apex domain, not www)";
-    if (issue.code === "too_big" && issue.maximum !== undefined && field !== "term_min" && field !== "term_max" && field !== "apr_max") {
+    if (issue.code === "too_big" && issue.maximum !== undefined) {
       return `ยาวเกินไป สูงสุด ${String(issue.maximum)} ตัวอักษร (Too long, at most ${String(issue.maximum)} characters)`;
     }
     return FORMAT[field] ?? `ข้อมูลไม่ถูกต้อง (Invalid): ${message}`;
