@@ -8,8 +8,9 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   leads: ["experiment_id", "variant", "keyword"],
   click_sessions: ["experiment_id", "variant", "keyword", "brand_id"],
   consent_evidence: ["consent_text_hash", "consent_brand", "gpc"],
+  traffic_events: ["risk_score", "risk_signals"], // 0015, FUS-372
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "traffic_velocity"];
 
 interface ColumnInfo {
   cid: number;
@@ -125,6 +126,7 @@ describe("leads-db migrations", () => {
         "postback_events",
         "suppressions",
         "traffic_events",
+        "traffic_velocity",
         "v2_session_submissions",
         "v2_sessions",
         "zip_lookup",
@@ -365,6 +367,46 @@ describe("Anjuna additions", () => {
       await expect(
         env.DB.prepare("UPDATE mailing_outbox SET status = 'queued' WHERE lead_id = ?1").bind(leadId).run(),
       ).rejects.toThrow(/CHECK constraint failed/);
+    });
+  });
+
+  describe("traffic risk (0015, FUS-372)", () => {
+    const event = (score: unknown, signals: unknown) =>
+      env.DB.prepare(
+        `INSERT INTO traffic_events (event_type, session_id, hostname, occurred_at, created_at, risk_score, risk_signals)
+         VALUES ('landing_viewed', 's-risk', 'brand-a.test', ?1, ?1, ?2, ?3)`,
+      ).bind(NOW, score, signals);
+
+    it("adds nullable risk_score INTEGER and risk_signals TEXT to traffic_events", async () => {
+      const cols = (await tableInfo(env.DB, "traffic_events")).filter((c) => c.name.startsWith("risk_"));
+      expect(columnDefs(cols)).toEqual([
+        { name: "risk_score", type: "INTEGER", notnull: 0, dflt_value: null, pk: 0 },
+        { name: "risk_signals", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 },
+      ]);
+      await event(null, null).run();
+      await event(70, '["known_bot_ua","timezone_geo_mismatch"]').run();
+      const rows = await env.DB.prepare("SELECT risk_score, risk_signals FROM traffic_events WHERE session_id = 's-risk' ORDER BY id").all();
+      expect(rows.results).toEqual([
+        { risk_score: null, risk_signals: null },
+        { risk_score: 70, risk_signals: '["known_bot_ua","timezone_geo_mismatch"]' },
+      ]);
+    });
+
+    it("rejects a negative score and signals that are not JSON", async () => {
+      await expect(event(-1, "[]").run()).rejects.toThrow(/CHECK constraint failed/);
+      await expect(event(20, "known_bot_ua").run()).rejects.toThrow(/CHECK constraint failed/);
+    });
+
+    it("counts telemetry per hour and IP hash, never a raw IP", async () => {
+      const bump = (hash: string) =>
+        env.DB.prepare(
+          `INSERT INTO traffic_velocity (hour, ip_hash, events) VALUES ('2026-10-02T00', ?1, 1)
+           ON CONFLICT (hour, ip_hash) DO UPDATE SET events = events + 1 RETURNING events`,
+        ).bind(hash).first<{ events: number }>();
+      const hash = "f".repeat(64);
+      expect(await bump(hash)).toEqual({ events: 1 });
+      expect(await bump(hash)).toEqual({ events: 2 });
+      await expect(bump("203.0.113.9")).rejects.toThrow(/CHECK constraint failed/);
     });
   });
 });

@@ -48,6 +48,15 @@ describe("AnalyticsForwardRequest", () => {
       expect(AnalyticsForwardRequest.safeParse({ ...golden("posthog"), path }).success).toBe(true);
     }
   });
+  it("accepts an optional visitor block and rejects a raw IP or an unknown visitor field", () => {
+    const data = golden("telemetry");
+    const visitor = { user_agent: "Mozilla/5.0", edge_timezone: "America/Chicago", ip_hash: "a".repeat(64), click_session_id: "c".repeat(43) };
+    expect(AnalyticsForwardRequest.parse({ ...data, visitor })).toEqual({ ...data, visitor });
+    expect(AnalyticsForwardRequest.safeParse({ ...data, visitor: {} }).success).toBe(true);
+    expect(AnalyticsForwardRequest.safeParse({ ...data, visitor: { ip: "203.0.113.9" } }).success).toBe(false);
+    expect(AnalyticsForwardRequest.safeParse({ ...data, visitor: { ip_hash: "203.0.113.9" } }).success).toBe(false);
+    expect(AnalyticsForwardRequest.safeParse({ ...data, visitor: { user_agent: "a".repeat(513) } }).success).toBe(false);
+  });
   it("rejects a content type with control characters", () => {
     expect(AnalyticsForwardRequest.safeParse({ ...golden("errors"), content_type: "text/plain\r\nx: y" }).success).toBe(false);
   });

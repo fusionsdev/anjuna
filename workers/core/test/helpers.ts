@@ -105,7 +105,7 @@ export async function createHarness(options: {
         await db.batch([db.prepare("DROP VIEW leads"), db.prepare("ALTER TABLE fixture_leads RENAME TO leads")]);
         hiddenOrphan = false;
       }
-      await db.batch(["continuations", "mailing_outbox", "consent_evidence", "click_sessions", "zip_lookup", "conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials", "traffic_events", "client_errors"]
+      await db.batch(["continuations", "mailing_outbox", "consent_evidence", "click_sessions", "zip_lookup", "conversion_uploads", "postback_events", "leads", "brand_runtime", "account_credentials", "traffic_events", "traffic_velocity", "client_errors"]
         .map((table) => db.prepare(`DELETE FROM ${table}`)));
       await factory.prepare("DELETE FROM audit_log").run();
     },

@@ -1,0 +1,156 @@
+{
+  "signals": [
+    {
+      "id": "known_bot_ua",
+      "label": "เครื่องดูเป็นบอท (user agent)",
+      "weight": 50,
+      "count": 18
+    },
+    {
+      "id": "timezone_geo_mismatch",
+      "label": "เขตเวลาไม่ตรงกับประเทศ",
+      "weight": 20,
+      "count": 9
+    },
+    {
+      "id": "rapid_repeat_session",
+      "label": "คลิกซ้ำถี่เกิน 25 ครั้ง/ชม.",
+      "weight": 30,
+      "count": 4
+    }
+  ],
+  "domains": [
+    {
+      "hostname": "brand-a.example",
+      "visits": 100,
+      "high_risk": 15
+    },
+    {
+      "hostname": "brand-b.example",
+      "visits": 60,
+      "high_risk": 3
+    }
+  ],
+  "hours": [
+    {
+      "hour": 0,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 1,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 2,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 3,
+      "visits": 40,
+      "high_risk": 12
+    },
+    {
+      "hour": 4,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 5,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 6,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 7,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 8,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 9,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 10,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 11,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 12,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 13,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 14,
+      "visits": 120,
+      "high_risk": 6
+    },
+    {
+      "hour": 15,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 16,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 17,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 18,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 19,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 20,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 21,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 22,
+      "visits": 0,
+      "high_risk": 0
+    },
+    {
+      "hour": 23,
+      "visits": 0,
+      "high_risk": 0
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import {
   InMemorySubmitErrorCounts,
   RecordingNotifier,
   brandsWithoutPostbacks,
+  clickRisk,
   conversionStalled,
   rejectRateByBrand,
   runAlerts,
@@ -202,8 +203,51 @@ describe("rejectRateByBrand", () => {
   });
 });
 
+/** `visits` visits on `hostname`, the first `high` of them high risk (score 50, two events each). */
+async function seedVisits(hostname: string, visits: number, high: number, created_at = "2026-10-01T10:00:00.000Z") {
+  const stmt = env.DB.prepare(
+    `INSERT INTO traffic_events (event_type, session_id, hostname, occurred_at, created_at, risk_score, risk_signals)
+     VALUES ('landing_viewed', ?1, ?2, ?3, ?3, ?4, ?5)`,
+  );
+  const stmts = [];
+  for (let i = 0; i < visits; i++) {
+    const session = `${hostname}-${created_at}-${i}`;
+    stmts.push(stmt.bind(session, hostname, created_at, 0, "[]"));
+    stmts.push(i < high ? stmt.bind(session, hostname, created_at, 50, '["known_bot_ua"]') : stmt.bind(session, hostname, created_at, 20, '["timezone_geo_mismatch"]'));
+  }
+  await env.DB.batch(stmts);
+}
+
+describe("clickRisk", () => {
+  it("alerts a hostname at 20% high-risk visits with at least 50 visits, and counts a visit once", async () => {
+    await env.DB.prepare("DELETE FROM traffic_events").run();
+    await seedVisits("a.example", 50, 10); // 20%: alert
+    await seedVisits("b.example", 50, 9); // 18%: below the rate
+    await seedVisits("c.example", 49, 49); // 100% of 49: below the visit floor
+    await seedVisits("d.example", 100, 100, "2026-09-30T23:59:59.000Z"); // outside the 24-hour window
+
+    const r = await clickRisk(env.DB, { now: NOW });
+    expect(r).toEqual({
+      state: "alert",
+      detail: { window_hours: 24, alert_at: 0.2, min_visits: 50, hostnames: [{ hostname: "a.example", visits: 50, high_risk: 10, rate: 0.2 }] },
+    });
+  });
+
+  it("stays ok below the threshold and with no telemetry", async () => {
+    await env.DB.prepare("DELETE FROM traffic_events").run();
+    expect((await clickRisk(env.DB, { now: NOW })).state).toBe("ok");
+    await seedVisits("b.example", 50, 9);
+    await env.DB.prepare("INSERT INTO traffic_events (event_type, session_id, hostname, occurred_at, created_at) VALUES ('landing_viewed', 'legacy', 'b.example', ?1, ?1)").bind("2026-10-01T10:00:00.000Z").run();
+    const r = await clickRisk(env.DB, { now: NOW });
+    expect(r.state).toBe("ok");
+    expect(r.detail.hostnames).toEqual([]);
+  });
+});
+
 describe("runAlerts", () => {
-  it("returns all four checks and validates against the report schema", async () => {
+  it("returns all five checks and validates against the report schema", async () => {
+    await env.DB.prepare("DELETE FROM traffic_events").run();
+    await seedVisits("risky.example", 60, 30);
     await truncateLeads(env.DB);
     await env.DB.batch([
       insertLead(env.DB, { lead_id: "ra-1", brand: "brand-nopb", variant: null, keyword: null, created_at: "2026-10-01T10:00:00.000Z" }),
@@ -224,6 +268,7 @@ describe("runAlerts", () => {
       brands_without_postbacks: { state: "alert" },
       submit_error_rate: { state: "alert" },
       reject_rate: { state: "alert" },
+      click_risk: { state: "alert" },
     });
     expect(AlertsReport.safeParse(report).success).toBe(true);
 

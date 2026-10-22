@@ -1,4 +1,4 @@
-import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, UpdateBrandDraftResponse } from "@anjuna/contracts";
+import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
 import type {
@@ -160,4 +160,9 @@ export const api = {
   },
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
+  trafficRisk: (period: RiskPeriod) =>
+    request<unknown>("GET", `/api/traffic/risk?${new URLSearchParams({ period })}`).then((body) => TrafficRiskResponse.parse(body)),
+  /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */
+  trafficRiskExportUrl: (period: RiskPeriod, hostname?: string) =>
+    `/api/traffic/risk/export?${new URLSearchParams({ period, ...(hostname ? { hostname } : {}) })}`,
 };

@@ -19,6 +19,25 @@ describe("ADR-0004 forwarding", () => {
     expect(await answer(response)).toEqual(kind === "posthog" ? POSTHOG_OK : EMPTY_OK);
     expect(core.analytics).toEqual([{ kind, path: suffix, brand_id: "brand-a", hostname: "brand-a.example", content_type: "application/json", body }]);
   });
+  it("forwards telemetry visitor facts for risk scoring: UA, a hashed IP and the click cookie, never the raw IP (FUS-372)", async () => {
+    const { get, core } = setup();
+    const click = "c".repeat(43);
+    await get("/api/telemetry", { method: "POST", body: "{}", headers: { "user-agent": "Googlebot/2.1", "cf-connecting-ip": "203.0.113.9", cookie: `_vc=${click}` } });
+    const expectedHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("203.0.113.9:brand-a"))), (b) => b.toString(16).padStart(2, "0")).join("");
+    expect(core.analytics[0]!.visitor).toEqual({ user_agent: "Googlebot/2.1", ip_hash: expectedHash, click_session_id: click });
+    expect(JSON.stringify(core.analytics)).not.toContain("203.0.113.9");
+    await get("/api/errors", { method: "POST", body: "{}", headers: { "user-agent": "Googlebot/2.1", "cf-connecting-ip": "203.0.113.9" } });
+    expect(core.analytics[1]!.visitor).toBeUndefined();
+  });
+  it("answers a bot user agent exactly like a browser (AGENTS.md rule 3)", async () => {
+    const { get } = setup();
+    const snapshot = async (userAgent: string) => {
+      const response = await get("/api/telemetry", { method: "POST", body: '{"event_type":"landing_viewed","session_id":"s"}', headers: { "user-agent": userAgent, "cf-connecting-ip": "203.0.113.9" } });
+      return [response.status, Object.fromEntries(response.headers), await response.text()];
+    };
+    expect(await snapshot("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"))
+      .toEqual(await snapshot("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1"));
+  });
   it("answers a proxied PostHog POST with the static JSON success PostHog's capture endpoint sends", async () => {
     const { get } = setup();
     const response = await get("/_t/e/", { method: "POST", body: "{}" });

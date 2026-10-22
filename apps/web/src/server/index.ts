@@ -33,6 +33,7 @@ import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleTemplateRoute } from "./templates.js";
+import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleWizardRoute } from "./wizard.js";
 
 const json = (status: number, body: unknown): Response =>
@@ -292,6 +293,9 @@ async function route(
     if (!g.ok) return forbidden(g.error, rid);
     return fromCore(await callCore(env, ctx, { endpoint: "alertsReport", query: url.searchParams }));
   }
+
+  const trafficRisk = await handleTrafficRiskRoute(request, env, url, path, ctx);
+  if (trafficRisk) return trafficRisk;
 
   if (path === "/api/mailing" && method === "GET") {
     const g = authorize("mailingStatus", ctx.actor_role);

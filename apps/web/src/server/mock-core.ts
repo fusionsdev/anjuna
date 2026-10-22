@@ -14,6 +14,8 @@ import {
   AlertsQuery,
   AuditQuery,
   FunnelQuery,
+  TrafficRiskExportQuery,
+  TrafficRiskQuery,
   adminContextFromHeaders,
   authorize,
   matchAdminRoute,
@@ -30,6 +32,8 @@ import alertsReport from "@anjuna/contracts/fixtures/admin/alerts.response.json"
 import brandsList from "@anjuna/contracts/fixtures/admin/brands.list.response.json";
 import funnelReport from "@anjuna/contracts/fixtures/admin/funnel.response.json";
 import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.json";
+import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.json";
+import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -155,6 +159,9 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "alertsReport") {
     const q = AlertsQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "trafficRisk" || endpoint === "trafficRiskExport") {
+    const q = (endpoint === "trafficRisk" ? TrafficRiskQuery : TrafficRiskExportQuery).safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   }
 
   // 4. field groups
@@ -265,6 +272,12 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, alertsReport);
     case "mailingStatus":
       return json(200, mailingStatus);
+    case "trafficRisk":
+      return json(200, trafficRisk);
+    case "trafficRiskExport": {
+      const hostname = url.searchParams.get("hostname");
+      return json(200, { ...trafficRiskExport, rows: trafficRiskExport.rows.filter((row) => !hostname || row.hostname === hostname) });
+    }
     default: {
       const unexpected: never = endpoint;
       return err({ error: "not_found", resource: "route", request_id: `${rid}:${String(unexpected)}` });
