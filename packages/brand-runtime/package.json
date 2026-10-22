@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts", "./testing": "./src/testing.ts" },
+  "exports": { ".": "./src/index.ts", "./testing": "./src/testing.ts", "./page-text": "./src/page-text.ts", "./site-text": "./src/site-text.ts" },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "bundle": "bun scripts/bundle.ts",

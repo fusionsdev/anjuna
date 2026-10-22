@@ -10,7 +10,8 @@
 import { TEMPLATE_ZIP_LIMITS, TemplateTextDefaults, type AdminRequestContext } from "@anjuna/contracts";
 import { unzipSync } from "fflate";
 import { DuplicateBrandRequest, WizardDefaultsResponse, WizardDraft, ZoneCheckRequest, ZoneCheckResponse } from "../shared/wizard.js";
-import { replaceTemplateBrand } from "../shared/site-text-preview.js";
+import { PageCopyError, renderPageText, templateBrandName, type PageTextData } from "@anjuna/brand-runtime/page-text";
+import { applySiteText, type EffectiveSiteText } from "@anjuna/brand-runtime/site-text";
 import { writeFactoryAudit } from "./audit.js";
 import type { Env } from "./env.js";
 import { createDraft, decodePathSegment, storedProfile, tenantDefaults } from "./lifecycle.js";
@@ -101,8 +102,6 @@ const MIME: Record<string, string> = {
 };
 const PREVIEW_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
 
-const escapeText = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
 function toBase64(bytes: Uint8Array): string {
   let text = "";
   for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -124,14 +123,16 @@ function archivePath(ref: string, fromDir = ""): string | null {
 }
 
 /**
- * The template's index.html with the draft's site text applied the way the brand Worker applies it at serve time
- * (brand name in [data-brand], title, description, the template brand name replaced in an unedited title). It
- * needs no core runtime row. Scripts are removed; stylesheets, images and fonts of the archive are folded into the
- * document, so the page makes no request and renders under the sandbox CSP.
+ * The template's index.html as the brand serves it: renderPageText (the install render: copy, contact, template brand
+ * name) and then applySiteText (the brand Worker: brand name in [data-brand], title, description, the template brand
+ * name replaced in an unedited title). It needs no core runtime row. Scripts are removed; stylesheets, images and
+ * fonts of the archive are folded into the document, so the page makes no request and renders under the sandbox CSP.
+ * Throws PageCopyError when the saved copy breaks the copy rules, as the install does.
  */
-async function previewHtml(files: Record<string, Uint8Array>, input: { brand: string; title: string | null; description: string | null; defaults: TemplateTextDefaults | null }): Promise<string | null> {
-  const index = files["index.html"];
-  if (!index) return null;
+async function previewHtml(files: Record<string, Uint8Array>, input: { site: EffectiveSiteText; page: PageTextData }): Promise<string | null> {
+  if (!files["index.html"]) return null;
+  const pages = new Map(Object.entries(files).filter(([path]) => /\.html?$/i.test(path)).map(([path, bytes]) => [path, new TextDecoder().decode(bytes)]));
+  const index = (await renderPageText(pages, input.page)).get("index.html")!;
   let inlined = 0;
   const take = (path: string | null): Uint8Array | null => {
     const bytes = path ? files[path] : undefined;
@@ -152,19 +153,7 @@ async function previewHtml(files: Record<string, Uint8Array>, input: { brand: st
     });
     return text.replace(/<\/style/gi, "<\\/style");
   };
-  const { brand, title, description, defaults } = input;
-  const replaceBrand = (source: string) => replaceTemplateBrand(source, defaults?.brand_name, escapeText(brand));
-  const titleText = (): HTMLRewriterElementContentHandlers => {
-    let buffer = "";
-    return { text(chunk) {
-      buffer += chunk.text;
-      if (!chunk.lastInTextNode) { chunk.remove(); return; }
-      chunk.replace(replaceBrand(buffer), { html: true });
-      buffer = "";
-    } };
-  };
-  let rewriter = new HTMLRewriter()
-    .on("[data-brand]", { element(el) { el.setInnerContent(brand); } })
+  const rewriter = applySiteText(new HTMLRewriter(), input.site, "index")
     .on("script", { element(el) { el.remove(); } })
     .on('link[rel~="stylesheet"][href]', { element(el) {
       const path = archivePath(el.getAttribute("href") ?? "");
@@ -178,32 +167,16 @@ async function previewHtml(files: Record<string, Uint8Array>, input: { brand: st
       el.removeAttribute("srcset");
     } })
     .on("source[srcset]", { element(el) { el.removeAttribute("srcset"); } });
-  if (title !== null) {
-    rewriter = rewriter
-      .on("head > title", { element(el) { el.setInnerContent(title); } })
-      .on('head > meta[property="og:title"]', { element(el) { el.setAttribute("content", title); } });
-  } else if (defaults?.brand_name) {
-    rewriter = rewriter
-      .on("head > title", titleText())
-      .on('head > meta[property="og:title"]', { element(el) {
-        const content = el.getAttribute("content");
-        if (content !== null) el.setAttribute("content", replaceTemplateBrand(content, defaults.brand_name, brand));
-      } });
-  }
-  if (description !== null) {
-    rewriter = rewriter
-      .on('head > meta[name="description"]', { element(el) { el.setAttribute("content", description); } })
-      .on('head > meta[property="og:description"]', { element(el) { el.setAttribute("content", description); } });
-  }
-  return rewriter.transform(new Response(new TextDecoder().decode(index), { headers: { "content-type": "text/html; charset=utf-8" } })).text();
+  return rewriter.transform(new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } })).text();
 }
 
 async function preview(env: Env, brandId: string): Promise<Response> {
   const row = await readDraft(env, brandId);
   if (!row) return missingBrand();
   if (!editable(row)) return notEditable();
-  const template = await env.FACTORY.prepare("SELECT r2_key, text_defaults_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
-    .bind(row.template_version_id).first<{ r2_key: string; text_defaults_json: string | null }>();
+  const template = await env.FACTORY.prepare(`SELECT tv.r2_key, tv.text_defaults_json, t.name AS template_name
+    FROM template_versions tv LEFT JOIN templates t ON t.template_id = tv.template_id WHERE tv.template_version_id = ?1 AND tv.status = 'sealed'`)
+    .bind(row.template_version_id).first<{ r2_key: string; text_defaults_json: string | null; template_name: string | null }>();
   if (!template) return json(422, { error: "template_not_sealed" });
   const object = env.ARTIFACTS ? await env.ARTIFACTS.get(template.r2_key) : null;
   if (!object) return json(503, { error: "preview_unavailable", message: "Template archive is not available" });
@@ -225,9 +198,22 @@ async function preview(env: Env, brandId: string): Promise<Response> {
     const parsedDefaults = TemplateTextDefaults.safeParse(JSON.parse(template.text_defaults_json ?? "null"));
     if (parsedDefaults.success) defaults = parsedDefaults.data;
   } catch { /* invalid JSON: no defaults */ }
-  const copy = storedProfile(row.config_json)?.copy ?? {};
+  const profile = storedProfile(row.config_json);
+  const copy = profile?.copy ?? {};
   const brand = copy.brand_name ?? (row.name.trim() || defaults?.brand_name) ?? row.name;
-  const html = await previewHtml(files, { brand, title: copy.site_title ?? null, description: copy.site_description ?? null, defaults });
+  // The install render takes the same inputs: profile.copy.brand_name else brands.name, and brands.keyword_default.
+  const page: PageTextData = {
+    brand_name: copy.brand_name ?? row.name, profile,
+    template_brand: templateBrandName(template.text_defaults_json, template.template_name), keyword_default: row.keyword_default,
+  };
+  const site: EffectiveSiteText = { brand, title: copy.site_title ?? null, description: copy.site_description ?? null, templateBrand: defaults?.brand_name ?? null };
+  let html: string | null;
+  try {
+    html = await previewHtml(files, { site, page });
+  } catch (error) {
+    if (error instanceof PageCopyError) return json(422, { error: "invalid_copy", message: error.message });
+    throw error;
+  }
   if (html === null) return json(422, { error: "preview_unavailable", message: "Template has no index.html" });
   return new Response(html, { headers: {
     "content-type": "text/html; charset=utf-8", "cache-control": "no-store",

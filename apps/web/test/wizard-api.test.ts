@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
 import { zipSync } from "fflate";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createBrandWorker } from "@anjuna/brand-runtime";
+import { renderPageText, templateBrandName } from "@anjuna/brand-runtime/page-text";
+import { MockCoreClient, WILLOW_LAKE_INDEX, WILLOW_LAKE_TERMS, WIZARD_DEMO_PAGE_TEXT } from "@anjuna/brand-runtime/testing";
 import { WizardDraft, DuplicateBrandResponse, ZoneCheckResponse } from "../src/shared/wizard";
 import { PANEL_ROLE_TABLE, authorizePanel } from "../src/server/panel-roles";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
@@ -14,7 +17,7 @@ const PROFILE = {
     representative_example: "A 12 month loan of $1,000 at 29.99% APR costs about $96 a month.",
     unsupported_states: ["NY", "AR", "VT", "WV", "CA"],
   },
-  copy: { brand_name: "Maple Cash", site_title: "Maple Cash | Quick Funding", site_description: "See your options in minutes.", h1: "Cash when you need it", cta: "Check my rate" },
+  copy: { brand_name: "Maple Cash", site_title: "Maple Cash | Quick Funding", site_description: "See your options in minutes.", h1: "{{keyword}} When You Need It", cta: "Check my rate" },
   ads: { google_ads_account: "1234567890", google_conversion_action: "555", adkit_project: "maple-ads", microsoft_ads_account: "654321" },
 };
 const enc = (text: string) => new TextEncoder().encode(text);
@@ -259,7 +262,45 @@ describe("GET /api/wizard/preview/:id", () => {
     expect(html).toContain('content="See your options in minutes."');
     expect(html).toContain('<meta property="og:title" content="Maple Cash | Quick Funding">');
     expect(html).toMatch(/<header data-brand>Maple Cash<\/header>/);
+    expect(html).toContain("<h1><span data-kw>Quick Loan</span> When You Need It</h1>");
     expect(html).not.toContain("Harbor");
+  });
+
+  it("answers 422 for saved copy the install would refuse", async () => {
+    const response = await preview(await draftId({ profile: { copy: { h1: "No keyword slot" } } }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "invalid_copy" });
+  });
+
+  // FUS-364: the Willow Lake Lending template on brand "Wizard Demo". The live page is renderPageText (the install
+  // render; workers/factory/test/page-text-render.test.ts shows renderBrand uploads its output) served by the brand Worker.
+  it("shows the page the brand Worker serves after install", async () => {
+    await env.ARTIFACTS.put("templates/tv-wiz-willow.zip", zipSync({ "index.html": enc(WILLOW_LAKE_INDEX), "terms/index.html": enc(WILLOW_LAKE_TERMS) }));
+    const defaults = { brand_name: "Willow Lake Lending", title: "Willow Lake Lending | Loan Options", description: "Willow Lake Lending helps you compare options." };
+    await env.FACTORY.prepare(`INSERT OR IGNORE INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, text_defaults_json)
+      VALUES ('tv-wiz-willow', 'tpl-wiz', 4, ?1, 'templates/tv-wiz-willow.zip', 'sealed', 'owner', ?2, 'owner', ?2, ?3)`).bind("4".repeat(64), NOW, JSON.stringify(defaults)).run();
+    const { profile } = WIZARD_DEMO_PAGE_TEXT;
+    const brandId = await draftId({ name: "Wizard Demo", keyword_default: "Loan Options", template_version_id: "tv-wiz-willow", profile });
+    const previewed = await (await preview(brandId)).text();
+
+    const rendered = await renderPageText(new Map([["index.html", WILLOW_LAKE_INDEX], ["terms/index.html", WILLOW_LAKE_TERMS]]), {
+      brand_name: "Wizard Demo", template_brand: templateBrandName(JSON.stringify(defaults), "Wizard"), keyword_default: "Loan Options", profile,
+    });
+    const worker = createBrandWorker({
+      brand_id: "wizard-demo", hostname: "demo11.example", brand: "Wizard Demo", formRoute: "/request", amount_buckets: [1000],
+      keyword_default: "Loan Options", text_defaults: defaults, core: new MockCoreClient(),
+      assets: { fetch: async () => new Response(rendered.get("index.html")!, { headers: { "content-type": "text/html" } }) },
+    });
+    const served = await (await worker.fetch(new Request("https://demo11.example/"))).text();
+
+    // The preview drops scripts (the JSON-LD block is the only one) and image sources missing from the archive.
+    expect(previewed).toBe(served.replace(/<script type="application\/ld\+json">.*?<\/script>/, "").replace(' src="/logo.png"', ""));
+    expect(previewed).toContain("<h1><span data-kw>Loan Options</span> Options in Minutes</h1>");
+    expect(previewed).toContain('href="tel:+15550100199"');
+    expect(previewed).toContain("+1 (555) 010-0199");
+    expect(previewed).toContain("<title>Wizard Demo | Loan Options</title>");
+    expect(previewed).not.toContain("Willow Lake");
+    expect(previewed).not.toContain("710-3200");
   });
 
   it("replaces the template brand in an unedited title with the brand name", async () => {

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anjuna/auth-db": "workspace:*",
+    "@anjuna/brand-runtime": "workspace:*",
     "@anjuna/contracts": "workspace:*",
     "@anjuna/factory-db": "workspace:*",
     "@anjuna/template-cert": "workspace:*",

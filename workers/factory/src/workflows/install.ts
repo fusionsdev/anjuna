@@ -5,6 +5,7 @@ import {
   attachCustomDomain, assetContentType, blockingDnsRecords, brandHostnames, createAssetsSession, deployScript, type AssetManifest, uploadAssetBucket,
   getZone, uploadScript,
 } from "../cf-api.js";
+import { templateBrandName } from "@anjuna/brand-runtime/page-text";
 import { readZipFromR2, renderBrand, unzip, writeRenderToR2 } from "../render.js";
 import { assembleBrandConfig, compensationInstallId, deriveAuthoritativeRuntime, rejectQueuedInstall, setInstallStatus, validateInstallInputs, stepErrorText } from "../receipt.js";
 import { CoreLifecycleClient } from "../core-lifecycle-client.js";
@@ -40,6 +41,8 @@ interface RevisionRow {
 interface TemplateVersionRow {
   r2_key: string;
   status: string;
+  text_defaults_json?: string | null;
+  template_name?: string | null;
 }
 
 /** A computation on rows and bytes already read: the same input fails the same way, so any failure settles the step at once. */
@@ -187,7 +190,8 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
           if (!revision) throw new NonRetryableError(`Revision ${revision_id} not found`);
 
           const [tv, fa] = await Promise.all([
-            db.prepare("SELECT r2_key FROM template_versions WHERE template_version_id = ?")
+            db.prepare(`SELECT tv.r2_key, tv.text_defaults_json, t.name AS template_name
+              FROM template_versions tv LEFT JOIN templates t ON t.template_id = tv.template_id WHERE tv.template_version_id = ?`)
               .bind(revision.template_version_id).first<TemplateVersionRow>(),
             db.prepare("SELECT r2_key FROM form_artifacts WHERE form_artifact_id = ?")
               .bind(revision.form_artifact_id).first<FormArtifactRow>(),
@@ -199,10 +203,15 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             readZipFromR2(ARTIFACTS, fa.r2_key),
           ]);
 
-          // Legal pages print the draft profile and the public brand name (profile.copy.brand_name, else brands.name).
+          // Legal pages and page text print the draft profile and the public brand name (profile.copy.brand_name, else
+          // brands.name). The template's own brand name is replaced on every page. Invalid saved copy fails the install.
           const { files } = await settleOnFailure(() => {
             const profile = (JSON.parse(revision.config_json) as { profile?: BrandProfile }).profile;
-            return renderBrand(templateFiles, formFiles, brand_id, revision_id, { brand_name: profile?.copy?.brand_name ?? name, profile });
+            return renderBrand(templateFiles, formFiles, brand_id, revision_id, {
+              brand_name: profile?.copy?.brand_name ?? name, profile,
+              template_brand: templateBrandName(tv.text_defaults_json, tv.template_name),
+              keyword_default: initial_runtime.keyword_default,
+            });
           });
           const key = await writeRenderToR2(ARTIFACTS, brand_id, revision_id, files);
           return { render_r2_key: key };

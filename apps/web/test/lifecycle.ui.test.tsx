@@ -386,6 +386,59 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(requests.filter((r) => r.path === "/api/installs/active-1")).toHaveLength(reads);
   });
 
+  describe("install progress polling stops", () => {
+    const reads = (installId: string) => requests.filter((r) => r.method === "GET" && r.path === `/api/installs/${installId}`).length;
+    const running = { ...failed, install_id: "redeploy-9", status: "running" as const, runtime_sync_status: "running" as const };
+
+    it.each(["ready", "failed", "rolled_back"] as const)("after a redeploy reaches %s", async (status) => {
+      vi.stubGlobal("confirm", vi.fn(() => true));
+      routes.set("POST /api/brands/brand-a/redeploy", () => json({ install_id: "redeploy-9", brand_id: "brand-a", status: "running" }, 201));
+      detail(running);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await act(async () => { render(<BrandLifecycle me={owner} />); });
+      fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่ (Redeploy)" }));
+      await screen.findAllByText("redeploy-9", { selector: "code" });
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+      expect(reads("redeploy-9")).toBeGreaterThan(1);
+      detail({ ...running, status, runtime_sync_status: status === "ready" ? "ready" : "failed" });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      const atTerminal = reads("redeploy-9");
+      await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+      expect(reads("redeploy-9")).toBe(atTerminal);
+    });
+
+    it("never polls a terminal install recovered from history", async () => {
+      history([{ ...failed, install_id: "done-1", status: "ready", error: null }]);
+      detail({ ...failed, install_id: "done-1", status: "ready", runtime_sync_status: "ready" });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await act(async () => { render(<BrandLifecycle me={owner} />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+      expect(reads("done-1")).toBe(1);
+    });
+
+    it("never polls a terminal install from history whose detail read fails", async () => {
+      history([{ ...failed, install_id: "done-2", status: "ready", error: null }]);
+      routes.set("GET /api/installs/done-2", () => json({ error: "internal" }, 500));
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      await act(async () => { render(<BrandLifecycle me={owner} />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(400_000); });
+      expect(reads("done-2")).toBe(1);
+    });
+
+    it("on unmount", async () => {
+      history([{ ...running, error: null }]);
+      detail(running);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const view = await act(async () => render(<BrandLifecycle me={owner} />));
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+      expect(reads("redeploy-9")).toBeGreaterThan(1);
+      view.unmount();
+      const atUnmount = reads("redeploy-9");
+      await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+      expect(reads("redeploy-9")).toBe(atUnmount);
+    });
+  });
+
   it("ignores install history arriving after the operator switches brands", async () => {
     lifecycleRows.push({ ...brand, brand_id: "brand-b", hostnames: ["second.test"], status: "draft" });
     let release!: (response: Response) => void;

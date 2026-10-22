@@ -175,7 +175,20 @@ describe("page text (title, description, data-brand)", () => {
   it("a template without data-brand passes with one warning", () => {
     const result = check(indexWith(validIndex().replace(" data-brand", "")));
     expect(result.ok).toBe(true);
-    expect(issuesFor(result, "structure").map((i) => i.en)).toEqual([expect.stringContaining("data-brand")]);
+    expect(issuesFor(result, "structure").map((i) => i.en)).toEqual([expect.stringContaining("No element has data-brand"), expect.stringContaining("\"Harbor\" appears 1 time(s) outside data-brand")]);
+  });
+
+  it("counts the template brand name outside data-brand as a warning, not a block (FUS-364)", () => {
+    const files = indexWith(validIndex().replace('<a href="/" data-brand>Harbor</a>',
+      '<a href="/" data-brand>Harbor</a><h3>What is Harbor?</h3><p>Harbor and Harbors, <span data-brand>Harbor</span>.</p><script>var a="Harbor"</script>'));
+    files["terms/index.html"] = files["terms/index.html"]!.replace("</body>", "<p>Harbor terms</p></body>");
+    const result = check(files);
+    expect(result.ok).toBe(true);
+    const found = issuesFor(result, "structure").filter((i) => i.en.includes("outside data-brand"));
+    expect(found).toHaveLength(1);
+    expect(found[0]!.severity).toBe("warning");
+    expect(found[0]!.en).toContain('"Harbor" appears 3 time(s) outside data-brand (index.html: 2, terms/index.html: 1)');
+    expect(issuesFor(check(validFiles()), "structure").filter((i) => i.en.includes("outside data-brand"))).toEqual([]);
   });
 
   it("a data-brand element with nested elements is a warning", () => {

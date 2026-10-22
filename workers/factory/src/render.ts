@@ -1,6 +1,7 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { unzipSync, zipSync } from "fflate";
 import { BrandProfile, TEMPLATE_RULES } from "@anjuna/contracts";
+import { renderPageText } from "@anjuna/brand-runtime/page-text";
 
 export type FileMap = Map<string, Uint8Array>;
 
@@ -11,6 +12,10 @@ const DEC = new TextDecoder();
 export interface LegalRenderData {
   brand_name?: string;
   profile?: BrandProfile;
+  /** The template's own brand name (text_defaults.brand_name, else the template display name). */
+  template_brand?: string | null;
+  /** Default text of the H1 [data-kw] slot; needed when profile.copy.h1 is set. */
+  keyword_default?: string | null;
 }
 
 /** Static text-node slots in terms/disclosures. Missing profile values never use product defaults. */
@@ -116,10 +121,20 @@ export async function renderBrand(
   const merged: FileMap = new Map();
 
   // Fill only explicit legal-page slots, once per render. Existing templates without slots stay byte-identical.
+  const pages = new Map<string, string>();
   for (const [path, bytes] of templateFiles) {
     const legalPage = /^\/?(?:terms|disclosures)(?:\/index)?\.html?$/i.test(path);
-    merged.set(path, legalPage && /data-legal/i.test(DEC.decode(bytes)) ? await fillLegalPage(bytes, legal) : bytes);
+    const filled = legalPage && /data-legal/i.test(DEC.decode(bytes)) ? await fillLegalPage(bytes, legal) : bytes;
+    merged.set(path, filled);
+    if (/\.html?$/i.test(path)) pages.set(path, DEC.decode(filled));
   }
+
+  // Page text (wizard copy, contact, the template's own brand name): the function the wizard preview runs too.
+  // Pages with nothing to change keep their bytes.
+  const rendered = await renderPageText(pages, {
+    brand_name: legal.brand_name ?? "", template_brand: legal.template_brand, keyword_default: legal.keyword_default, profile: legal.profile,
+  });
+  for (const [path, html] of rendered) if (html !== pages.get(path)) merged.set(path, ENC.encode(html));
 
   // Add form files, renaming chunks and rewriting references.
   for (const [path, bytes] of formFiles) {

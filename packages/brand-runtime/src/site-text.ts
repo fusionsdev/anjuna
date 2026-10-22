@@ -27,7 +27,7 @@ export function effectiveSiteText(settings: BrandSettings): EffectiveSiteText {
 }
 
 /** Text content as HTML source. Site text never contains < > " (contract); & and ' may appear. */
-const escapeText = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+export const escapeText = (value: string) =>value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 /** lol-html escapes the double quote in attribute values; the ampersand is escaped here. */
 const attributeValue = (value: string) => value.replace(/&/g, "&amp;");
 
@@ -50,11 +50,17 @@ function brandSourcePattern(text: string): RegExp {
   return new RegExp(`(${before}${parts.join("")}${after})|${ENTITY}`, "gu");
 }
 
-/** Replace the template brand name in HTML source; entities the template wrote (&mdash;, &nbsp;) pass through. */
-function brandReplacer(from: string, to: string): (source: string) => string {
+/**
+ * Replace the template brand name in HTML source with `replacementHtml`; entities the template wrote (&mdash;, &nbsp;)
+ * pass through.
+ */
+export function brandSourceReplacer(from: string, replacementHtml: string): (source: string) => string {
   const pattern = brandSourcePattern(from);
-  const replacement = escapeText(to);
-  return (source) => source.replace(pattern, (match, brand: string | undefined) => brand === undefined ? match : replacement);
+  return (source) => source.replace(pattern, (match, brand: string | undefined) => brand === undefined ? match : replacementHtml);
+}
+
+function brandReplacer(from: string, to: string): (source: string) => string {
+  return brandSourceReplacer(from, escapeText(to));
 }
 
 /** <title> text can arrive in several chunks: collect them, then write the replaced source once. */

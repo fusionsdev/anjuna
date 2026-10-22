@@ -125,7 +125,10 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
         const latest = history.find((row) => row.status === "queued" || row.status === "running") ?? history[0];
         if (!latest) return;
         setInstallError(latest.error);
-        setPendingOperation({ brandId: selected.brand_id, generation: token.generation, installId: latest.install_id });
+        // Only an active install is polled. A terminal one is read once below and never polled.
+        if (latest.status === "queued" || latest.status === "running") {
+          setPendingOperation({ brandId: selected.brand_id, generation: token.generation, installId: latest.install_id });
+        }
         const detail = await api.installDetail(latest.install_id);
         if (active && detail.install_id === latest.install_id) commitInstallDetail(detail, token);
       } catch (e) {
@@ -155,19 +158,27 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
     let active = true;
     let attempts = 0;
     const maxAttempts = 120;
+    // Stop reading at a terminal status even when the answer can no longer be shown (operator moved on, newer
+    // operation): only a re-render with a still-pending install starts a new timer.
+    const stop = () => { active = false; window.clearInterval(timer); };
     const timer = window.setInterval(() => { void api.installDetail(installId).then((next) => {
       attempts += 1;
-      if (!active || !canCommit(token, next.brand_id) || next.install_id !== installId) return;
+      if (!active) return;
+      const terminal = next.install_id === installId && (next.status === "ready" || next.status === "failed" || next.status === "rolled_back");
+      if (terminal || attempts >= maxAttempts) stop();
+      if (!canCommit(token, next.brand_id) || next.install_id !== installId) return;
       commitInstallDetail(next, token);
-      if (next.status !== "queued" && next.status !== "running") void load(token);
+      if (terminal) void load(token);
     }, () => {
       attempts += 1;
-      if (active && attempts >= maxAttempts && canCommit(token, selectedId)) {
+      if (!active || attempts < maxAttempts) return;
+      stop();
+      if (canCommit(token, selectedId)) {
         setPendingOperation(null);
         setError("ติดตาม lifecycle ไม่สำเร็จภายในเวลาที่กำหนด");
       }
     }); }, 3000);
-    return () => { active = false; window.clearInterval(timer); };
+    return stop;
   }, [install, pendingOperation, selectedId, state, load]);
 
   function operationToken() {

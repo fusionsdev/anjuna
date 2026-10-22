@@ -47,7 +47,8 @@ const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 /** The same bytes and headers for every visitor and every request header. */
 export function assetResponse(bytes: Uint8Array, contentType: BrandAssetContentType): Response {
-  return new Response(bytes, { status: 200, headers: {
+  // The cast keeps the DOM lib (apps/web imports this package in tests) from rejecting Uint8Array<ArrayBufferLike>.
+  return new Response(bytes as BodyInit, { status: 200, headers: {
     ...ASSET_HEADERS, "content-type": contentType,
     ...(contentType === "image/svg+xml" ? { "content-security-policy": SVG_CSP } : {}),
   } });
