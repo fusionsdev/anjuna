@@ -23,6 +23,7 @@
  *
  * Out of scope: rollback / install / upgrade (factory Workflows, T10).
  */
+import { TrafficBreakdownQuery, TrafficBreakdownResponse } from "./traffic.js";
 import { z } from "zod";
 import { BrandId, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
 import { Keyword } from "./runtime-config.js";
@@ -627,6 +628,10 @@ export type MailingStatusResponse = z.infer<typeof MailingStatusResponse>;
  * sees only rows where actor_id is themselves.
  */
 export const AdminApi = {
+  trafficBreakdown: {
+    method: "GET", path: "/admin/traffic/breakdown", min_role: "employee",
+    query: TrafficBreakdownQuery, response: TrafficBreakdownResponse,
+  },
   listBrands: {
     method: "GET",
     path: "/admin/brands",

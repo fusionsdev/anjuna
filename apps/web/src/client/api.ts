@@ -1,3 +1,4 @@
+import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
@@ -97,6 +98,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  trafficBreakdown: (period: TrafficPeriod, by: TrafficDimension) =>
+    request<unknown>("GET", `/api/traffic/breakdown?${new URLSearchParams({ period, by })}`).then((body) => TrafficBreakdownResponse.parse(body)),
   builderKeys: () => request<unknown>("GET", "/api/builder-keys").then((body) => BuilderKeyListResponse.parse(body)),
   createBuilderKey: (label: string) => request<unknown>("POST", "/api/builder-keys", { label }).then((body) => BuilderKeyCreateResponse.parse(body).key),
   revokeBuilderKey: (id: string) => request<{ key: unknown }>("POST", `/api/builder-keys/${encodeURIComponent(id)}/revoke`, {}).then((body) => BuilderKeySummary.parse(body.key)),

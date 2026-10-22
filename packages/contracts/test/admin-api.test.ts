@@ -280,7 +280,7 @@ describe("secrets never appear in GET fixtures", () => {
  * deletion, manage users) are listed separately and must NOT appear in the table.
  */
 const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by: (AdminEndpoint | `patch:${string}`)[] }[] = [
-  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "alertsReport", "mailingStatus", "trafficRisk"] },
+  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "trafficBreakdown", "alertsReport", "mailingStatus", "trafficRisk"] },
   { action: "Export high-risk clicks for a refund request (FUS-372)", employee: "no", covered_by: ["trafficRiskExport"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
   { action: "Edit site text", employee: "yes", covered_by: ["patch:site_text"] },
@@ -383,7 +383,8 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/traffic/risk/export")).toEqual({ endpoint: "trafficRiskExport", params: {} });
     expect(matchAdminRoute("DELETE", "/admin/brands/brand-a")).toBeNull();
     expect(matchAdminRoute("POST", "/admin/brands/brand-a/rollback")).toBeNull();
-    expect(ADMIN_ENDPOINTS).toHaveLength(14);
+    expect(matchAdminRoute("GET", "/admin/traffic/breakdown")).toEqual({ endpoint: "trafficBreakdown", params: {} });
+    expect(ADMIN_ENDPOINTS).toHaveLength(15);
   });
 });
 

@@ -282,6 +282,12 @@ async function route(
   }
 
   // --- reports: core read-only admin routes. The panel does not bind the leads D1. ---
+  if (path === "/api/traffic/breakdown" && method === "GET") {
+    const g = authorize("trafficBreakdown", ctx.actor_role);
+    if (!g.ok) return forbidden(g.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "trafficBreakdown", query: url.searchParams }));
+  }
+
   if (path === "/api/funnel" && method === "GET") {
     const g = authorize("funnelReport", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);

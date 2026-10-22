@@ -17,6 +17,8 @@ import {
   SpendQuery,
   TrafficRiskExportQuery,
   TrafficRiskQuery,
+  TrafficBreakdownQuery,
+  trafficWindow,
   adminContextFromHeaders,
   authorize,
   matchAdminRoute,
@@ -167,6 +169,13 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "trafficRisk" || endpoint === "trafficRiskExport") {
     const q = (endpoint === "trafficRisk" ? TrafficRiskQuery : TrafficRiskExportQuery).safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  }
+
+  if (endpoint === "trafficBreakdown") {
+    const q = TrafficBreakdownQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+    return json(200, { ...q.data, ...trafficWindow(q.data.period), timezone: "America/New_York",
+      rows: q.data.by === "hour" ? Array.from({ length: 24 }, (_, hour) => ({ key: String(hour).padStart(2, "0"), visits: 0, leads: 0 })) : [], brands: [] });
   }
 
   // 4. field groups
