@@ -24,18 +24,30 @@ beforeEach(async () => {
     env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-1','abcdef1','forms/fa-1','manifest','2026-01','form@abcdef1','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-a','Brand A','test-account','a.test','live','brand-a_rev_3','owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-b','Brand B','test-account','b.test','live','brand-b_rev_1','owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-c','Brand C','test-account','c.test','live','brand-c_rev_3','owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-d','Brand D','test-account','d.test','draft',NULL,'owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
   ]);
   await env.FACTORY.batch([
     rev("brand-a_rev_1", "brand-a", 1),
     rev("brand-a_rev_2", "brand-a", 2),
     rev("brand-a_rev_3", "brand-a", 3),
     rev("brand-b_rev_1", "brand-b", 1),
+    rev("brand-c_rev_1", "brand-c", 1),
+    rev("brand-c_rev_2", "brand-c", 2),
+    rev("brand-c_rev_3", "brand-c", 3),
+    rev("brand-d_rev_1", "brand-d", 1),
   ]);
   await env.FACTORY.batch([
     install("rev-a1", "brand-a", "install", "ready", "brand-a_rev_1", "2026-10-10T00:00:00.000Z"),
     install("rev-a2", "brand-a", "upgrade", "ready", "brand-a_rev_2", "2026-10-11T00:00:00.000Z"),
     install("rev-a3", "brand-a", "upgrade", "ready", "brand-a_rev_3", "2026-10-12T00:00:00.000Z"),
     install("rev-b1", "brand-b", "install", "ready", "brand-b_rev_1", "2026-10-10T00:00:00.000Z"),
+    // brand-c: install rev_1, upgrade rev_2, rollback to rev_1, upgrade rev_3. Rev_3 is current; the newest ready
+    // non-current install is the rollback to rev_1, so neither "current minus one" nor revision order gives it.
+    install("rev-c1", "brand-c", "install", "ready", "brand-c_rev_1", "2026-10-10T00:00:00.000Z"),
+    install("rev-c2", "brand-c", "upgrade", "ready", "brand-c_rev_2", "2026-10-11T00:00:00.000Z"),
+    install("rev-c3", "brand-c", "rollback", "ready", "brand-c_rev_1", "2026-10-12T00:00:00.000Z"),
+    install("rev-c4", "brand-c", "upgrade", "ready", "brand-c_rev_3", "2026-10-13T00:00:00.000Z"),
   ]);
 });
 
@@ -74,6 +86,28 @@ describe("GET /api/brands/:id/revisions", () => {
     expect(row?.to_revision_id).toBe(target);
   });
 
+  it("names the newest ready non-current install, not the previous revision number", async () => {
+    const body = await revisions("/api/brands/brand-c/revisions", employee);
+    expect(body.current_revision_id).toBe("brand-c_rev_3");
+    expect(body.rollback_target_revision_id).toBe("brand-c_rev_1");
+  });
+
+  it("queues a rollback to the same non-linear target", async () => {
+    const worker = { fetch: async () => Response.json({ instance_id: "rollback" }) } as unknown as Fetcher;
+    const started = await call("/api/brands/brand-c/rollback", { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER: worker }) });
+    expect(started.status).toBe(201);
+    const { install_id } = await started.json() as { install_id: string };
+    const row = await env.FACTORY.prepare("SELECT to_revision_id FROM installs WHERE install_id = ?1").bind(install_id).first<{ to_revision_id: string | null }>();
+    expect(row?.to_revision_id).toBe("brand-c_rev_1");
+  });
+
+  it("returns null current and target for a brand that was never installed", async () => {
+    const body = await revisions("/api/brands/brand-d/revisions", employee);
+    expect(body.current_revision_id).toBeNull();
+    expect(body.rollback_target_revision_id).toBeNull();
+    expect(body.revisions.some((r) => r.is_current)).toBe(false);
+  });
+
   it("returns a null target for a brand with only one revision", async () => {
     const body = await revisions("/api/brands/brand-b/revisions", employee);
     expect(body.revisions).toHaveLength(1);
@@ -82,10 +116,14 @@ describe("GET /api/brands/:id/revisions", () => {
   });
 
   it("answers 404 for an unknown brand and for a core-only brand with no factory row", async () => {
-    expect((await call("/api/brands/brand-ghost/revisions", { cookie: employee })).status).toBe(404);
+    const response = await call("/api/brands/brand-ghost/revisions", { cookie: employee });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found", resource: "brand" });
   });
 
   it("answers 400 for an undecodable path segment", async () => {
-    expect((await call("/api/brands/%/revisions", { cookie: employee })).status).toBe(400);
+    const response = await call("/api/brands/%/revisions", { cookie: employee });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_brand_id" });
   });
 });
