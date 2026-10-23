@@ -27,6 +27,7 @@ beforeEach(async () => {
   const audit = (id: number, actor: string, role: string, action: string, entityType: string, entityId: string, at: string) =>
     env.FACTORY.prepare("INSERT OR IGNORE INTO audit_log (id,actor_id,actor_role,action,entity_type,entity_id,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)").bind(id, actor, role, action, entityType, entityId, at);
   await env.FACTORY.batch([
+    env.FACTORY.prepare("DELETE FROM installs WHERE install_id IN ('inst-bad', 'inst-fin')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-1','abcdef1','forms/fa-1','manifest','2026-01','form@abcdef1','2026-10-01T00:00:00Z')"),
@@ -91,6 +92,12 @@ describe("GET /api/deploys", () => {
     });
     expect(body.events.find((e) => e.event_id === "inst-a2")).toMatchObject({ operation: "rollback" });
     expect(body.events.find((e) => e.event_id === "inst-b1")).toMatchObject({ operation: "install", is_canary: true });
+    expect(body.events.find((e) => e.event_id === "inst-a1")).toMatchObject({
+      started_by: "seed-owner", started_role: "owner", started_at: "2026-10-21T01:00:00.000Z", finished_at: "2026-10-21T01:04:00.000Z",
+    });
+    expect(body.events.find((e) => e.event_id === "inst-b1")).toMatchObject({
+      started_by: "seed-owner", started_at: "2026-10-21T00:00:00.000Z", finished_at: "2026-10-21T00:05:00.000Z",
+    });
     expect(body.events.find((e) => e.event_id === "audit-101")).toMatchObject({
       source: "audit", operation: null, action: "brand.profile.update", status: "done", brand_id: "brand-a", started_by: ownerId, started_role: "owner", finished_at: null,
     });
@@ -127,8 +134,8 @@ describe("GET /api/deploys", () => {
       coreEntry(913, "brand.create", "brand-a", "core-owner", "2026-10-21T09:00:00.000Z"),
       coreEntry(914, "brand.update.extra", "brand-a", "core-owner", "2026-10-21T09:30:00.000Z"),
     ]));
-    expect(ids(body)).toEqual(["audit-910", "audit-911", "audit-912", "audit-101", "audit-104", "audit-105"]);
-    expect(body.events.filter((e) => e.event_id.match(/^audit-91[012]$/)).map((e) => e.action)).toEqual(["brand.update", "brand.pause", "brand.resume"]);
+    expect(ids(body)).toEqual(["core-audit-910", "core-audit-911", "core-audit-912", "audit-101", "audit-104", "audit-105"]);
+    expect(body.events.filter((e) => e.event_id.match(/^core-audit-91[012]$/)).map((e) => e.action)).toEqual(["brand.update", "brand.pause", "brand.resume"]);
   });
 
   it("excludes install.start, redeploy and upgrade audit rows, which the install rows already carry", async () => {
@@ -145,15 +152,39 @@ describe("GET /api/deploys", () => {
     expect(actions).not.toContain("install.start");
     expect(actions).not.toContain("redeploy.start");
     expect(actions.filter((a) => /^(install|redeploy|upgrade)\./.test(a))).toEqual([]);
-    expect(ids(body)).toContain("audit-905");
+    expect(ids(body)).toContain("core-audit-905");
     // 102 and 103 are factory install.start and redeploy.start rows, 106 is a template-entity row, 901 to 904 are core rows.
-    expect(ids(body).filter((id) => ["audit-102", "audit-103", "audit-106", "audit-901", "audit-902", "audit-903", "audit-904"].includes(id))).toEqual([]);
+    expect(ids(body).filter((id) => ["audit-102", "audit-103", "audit-106", "core-audit-901", "core-audit-902", "core-audit-903", "core-audit-904"].includes(id))).toEqual([]);
     expect(seen).toHaveLength(1);
+  });
+
+  it("drops an install row whose started_at is not a date, nulls an unparsable finished_at, and still answers 200", async () => {
+    const insert = (id: string, startedAt: string, finishedAt: string | null) =>
+      env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,to_revision_id,started_by,started_role,started_at,finished_at) VALUES (?1,'brand-a','install','ready','brand-a_rev_1','seed-owner','owner',?2,?3)").bind(id, startedAt, finishedAt);
+    await env.FACTORY.batch([insert("inst-bad", "not a date", null), insert("inst-fin", "2026-10-17T00:00:00.000Z", "garbage")]);
+    const body = await deploys("/api/deploys?source=install", owner);
+    expect(ids(body)).toEqual(["inst-b2", "inst-a1", "inst-b1", "inst-a2", "inst-fin"]);
+    expect(body.events.find((e) => e.event_id === "inst-fin")!.finished_at).toBeNull();
+  });
+
+  it("reports has_more at limit=200 when core holds more rows than its 200-row cap", async () => {
+    const all = Array.from({ length: 201 }, (_, i) =>
+      coreEntry(2000 + i, "brand.update", "brand-ghost", "core-owner", new Date(Date.UTC(2026, 9, 21, 12) - i * 60_000).toISOString()));
+    // Like real core: a limit above 200 is refused, and a page shorter than the match count carries next_cursor.
+    const core = { fetch: async (request: Request) => {
+      const limit = Number(new URL(request.url).searchParams.get("limit"));
+      if (limit > 200) return Response.json({ error: "invalid" }, { status: 422 });
+      return Response.json({ entries: all.slice(0, limit), next_cursor: all.length > limit ? "next" : null });
+    } } as unknown as Fetcher;
+    const body = await deploys("/api/deploys?brand=brand-ghost&limit=200", owner, makeEnv({ MOCK_CORE: undefined, CORE: core }));
+    expect(body.unavailable).toEqual([]);
+    expect(body.events).toHaveLength(200);
+    expect(body.has_more).toBe(true);
   });
 
   it("keeps an event for a brand with no factory row", async () => {
     const body = await deploys("/api/deploys", owner, coreEnv([coreEntry(900, "brand.update", "brand-ghost")]));
-    expect(ids(body)[0]).toBe("audit-900");
+    expect(ids(body)[0]).toBe("core-audit-900");
     expect(body.events[0]).toMatchObject({ source: "audit", brand_id: "brand-ghost", action: "brand.update", status: "done", started_by: "core-owner", started_at: "2026-10-21T05:00:00.000Z" });
     expect(body.unavailable).toEqual([]);
   });
@@ -203,5 +234,15 @@ describe("GET /api/deploys", () => {
     expect(ownerSeen[0]!.searchParams.get("target_type")).toBe("brand");
     expect(ownerSeen[0]!.searchParams.get("target_id")).toBe("brand-a");
     expect(ownerSeen[0]!.searchParams.get("limit")).toBe("11");
+  });
+
+  // audit_log is append-only, so this row stays for the rest of the file: keep the case last.
+  it("shows a factory audit row and a core audit row that share a numeric id", async () => {
+    await env.FACTORY.prepare("INSERT OR IGNORE INTO audit_log (id,actor_id,actor_role,action,entity_type,entity_id,created_at) VALUES (910,?1,'owner','brand.create','brand','brand-a','2026-10-21T10:00:00.000Z')").bind(ownerId).run();
+    const body = await deploys("/api/deploys?source=audit", owner, coreEnv([coreEntry(910, "brand.update", "brand-a", "core-owner", "2026-10-21T09:00:00.000Z")]));
+    expect(ids(body)).toContain("audit-910");
+    expect(ids(body)).toContain("core-audit-910");
+    expect(body.events.find((e) => e.event_id === "audit-910")!.action).toBe("brand.create");
+    expect(body.events.find((e) => e.event_id === "core-audit-910")!.action).toBe("brand.update");
   });
 });

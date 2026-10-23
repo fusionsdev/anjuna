@@ -16,8 +16,9 @@ beforeEach(async () => {
   employee = await sessions.employee();
   const rev = (id: string, brand: string, n: number, createdAt = "2026-10-01T00:00:00Z") =>
     env.FACTORY.prepare("INSERT OR IGNORE INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,?3,'tv-1','fa-1','{}','owner',?4)").bind(id, brand, n, createdAt);
-  const install = (id: string, brand: string, kind: string, status: string, to: string, finishedAt: string) =>
-    env.FACTORY.prepare("INSERT OR IGNORE INTO installs (install_id,brand_id,kind,from_revision_id,to_revision_id,status,started_by,started_role,started_at,finished_at) VALUES (?1,?2,?3,NULL,?4,?5,'seed-owner','owner',?6,?6)").bind(id, brand, kind, to, status, finishedAt);
+  // started_at differs from finished_at, so ordering the target by started_at picks a different row than finished_at does.
+  const install = (id: string, brand: string, kind: string, status: string, to: string, finishedAt: string, startedAt = new Date(Date.parse(finishedAt) - 3_600_000).toISOString()) =>
+    env.FACTORY.prepare("INSERT OR IGNORE INTO installs (install_id,brand_id,kind,from_revision_id,to_revision_id,status,started_by,started_role,started_at,finished_at) VALUES (?1,?2,?3,NULL,?4,?5,'seed-owner','owner',?6,?7)").bind(id, brand, kind, to, status, startedAt, finishedAt);
   await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
@@ -44,9 +45,10 @@ beforeEach(async () => {
     install("rev-b1", "brand-b", "install", "ready", "brand-b_rev_1", "2026-10-10T00:00:00.000Z"),
     // brand-c: install rev_1, upgrade rev_2, rollback to rev_1, upgrade rev_3. Rev_3 is current; the newest ready
     // non-current install is the rollback to rev_1, so neither "current minus one" nor revision order gives it.
+    // rev-c3 is inserted before rev-c2 and started earliest, so rowid order or started_at order would name rev_2.
     install("rev-c1", "brand-c", "install", "ready", "brand-c_rev_1", "2026-10-10T00:00:00.000Z"),
+    install("rev-c3", "brand-c", "rollback", "ready", "brand-c_rev_1", "2026-10-12T00:00:00.000Z", "2026-10-09T00:00:00.000Z"),
     install("rev-c2", "brand-c", "upgrade", "ready", "brand-c_rev_2", "2026-10-11T00:00:00.000Z"),
-    install("rev-c3", "brand-c", "rollback", "ready", "brand-c_rev_1", "2026-10-12T00:00:00.000Z"),
     install("rev-c4", "brand-c", "upgrade", "ready", "brand-c_rev_3", "2026-10-13T00:00:00.000Z"),
   ]);
 });

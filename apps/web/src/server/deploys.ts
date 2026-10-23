@@ -9,11 +9,11 @@ import {
   type DeployEvent,
   type DeployUnavailableSource,
 } from "@anjuna/contracts";
-import { z } from "zod";
 import { callCore } from "./core.js";
 import type { Env } from "./env.js";
 import { decodePathSegment, installOperation, rollbackTargetRevisionId } from "./lifecycle.js";
 import { authorizePanel } from "./panel-roles.js";
+import { asTimestamp } from "./timestamps.js";
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), {
   status, headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -35,10 +35,6 @@ const DEFAULT_LIMIT = 50;
 const CORE_AUDIT_MAX = 200;
 // installs.to_revision_id of a redeploy is `<brand_id>_redeploy_<install_id>` (see installOperation); "_redeploy_" is 10 characters.
 const IS_REDEPLOY = "(to_revision_id IS NOT NULL AND substr(to_revision_id, 1, length(brand_id) + 10) = brand_id || '_redeploy_')";
-
-const Instant = z.iso.datetime();
-// D1 holds both `...Z` and `...+07:00` strings, and the contract timestamp accepts only the first form.
-const asTimestamp = (value: string): string => (Instant.safeParse(value).success ? value : new Date(value).toISOString());
 
 interface InstallRow {
   install_id: string; brand_id: string; kind: string; status: DeployEvent["status"];
@@ -63,40 +59,50 @@ async function installEvents(db: D1Database, q: DeployHistoryQuery, limit: numbe
        FROM installs${where.length ? ` WHERE ${where.join(" AND ")}` : ""}
        ORDER BY julianday(started_at) DESC, install_id DESC LIMIT ?`,
   ).bind(...binds, limit + 1).all<InstallRow>();
-  return results.map((r) => ({
-    source: "install" as const,
-    event_id: r.install_id,
-    brand_id: r.brand_id,
-    operation: installOperation(r.kind, r.brand_id, r.to_revision_id),
-    action: null,
-    status: r.status,
-    from_revision_id: r.from_revision_id,
-    to_revision_id: r.to_revision_id,
-    is_canary: r.is_canary === 1,
-    started_by: r.started_by,
-    started_role: r.started_role,
-    started_at: asTimestamp(r.started_at),
-    finished_at: r.finished_at === null ? null : asTimestamp(r.finished_at),
-    error: r.error === null ? null : r.error.slice(0, 500),
-  }));
+  // A row whose started_at is not a date at all cannot be placed on the timeline: drop it, keep the rest.
+  return results.flatMap((r): DeployEvent[] => {
+    const startedAt = asTimestamp(r.started_at);
+    if (startedAt === null) return [];
+    return [{
+      source: "install" as const,
+      event_id: r.install_id,
+      brand_id: r.brand_id,
+      operation: installOperation(r.kind, r.brand_id, r.to_revision_id),
+      action: null,
+      status: r.status,
+      from_revision_id: r.from_revision_id,
+      to_revision_id: r.to_revision_id,
+      is_canary: r.is_canary === 1,
+      started_by: r.started_by,
+      started_role: r.started_role,
+      started_at: startedAt,
+      finished_at: r.finished_at === null ? null : asTimestamp(r.finished_at),
+      error: r.error === null ? null : r.error.slice(0, 500),
+    }];
+  });
 }
 
-const auditEvent = (id: number, brandId: string, action: string, actorId: string, role: DeployEvent["started_role"], at: string): DeployEvent => ({
-  source: "audit",
-  event_id: `audit-${id}`,
-  brand_id: brandId,
-  operation: null,
-  action,
-  status: "done",
-  from_revision_id: null,
-  to_revision_id: null,
-  is_canary: false,
-  started_by: actorId,
-  started_role: role,
-  started_at: asTimestamp(at),
-  finished_at: null,
-  error: null,
-});
+// The factory and core audit tables are separate, so their numeric ids can collide: core rows get their own prefix.
+const auditEvent = (eventId: string, brandId: string, action: string, actorId: string, role: DeployEvent["started_role"], at: string): DeployEvent | null => {
+  const startedAt = asTimestamp(at);
+  if (startedAt === null) return null;
+  return {
+    source: "audit",
+    event_id: eventId,
+    brand_id: brandId,
+    operation: null,
+    action,
+    status: "done",
+    from_revision_id: null,
+    to_revision_id: null,
+    is_canary: false,
+    started_by: actorId,
+    started_role: role,
+    started_at: startedAt,
+    finished_at: null,
+    error: null,
+  };
+};
 
 async function factoryAuditEvents(db: D1Database, q: DeployHistoryQuery, limit: number, onlyActor: string | null): Promise<DeployEvent[]> {
   const actions = DEPLOY_AUDIT_ACTIONS.map(() => "(action = ? OR substr(action, 1, ?) = ?)").join(" OR ");
@@ -108,10 +114,12 @@ async function factoryAuditEvents(db: D1Database, q: DeployHistoryQuery, limit: 
     `SELECT id, actor_id, actor_role, action, entity_id, created_at FROM audit_log
        WHERE ${where.join(" AND ")} ORDER BY julianday(created_at) DESC, id DESC LIMIT ?`,
   ).bind(...binds, limit + 1).all<AuditRow>();
-  return results.map((r) => auditEvent(r.id, r.entity_id, r.action, r.actor_id, r.actor_role, r.created_at));
+  return results.flatMap((r) => auditEvent(`audit-${r.id}`, r.entity_id, r.action, r.actor_id, r.actor_role, r.created_at) ?? []);
 }
 
-async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHistoryQuery, limit: number, onlyActor: string | null): Promise<DeployEvent[] | null> {
+async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHistoryQuery, limit: number, onlyActor: string | null): Promise<{ events: DeployEvent[]; more: boolean } | null> {
+  // Core rejects a limit above 200 (AUDIT_PAGE_LIMIT), so at limit=200 it cannot be asked for one extra row;
+  // next_cursor tells us it holds more.
   const query = new URLSearchParams({ target_type: "brand", limit: String(Math.min(limit + 1, CORE_AUDIT_MAX)) });
   if (q.brand) query.set("target_id", q.brand);
   if (onlyActor) query.set("actor_id", onlyActor);
@@ -119,10 +127,12 @@ async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHist
   if (result.status !== 200) return null;
   const parsed = AuditListResponse.safeParse(result.body);
   if (!parsed.success) return null;
-  return parsed.data.entries
+  const events = parsed.data.entries
     .filter((e) => e.target.type === "brand" && isCoreDeployAuditAction(e.action) && BrandId.safeParse(e.target.id).success)
     .filter((e) => (!q.brand || e.target.id === q.brand) && (!onlyActor || e.actor_id === onlyActor))
-    .map((e) => auditEvent(e.id, e.target.id, e.action, e.actor_id, e.actor_role, e.at));
+    .flatMap((e) => auditEvent(`core-audit-${e.id}`, e.target.id, e.action, e.actor_id, e.actor_role, e.at) ?? []);
+  // Below the cap the extra row already makes the merged length exceed limit; only the capped request needs the cursor.
+  return { events, more: limit + 1 > CORE_AUDIT_MAX && parsed.data.next_cursor !== null };
 }
 
 // Newest instant first; the text of the timestamp is no guide because offsets differ between rows.
@@ -152,7 +162,10 @@ async function brandRevisions(env: Env, ctx: AdminRequestContext, rawBrandId: st
     brand_id: brand.brand_id,
     current_revision_id: brand.current_revision_id,
     rollback_target_revision_id: rollbackTarget,
-    revisions: results.map((r) => ({ ...r, created_at: asTimestamp(r.created_at), is_current: r.revision_id === brand.current_revision_id })),
+    revisions: results.flatMap((r) => {
+      const createdAt = asTimestamp(r.created_at);
+      return createdAt === null ? [] : [{ ...r, created_at: createdAt, is_current: r.revision_id === brand.current_revision_id }];
+    }),
   }));
 }
 
@@ -181,13 +194,15 @@ export async function handleDeployRoute(request: Request, env: Env, url: URL, pa
   const installs = wantsInstalls ? await installEvents(env.FACTORY, q, limit) : [];
   const factoryAudit = wantsAudit ? await factoryAuditEvents(env.FACTORY, q, limit, onlyActor) : [];
   let coreAudit: DeployEvent[] = [];
+  let coreMore = false;
   if (wantsAudit) {
     const fetched = await coreAuditEvents(env, ctx, q, limit, onlyActor);
     if (fetched === null) unavailable.push("core_audit");
-    else coreAudit = fetched;
+    else { coreAudit = fetched.events; coreMore = fetched.more; }
   }
 
-  // Core and the panel share the audit_log table in production: show each audit row once.
-  const merged = [...new Map([...installs, ...factoryAudit, ...coreAudit].map((e) => [`${e.source}:${e.event_id}`, e])).values()].sort(byInstantDesc);
-  return json(200, DeployHistoryResponse.parse({ events: merged.slice(0, limit), has_more: merged.length > limit, unavailable }));
+  // No dedupe: install ids, `audit-<id>` and `core-audit-<id>` are disjoint, and the factory and core action
+  // allowlists are disjoint, so no source can return the same row twice.
+  const merged = [...installs, ...factoryAudit, ...coreAudit].sort(byInstantDesc);
+  return json(200, DeployHistoryResponse.parse({ events: merged.slice(0, limit), has_more: merged.length > limit || coreMore, unavailable }));
 }

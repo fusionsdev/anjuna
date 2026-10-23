@@ -18,6 +18,9 @@ describe("DeployEvent", () => {
   it("rejects an unknown key", () => {
     expect(DeployEvent.safeParse({ ...install, install_id: "inst-1" }).success).toBe(false);
   });
+  it("rejects an install row that carries an action", () => {
+    expect(DeployEvent.safeParse({ ...install, action: "brand.update" }).success).toBe(false);
+  });
   it("rejects an audit row that carries an operation", () => {
     expect(DeployEvent.safeParse({ ...auditEvent, operation: "install" }).success).toBe(false);
   });
@@ -30,6 +33,8 @@ describe("DeployEvent", () => {
 describe("DeployHistoryQuery", () => {
   it("coerces limit and bounds it to 1..200", () => {
     expect(DeployHistoryQuery.parse({ limit: "50" }).limit).toBe(50);
+    expect(DeployHistoryQuery.parse({ limit: "1" }).limit).toBe(1);
+    expect(DeployHistoryQuery.parse({ limit: "200" }).limit).toBe(200);
     expect(DeployHistoryQuery.safeParse({ limit: "0" }).success).toBe(false);
     expect(DeployHistoryQuery.safeParse({ limit: "201" }).success).toBe(false);
   });
