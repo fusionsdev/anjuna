@@ -1,6 +1,7 @@
 import type { BuilderKeySummary } from "@anjuna/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
+import { useConfirm } from "../components/ConfirmDialog";
 
 export function BuilderKeysScreen({ me }: { me: Me }) {
   const [keys, setKeys] = useState<BuilderKeySummary[] | null>(null);
@@ -8,6 +9,7 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
+  const [confirm, confirmDialog] = useConfirm();
 
   const load = useCallback(() => api.builderKeys().then((r) => setKeys(r.keys), (e) => setMsg(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ")), []);
   useEffect(() => void load(), [load]);
@@ -21,6 +23,16 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
     } catch (e) {
       setMsg(e instanceof ApiError ? e.thai : "ไม่สำเร็จ");
     }
+  }
+
+  async function revoke(k: BuilderKeySummary) {
+    const ok = await confirm({
+      title: `ยกเลิกคีย์ ${k.label}?`,
+      body: "bolt.new ที่ใช้คีย์นี้จะเชื่อมต่อไม่ได้ทันที",
+      confirmLabel: "ยกเลิกคีย์ (Revoke key)",
+      tone: "danger",
+    });
+    if (ok) await run(() => api.revokeBuilderKey(k.key_id));
   }
 
   async function copy(k: BuilderKeySummary) {
@@ -70,7 +82,7 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
                   <button
                     className="btn neg"
                     aria-label={`ยกเลิกคีย์ ${k.label} (Revoke)`}
-                    onClick={() => { if (window.confirm(`ยกเลิกคีย์ ${k.label}? bolt.new ที่ใช้คีย์นี้จะเชื่อมต่อไม่ได้ทันที`)) void run(() => api.revokeBuilderKey(k.key_id)); }}
+                    onClick={() => void revoke(k)}
                   >
                     ยกเลิก (Revoke)
                   </button>
@@ -94,6 +106,7 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
           สร้างคีย์ (Create key)
         </button>
       </div>
+      {confirmDialog}
     </>
   );
 }

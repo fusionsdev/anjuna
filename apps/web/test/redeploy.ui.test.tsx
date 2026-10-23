@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary, type InstallWithReceipts } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
+import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
@@ -21,7 +22,6 @@ const running: InstallWithReceipts = {
 type Handler = (init?: RequestInit) => Response | Promise<Response>;
 let routes: Map<string, Handler>;
 let requests: Array<{ method: string; path: string }>;
-let confirm: ReturnType<typeof vi.fn>;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const showBrand = (overrides: Partial<LifecycleBrandSummary>, installs: unknown[] = []) => {
   routes.set("GET /api/lifecycle/brands", () => json({ brands: [{ ...liveBrand, ...overrides }] }));
@@ -31,8 +31,6 @@ const redeployPosts = () => requests.filter((r) => r.method === "POST" && r.path
 
 beforeEach(() => {
   requests = [];
-  confirm = vi.fn(() => true);
-  vi.stubGlobal("confirm", confirm);
   routes = new Map<string, Handler>([
     ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
     ["GET /api/templates/sealed", () => json({ templates: [] })],
@@ -80,18 +78,18 @@ describe("Redeploy button in the brand detail", () => {
   });
 
   it("asks for confirmation and sends nothing when the Owner declines", async () => {
-    confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(String(confirm.mock.calls[0]![0])).toContain("Redeploy");
+    const dialog = await answerConfirm(false);
+    expect(dialog.textContent).toContain("Redeploy");
     expect(redeployPosts()).toHaveLength(0);
   });
 
   it("posts the redeploy once after confirmation and shows the new install with its receipts", async () => {
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(redeployPosts()).toHaveLength(0);
+    await answerConfirm(true);
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(redeployPosts()).toHaveLength(1);
     expect(await screen.findByText("สร้างหน้าเว็บ (Render)")).toBeTruthy();
@@ -147,11 +145,9 @@ describe("Redeploy with the latest form in the brand detail", () => {
   });
 
   it("names the target form version and the current one in the confirm text, and sends nothing when declined", async () => {
-    confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: latestName }));
-    expect(confirm).toHaveBeenCalledTimes(1);
-    const text = String(confirm.mock.calls[0]![0]);
+    const text = (await answerConfirm(false)).textContent!;
     expect(text).toContain("form@abcdef2");
     expect(text).toContain("form@abcdef1");
     expect(text).toContain("Redeploy");
@@ -161,6 +157,7 @@ describe("Redeploy with the latest form in the brand detail", () => {
   it("posts the chosen artifact once after confirmation and shows the new install", async () => {
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: latestName }));
+    await answerConfirm(true);
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(redeployPosts()).toHaveLength(1);
     expect(bodies).toEqual([{ form_artifact_id: "fa-2" }]);
@@ -170,6 +167,7 @@ describe("Redeploy with the latest form in the brand detail", () => {
   it("the plain Redeploy button still keeps the current form", async () => {
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    await answerConfirm(true);
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(bodies).toEqual([{}]);
   });
@@ -239,30 +237,28 @@ describe("Redeploy of a brand that core reports as paused", () => {
   });
 
   it("says in the Redeploy confirm text that the brand stays paused", async () => {
-    confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
-    expect(String(confirm.mock.calls[0]![0])).toContain(stays);
+    expect((await answerConfirm(false)).textContent).toContain(stays);
   });
 
   it("says in the Redeploy with latest form confirm text that the brand stays paused", async () => {
-    confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: latestName }));
-    expect(String(confirm.mock.calls[0]![0])).toContain(stays);
+    expect((await answerConfirm(false)).textContent).toContain(stays);
   });
 
   it("does not say it for a brand that is not paused", async () => {
     routes.set("GET /api/brands", () => json({ brands: [], generated_at: "2026-10-06T00:00:00Z" }));
-    confirm.mockReturnValue(false);
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
-    expect(String(confirm.mock.calls[0]![0])).not.toContain("paused");
+    expect((await answerConfirm(false)).textContent).not.toContain("paused");
   });
 
   it("posts the redeploy for a paused brand", async () => {
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+    await answerConfirm(true);
     expect((await screen.findAllByText("redeploy-ins", { selector: "code" })).length).toBeGreaterThan(0);
     expect(redeployPosts()).toHaveLength(1);
     expect(bodies).toEqual([{}]);

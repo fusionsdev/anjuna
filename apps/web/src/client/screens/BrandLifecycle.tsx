@@ -2,6 +2,7 @@ import { type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
+import { useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, sortWorstProfitFirst, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
@@ -93,6 +94,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const operationGeneration = useRef(0);
+  const [confirm, confirmDialog] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
   const owner = me.role === "owner";
@@ -292,13 +294,23 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
   async function redeploy() {
     if (!selected) return;
-    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน? (Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.)${pausedNote()}`)) return;
+    const ok = await confirm({
+      title: "ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน?",
+      body: `Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.${pausedNote()}`,
+      confirmLabel: "ติดตั้งใหม่ (Redeploy)",
+    });
+    if (!ok) return;
     await dispatchOperation(() => api.redeploy(selected.brand_id));
   }
   async function redeployLatest() {
     const target = selected?.newer_form;
     if (!selected || !target) return;
-    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}? (Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.)${pausedNote()}`)) return;
+    const ok = await confirm({
+      title: `ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}?`,
+      body: `Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.${pausedNote()}`,
+      confirmLabel: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)",
+    });
+    if (!ok) return;
     await dispatchOperation(() => api.redeploy(selected.brand_id, target.form_artifact_id));
   }
   async function startInstall() {
@@ -381,7 +393,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       <div className="brands-aside">
         {selected
           ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
-          : listLoaded && routeBrandId
+          // A failed Core list may hide a Core-only brand, so the id is not known to be missing.
+          : listLoaded && !coreListError && routeBrandId
             ? <section className="panel brand-side"><p role="alert">ไม่พบแบรนด์ <code>{routeBrandId}</code> (Brand not found)</p></section>
             : <section className="panel brand-side"><p className="muted">เลือกแบรนด์จากตารางเพื่อดูและแก้ไข</p></section>}
         {runtimeBrand && <section className="panel" aria-label="การตั้งค่าและสถิติรันไทม์ (Runtime config and statistics)">
@@ -396,6 +409,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
     {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
+    {confirmDialog}
   </div>;
 }
 

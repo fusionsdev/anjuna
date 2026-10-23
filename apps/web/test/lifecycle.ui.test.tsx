@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary, type BrandConfig, type InstallWithReceipts } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
+import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
@@ -121,6 +122,14 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("heading", { name: "renderable.test" })).toBeNull();
   });
 
+  it("does not say a route brand is missing while the Core list is unavailable", async () => {
+    lifecycleRows = [];
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [], core_error: { code: "core_list_fetch_failed", message: "Core brand list fetch failed" } }));
+    render(<BrandLifecycle me={owner} routeBrandId="core_only_brand" />);
+    expect(await screen.findByText(/Core brand list is unavailable/)).toBeTruthy();
+    expect(screen.queryByText(/ไม่พบแบรนด์/)).toBeNull();
+  });
+
   it("says a route brand id is not found when the brand list is empty", async () => {
     lifecycleRows = [];
     render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
@@ -204,7 +213,6 @@ describe("mounted lifecycle UI with API responses", () => {
   });
 
   it("labels every control in the config panel as Thai (English)", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true));
     routes.set("PATCH /api/brands/brand-a", () => json({ brand: config, issued_postback_token: "tok_0123456789abcdef" }));
     render(<BrandLifecycle me={owner} />);
     await openRuntimeConfig();
@@ -220,6 +228,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const thaiThenEnglish = /^[฀-๿][^()]*\([A-Za-z][^()]*\)/;
     for (const button of within(panel).getAllByRole("button")) expect(button.textContent, button.textContent ?? "").toMatch(thaiThenEnglish);
     fireEvent.click(within(panel).getByRole("button", { name: rotateName }));
+    await answerConfirm(true);
     const modal = await screen.findByRole("dialog", { name: "โทเคน postback ใหม่ (New postback token)" });
     expect(within(modal).getByRole("heading", { name: "โทเคน postback ใหม่ (New postback token)" })).toBeDefined();
     expect(within(modal).getByRole("button", { name: "คัดลอก (Copy)" })).toBeDefined();
@@ -322,7 +331,6 @@ describe("mounted lifecycle UI with API responses", () => {
     const syncErrorLabel = "ซิงก์ผิดพลาด (sync_error)";
 
     it("clears a sync_error label once the list reports ready, without reselecting the brand", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
       lifecycleRows = [{ ...brand, runtime_sync_status: "sync_error" }];
       routes.set("POST /api/brands/brand-a/redeploy", () => {
         lifecycleRows = [{ ...brand, runtime_sync_status: "ready" }];
@@ -332,13 +340,13 @@ describe("mounted lifecycle UI with API responses", () => {
       render(<BrandLifecycle me={owner} />);
       await waitFor(() => expect(syncCell()).toBe(syncErrorLabel));
       fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+      await answerConfirm(true);
       await screen.findAllByText("redeploy-1", { selector: "code" });
       await waitFor(() => expect(syncCell()).toBe(readyLabel));
       expect(requests.filter((r) => r.method === "GET" && r.path === "/api/brands/brand-a/installs")).toHaveLength(1);
     });
 
     it("does not show ready while the install is still running and the list reloads with ready", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
       routes.set("POST /api/brands/brand-a/redeploy", () => {
         lifecycleRows = [{ ...brand, runtime_sync_status: "ready", current_revision_id: "rev-2" }];
         return json({ install_id: "redeploy-1", brand_id: "brand-a", status: "running" }, 201);
@@ -346,6 +354,7 @@ describe("mounted lifecycle UI with API responses", () => {
       detail({ ...failed, install_id: "redeploy-1", revision_id: "rev-2", status: "running", runtime_sync_status: "running" });
       render(<BrandLifecycle me={owner} />);
       fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+      await answerConfirm(true);
       await screen.findAllByText("redeploy-1", { selector: "code" });
       await waitFor(() => expect(requests.filter((r) => r.path === "/api/lifecycle/brands").length).toBeGreaterThan(1));
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -416,12 +425,12 @@ describe("mounted lifecycle UI with API responses", () => {
     const running = { ...failed, install_id: "redeploy-9", status: "running" as const, runtime_sync_status: "running" as const };
 
     it.each(["ready", "failed", "rolled_back"] as const)("after a redeploy reaches %s", async (status) => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
       routes.set("POST /api/brands/brand-a/redeploy", () => json({ install_id: "redeploy-9", brand_id: "brand-a", status: "running" }, 201));
       detail(running);
       vi.useFakeTimers({ shouldAdvanceTime: true });
       await act(async () => { render(<BrandLifecycle me={owner} />); });
       fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่ (Redeploy)" }));
+      await answerConfirm(true);
       await screen.findAllByText("redeploy-9", { selector: "code" });
       await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
       expect(reads("redeploy-9")).toBeGreaterThan(1);

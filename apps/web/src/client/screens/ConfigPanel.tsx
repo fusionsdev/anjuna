@@ -8,6 +8,7 @@ import type { BrandEditState } from "../../shared/brand-edit";
 import { replaceTemplateBrand } from "../../shared/site-text-preview";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import { ApiError, api, type Me } from "../api";
+import { useConfirm } from "../components/ConfirmDialog";
 import { BrandAssetsSection, TemplateVersionSection } from "./BrandEditSections";
 
 /** The UI hides what the role cannot do; the server enforces it regardless. */
@@ -22,6 +23,7 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [defaults, setDefaults] = useState<TemplateTextDefaults | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
   useEffect(() => { void api.siteTextDefaults(brandId).then((r) => setDefaults(r.defaults), () => setDefaults(null)); }, [brandId]);
 
   // The template version and Microsoft Ads account of the current revision: Owner fields.
@@ -84,7 +86,13 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
           <button
             className="btn"
             onClick={async () => {
-              if (!window.confirm("ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า? (Roll the brand back to its previous version.)")) return;
+              const ok = await confirm({
+                title: "ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า?",
+                body: "Roll the brand back to its previous version.",
+                confirmLabel: "ย้อนกลับ (Rollback)",
+                tone: "danger",
+              });
+              if (!ok) return;
               const started = await act(() => api.rollbackLifecycle(brandId), "เริ่มย้อนกลับแล้ว ดูสถานะในหน้า Lifecycle (Rollback started, follow it in the lifecycle view)");
               if (started) onOperationStarted?.(started.install_id);
             }}
@@ -96,7 +104,12 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
           key={`t${edit?.template_version_id ?? "?"}`}
           currentId={edit?.template_version_id ?? null}
           onChange={async (target) => {
-            if (!window.confirm(`ย้ายแบรนด์นี้ไปเทมเพลต ${target.name} v${target.version} และติดตั้งใหม่? (Move this brand to ${target.name} v${target.version} and redeploy. If a step fails it rolls back to the current version.)`)) return false;
+            const ok = await confirm({
+              title: `ย้ายแบรนด์นี้ไปเทมเพลต ${target.name} v${target.version} และติดตั้งใหม่?`,
+              body: `Move this brand to ${target.name} v${target.version} and redeploy. If a step fails it rolls back to the current version.`,
+              confirmLabel: "ย้ายเทมเพลต (Move template)",
+            });
+            if (!ok) return false;
             const started = await act(() => api.redeploy(brandId, undefined, target.template_version_id), "เริ่มติดตั้งใหม่แล้ว ดูสถานะในหน้า Lifecycle (Redeploy started, follow it in the lifecycle view)");
             if (!started) return false;
             onOperationStarted?.(started.install_id);
@@ -124,7 +137,13 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
           onSaveMicrosoft={async (account) => { if (await act(() => api.setMicrosoftAds(brandId, account), "บันทึกบัญชี Microsoft Ads แล้ว (Microsoft Ads account saved)")) await loadEdit(); }}
           onSave={(m) => save(m)}
           onRotate={async () => {
-            if (!window.confirm("หมุน (rotate) postback token? ต้องอัปเดต URL ใน LeadsGate ทันที")) return;
+            const ok = await confirm({
+              title: "หมุน (rotate) postback token?",
+              body: "ต้องอัปเดต URL ใน LeadsGate ทันที",
+              confirmLabel: "หมุน token (Rotate token)",
+              tone: "danger",
+            });
+            if (!ok) return;
             const r = await act(() => api.patchBrand(brandId, { rotate_postback_token: true, expected_updated_at: brand.updated_at }), "หมุน token แล้ว");
             if (r?.issued_postback_token) setIssuedToken(r.issued_postback_token);
           }}
@@ -132,6 +151,7 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
       )}
 
       {issuedToken && <TokenModal token={issuedToken} onClose={() => setIssuedToken(null)} />}
+      {confirmDialog}
     </Drawer>
   );
 }

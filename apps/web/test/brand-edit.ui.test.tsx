@@ -4,6 +4,7 @@ import brandFixture from "@anjuna/contracts/fixtures/admin/brand.get.response.js
 import { BRAND_ASSET_MAX_BYTES, brandInitialSvg } from "@anjuna/contracts";
 import type { Me } from "../src/client/api";
 import { ConfigPanel } from "../src/client/screens/ConfigPanel";
+import { answerConfirm } from "./confirm";
 
 const owner: Me = { id: "owner", email: "owner@example.test", role: "owner" };
 const employee: Me = { ...owner, id: "employee", email: "emp1@example.test", role: "employee" };
@@ -37,7 +38,6 @@ beforeEach(() => {
       return json({ brand_id: "brand-a", microsoft_ads_account: microsoft, changed: true });
     }],
   ]);
-  vi.stubGlobal("confirm", vi.fn(() => true));
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const body = init?.body instanceof FormData ? init.body : init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -63,15 +63,17 @@ describe("rollback button", () => {
     expect(container.textContent).not.toMatch(/T10|coming|เร็ว ๆ นี้|placeholder/i);
     expect(document.body.textContent).not.toMatch(/T10|coming with|เร็ว ๆ นี้/i);
     fireEvent.click(button);
+    expect(sent("POST", "/api/brands/brand-a/rollback")).toHaveLength(0);
+    await answerConfirm(true);
     await waitFor(() => expect(sent("POST", "/api/brands/brand-a/rollback")).toHaveLength(1));
     await waitFor(() => expect(started).toHaveBeenCalledWith("ins_rollback"));
     expect(await screen.findByText(/เริ่มย้อนกลับแล้ว/)).toBeTruthy();
   });
 
   it("does nothing when the Owner declines the confirm, and is hidden from an Employee", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => false));
     panel();
     fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับเป็นเวอร์ชันก่อนหน้า (Rollback)" }));
+    await answerConfirm(false);
     expect(sent("POST", "/api/brands/brand-a/rollback")).toHaveLength(0);
     cleanup();
     panel(employee);
@@ -93,28 +95,28 @@ describe("template version", () => {
     fireEvent.change(select, { target: { value: "tv-2" } });
     expect(change.disabled).toBe(false);
     fireEvent.click(change);
+    const dialog = await answerConfirm(true);
+    expect(dialog.textContent).toContain("Copperline v2");
     await waitFor(() => expect(sent("POST", "/api/brands/brand-a/redeploy")).toHaveLength(1));
     expect(sent("POST", "/api/brands/brand-a/redeploy")[0]!.body).toEqual({ template_version_id: "tv-2" });
-    expect(vi.mocked(window.confirm).mock.calls.at(-1)![0]).toContain("Copperline v2");
     await waitFor(() => expect(started).toHaveBeenCalledWith("ins_redeploy"));
   });
 
   it("sends nothing when the confirm is declined, keeps the choice, and shows a refused redeploy as a Thai message", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => false));
     panel();
     // The section remounts once the running version is known: query it fresh each time.
     const section = () => within(screen.getByRole("heading", { level: 3, name: /เวอร์ชันเทมเพลต/ }).closest("section")!);
     await waitFor(() => expect(section().getByText("Harbor v1")).toBeTruthy());
     fireEvent.change(section().getByRole("combobox"), { target: { value: "tv-2" } });
     fireEvent.click(section().getByRole("button", { name: /Change template and redeploy/ }));
-    expect(window.confirm).toHaveBeenCalledTimes(1);
+    await answerConfirm(false);
     expect(sent("POST", "/api/brands/brand-a/redeploy")).toHaveLength(0);
     expect((section().getByRole("combobox") as unknown as HTMLSelectElement).value).toBe("tv-2");
-    vi.stubGlobal("confirm", vi.fn(() => true));
     routes.set("POST /api/brands/brand-a/redeploy", () => json({ error: "lifecycle_operation_active", active_install_id: "ins_9" }, 409));
     // The button is busy until the declined confirm has settled.
     await waitFor(() => expect((section().getByRole("button", { name: /Change template and redeploy/ }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(section().getByRole("button", { name: /Change template and redeploy/ }));
+    await answerConfirm(true);
     expect(await screen.findByText(/An install is already running/)).toBeTruthy();
     expect(sent("POST", "/api/brands/brand-a/redeploy")).toHaveLength(1);
     expect((section().getByRole("combobox") as unknown as HTMLSelectElement).value).toBe("tv-2");
@@ -239,6 +241,8 @@ describe("logo and favicon", () => {
     panel(employee);
     const s = await section();
     fireEvent.click(await s.findByRole("button", { name: /Remove\) ไอคอนแท็บ/ }));
+    expect(sent("DELETE", "/api/brands/brand-a/assets/favicon")).toHaveLength(0);
+    await answerConfirm(true);
     await waitFor(() => expect(sent("DELETE", "/api/brands/brand-a/assets/favicon")).toHaveLength(1));
     await waitFor(() => expect(s.queryByRole("button", { name: /Remove/ })).toBeNull());
   });
