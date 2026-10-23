@@ -1,6 +1,7 @@
-import { CONVERSION_STALLED_HOURS, type AlertsReportResponse, type ConversionsReportResponse, type FunnelReportResponse, type SpendReportResponse } from "@anjuna/contracts";
+import { CONVERSION_STALLED_HOURS, spendPeriodRange, type AlertsReportResponse, type ConversionsReportResponse, type FunnelReportResponse, type SpendReportResponse } from "@anjuna/contracts";
 import { useEffect, useState, type MouseEvent } from "react";
 import { api, type Me } from "../api";
+import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars";
 import { delta, previousRange } from "../home-metrics";
 import { isPlainLeftClick, navigate } from "../router";
 import { conversionsPath } from "./Conversions";
@@ -166,18 +167,23 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [spend, setSpend] = useState<{ cost: number; clicks: number } | null | undefined>(undefined);
   const [alerts, setAlerts] = useState<AlertsReportResponse | null | undefined>(undefined);
   const [conversions, setConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
+  const [daily, setDaily] = useState<DailyCount[] | null | undefined>(undefined);
   const [testSold, setTestSold] = useState<Value>(undefined);
   const [templates, setTemplates] = useState<Value>(undefined);
   const [drafts, setDrafts] = useState<Value>(undefined);
 
-  // Funnel counts, spend and conversions follow the period switch. A late answer for an old period is dropped.
+  // Funnel counts, spend, conversions and the daily bars follow the period switch. A late answer for an old period is dropped.
   useEffect(() => {
     let current = true;
     setFunnel(undefined);
     setPreviousFunnel(undefined);
     setSpend(owner ? undefined : null);
     setConversions(undefined);
+    setDaily(undefined);
     api.conversions({ period }).then((report) => current && setConversions(report), () => current && setConversions(null));
+    // One bar pair per UTC day. `today` would be a single bar, so the chart shows the last 7 days.
+    const days = spendPeriodRange(period === "today" ? "7d" : period);
+    api.leadAggregates(days).then((report) => current && setDaily(dailySeries(report, days.from, days.to)), () => current && setDaily(null));
     api.funnel(periodRange(period)).then((report) => current && setFunnel(sumFunnel(report)), () => current && setFunnel(null));
     // The window before it feeds the deltas only. If it fails the deltas show a dash and the values stay.
     api.funnel(previousRange(periodRange(period))).then((report) => current && setPreviousFunnel(sumFunnel(report)), () => current && setPreviousFunnel(null));
@@ -301,6 +307,14 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
               <button type="button" className="btn" style={{ marginInlineStart: 6 }} onClick={go("funnel")}>ดูในฟันเนล</button>
             </p>
           )}
+        </section>
+        <section className="panel" aria-label="ลีดรายวัน">
+          <div className="home-ptitle">
+            <h2>ลีดรายวัน</h2>
+          </div>
+          {daily === undefined && <p className="hint">…</p>}
+          {daily === null && <p className="hint">—</p>}
+          {daily && <DailyBars days={daily} />}
         </section>
         <div className="home-grid2">
           <section className="panel home-conv" aria-label="คอนเวอร์ชัน">

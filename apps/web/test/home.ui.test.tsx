@@ -38,9 +38,18 @@ const CONVERSIONS_30D: ConversionsReportResponse = { ...CONVERSIONS_OWNER, perio
 // Employee view: core withholds every money field.
 const redact = (report: ConversionsReportResponse): ConversionsReportResponse => ({ ...report, value_totals: null, rows: report.rows.map((r) => ({ ...r, value: null })) });
 const template = (id: string, status: string) => ({ template_version_id: id, template_id: id, name: id, version: 1, status, submitted_by_label: null, created_at: "2026-10-20", sealed_at: null, thumbnail_url: null, brands_using: 0 });
+// Daily outcome counts: 2026-10-21 has 3 pending + 1 sold (4 leads, 1 sold); 2026-10-22 has 2 sold + 1 rejected (3 leads, 2 sold).
+const aggregateRows = [
+  { brand_id: "cg", day: "2026-10-21", status: "pending", count: 3 },
+  { brand_id: "cg", day: "2026-10-21", status: "sold", count: 1 },
+  { brand_id: "cg", day: "2026-10-22", status: "sold", count: 2 },
+  { brand_id: "cg", day: "2026-10-22", status: "rejected", count: 1 },
+];
+const aggregatesBody = (from: string, to: string) => ({ from, to, timezone: "UTC", rows: aggregateRows });
 
 let funnel: (from: string) => Response | Promise<Response>;
 let conversions: (period: string) => Response | Promise<Response>;
+let aggregates: (from: string, to: string) => Response | Promise<Response>;
 let alertsBody: unknown;
 let alertsReply: () => Response | Promise<Response>;
 let spend: ReturnType<typeof vi.fn>;
@@ -53,6 +62,7 @@ beforeEach(() => {
   requests = [];
   funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
   conversions = (period) => json(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER);
+  aggregates = (from, to) => json(aggregatesBody(from, to));
   alertsBody = alertsReport;
   alertsReply = () => json(alertsBody);
   spend =vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
@@ -62,6 +72,7 @@ beforeEach(() => {
     const url = new URL(input, "http://panel.test");
     if (url.pathname === "/api/funnel") return funnel(url.searchParams.get("from") ?? "");
     if (url.pathname === "/api/conversions") return conversions(url.searchParams.get("period") ?? "");
+    if (url.pathname === "/api/leads/aggregates") return aggregates(url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? "");
     if (url.pathname === "/api/alerts") return alertsReply();
     if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [{ brand_id: "a", status: "live" }, { brand_id: "b", status: "live" }, { brand_id: "c", status: "draft" }] });
@@ -91,6 +102,14 @@ const ledgerDelta = (label: string) => {
 };
 const funnelQueries = () => requests.filter((r) => r.startsWith("/api/funnel")).map((r) => new URL(r, "http://panel.test").searchParams);
 const conversionRequests = () => requests.filter((r) => r.startsWith("/api/conversions"));
+/** The `[from, to]` days of every daily-bars request, in call order. */
+const aggregateQueries = () => requests.filter((r) => r.startsWith("/api/leads/aggregates")).map((r) => {
+  const params = new URL(r, "http://panel.test").searchParams;
+  return [params.get("from"), params.get("to")];
+});
+const dailyPanel = () => within(screen.getByRole("region", { name: "ลีดรายวัน" }));
+/** One `<title>` per day in the daily bars. */
+const dayTitles = () => [...screen.getByRole("region", { name: "ลีดรายวัน" }).querySelectorAll("svg g > title")].map((t) => t.textContent);
 const card = () => within(screen.getByRole("region", { name: "คอนเวอร์ชัน" }));
 /** The big number under a card label. */
 const cardValue = (label: string) => card().getByText(label).parentElement!.querySelector(".v")!.textContent;
@@ -468,6 +487,83 @@ describe("Home screen, owner", () => {
     await waitFor(() => expect(fixTexts()).toContain("อัตรา reject 38% สูงกว่าค่าปกติ 10%"));
     expect(fixTexts().some((t) => t?.startsWith("คอนเวอร์ชัน"))).toBe(false);
   });
+
+  it("asks for the daily lead counts of the chosen window and widens today to the last 7 days", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(aggregateQueries()).toEqual([["2026-10-16", "2026-10-22"]]);
+    expect(dayTitles()).toEqual([
+      "2026-10-16: ลีด 0, ขายได้ 0",
+      "2026-10-17: ลีด 0, ขายได้ 0",
+      "2026-10-18: ลีด 0, ขายได้ 0",
+      "2026-10-19: ลีด 0, ขายได้ 0",
+      "2026-10-20: ลีด 0, ขายได้ 0",
+      "2026-10-21: ลีด 4, ขายได้ 1",
+      "2026-10-22: ลีด 3, ขายได้ 2",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(dayTitles()).toHaveLength(30));
+    expect(aggregateQueries()[1]).toEqual(["2026-09-23", "2026-10-22"]);
+    expect(dayTitles().slice(-2)).toEqual(["2026-10-21: ลีด 4, ขายได้ 1", "2026-10-22: ลีด 3, ขายได้ 2"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
+    await waitFor(() => expect(aggregateQueries()).toHaveLength(3));
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(aggregateQueries()[2]).toEqual(["2026-10-16", "2026-10-22"]);
+  });
+
+  it("shows the daily bars legend and the loading mark until the counts arrive", async () => {
+    let release: (response: Response) => void = () => {};
+    aggregates = () => new Promise<Response>((resolve) => { release = resolve; });
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    expect(dailyPanel().getByText("…")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
+
+    release(json(aggregatesBody("2026-10-16", "2026-10-22")));
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(dailyPanel().queryByText("…")).toBeNull();
+    expect(dailyPanel().getByRole("img", { name: "ลีดและยอดขายรายวัน" })).toBeTruthy();
+    expect(dailyPanel().getByText("ขายได้")).toBeTruthy();
+    expect(dailyPanel().getByText("ลีด", { selector: "li" })).toBeTruthy();
+  });
+
+  it("shows — in the daily bars panel when the aggregates call fails and keeps the other panels", async () => {
+    aggregates = () => json({ error: "core_unavailable" }, 502);
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await waitFor(() => expect(dailyPanel().getByText("—")).toBeTruthy());
+    expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
+    expect(dailyPanel().queryByText("ยังไม่มีลีดในช่วงนี้")).toBeNull();
+
+    expect(ledgerValue("รายได้").text).toBe("$410");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันส่งไม่ได้ 4 รายการ"));
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ลีด");
+  });
+
+  it("shows the empty state when the window has no leads", async () => {
+    aggregates = (from, to) => json({ from, to, timezone: "UTC", rows: [] });
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(dailyPanel().getByText("ยังไม่มีลีดในช่วงนี้")).toBeTruthy());
+    expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
+  });
+
+  it("drops a late daily bars answer for an old period", async () => {
+    let releaseOld: (response: Response) => void = () => {};
+    const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
+    // The 7 day window starts on 2026-10-16 and is still on its way; the 30 day window answers first.
+    aggregates = (from, to) => (from === "2026-10-16" ? old : json(aggregatesBody(from, to)));
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(dayTitles()).toHaveLength(30));
+
+    releaseOld(json(aggregatesBody("2026-10-16", "2026-10-22")));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dayTitles()).toHaveLength(30);
+  });
 });
 
 describe("Home screen, employee", () => {
@@ -539,6 +635,15 @@ describe("Home screen, employee", () => {
     expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
     expect(card().getByRole("link", { name: "ส่งไม่ได้ 4" }).getAttribute("href")).toBe("/conversions?status=dead");
     await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันส่งไม่ได้ 4 รายการ"));
+    expect(document.body.textContent).not.toContain("$");
+  });
+
+  it("employee sees the daily bars, which carry counts only", async () => {
+    render(<HomeScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(dayTitles().slice(-2)).toEqual(["2026-10-21: ลีด 4, ขายได้ 1", "2026-10-22: ลีด 3, ขายได้ 2"]);
+    expect(aggregateQueries()).toEqual([["2026-10-16", "2026-10-22"]]);
     expect(document.body.textContent).not.toContain("$");
   });
 
