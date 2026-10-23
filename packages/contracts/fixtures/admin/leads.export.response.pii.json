@@ -1,0 +1,39 @@
+{
+  "rows": [
+    {
+      "lead_id": "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f",
+      "brand": "brand-a",
+      "hostname": "brand-a.example",
+      "status": "soldLead",
+      "outcome": "sold",
+      "requested_amount": 1000,
+      "loan_purpose": "DEBT_CONSOLIDATION",
+      "state": "TX",
+      "keyword": "Fast Cash Loans",
+      "variant": "a",
+      "form_variant": "lite_v1",
+      "created_at": "2026-10-01T12:00:00.000Z",
+      "first_name": "Test",
+      "last_name": "Applicant",
+      "birth_date": "1990-01-15",
+      "email": "test.applicant@example.com",
+      "home_phone": "2145550123",
+      "work_phone": null,
+      "address": "100 Example St",
+      "city": "Dallas",
+      "zip": "75201",
+      "address_length_months": 24,
+      "own_home": false,
+      "income_type": "EMPLOYMENT",
+      "employer": "Example Co",
+      "job_title": "Clerk",
+      "employed_months": 36,
+      "pay_date1": "2026-10-09",
+      "pay_frequency": "BIWEEKLY",
+      "direct_deposit": true,
+      "monthly_income": 3200
+    }
+  ],
+  "truncated": true,
+  "pii": true
+}

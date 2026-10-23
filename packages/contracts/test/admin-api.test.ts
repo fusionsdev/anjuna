@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ADMIN_AUDIT_ACTIONS,
   ADMIN_CONTEXT_HEADERS,
   ADMIN_ENDPOINTS,
   ADMIN_ERROR_STATUS,
@@ -28,11 +29,18 @@ import {
   GetLeadResponse,
   LeadAggregatesQuery,
   LeadAggregatesResponse,
+  LEAD_EXPORT_COLUMNS,
+  LEAD_EXPORT_PII_COLUMNS,
+  LeadExportResponse,
+  LeadExportRow,
   leadOutcome,
+  LeadsQuery,
+  LeadsResponse,
   ListBrandsResponse,
   MailingStatusResponse,
   matchAdminRoute,
   SpendReportResponse,
+  SuppressionsResponse,
   RISK_SIGNALS,
   TrafficRiskExportQuery,
   TrafficRiskExportResponse,
@@ -63,6 +71,11 @@ describe("golden fixtures validate", () => {
     ["leads.aggregates.query.json", LeadAggregatesQuery],
     ["leads.aggregates.response.json", LeadAggregatesResponse],
     ["lead.get.response.json", GetLeadResponse],
+    ["lead.get.response.employee.json", GetLeadResponse],
+    ["leads.list.response.json", LeadsResponse],
+    ["leads.export.response.json", LeadExportResponse],
+    ["leads.export.response.pii.json", LeadExportResponse],
+    ["suppressions.list.response.json", SuppressionsResponse],
     ["audit.list.response.owner.json", AuditListResponse],
     ["audit.list.response.employee.json", AuditListResponse],
     ["funnel.query.json", FunnelQuery],
@@ -190,10 +203,8 @@ describe("authorize()", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("lead detail is owner-only; aggregates are open to employees", () => {
-    const r = authorize("getLead", "employee");
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toEqual({ error: "forbidden_role", required_role: "owner" });
+  it("lead detail and aggregates are open to employees; the PII fields are redacted by core", () => {
+    expect(authorize("getLead", "employee").ok).toBe(true);
     expect(authorize("getLead", "owner").ok).toBe(true);
     expect(authorize("leadAggregates", "employee").ok).toBe(true);
   });
@@ -289,7 +300,10 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "Change amount buckets", employee: "no", covered_by: ["patch:amount_buckets"] },
   { action: "Switch flow gate mode (`param` / `signed_cookie`)", employee: "no", covered_by: ["patch:flow_gate_mode"] },
   { action: "Set LeadsGate aid, postback token, drain key, prepop base", employee: "no", covered_by: ["patch:money_routing"] },
-  { action: "View individual leads with PII", employee: "no", covered_by: ["getLead"] },
+  // The PII *fields* of getLead are owner-only inside the handler (core redacts by role), so the
+  // endpoint table cannot show them. workers/core/test/admin.test.ts covers that field-level rule.
+  { action: "View individual leads without PII", employee: "yes", covered_by: ["listLeads", "getLead", "leadExport"] },
+  { action: "Search the email suppression list", employee: "no", covered_by: ["listSuppressions"] },
   { action: "View audit log", employee: "own", covered_by: ["listAudit"] },
   { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport"] },
 ];
@@ -384,7 +398,10 @@ describe("routing", () => {
     expect(matchAdminRoute("DELETE", "/admin/brands/brand-a")).toBeNull();
     expect(matchAdminRoute("POST", "/admin/brands/brand-a/rollback")).toBeNull();
     expect(matchAdminRoute("GET", "/admin/traffic/breakdown")).toEqual({ endpoint: "trafficBreakdown", params: {} });
-    expect(ADMIN_ENDPOINTS).toHaveLength(15);
+    expect(matchAdminRoute("GET", "/admin/leads")).toEqual({ endpoint: "listLeads", params: {} });
+    expect(matchAdminRoute("GET", "/admin/leads/export")).toEqual({ endpoint: "leadExport", params: {} });
+    expect(matchAdminRoute("GET", "/admin/suppressions")).toEqual({ endpoint: "listSuppressions", params: {} });
+    expect(ADMIN_ENDPOINTS).toHaveLength(18);
   });
 });
 
@@ -476,5 +493,123 @@ describe("schema rules", () => {
     const list = fixture<{ brands: Record<string, unknown>[]; generated_at: string }>(A("brands.list.response.json"));
     const bad = { ...list, brands: [{ ...list.brands[0], stats_7d: { leads: 1, sold: 1, pending: 1 } }] };
     expect(ListBrandsResponse.safeParse(bad).success).toBe(false);
+  });
+});
+
+// spec leads
+describe("leads, export and suppressions (FUS-376)", () => {
+  it("leads query refuses a window longer than 93 days and from after to", () => {
+    expect(LeadsQuery.safeParse({ from: "2026-10-02", to: "2026-10-01" }).success).toBe(false);
+    expect(LeadsQuery.safeParse({ from: "2026-01-01", to: "2026-12-31" }).success).toBe(false);
+    expect(LeadsQuery.safeParse({ from: "2026-07-01", to: "2026-10-01" }).success).toBe(true);
+    expect(LeadsQuery.safeParse({}).success).toBe(true); // both absent is allowed
+    expect(LeadsQuery.safeParse({ q: "ab" }).success).toBe(false); // under 4 chars
+    expect(LeadsQuery.safeParse({ q: "ab%_" }).success).toBe(false);
+    expect(LeadsQuery.safeParse({ limit: 201 }).success).toBe(false);
+    expect(LeadsQuery.safeParse({ status: "sold", brand: "brand-a" }).success).toBe(true);
+    expect(LeadsQuery.safeParse({ email: "a@example.com" }).success).toBe(false); // no email search
+  });
+
+  it("export query refuses a bad window and defaults to the non-PII column set", () => {
+    expect(AdminApi.leadExport.query.safeParse({ from: "2026-10-02", to: "2026-10-01" }).success).toBe(false);
+    expect(AdminApi.leadExport.query.safeParse({ pii: "yes" }).success).toBe(false);
+    expect(AdminApi.leadExport.query.parse({})).toEqual({ pii: "0", limit: 5000 });
+    expect(AdminApi.leadExport.query.safeParse({ limit: 5001 }).success).toBe(false);
+  });
+
+  it("lead export refuses pii=1 for an employee and allows it for an owner", () => {
+    const denied = authorize("leadExport", "employee", { pii: true });
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) {
+      expect(denied.error).toEqual({ error: "forbidden_role", required_role: "owner", denied_fields: ["pii"] });
+      expect(AdminError.safeParse(denied.error).success).toBe(true);
+    }
+    expect(authorize("leadExport", "employee").ok).toBe(true);
+    expect(authorize("leadExport", "employee", { pii: false }).ok).toBe(true);
+    expect(authorize("leadExport", "owner", { pii: true }).ok).toBe(true);
+  });
+
+  it("lead detail parses the employee fixture with applicant, payout and value null", () => {
+    const employeeLead = AdminApi.getLead.response.parse(fixture(A("lead.get.response.employee.json"))).lead;
+    expect(employeeLead.applicant).toBeNull();
+    expect(employeeLead.postbacks.every((p) => p.payout === null)).toBe(true);
+    expect(employeeLead.conversion?.value).toBeNull();
+    expect(employeeLead.conversion?.last_error).toBeNull();
+    expect(employeeLead.profile.state).toBe("TX");
+    expect(JSON.stringify(employeeLead)).not.toContain("fixture-click");
+  });
+
+  it("the owner and employee lead fixtures differ only in the PII and money fields", () => {
+    const owner = GetLeadResponse.parse(fixture(A("lead.get.response.json"))).lead;
+    const employee = GetLeadResponse.parse(fixture(A("lead.get.response.employee.json"))).lead;
+    expect(owner.applicant).not.toBeNull();
+    expect({
+      ...employee,
+      applicant: owner.applicant,
+      postbacks: owner.postbacks,
+      conversion: owner.conversion && { ...employee.conversion, value: owner.conversion.value, last_error: owner.conversion.last_error },
+    }).toEqual(owner);
+    expect(owner.postbacks.some((p) => p.payout !== null)).toBe(true);
+    expect(owner.conversion?.value).not.toBeNull();
+  });
+
+  it("every new endpoint parses its fixture and sits in the role table", () => {
+    const row = (e: AdminEndpoint) => ADMIN_ROLE_TABLE.find((r) => r.endpoint === e)!;
+    expect(AdminApi.listLeads.response.safeParse(fixture(A("leads.list.response.json"))).success).toBe(true);
+    expect(AdminApi.leadExport.response.safeParse(fixture(A("leads.export.response.json"))).success).toBe(true);
+    expect(AdminApi.leadExport.response.safeParse(fixture(A("leads.export.response.pii.json"))).success).toBe(true);
+    expect(AdminApi.listSuppressions.response.safeParse(fixture(A("suppressions.list.response.json"))).success).toBe(true);
+    expect(row("listLeads").min_role).toBe("employee");
+    expect(row("leadExport").min_role).toBe("employee");
+    expect(row("listSuppressions").min_role).toBe("owner");
+    expect(row("getLead").min_role).toBe("employee");
+    expect(row("getLead").scope).toEqual({ employee: "all", owner: "all" });
+    expect(row("listSuppressions").scope).toEqual({ employee: "none", owner: "all" });
+  });
+
+  it("authorize() refuses the suppression search to an employee", () => {
+    const r = authorize("listSuppressions", "employee");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toEqual({ error: "forbidden_role", required_role: "owner" });
+  });
+
+  it("export column constants cover every row field and keep PII last", () => {
+    const plain = fixture<{ rows: Record<string, unknown>[] }>(A("leads.export.response.json")).rows[0]!;
+    const pii = fixture<{ rows: Record<string, unknown>[] }>(A("leads.export.response.pii.json")).rows[0]!;
+    expect(Object.keys(LeadExportRow.parse(plain)).sort()).toEqual([...LEAD_EXPORT_COLUMNS].sort());
+    expect(Object.keys(LeadExportRow.parse(pii)).sort()).toEqual([...LEAD_EXPORT_PII_COLUMNS].sort());
+    expect(LEAD_EXPORT_PII_COLUMNS.slice(0, LEAD_EXPORT_COLUMNS.length)).toEqual([...LEAD_EXPORT_COLUMNS]);
+    expect(new Set(LEAD_EXPORT_PII_COLUMNS).size).toBe(LEAD_EXPORT_PII_COLUMNS.length);
+    expect(LEAD_EXPORT_PII_COLUMNS).toContain("email");
+    expect(LEAD_EXPORT_COLUMNS).not.toContain("email");
+    expect(LEAD_EXPORT_PII_COLUMNS).not.toContain("click_id");
+  });
+
+  it("no PII column is in the non-PII export set", () => {
+    for (const c of ["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip"]) {
+      expect(LEAD_EXPORT_COLUMNS, c).not.toContain(c);
+      expect(LEAD_EXPORT_PII_COLUMNS, c).toContain(c);
+    }
+    expect(LeadExportRow.safeParse({ ...fixture<{ rows: object[] }>(A("leads.export.response.json")).rows[0], click_id: "x" }).success).toBe(false);
+  });
+
+  it("no new fixture carries a click id value or key", () => {
+    for (const f of ["lead.get.response.json", "lead.get.response.employee.json", "leads.list.response.json", "leads.export.response.json", "leads.export.response.pii.json"]) {
+      expect(fixtureText(A(f)), f).not.toMatch(/"(gclid|gbraid|wbraid|msclkid|click_id)"\s*:|fixture-click/);
+    }
+  });
+
+  it("suppressions query accepts the known reasons and sources only", () => {
+    expect(AdminApi.listSuppressions.query.safeParse({ q: "a@", reason: "bounce", source: "ses" }).success).toBe(true);
+    expect(AdminApi.listSuppressions.query.safeParse({ reason: "spam" }).success).toBe(false);
+    expect(AdminApi.listSuppressions.query.safeParse({ source: "other" }).success).toBe(false);
+    expect(AdminApi.listSuppressions.query.safeParse({ q: "" }).success).toBe(false);
+    expect(AdminApi.listSuppressions.query.safeParse({ limit: 201 }).success).toBe(false);
+  });
+
+  it("the audit action list names the four PII actions", () => {
+    for (const a of ["pii.lead_view", "pii.lead_export", "lead.export", "pii.suppression_search"]) {
+      expect(ADMIN_AUDIT_ACTIONS).toContain(a);
+    }
   });
 });
