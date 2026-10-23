@@ -24,6 +24,7 @@ describe("upgrade-all outcomes", () => {
     expect(rows).toHaveLength(5);
     for (const [index, status] of ["กำลังทำงาน (running)", "พร้อมใช้งาน (ready)", "ล้มเหลว (failed)", "ย้อนกลับแล้ว (rolled-back)", "ข้าม (skipped)"].entries()) {
       expect(within(rows[index]!).getByText(`brand-${index}.test`)).toBeTruthy();
+      expect(within(rows[index]!).getByText(`brand-${index}`).tagName).toBe("CODE");
       expect(within(rows[index]!).getByText(status)).toBeTruthy();
     }
     expect(within(rows[0]!).getByText("ทดลองก่อน (Canary)")).toBeTruthy();

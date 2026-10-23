@@ -2,6 +2,7 @@ import type { FunnelReportResponse, TrafficBreakdownResponse, TrafficDimension, 
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { ApiError, api } from "../api";
+import { BrandLabel, useBrandLabels } from "../brand-labels";
 import { RiskPanel } from "./RiskPanel";
 
 const periods: Array<[TrafficPeriod, string]> = [["today", "วันนี้"], ["7d", "7 วัน"], ["30d", "30 วัน"]];
@@ -53,6 +54,7 @@ export function FunnelScreen() {
   const [hourError, setHourError] = useState<string | null>(null);
   const [spendError, setSpendError] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const labelOf = useBrandLabels();
 
   useEffect(() => {
     let active = true;
@@ -124,8 +126,9 @@ export function FunnelScreen() {
           const sold = report ? report.rows.filter((r) => r.brand === b.brand_id).reduce((sum, r) => sum + r.sold, 0) : null;
           const clicks = paid.get(b.brand_id) ?? null;
           const leak = biggestLeak([["คลิกที่จ่าย", clicks], ["ถึงเว็บ", b.visits], ["ถึง /go", b.go_count], ["ฟอร์ม", b.form_views], ["ลีด", b.leads]]);
+          const known = labelOf(b.brand_id);
           return <tr key={b.brand_id}>
-            <td>{b.brand_id}{b.hostname && <small style={{ display: "block", color: "var(--muted)" }}>{b.hostname}</small>}</td>
+            <td><BrandLabel brandId={b.brand_id} domain={known !== b.brand_id ? known : b.hostname || known} /></td>
             <td className="blue">{number(clicks)}</td><td>{number(b.visits)}</td><td>{number(b.go_count)}</td>
             <td>{number(b.form_views)}</td><td>{number(b.leads)}</td><td>{number(sold)}</td>
             <td>{leak ? <span className={`pill ${leak.loss > .8 ? "p-warn" : "p-mute"}`}>{leak.label} หลุด {Math.round(leak.loss * 100)}%</span> : <span className="pill p-mute">—</span>}</td>
@@ -166,7 +169,7 @@ export function FunnelScreen() {
       {reportError ? <p role="alert">{reportError}</p> : error ? <p className="hint">ยังโหลดรายงานไม่ได้</p> : !report ? <p role="status">กำลังโหลด…</p> :
         <div className="tw"><table><thead><tr><th>แบรนด์</th><th>คีย์เวิร์ด</th><th>ตัวแปร</th><th>คลิก</th><th>/go</th><th>เปิดฟอร์ม</th><th>ส่ง</th><th>ขายได้</th>{owner && <th>รายได้</th>}<th>อัตราส่ง</th><th>อัตราขาย</th></tr></thead>
           <tbody>{report.rows.map((r) => <tr key={JSON.stringify([r.brand, r.keyword, r.variant])}>
-            <td>{r.brand}</td><td>{r.keyword ?? "—"}</td><td>{r.variant ?? "—"}</td><td>{r.clicks}</td><td>{r.go_count}</td><td>{r.form_views}</td><td>{r.submits}</td><td>{r.sold}</td>
+            <td><BrandLabel brandId={r.brand} domain={labelOf(r.brand)} /></td><td>{r.keyword ?? "—"}</td><td>{r.variant ?? "—"}</td><td>{r.clicks}</td><td>{r.go_count}</td><td>{r.form_views}</td><td>{r.submits}</td><td>{r.sold}</td>
             {owner && <td>{r.revenue.toFixed(2)}</td>}<td>{rate(r.submit_rate)}</td><td>{rate(r.sold_rate)}</td>
           </tr>)}{report.rows.length === 0 && <tr><td colSpan={owner ? 11 : 10} className="hint">ไม่มีข้อมูลในช่วงนี้</td></tr>}</tbody>
         </table></div>}

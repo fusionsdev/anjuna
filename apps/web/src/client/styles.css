@@ -197,3 +197,6 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .toast { position: fixed; right: 16px; bottom: 16px; z-index: 40; display: flex; gap: var(--space-3); align-items: center; padding: 10px 14px; border-radius: var(--radius-md); box-shadow: var(--shadow-2); background: var(--raised); border: 1px solid var(--line); max-width: min(420px, calc(100vw - 32px)); }
 .toast-ok { border-left: 3px solid var(--money); }
 .toast-err { border-left: 3px solid var(--bad); }
+
+.brand-label { display: inline-flex; flex-direction: column; }
+.brand-label .brand-id { font-family: var(--mono); font-size: var(--text-xs); color: var(--muted); }

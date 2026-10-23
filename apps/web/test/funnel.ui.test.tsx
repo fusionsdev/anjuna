@@ -11,6 +11,7 @@ let spendStatus: number;
 let empty: boolean;
 let trafficStatus: number;
 let requests: string[];
+let lifecycleBrands: Array<{ brand_id: string; hostnames: string[] }>;
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 function traffic(period: TrafficBreakdownResponse["period"], by: TrafficBreakdownResponse["by"]): TrafficBreakdownResponse {
   const keys = { source: "google", domain: "a.example", device: "mobile", browser: "safari", hour: "00" };
@@ -23,7 +24,7 @@ function traffic(period: TrafficBreakdownResponse["period"], by: TrafficBreakdow
 const reportRow = { brand: "brand-a", keyword: "Quick Cash", variant: "a", clicks: 60, go_count: 30, form_views: 25, submits: 6, sold: 2, revenue: 24, submit_rate: .1, sold_rate: 1 / 3 };
 let fetchMock: ReturnType<typeof vi.fn<(input: string) => Promise<Response>>>;
 beforeEach(() => {
-  role = "owner"; spendStatus = 200; empty = false; trafficStatus = 200; requests = [];
+  role = "owner"; spendStatus = 200; empty = false; trafficStatus = 200; requests = []; lifecycleBrands = [];
   fetchMock = vi.fn(async (input: string) => {
     requests.push(input);
     const url = new URL(input, "https://app.test");
@@ -32,6 +33,8 @@ beforeEach(() => {
     if (url.pathname === "/api/funnel") return json({ from, to, rows: empty ? [] : [reportRow, { ...reportRow, variant: "b", sold: 3 }] });
     if (url.pathname === "/api/traffic/breakdown") return json(trafficStatus === 200 ? traffic(url.searchParams.get("period") as TrafficBreakdownResponse["period"], url.searchParams.get("by") as TrafficBreakdownResponse["by"]) : { error: "internal" }, trafficStatus);
     if (url.pathname === "/api/traffic/risk") return json(trafficRisk);
+    if (url.pathname === "/api/lifecycle/brands") return json({ brands: lifecycleBrands, core_error: null });
+    if (url.pathname === "/api/brands") return json({ brands: [], generated_at: "2026-10-23T00:00:00.000Z" });
     throw new Error(`Unexpected fetch ${input}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -44,11 +47,22 @@ describe("Funnel screen", () => {
     render(<FunnelScreen />);
     await waitFor(() => expect(brandTable().getByText("200")).toBeTruthy());
     const row = within(brandTable().getByText("brand-a").closest("tr")!);
-    await waitFor(() => expect(row.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["brand-aa.example", "200", "100", "50", "40", "10", "5", "ลีด หลุด 75%"]));
+    await waitFor(() => expect(row.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["a.examplebrand-a", "200", "100", "50", "40", "10", "5", "ลีด หลุด 75%"]));
     expect(screen.getByRole("heading", { name: "แยกตามคีย์เวิร์ดและ A/B" })).toBeTruthy();
     expect(screen.getAllByText("Quick Cash")).toHaveLength(2);
     expect(screen.getByRole("img", { name: "จำนวนคนเข้าเว็บแต่ละชั่วโมง" }).children).toHaveLength(24);
     expect(screen.getByTitle("08:00 เข้าเว็บ 100 ลีด 10")).toBeTruthy();
+  });
+  it("shows the factory domain first in both brand tables and keeps the id in code", async () => {
+    lifecycleBrands = [{ brand_id: "brand-a", hostnames: ["lead.example"] }];
+    render(<FunnelScreen />);
+    await waitFor(() => expect(brandTable().getByText("lead.example")).toBeTruthy());
+    expect(brandTable().getByText("brand-a").tagName).toBe("CODE");
+    expect(brandTable().queryByText("a.example")).toBeNull();
+    const reportRows = within(screen.getByRole("heading", { name: "แยกตามคีย์เวิร์ดและ A/B" }).closest("section")!).getAllByText("lead.example");
+    expect(reportRows).toHaveLength(2);
+    expect(requests.filter((p) => p === "/api/lifecycle/brands")).toHaveLength(1);
+    expect(requests.filter((p) => p === "/api/brands")).toHaveLength(1);
   });
   it("shows a dash when spend is absent and still loads the report", async () => {
     spendStatus = 404;
