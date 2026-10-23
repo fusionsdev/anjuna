@@ -117,4 +117,41 @@ describe("useConfirm", () => {
     view.unmount();
     await expect(asked).resolves.toBe(false);
   });
+
+  it("keeps focus in the dialog after a click on its text: Escape, Tab and Shift+Tab work from the dialog element", async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByText("ask a"));
+    const dialog = await screen.findByRole("alertdialog");
+    // A click on the title or body focuses the nearest focusable ancestor, which is the dialog itself.
+    expect(dialog.getAttribute("tabindex")).toBe("-1");
+    const [cancel, accept] = within(dialog).getAllByRole("button");
+    dialog.focus();
+    expect(fireEvent.keyDown(dialog, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(cancel);
+    dialog.focus();
+    expect(fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(accept);
+    dialog.focus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(await screen.findByText("a:false")).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("cancel() resolves an open dialog as false and removes it, and does nothing when none is open", async () => {
+    let asked!: Promise<boolean>;
+    let cancel!: () => void;
+    function WithCancel() {
+      const [confirm, dialog, cancelOpen] = useConfirm();
+      cancel = cancelOpen;
+      return <><button onClick={() => { asked = confirm({ title: "ลบ?", confirmLabel: "ลบ (Delete)" }); }}>ask</button>{dialog}</>;
+    }
+    render(<WithCancel />);
+    act(() => cancel());
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    fireEvent.click(screen.getByText("ask"));
+    await screen.findByRole("alertdialog");
+    act(() => cancel());
+    await expect(asked).resolves.toBe(false);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
 });

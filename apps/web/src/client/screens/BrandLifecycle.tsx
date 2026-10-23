@@ -2,7 +2,7 @@ import { type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
-import { useConfirm } from "../components/ConfirmDialog";
+import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, sortWorstProfitFirst, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
@@ -94,7 +94,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const operationGeneration = useRef(0);
-  const [confirm, confirmDialog] = useConfirm();
+  const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
   const owner = me.role === "owner";
@@ -104,6 +104,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
+  // The wizard replaces this screen's JSX, which hides {confirmDialog}; close an open question so it cannot come back later.
+  useEffect(() => { if (wizard) cancelConfirm(); }, [wizard]);
   // A resumed draft (brandId set) is not the new-brand route, so leaving /brands/new keeps it open.
   useEffect(() => setWizard((w) => (wizardRoute ? (w ?? {}) : w && !w.brandId ? null : w)), [wizardRoute]);
   useEffect(() => { if (routeBrandId && routeBrandId !== selectedId) setSelectedId(routeBrandId); }, [routeBrandId]);
@@ -137,6 +139,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useLayoutEffect(() => {
     let active = true;
     operationGeneration.current += 1;
+    // A dialog opened for the previous brand must not stay open over this one.
+    cancelConfirm();
     setState(undefined);
     setInstall(undefined);
     setInstallError(null);
@@ -284,16 +288,23 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       if (canCommit(token, selected.brand_id)) setRecovering(false);
     }
   }
+  /** Asks first. False when declined, or when the brand changed while the dialog was open (the generation moved on). */
+  async function confirmForBrand(options: ConfirmOptions): Promise<boolean> {
+    const generation = operationGeneration.current;
+    const ok = await confirm(options);
+    return ok && operationGeneration.current === generation;
+  }
   async function rollback() {
     if (!selected) return;
-    const ok = await confirm({
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
       title: "ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า?",
       body: "Roll the brand back to its previous version.",
       confirmLabel: "ย้อนกลับ (Rollback)",
       tone: "danger",
     });
     if (!ok) return;
-    await dispatchOperation(() => api.rollbackLifecycle(selected.brand_id));
+    await dispatchOperation(() => api.rollbackLifecycle(brandId));
   }
   // Pause lives in core and the factory brand stays live, so a paused brand can be redeployed; it stays paused.
   function pausedNote() {
@@ -301,24 +312,26 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
   async function redeploy() {
     if (!selected) return;
-    const ok = await confirm({
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
       title: "ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน?",
       body: `Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.${pausedNote()}`,
       confirmLabel: "ติดตั้งใหม่ (Redeploy)",
     });
     if (!ok) return;
-    await dispatchOperation(() => api.redeploy(selected.brand_id));
+    await dispatchOperation(() => api.redeploy(brandId));
   }
   async function redeployLatest() {
     const target = selected?.newer_form;
     if (!selected || !target) return;
-    const ok = await confirm({
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
       title: `ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}?`,
       body: `Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.${pausedNote()}`,
       confirmLabel: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)",
     });
     if (!ok) return;
-    await dispatchOperation(() => api.redeploy(selected.brand_id, target.form_artifact_id));
+    await dispatchOperation(() => api.redeploy(brandId, target.form_artifact_id));
   }
   async function startInstall() {
     if (!selected) return;
@@ -330,14 +343,15 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
   async function recover() {
     if (!selected) return;
-    const ok = await confirm({
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
       title: "กู้คืนแบรนด์นี้?",
       body: "Recover runs the compensation install for this brand.",
       confirmLabel: "กู้คืน (Recover)",
       tone: "danger",
     });
     if (!ok) return;
-    await dispatchOperation(() => api.recover(selected.brand_id));
+    await dispatchOperation(() => api.recover(brandId));
   }
 
   async function startUpgradeAll() {

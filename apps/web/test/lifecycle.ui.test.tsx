@@ -200,6 +200,17 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.getByText(/สถิติ 7 วัน · ลีด \(Leads\): 9 · ขายได้ \(Sold\): 3 · รอผล \(Pending\): 2/)).toBeDefined();
   });
 
+  it("sends no pause request when the Owner cancels Pause in the Runtime config drawer", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await openRuntimeConfig();
+    const panel = await screen.findByRole("complementary", { name: configLabel });
+    fireEvent.click(await within(panel).findByRole("button", { name: pauseName }));
+    await answerConfirm(false);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(requests.some((r) => r.method === "POST" && r.path.endsWith("/pause"))).toBe(false);
+    expect(within(panel).getByRole("button", { name: pauseName })).toBeDefined();
+  });
+
   it("keeps employee runtime controls accessible with owner-only controls hidden", async () => {
     render(<BrandLifecycle me={employee} />);
     await openRuntimeConfig();
@@ -491,6 +502,61 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByText("failed-1", { selector: "code" })).toBeNull();
     expect(screen.queryByText("stale failure")).toBeNull();
     expect(screen.queryByRole("button", { name: /Runtime config/ })).toBeNull();
+  });
+});
+
+describe("a confirm left open when the operator leaves the brand", () => {
+  const newerForm = { form_artifact_id: "fa-2", bundle_form_version: "form@abcdef2" };
+  const posts = () => requests.filter((r) => r.method === "POST");
+  const otherBrand = () => LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] });
+  const accepted = () => json({ install_id: "op-a", brand_id: "brand-a", status: "running" }, 201);
+  const recoverable = () => {
+    lifecycleRows = [{ ...brand, status: "installing", current_revision_id: null, runtime_sync_status: "failed" }, otherBrand()];
+    history([{ install_id: failed.install_id, status: "failed", error: "Compensation failed" }]);
+    detail({ ...failed, recovery_required: true });
+  };
+
+  beforeEach(() => {
+    lifecycleRows = [{ ...brand, newer_form: newerForm }, otherBrand()];
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    routes.set("POST /api/brands/brand-a/redeploy", accepted);
+    routes.set("POST /api/brands/brand-a/rollback", accepted);
+    routes.set("POST /api/brands/brand-a/recover", accepted);
+    detail({ ...failed, install_id: "op-a", status: "running", runtime_sync_status: "running" });
+  });
+
+  it.each([
+    ["redeploy", "ติดตั้งใหม่ (Redeploy)", false],
+    ["redeploy with the latest form", "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)", false],
+    ["rollback", rollbackName, false],
+    ["recover", recoverName, true],
+  ] as const)("closes the %s dialog on a route change and sends nothing for the old brand", async (_name, button, needsRecovery) => {
+    if (needsRecovery) recoverable();
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: button }));
+    await screen.findByRole("alertdialog");
+    view.rerender(<BrandLifecycle me={owner} routeBrandId="brand-b" />);
+    expect(await screen.findByRole("heading", { name: "second.test" })).toBeDefined();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(posts()).toHaveLength(0);
+    expect(screen.queryByText("op-a", { selector: "code" })).toBeNull();
+  });
+
+  it("closes an open confirm when the wizard opens, and it does not come back when the wizard closes", async () => {
+    routes.set("GET /api/templates", () => json({ templates: [] }));
+    routes.set("GET /api/wizard/defaults", () => json({ amount_buckets: [100, 200, 300], form_route: "/request" }));
+    const view = render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่ (Redeploy)" }));
+    await screen.findByRole("alertdialog");
+    view.rerender(<BrandLifecycle me={owner} wizardRoute />);
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeDefined();
+    view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
+    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeDefined();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posts()).toHaveLength(0);
   });
 });
 
