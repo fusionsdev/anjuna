@@ -14,7 +14,9 @@ import {
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
+  LEAD_AGGREGATES_MAX_DAYS,
   LeadConversion,
+  LeadCursorKey,
   LeadId,
   LeadsQuery,
   adminContextFromHeaders,
@@ -703,11 +705,12 @@ export function decodeLeadCursor(cursor: string): { created_at: string; lead_id:
     const text = atob(cursor.replace(/-/g, "+").replace(/_/g, "/"));
     const separator = text.indexOf("|");
     if (separator < 0) return null;
-    const created_at = text.slice(0, separator);
-    const lead_id = text.slice(separator + 1);
-    if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(created_at)) return null;
-    if (!/^[A-Za-z0-9-]{1,64}$/.test(lead_id)) return null;
-    return { created_at, lead_id };
+    // A malformed timestamp would reach SQL as a string comparison and return a wrong page, not an error.
+    const parsed = LeadCursorKey.safeParse({
+      created_at: text.slice(0, separator),
+      lead_id: text.slice(separator + 1),
+    });
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
@@ -718,6 +721,32 @@ export function likeEscape(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
 }
 
+/** UTC calendar days, `YYYY-MM-DD`, both inclusive. */
+export interface LeadWindow {
+  from: string;
+  to: string;
+}
+
+/**
+ * Fills a missing bound so no request scans unbounded history: `to` defaults to today and `from`
+ * to 29 days before `to` (a 30-day span). Then it applies the same two refusals the query schemas
+ * apply, to the resolved pair, because the schemas cannot see a defaulted bound. Callers read
+ * `from` and `to` from the result (the audit target id of an export, for one) and pass the result
+ * to `leadFilterSql`, so the default is computed once per request.
+ */
+export function resolveLeadWindow(
+  query: Pick<LeadsQuery, "from" | "to">,
+  now: Date = new Date(),
+): LeadWindow | { issue: { path: string; message: string } } {
+  const to = query.to ?? now.toISOString().slice(0, 10);
+  const from = query.from ?? new Date(Date.parse(to) - 29 * 86_400_000).toISOString().slice(0, 10);
+  if (from > to) return { issue: { path: "from", message: "from must not be after to" } };
+  if ((Date.parse(to) - Date.parse(from)) / 86_400_000 + 1 > LEAD_AGGREGATES_MAX_DAYS) {
+    return { issue: { path: "from", message: `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days` } };
+  }
+  return { from, to };
+}
+
 /**
  * `WHERE` body (without the word) shared by the lead list and the lead export. Columns are
  * qualified with the alias `l`. Pushes its binds onto `bindings`; each placeholder is taken from
@@ -725,29 +754,19 @@ export function likeEscape(value: string): string {
  */
 export function leadFilterSql(
   query: LeadsQuery | LeadExportQuery,
+  window: LeadWindow,
   bindings: unknown[],
-  now: Date = new Date(),
 ): string {
   const add = (value: unknown): string => {
     bindings.push(value);
     return `?${bindings.length}`;
   };
-  const clauses: string[] = [];
-
-  let from = query.from;
-  if (query.from === undefined && query.to === undefined) {
-    const start = new Date(now);
-    start.setUTCDate(start.getUTCDate() - 29);
-    from = start.toISOString().slice(0, 10);
-  }
-  if (from !== undefined) {
-    clauses.push(`julianday(l.created_at) >= julianday(${add(`${from}T00:00:00.000Z`)})`);
-  }
-  if (query.to !== undefined) {
-    const toExclusive = new Date(`${query.to}T00:00:00.000Z`);
-    toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
-    clauses.push(`julianday(l.created_at) < julianday(${add(toExclusive.toISOString())})`);
-  }
+  const toExclusive = new Date(`${window.to}T00:00:00.000Z`);
+  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+  const clauses: string[] = [
+    `julianday(l.created_at) >= julianday(${add(`${window.from}T00:00:00.000Z`)})`,
+    `julianday(l.created_at) < julianday(${add(toExclusive.toISOString())})`,
+  ];
   if (query.brand !== undefined) clauses.push(`l.brand = ${add(query.brand)}`);
   if (query.status === "sold") clauses.push("l.status = 'soldLead'");
   else if (query.status === "rejected") clauses.push("l.status = 'rejectLead'");
@@ -784,8 +803,11 @@ async function listLeads(url: URL, env: Env, context: AdminRequestContext): Prom
     return invalid(context, [{ path: "cursor", message: "Invalid cursor" }]);
   }
 
+  const window = resolveLeadWindow(query);
+  if ("issue" in window) return invalid(context, [window.issue]);
+
   const bindings: unknown[] = [];
-  const clauses = [leadFilterSql(query, bindings)];
+  const clauses = [leadFilterSql(query, window, bindings)];
   if (cursor !== null) {
     bindings.push(cursor.created_at, cursor.lead_id);
     const at = bindings.length - 1;

@@ -14,7 +14,7 @@ import {
   MailingStatusResponse,
   type AdminRequestContext,
 } from "@anjuna/contracts";
-import { decodeLeadCursor, encodeLeadCursor, likeEscape } from "../src/admin/index.js";
+import { decodeLeadCursor, encodeLeadCursor, likeEscape, resolveLeadWindow } from "../src/admin/index.js";
 import { createHarness, fixtureText, type Harness } from "./helpers.js";
 
 const owner: AdminRequestContext = {
@@ -511,6 +511,19 @@ describe("GET /admin/leads (FUS-376)", () => {
   };
   const ids = (page: LeadsResponse) => page.rows.map((row) => row.lead_id);
 
+  // Binds created_at directly, so a test can batch many inserts in one D1 round trip instead of looping.
+  const insert = (id: string, brand: string, createdAt: string) => lh.db.prepare(`INSERT INTO leads (
+      lead_id, session_id, form_version, form_variant, site_id, brand, hostname,
+      requested_amount, loan_purpose, first_name, last_name, birth_date, email, home_phone,
+      address, city, state, zip, address_length_months, own_home, income_type, employer,
+      job_title, employed_months, pay_date1, pay_frequency, direct_deposit, monthly_income,
+      tracking_json, metadata_json, created_at, click_id
+    ) VALUES (?1, 'session', 'test', 'lite_v1', 'form-default', ?2, ?3,
+      1000, 'OTHER', 'Test', 'Applicant', '1990-01-01', 'test@example.com', '2145550123',
+      '100 Example St', 'Dallas', 'TX', '75201', 24, 0, 'EMPLOYMENT', 'Example',
+      'Clerk', 24, '2026-10-09', 'BIWEEKLY', 1, 3000, '{}', '{}', ?4, ?5)`)
+    .bind(id, brand, `${brand}.example`, createdAt, `clk-${id}`);
+
   beforeAll(async () => {
     lh = await createHarness();
     for (const brand of ["brand-a", "brand-b", "brand-c"]) await lh.seedBrand(brand);
@@ -606,7 +619,7 @@ describe("GET /admin/leads (FUS-376)", () => {
     }
     expect(likeEscape("a%b_c\\d")).toBe("a\\%b\\_c\\\\d");
     const count = async (pattern: string) => (await lh.db.prepare(
-      "SELECT COUNT(*) AS n FROM leads WHERE lead_id LIKE ?1 ESCAPE '\\'",
+      "SELECT COUNT(*) AS n FROM leads WHERE lead_id LIKE ?1 ESCAPE '\\' AND brand IN ('brand-a', 'brand-b')",
     ).bind(pattern).first<{ n: number }>())!.n;
     expect(await count("%")).toBe(7);
     expect(await count(`${likeEscape("%")}%`)).toBe(0);
@@ -660,17 +673,49 @@ describe("GET /admin/leads (FUS-376)", () => {
     expect(cursor).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(decodeLeadCursor("abcd")).toBeNull();
     expect(decodeLeadCursor(btoa("2026-10-04|x"))).toBeNull();
+
+    // Matches the cursor regex and the old decoder, but is not a date: it used to reach SQL.
+    const notADate = "MjAyNi05OS05OVQ6WnxsZWFkLTAwMDE";
+    expect(atob(notADate)).toBe("2026-99-99T:Z|lead-0001");
+    expect(decodeLeadCursor(notADate)).toBeNull();
+    expect(decodeLeadCursor(btoa("2026-02-31T00:00:00.000Z|lead-0001-x"))).toBeNull();
+    expect(decodeLeadCursor(btoa("2026-10-04T08:00:00.000Z|short"))).toBeNull();
+    const bad = await lh.admin(`/admin/leads?${WINDOW}&cursor=${notADate}`, owner);
+    expect(bad.status).toBe(422);
+    expect(await bad.json()).toMatchObject({ error: "invalid", issues: [{ path: "cursor" }] });
+  });
+
+  it("resolves a missing bound, then refuses a window over 93 days", async () => {
+    const now = new Date("2026-10-23T12:00:00.000Z");
+    expect(resolveLeadWindow({}, now)).toEqual({ from: "2026-09-24", to: "2026-10-23" });
+    expect(resolveLeadWindow({ from: "2026-10-01" }, now)).toEqual({ from: "2026-10-01", to: "2026-10-23" });
+    expect(resolveLeadWindow({ to: "2026-10-10" }, now)).toEqual({ from: "2026-09-11", to: "2026-10-10" });
+    expect(resolveLeadWindow({ from: "2026-07-23" }, now)).toEqual({ from: "2026-07-23", to: "2026-10-23" });
+    expect(resolveLeadWindow({ from: "2026-07-22" }, now)).toMatchObject({ issue: { message: "Window is longer than 93 days" } });
+    expect(resolveLeadWindow({ from: "2026-10-24" }, now)).toMatchObject({ issue: { message: "from must not be after to" } });
+
+    for (const query of ["from=2020-01-01", "from=2025-01-01"]) {
+      const response = await lh.admin(`/admin/leads?${query}`, owner);
+      expect(response.status, query).toBe(422);
+      expect(await response.json()).toMatchObject({
+        error: "invalid", issues: [{ path: "from", message: "Window is longer than 93 days" }],
+      });
+    }
+    // A lone `to` anywhere in history is a 30-day window ending there, not a scan of everything before it.
+    // Scoped to brand-b so rows other tests seed at the real clock cannot enter the window.
+    const ties = ["tie-0000000003", "tie-0000000002", "tie-0000000001"];
+    expect(ids(await leadsAt("/admin/leads?brand=brand-b&to=2026-10-05"))).toEqual([...ties, "lead-0009-older"]);
+    expect(ids(await leadsAt("/admin/leads?brand=brand-b&to=2026-10-31"))).toEqual(ties);
+    expect(ids(await leadsAt("/admin/leads?brand=brand-b&to=2026-09-30"))).toEqual(["lead-0009-older"]);
+    expect(ids(await leadsAt("/admin/leads?brand=brand-b&to=2026-08-31"))).toEqual([]);
   });
 
   it("defaults to the last 30 days and 50 rows", async () => {
     const stamp = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
-    for (let n = 1; n <= 51; n++) {
-      const id = `recent-${String(n).padStart(8, "0")}`;
-      await lh.seedLead(id, `clk-recent-${n}`, "brand-c");
-      await lh.db.prepare("UPDATE leads SET created_at = ?1 WHERE lead_id = ?2").bind(stamp(1), id).run();
-    }
-    await lh.seedLead("stale-00000001", "clk-stale-1", "brand-c");
-    await lh.db.prepare("UPDATE leads SET created_at = ?1 WHERE lead_id = 'stale-00000001'").bind(stamp(45)).run();
+    await lh.db.batch([
+      ...Array.from({ length: 51 }, (_, i) => insert(`recent-${String(i + 1).padStart(8, "0")}`, "brand-c", stamp(1))),
+      insert("stale-00000001", "brand-c", stamp(45)),
+    ]);
 
     const first = await leadsAt("/admin/leads?brand=brand-c");
     expect(first.rows).toHaveLength(50);
@@ -679,6 +724,20 @@ describe("GET /admin/leads (FUS-376)", () => {
     expect(second.rows).toHaveLength(1);
     expect(second.next_cursor).toBeNull();
     expect([...ids(first), ...ids(second)]).not.toContain("stale-00000001");
+  });
+
+  it("starts the default window 29 days before today at 00:00Z, not 28 or 30", async () => {
+    const todayMs = Date.parse(new Date().toISOString().slice(0, 10));
+    const at = (days: number, time: string) =>
+      `${new Date(todayMs - days * DAY_MS).toISOString().slice(0, 10)}T${time}Z`;
+    const fixtures = [
+      ["edge-today-0001", at(0, "00:00:00.000")],
+      ["edge-in-0000029", at(29, "00:00:00.000")],
+      ["edge-out-000030", at(30, "23:59:59.999")],
+    ] as const;
+    await lh.db.batch(fixtures.map(([id, createdAt]) => insert(id, "brand-d", createdAt)));
+
+    expect(ids(await leadsAt("/admin/leads?brand=brand-d"))).toEqual(["edge-today-0001", "edge-in-0000029"]);
   });
 });
 

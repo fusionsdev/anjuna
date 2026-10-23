@@ -478,6 +478,10 @@ const leadWindowShort = (q: LeadWindow) =>
 /** Opaque to the contract; the shape (`base64url(created_at|lead_id)` or `base64url(email)`) is core's. */
 export const LeadCursor = z.string().regex(/^[A-Za-z0-9_-]{1,344}$/);
 
+/** What a decoded lead cursor must hold: the same `created_at` and `lead_id` shapes a list row has. */
+export const LeadCursorKey = z.strictObject({ created_at: Timestamp, lead_id: LeadId });
+export type LeadCursorKey = z.infer<typeof LeadCursorKey>;
+
 export const LeadsQuery = LeadFilter.extend({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   cursor: LeadCursor.optional(),
