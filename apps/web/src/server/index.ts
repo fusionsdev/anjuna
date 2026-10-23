@@ -124,7 +124,7 @@ async function route(
   if (brandEdit) return brandEdit;
 
   if (path === "/api/me" && method === "GET") {
-    return json(200, { user: { id: ctx.actor_id, email, role: ctx.actor_role } });
+    return json(200, { user: { id: ctx.actor_id, email, role: ctx.actor_role, account: env.DEFAULT_ACCOUNT } });
   }
 
   // --- brands (core admin API + factory DB) ---

@@ -68,7 +68,7 @@ describe("Console rail", () => {
       "หน้าแรก", "แบรนด์", "สร้างแบรนด์ใหม่", "เทมเพลต", "ฟันเนล", "การแจ้งเตือน", "รายชื่ออีเมล", "ประวัติการแก้ไข", "ผู้ใช้", "คีย์ Builder",
     ]);
     expect(within(nav).getByRole("link", { name: "หน้าแรก" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByText(owner.email)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
     expect(screen.getByText("Owner")).toBeTruthy();
     expect(await screen.findByLabelText("0 รายการที่ต้องจัดการ")).toHaveProperty("textContent", "0");
   });
@@ -145,6 +145,7 @@ describe("Console rail", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
     expect(screen.queryByRole("link", { name: /^ผู้ใช้$/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
     expect(screen.getByText("พนักงาน")).toBeTruthy();
     expect(screen.getByRole("link", { name: "คีย์ Builder" })).toBeTruthy();
   });
@@ -260,7 +261,8 @@ describe("Console rail", () => {
 
   it("signs out through the existing API and removes the rail", async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "ออกจากระบบ (Sign out)" }));
+    fireEvent.click(await screen.findByRole("button", { name: /owner@example.test/ }));
+    fireEvent.click(screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" }));
     expect(await screen.findByRole("heading", { name: "Sign in screen" })).toBeTruthy();
     expect(api.signOut).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("navigation")).toBeNull();

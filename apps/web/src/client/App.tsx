@@ -11,7 +11,9 @@ import { BuilderKeysScreen } from "./screens/BuilderKeys";
 import { NotFound } from "./screens/NotFound";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
-import { isPlainLeftClick, navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
+import { navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
+import { AppShell, pageTitle } from "./components/AppShell";
+import { SidebarNav, type NavItem } from "./components/SidebarNav";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -56,89 +58,57 @@ export function App() {
     if (id === "new-brand") setWizardRequest((count) => count + 1);
     navigate(viewPath(id));
   };
-  const nav: { id: Exclude<View, "not-found">; label: string; show: boolean; gap?: boolean }[] = [
+  const nav: (NavItem & { show: boolean })[] = [
     { id: "home", label: "หน้าแรก", show: true },
     { id: "brands", label: "แบรนด์", show: true },
     { id: "new-brand", label: "สร้างแบรนด์ใหม่", show: true },
     { id: "templates", label: "เทมเพลต", show: true },
     { id: "funnel", label: "ฟันเนล", show: true, gap: true },
-    { id: "alerts", label: "การแจ้งเตือน", show: true },
+    { id: "alerts", label: "การแจ้งเตือน", show: true, badge: alertCount !== null ? { count: alertCount, label: `${alertCount} รายการที่ต้องจัดการ` } : null },
     { id: "mailing", label: "รายชื่ออีเมล", show: true },
     { id: "audit", label: "ประวัติการแก้ไข", show: true, gap: true },
     { id: "users", label: "ผู้ใช้", show: me.role === "owner" },
     { id: "builder-keys", label: "คีย์ Builder", show: true },
   ];
+  const items: NavItem[] = nav.filter((n) => n.show);
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brandmark"><i aria-hidden="true" />Anjuna</div>
-        <nav aria-label="เมนูหลัก">
-          {nav
-            .filter((n) => n.show)
-            .map((n) => (
-              <a
-                key={n.id}
-                className={`nav${n.gap ? " navgap" : ""}`}
-                href={viewPath(n.id)}
-                aria-current={view === n.id ? "page" : undefined}
-                onClick={(e) => {
-                  if (!isPlainLeftClick(e)) return;
-                  e.preventDefault();
-                  open(n.id);
-                }}
-              >
-                <span>{n.label}</span>
-                {n.id === "alerts" && alertCount !== null && <b aria-label={`${alertCount} รายการที่ต้องจัดการ`}>{alertCount}</b>}
-              </a>
-            ))}
-        </nav>
-        <div className="me">
-          <div className="who">
-            <div>{me.email}</div>
-            <div>{me.role === "owner" ? "Owner" : "พนักงาน"}</div>
-          </div>
-          <button
-            type="button"
-            className="nav signout"
-            onClick={async () => {
-              await api.signOut().catch(() => undefined);
-              setMe(null);
-            }}
-          >
-            ออกจากระบบ (Sign out)
-          </button>
-        </div>
-      </aside>
-      <main className="content">
-        {view === "home" && <HomeScreen me={me} onGo={open} />}
-        {(view === "brands" || view === "new-brand") && (
-          <BrandLifecycle
-            me={me}
-            wizardRequest={wizardRequest}
-            wizardRoute={view === "new-brand"}
-            routeBrandId={route.view === "brands" ? route.brandId : null}
-            onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }), { replace: window.location.pathname === "/brands/new" })}
-            onWizardClosed={() => { if (window.location.pathname === "/brands/new") navigate("/brands", { replace: true }); }}
-          />
-        )}
-        {view === "templates" && (
-          <TemplatesScreen
-            me={me}
-            selectedId={route.view === "templates" ? route.templateId : null}
-            onSelect={(id) => navigate(routePath({ view: "templates", templateId: id }))}
-          />
-        )}
-        {view === "builder-keys" && <BuilderKeysScreen me={me} />}
-        {view === "funnel" && <FunnelScreen />}
-        {view === "alerts" && <AlertsScreen />}
-        {view === "mailing" && <MailingScreen />}
-        {view === "audit" && <AuditScreen me={me} />}
-        {view === "users" && (me.role === "owner"
-          ? <UsersScreen me={me} />
-          : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
-        {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
-      </main>
-    </div>
+    <AppShell
+      me={me}
+      title={pageTitle[view]}
+      onSignOut={async () => {
+        await api.signOut().catch(() => undefined);
+        setMe(null);
+      }}
+      nav={<SidebarNav items={items} current={view} onOpen={open} />}
+    >
+      {view === "home" && <HomeScreen me={me} onGo={open} />}
+      {(view === "brands" || view === "new-brand") && (
+        <BrandLifecycle
+          me={me}
+          wizardRequest={wizardRequest}
+          wizardRoute={view === "new-brand"}
+          routeBrandId={route.view === "brands" ? route.brandId : null}
+          onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }), { replace: window.location.pathname === "/brands/new" })}
+          onWizardClosed={() => { if (window.location.pathname === "/brands/new") navigate("/brands", { replace: true }); }}
+        />
+      )}
+      {view === "templates" && (
+        <TemplatesScreen
+          me={me}
+          selectedId={route.view === "templates" ? route.templateId : null}
+          onSelect={(id) => navigate(routePath({ view: "templates", templateId: id }))}
+        />
+      )}
+      {view === "builder-keys" && <BuilderKeysScreen me={me} />}
+      {view === "funnel" && <FunnelScreen />}
+      {view === "alerts" && <AlertsScreen />}
+      {view === "mailing" && <MailingScreen />}
+      {view === "audit" && <AuditScreen me={me} />}
+      {view === "users" && (me.role === "owner"
+        ? <UsersScreen me={me} />
+        : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
+      {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
+    </AppShell>
   );
 }
