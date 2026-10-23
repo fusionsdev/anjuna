@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   AlertsReportResponse,
+  AuditEntry,
   AuditListResponse,
   BrandPatchResponse,
   BrandStatusChangeResponse,
@@ -273,6 +274,13 @@ describe("AdminService contract", () => {
         request_id: employee.request_id,
       });
     }
+    const endpoint = await h.admin("/admin/traffic/risk/export?period=7d", employee);
+    expect(endpoint.status, "trafficRiskExport").toBe(403);
+    expect(await endpoint.json(), "trafficRiskExport").toMatchObject({
+      error: "forbidden_role",
+      required_role: "owner",
+      request_id: employee.request_id,
+    });
     expect(await auditCount()).toBe(before);
   });
 
@@ -803,7 +811,12 @@ describe("GET /admin/leads/:lead_id (FUS-376)", () => {
     ).first<Record<string, string>>();
     expect([row!.action, row!.entity_type, row!.entity_id, row!.actor_id, row!.actor_role])
       .toEqual(["pii.lead_view", "lead", detailId, owner.actor_id, "owner"]);
+    // A read is not a change, so there is no before-image: SQL NULL, not "{}" or "null".
+    expect(row!.before_json).toBeNull();
     expect(JSON.parse(row!.after_json!)).toEqual({ fields: PII_FIELDS });
+    const listed = await dh.admin(`/admin/audit?target_type=lead&target_id=${detailId}`, owner);
+    const [entry] = AuditListResponse.parse(await listed.json()).entries;
+    expect(AuditEntry.parse(entry)).toMatchObject({ action: "pii.lead_view", old: null, new: { fields: PII_FIELDS } });
     for (const pii of [...PII_VALUES, "fixture-click", "clkdetail0001"]) {
       expect(`${row!.before_json}${row!.after_json}`, pii).not.toContain(pii);
     }

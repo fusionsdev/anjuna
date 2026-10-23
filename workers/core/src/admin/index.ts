@@ -282,7 +282,7 @@ async function writeAudit(
     | "pii.lead_view" | "pii.lead_export" | "lead.export" | "pii.suppression_search",
   entityType: "brand" | "lead" | "lead_export" | "suppression",
   entityId: string,
-  oldValue: JsonRecord,
+  oldValue: JsonRecord | null,
   newValue: JsonRecord,
   at: string,
 ): Promise<number> {
@@ -296,7 +296,7 @@ async function writeAudit(
     action,
     entityType,
     entityId,
-    JSON.stringify(oldValue),
+    oldValue === null ? null : JSON.stringify(oldValue),
     JSON.stringify(newValue),
     at,
   ).run();
@@ -649,9 +649,11 @@ async function getLead(
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
-  // Fails closed: no try/catch, so an audit insert that throws keeps the PII body unsent.
+  // Fails closed: no try/catch, so an audit insert that throws keeps the PII body unsent. The throw
+  // crosses the service binding as a rejected fetch, not a 500, and the panel's callCore maps that to
+  // 502 bad_gateway, so core has no status code of its own to assert for this path.
   if (applicant !== null) {
-    await writeAudit(env, context, "pii.lead_view", "lead", leadId, {}, { fields: PII_LEAD_FIELDS }, new Date().toISOString());
+    await writeAudit(env, context, "pii.lead_view", "lead", leadId, null, { fields: PII_LEAD_FIELDS }, new Date().toISOString());
   }
   return json({ lead: detail });
 }
