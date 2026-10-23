@@ -1,8 +1,7 @@
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { describe, expect, it } from "vitest";
-import { BRAND_CHIPS, BRAND_SORTS, brandHealth, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandHealth } from "../src/client/brand-health";
+import { BRAND_CHIPS, BRAND_SORTS, brandHealth, matchesBrandChip, matchesBrandSearch, sortBrands, sortWorstProfitFirst, type BrandChip, type BrandHealth } from "../src/client/brand-health";
 import { finalUrl, siteUrl } from "../src/client/final-url";
-import { sortWorstProfitFirst } from "../src/client/screens/BrandStatsRow";
 
 const brand = (over: Partial<LifecycleBrandSummary> = {}) => LifecycleBrandSummary.parse({
   brand_id: "brand-a", account: "acc", hostnames: ["a.test", "www.a.test"], status: "live",
@@ -41,6 +40,20 @@ describe("brandHealth", () => {
     expect(health.severity).toBe(0);
     expect(health.activityAt).toBe("2026-10-20T00:00:00.000Z");
   });
+  it("pins the severity index of every issue", () => {
+    const only = (row: LifecycleBrandSummary, runtime: { status: "live" | "paused" } | undefined) => brandHealth(row, runtime);
+    const cases = [
+      ["install_failed", 0, only(brand({ status: "failed" }), { status: "live" })],
+      ["sync_error", 1, only(brand({ runtime_sync_status: "sync_error" }), { status: "live" })],
+      ["install_running", 2, only(brand({ status: "installing" }), { status: "live" })],
+      ["no_domain", 3, only(brand({ status: "draft", current_revision_id: null, runtime_sync_status: "queued" }), undefined)],
+      ["paused", 4, only(brand(), { status: "paused" })],
+    ] as const;
+    for (const [issue, severity, health] of cases) {
+      expect(health.issues).toEqual([issue]);
+      expect(health.severity).toBe(severity);
+    }
+  });
   it("reads severity 99 and a null activityAt for a healthy brand with no install row", () => {
     const health = brandHealth(brand({ latest_install: null }), { status: "live" });
     expect(health.severity).toBe(99);
@@ -64,6 +77,18 @@ describe("matchesBrandChip", () => {
     const health = brandHealth(row, { status: "paused" });
     expect(matchesBrandChip(health, row, "paused")).toBe(true);
     expect(matchesBrandChip(health, row, "live")).toBe(false);
+  });
+  it("puts a failed brand under failed and not under live", () => {
+    const row = brand({ status: "failed" });
+    const health = brandHealth(row, { status: "live" });
+    expect(matchesBrandChip(health, row, "failed")).toBe(true);
+    expect(matchesBrandChip(health, row, "live")).toBe(false);
+  });
+  it("puts a brand that never installed under no_domain", () => {
+    const row = brand({ status: "draft", current_revision_id: null, runtime_sync_status: "queued" });
+    const health = brandHealth(row, undefined);
+    expect(matchesBrandChip(health, row, "no_domain")).toBe(true);
+    expect(matchesBrandChip(health, row, "failed")).toBe(false);
   });
   it("lists every chip and sort, with profit the only owner-only sort", () => {
     expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["all", "live", "paused", "failed", "no_domain"]);
@@ -99,6 +124,18 @@ describe("sortBrands", () => {
       row("tie-fail", "c.test", 0, "2026-10-20T00:00:00.000Z"),
     ];
     expect(ids(sortBrands(rows, "issues", read))).toEqual(["tie-fail", "new-fail", "old-fail", "healthy"]);
+  });
+  it("issues orders every severity level ahead of the next, whatever the activity", () => {
+    // Newest activity belongs to the least severe row, so only severity can produce this order.
+    const rows = [
+      row("healthy", "a.test", 99, "2026-10-25T00:00:00.000Z"),
+      row("paused", "b.test", 4, "2026-10-24T00:00:00.000Z"),
+      row("no-domain", "c.test", 3, "2026-10-23T00:00:00.000Z"),
+      row("running", "d.test", 2, "2026-10-22T00:00:00.000Z"),
+      row("sync", "e.test", 1, "2026-10-21T00:00:00.000Z"),
+      row("failed", "f.test", 0, "2026-10-20T00:00:00.000Z"),
+    ];
+    expect(ids(sortBrands(rows, "issues", read))).toEqual(["failed", "sync", "running", "no-domain", "paused", "healthy"]);
   });
   it("activity puts a null activityAt last", () => {
     const rows = [row("none", "a.test", 99, null), row("old", "b.test", 99, "2026-10-01T00:00:00.000Z"), row("new", "c.test", 99, "2026-10-20T00:00:00.000Z")];

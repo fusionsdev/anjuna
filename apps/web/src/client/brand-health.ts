@@ -1,5 +1,4 @@
 import type { BrandSummary, LifecycleBrandSummary } from "@anjuna/contracts";
-import { sortWorstProfitFirst } from "./screens/BrandStatsRow";
 
 /** Also the severity order, worst first. */
 export type BrandIssue = "install_failed" | "sync_error" | "install_running" | "no_domain" | "paused";
@@ -93,5 +92,14 @@ export function sortBrands<T>(rows: T[], mode: BrandSortMode, read: (row: T) => 
     if (mode === "az") return byDomain(left.domain, right.domain);
     if (mode === "issues" && left.health.severity !== right.health.severity) return left.health.severity - right.health.severity;
     return byActivity(left.health.activityAt, right.health.activityAt) || byDomain(left.domain, right.domain);
+  });
+}
+
+/** Worst profit first. A brand whose profit is unknown goes last, in its original order. */
+export function sortWorstProfitFirst<T>(items: T[], profit: (item: T) => number | null): T[] {
+  return [...items].sort((a, b) => {
+    const left = profit(a);
+    const right = profit(b);
+    return left === null ? (right === null ? 0 : 1) : right === null ? -1 : left - right;
   });
 }
