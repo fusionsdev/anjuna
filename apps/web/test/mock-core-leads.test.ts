@@ -94,7 +94,8 @@ describe("mock core leads endpoints (FUS-376)", () => {
       ...owner.lead.postbacks.map((p: { payout: unknown }) => p.payout),
       owner.lead.conversion.value,
       owner.lead.conversion.last_error,
-    ];
+      // 0 is not secret: a count or a flag of 0 in the employee body would match it by chance.
+    ].filter((secret) => secret !== 0);
     expect(secrets.length).toBeGreaterThanOrEqual(10);
     const leaves: unknown[] = [];
     const walk = (node: unknown): void => {
@@ -102,9 +103,12 @@ describe("mock core leads endpoints (FUS-376)", () => {
       else leaves.push(node);
     };
     walk(body);
+    const stringLeaves = leaves.filter((leaf): leaf is string => typeof leaf === "string");
     for (const secret of secrets) {
       expect(leaves, `leaked ${JSON.stringify(secret)}`).not.toContain(secret);
-      if (typeof secret === "string") expect(text).not.toContain(secret);
+      // A number can also leak as text ("85" in a message or a string field).
+      expect(stringLeaves, `leaked ${JSON.stringify(secret)} as a string`).not.toContain(String(secret));
+      expect(text).not.toContain(String(secret));
     }
   });
 

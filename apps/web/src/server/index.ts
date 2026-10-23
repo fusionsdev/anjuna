@@ -32,6 +32,7 @@ import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleLeadsRoute } from "./leads.js";
+import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
 import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleWizardRoute } from "./wizard.js";
@@ -188,6 +189,8 @@ async function route(
   // spec leads: after the aggregates arm above, or the lead id pattern captures it.
   const leads = await handleLeadsRoute(request, env, url, path, ctx);
   if (leads) return leads;
+  const suppressions = await handleSuppressionsRoute(request, env, url, path, ctx);
+  if (suppressions) return suppressions;
 
   // --- audit: core's rows (brand/config) plus the panel's own (sign-in, users) ---
   if (path === "/api/audit" && method === "GET") {
