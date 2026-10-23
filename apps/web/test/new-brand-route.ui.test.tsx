@@ -13,6 +13,10 @@ const back = () => act(async () => {
   window.history.back();
   await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
 });
+const forward = () => act(async () => {
+  window.history.forward();
+  await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+});
 
 let routes: Record<string, unknown>;
 
@@ -96,5 +100,26 @@ describe("a resumed draft wizard", () => {
     await waitFor(() => expect(wizard()).toBeNull());
     expect(await screen.findByRole("heading", { name: "Maple Cash" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Live Cash" })).toBeNull();
+  });
+
+  it("is replaced by the new-brand wizard when Forward enters /brands/new, and Back closes it", async () => {
+    // The draft comes first, so it is the default selection at /brands and Resume does not change the URL.
+    routes["/api/lifecycle/brands"] = { brands: [row("brand_new", "Maple Cash", "maple.test", "draft"), row("brand_live", "Live Cash", "live.test", "live")] };
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: newBrand }));
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    await back();
+    await waitFor(() => expect(wizard()).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" })).toBeTruthy();
+    expect(window.location.pathname).toBe("/brands");
+    await forward();
+    expect(window.location.pathname).toBe("/brands/new");
+    expect(await screen.findByRole("heading", { level: 2, name: "แบรนด์ (Brand)" })).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "ชื่อแบรนด์ (Brand name)" }) as HTMLInputElement).value).toBe("");
+    await back();
+    expect(window.location.pathname).toBe("/brands");
+    await waitFor(() => expect(wizard()).toBeNull());
+    expect(await screen.findByRole("heading", { name: "Maple Cash" })).toBeTruthy();
   });
 });

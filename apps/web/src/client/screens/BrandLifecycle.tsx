@@ -118,8 +118,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
   // The wizard replaces this screen's JSX, which hides {confirmDialog}; close an open question so it cannot come back later.
   useEffect(() => { if (wizard) cancelConfirm(); }, [wizard]);
-  // A resumed draft (brandId set) is not the new-brand route, so leaving /brands/new keeps it open.
-  useEffect(() => setWizard((w) => (wizardRoute ? (w ?? {}) : w && !w.brandId ? null : w)), [wizardRoute]);
+  // Entering /brands/new shows the new-brand wizard, in place of a resumed draft (brandId set) if one is open.
+  // A resumed draft is not the new-brand route, so leaving /brands/new keeps it open.
+  useEffect(() => setWizard((w) => (wizardRoute ? (w?.brandId ? {} : (w ?? {})) : w && !w.brandId ? null : w)), [wizardRoute]);
   useEffect(() => {
     if (routeBrandId && routeBrandId !== selectedId) setSelectedId(routeBrandId);
     // The route is the source of truth: a resumed draft stays open only while the URL names its brand. On /brands/new the new-brand wizard takes its place.
