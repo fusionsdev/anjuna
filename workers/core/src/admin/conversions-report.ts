@@ -1,6 +1,6 @@
 import {
   CONVERSION_STALLED_HOURS, CONVERSIONS_ROW_LIMIT, ConversionsReportResponse, conversionReasonCode, spendPeriodRange,
-  type AdminRole, type ConversionStatus, type ConversionsQuery,
+  type AdminRole, type ConversionReasonCode, type ConversionStatus, type ConversionsQuery,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 
@@ -9,11 +9,27 @@ const cents = (value: number) => Math.round(value * 100) / 100;
 // Older rows may carry an offset ("+00:00") or no milliseconds. The contract wants canonical UTC.
 const iso = (value: string) => { const ms = Date.parse(value); return Number.isNaN(ms) ? value : new Date(ms).toISOString(); };
 
+// A `"gclid": "<x>"` pair, also with escaped quotes. The closing quote is optional: the drain cuts
+// `e.message` at 300 characters, so an echoed payload can end inside the value.
+const CLICK_ID_PAIR = /(\\*"(?:gclid|gbraid|wbraid|msclkid)\\*"\s*:\s*\\*")[^"\\]*/gi;
+
 interface Row {
   lead_id: string; brand: string; status: ConversionStatus; last_error: string | null;
   gclid: string | null; gbraid: string | null; wbraid: string | null; msclkid: string | null;
   attempts: number; value: number; currency: string; occurred_at: string; created_at: string;
   updated_at: string | null; next_attempt_at: string | null;
+}
+
+/**
+ * The drain stores raw AdKit failure text, which can echo the upload payload (click id and value).
+ * Every role gets click ids masked. A non-owner gets no free text at all for platform_error and not_ready.
+ */
+function sanitizeLastError(text: string | null, row: Row, owner: boolean, reasonCode: ConversionReasonCode | null): string | null {
+  if (text === null) return null;
+  if (!owner && (reasonCode === "platform_error" || reasonCode === "not_ready")) return null;
+  let masked = text;
+  for (const id of [row.gclid, row.gbraid, row.wbraid, row.msclkid]) if (id) masked = masked.split(id).join("[click id]");
+  return masked.replace(CLICK_ID_PAIR, "$1[click id]").slice(0, 300);
 }
 
 /** Read-only conversion queue report. Money is null unless the caller is the owner. */
@@ -52,15 +68,18 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
     totals: { pending: count("pending"), processing: count("processing"), uploaded: count("uploaded"), dead: count("dead") },
     value_totals: owner ? { uploaded: sum("uploaded"), dead: sum("dead") } : null,
     stalled: Number(stalled?.n ?? 0),
-    rows: rows.results.slice(0, CONVERSIONS_ROW_LIMIT).map((r) => ({
-      lead_id: r.lead_id, brand: r.brand, status: r.status,
-      reason_code: conversionReasonCode(r.status, r.last_error),
-      last_error: r.last_error?.slice(0, 300) ?? null,
-      click_type: r.gclid ? "gclid" : r.gbraid ? "gbraid" : r.wbraid ? "wbraid" : r.msclkid ? "msclkid" : null,
-      attempts: Number(r.attempts), value: owner ? cents(Number(r.value)) : null, currency: r.currency,
-      occurred_at: iso(r.occurred_at), created_at: iso(r.created_at), updated_at: iso(r.updated_at ?? r.created_at),
-      next_attempt_at: r.next_attempt_at === null ? null : iso(r.next_attempt_at),
-    })),
+    rows: rows.results.slice(0, CONVERSIONS_ROW_LIMIT).map((r) => {
+      const reasonCode = conversionReasonCode(r.status, r.last_error);
+      return {
+        lead_id: r.lead_id, brand: r.brand, status: r.status,
+        reason_code: reasonCode,
+        last_error: sanitizeLastError(r.last_error, r, owner, reasonCode),
+        click_type: r.gclid ? "gclid" : r.gbraid ? "gbraid" : r.wbraid ? "wbraid" : r.msclkid ? "msclkid" : null,
+        attempts: Number(r.attempts), value: owner ? cents(Number(r.value)) : null, currency: r.currency,
+        occurred_at: iso(r.occurred_at), created_at: iso(r.created_at), updated_at: iso(r.updated_at ?? r.created_at),
+        next_attempt_at: r.next_attempt_at === null ? null : iso(r.next_attempt_at),
+      };
+    }),
     truncated: rows.results.length > CONVERSIONS_ROW_LIMIT,
   });
 }

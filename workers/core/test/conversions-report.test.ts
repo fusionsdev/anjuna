@@ -183,6 +183,61 @@ describe("GET /admin/conversions", () => {
     expect(text).not.toMatch(/"value_totals"\s*:\s*\{/);
   });
 
+  it("masks the click id and hides platform_error text from an employee", async () => {
+    const echoed = 'Command failed: adkit manage google conversions upload --data {"conversions":[{"value":85,"gclid":"GCLID-SECRET-123"}]}';
+    await seed("echo-dead", "brand-a", { status: "dead", gclid: "GCLID-SECRET-123", value: 85, last_error: echoed });
+    const asOwner = await report("", owner);
+    const ownerRow = ConversionsReportResponse.parse(JSON.parse(asOwner.text)).rows[0]!;
+    expect(ownerRow.reason_code).toBe("platform_error");
+    expect(ownerRow.last_error).toContain("[click id]");
+    expect(ownerRow.last_error).not.toContain("GCLID-SECRET-123");
+    expect(ownerRow.last_error).toContain('"value":85');
+    expect(asOwner.text).not.toContain("GCLID-SECRET-123");
+
+    const asEmployee = await report("", employee);
+    const employeeRow = ConversionsReportResponse.parse(JSON.parse(asEmployee.text)).rows[0]!;
+    expect(employeeRow).toMatchObject({ reason_code: "platform_error", last_error: null, value: null });
+    expect(asEmployee.text).not.toContain("GCLID-SECRET-123");
+    // JSON.stringify escapes the quotes of a string field, so check both spellings.
+    expect(asEmployee.text).not.toContain('"value":85');
+    expect(asEmployee.text).not.toContain('\\"value\\":85');
+  });
+
+  it("masks a JSON click id pair that differs from the row's own column", async () => {
+    const echoed = 'upload failed for GCLID-ROW-1: {"msclkid": "OTHER-ID-9", "GclId" :"ANOTHER-77", "wbraid":"CUT-OFF-5';
+    await seed("pair-dead", "brand-a", { status: "dead", gclid: "GCLID-ROW-1", last_error: echoed });
+    for (const context of [owner, employee]) {
+      const { text } = await report("", context);
+      const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
+      expect(row.reason_code, context.actor_role).toBe("upload_failed");
+      expect(row.last_error, context.actor_role).toBe(
+        'upload failed for [click id]: {"msclkid": "[click id]", "GclId" :"[click id]", "wbraid":"[click id]',
+      );
+      for (const secret of ["OTHER-ID-9", "ANOTHER-77", "GCLID-ROW-1", "CUT-OFF-5"]) expect(text).not.toContain(secret);
+    }
+  });
+
+  it("masks a click id pair whose quotes are backslash-escaped", async () => {
+    await seed("escaped", "brand-a", { status: "dead", last_error: String.raw`upload failed: {\"gbraid\":\"ESC-ID-4\",\"value\":85}` });
+    const { text } = await report("", owner);
+    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
+    expect(row.last_error).toBe(String.raw`upload failed: {\"gbraid\":\"[click id]\",\"value\":85}`);
+    expect(text).not.toContain("ESC-ID-4");
+  });
+
+  it("keeps fixed-template error text for an employee and hides not_ready text", async () => {
+    await seed("no-route", "brand-b", { status: "dead", last_error: "no route for brand=brand-b hostname=b.example" });
+    await seed("not-ready", "brand-a", { status: "pending", last_error: "not ready yet: conversion action still propagating" });
+    const byId = async (context: AdminRequestContext) =>
+      Object.fromEntries((await parsed("", context)).rows.map((r) => [r.lead_id.replace(/^lead-/, ""), r]));
+    const asEmployee = await byId(employee);
+    expect(asEmployee["no-route"]).toMatchObject({ reason_code: "no_route", last_error: "no route for brand=brand-b hostname=b.example" });
+    expect(asEmployee["not-ready"]).toMatchObject({ reason_code: "not_ready", last_error: null });
+    const asOwner = await byId(owner);
+    expect(asOwner["no-route"]!.last_error).toBe("no route for brand=brand-b hostname=b.example");
+    expect(asOwner["not-ready"]!.last_error).toBe("not ready yet: conversion action still propagating");
+  });
+
   it("rejects an unknown period with 422", async () => {
     for (const query of ["period=90d", "period=", "status=lost&period=7d", "period=7d&brand=Bad%20Brand"]) {
       const response = await h.admin(`/admin/conversions?${query}&now=${now}`, owner);
