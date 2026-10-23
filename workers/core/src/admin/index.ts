@@ -14,6 +14,7 @@ import {
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
+  LeadConversion,
   LeadId,
   LeadsQuery,
   adminContextFromHeaders,
@@ -30,6 +31,7 @@ import {
   type BrandStatus,
   type BrandStatusChangeResponse,
   type LeadAggregateRow,
+  type LeadApplicant,
   type LeadDetail,
   type LeadExportQuery,
   type LeadListRow,
@@ -273,8 +275,11 @@ async function getBrandRow(db: D1Database, brandId: string): Promise<BrandRow | 
 async function writeAudit(
   env: Env,
   context: AdminRequestContext,
-  action: "brand.update" | "brand.pause" | "brand.resume",
-  brandId: string,
+  action:
+    | "brand.update" | "brand.pause" | "brand.resume"
+    | "pii.lead_view" | "pii.lead_export" | "lead.export" | "pii.suppression_search",
+  entityType: "brand" | "lead" | "lead_export" | "suppression",
+  entityId: string,
   oldValue: JsonRecord,
   newValue: JsonRecord,
   at: string,
@@ -282,12 +287,13 @@ async function writeAudit(
   const result = await env.FACTORY.prepare(
     `INSERT INTO audit_log
       (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
-     VALUES (?1, ?2, ?3, 'brand', ?4, ?5, ?6, ?7)`,
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
   ).bind(
     context.actor_id,
     context.actor_role,
     action,
-    brandId,
+    entityType,
+    entityId,
     JSON.stringify(oldValue),
     JSON.stringify(newValue),
     at,
@@ -460,7 +466,7 @@ async function patchBrand(
       newValue[change.field] = change.next;
     }
   }
-  const auditId = await writeAudit(env, context, "brand.update", brandId, oldValue, newValue, updatedAt);
+  const auditId = await writeAudit(env, context, "brand.update", "brand", brandId, oldValue, newValue, updatedAt);
   const updated = await getBrandRow(env.LEADS, brandId);
   if (!updated) throw new Error("Updated brand disappeared");
 
@@ -514,7 +520,7 @@ async function changeBrandStatus(
   const action = status === "paused" ? "brand.pause" : "brand.resume";
   const newValue: JsonRecord = { status };
   if (parsed.reason !== undefined) newValue.reason = parsed.reason;
-  const auditId = await writeAudit(env, context, action, brandId, { status: current }, newValue, updatedAt);
+  const auditId = await writeAudit(env, context, action, "brand", brandId, { status: current }, newValue, updatedAt);
   const response: BrandStatusChangeResponse = { brand_id: brandId, status, changed: true, audit_id: auditId };
   return json(response);
 }
@@ -563,25 +569,15 @@ async function getLead(
   context: AdminRequestContext,
   leadId: string,
 ): Promise<Response> {
+  const isOwner = context.actor_role === "owner";
   const row = await env.LEADS.prepare("SELECT * FROM leads WHERE lead_id = ?1").bind(leadId).first<LeadRow>();
   if (!row) return adminError(context, { error: "not_found", resource: "lead" });
   const postbacks = await env.LEADS.prepare(
     "SELECT event_type, payout, created_at FROM postback_events WHERE lead_id = ?1 ORDER BY created_at, id",
   ).bind(leadId).all<{ event_type: string; payout: number; created_at: string }>();
-  const detail: LeadDetail = {
-    lead_id: row.lead_id,
-    brand_id: row.brand,
-    hostname: row.hostname,
-    status: row.status,
-    outcome: leadOutcome(row.status),
-    form_version: row.form_version,
-    form_variant: row.form_variant,
-    experiment_id: row.experiment_id,
-    variant: row.variant?.toLowerCase() ?? null,
-    keyword: row.keyword,
-    requested_amount: Number(row.requested_amount),
-    loan_purpose: row.loan_purpose,
-    applicant: {
+  const upload = await loadLeadConversion(env, leadId);
+  const applicant: LeadApplicant | null = isOwner
+    ? {
       first_name: row.first_name,
       last_name: row.last_name,
       birth_date: row.birth_date,
@@ -602,19 +598,101 @@ async function getLead(
       pay_frequency: row.pay_frequency,
       direct_deposit: row.direct_deposit === 1,
       monthly_income: Number(row.monthly_income),
+    }
+    : null;
+  const detail: LeadDetail = {
+    lead_id: row.lead_id,
+    brand_id: row.brand,
+    hostname: row.hostname,
+    status: row.status,
+    outcome: leadOutcome(row.status),
+    form_version: row.form_version,
+    form_variant: row.form_variant,
+    experiment_id: row.experiment_id,
+    variant: row.variant?.toLowerCase() ?? null,
+    keyword: row.keyword,
+    requested_amount: Number(row.requested_amount),
+    loan_purpose: row.loan_purpose,
+    applicant,
+    profile: {
+      state: row.state,
+      address_length_months: Number(row.address_length_months),
+      own_home: row.own_home === 1,
+      income_type: row.income_type,
+      employer: row.employer,
+      job_title: row.job_title,
+      employed_months: Number(row.employed_months),
+      pay_date1: row.pay_date1,
+      pay_frequency: row.pay_frequency,
+      direct_deposit: row.direct_deposit === 1,
+      monthly_income: Number(row.monthly_income),
     },
     postbacks: postbacks.results.map((event) => ({
       event_type: event.event_type,
-      payout: Number(event.payout),
+      payout: isOwner ? Number(event.payout) : null,
       created_at: event.created_at,
     })),
+    conversion: upload === null ? null : {
+      status: conversionStatus(upload.status),
+      click_type: upload.click_type,
+      currency: upload.currency,
+      occurred_at: upload.occurred_at,
+      attempts: Number(upload.attempts),
+      next_attempt_at: upload.next_attempt_at,
+      created_at: upload.created_at,
+      updated_at: upload.updated_at,
+      value: isOwner ? Number(upload.value) : null,
+      last_error: isOwner ? upload.last_error : null,
+    },
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+  // Fails closed: no try/catch, so an audit insert that throws keeps the PII body unsent.
+  if (applicant !== null) {
+    await writeAudit(env, context, "pii.lead_view", "lead", leadId, {}, { fields: PII_LEAD_FIELDS }, new Date().toISOString());
+  }
   return json({ lead: detail });
 }
 
 // spec leads
+/** Names of the lead columns that are PII. An audit row records these names, never the values. */
+export const PII_LEAD_FIELDS = [
+  "first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip",
+] as const satisfies ReadonlyArray<keyof LeadApplicant>;
+
+/** `conversion_uploads.status` is free text the drain writes; anything unknown reads as pending. */
+function conversionStatus(raw: string): LeadConversion["status"] {
+  const parsed = LeadConversion.shape.status.safeParse(raw);
+  return parsed.success ? parsed.data : "pending";
+}
+
+interface LeadConversionSqlRow {
+  status: string;
+  click_type: LeadConversion["click_type"];
+  value: number;
+  currency: string;
+  occurred_at: string;
+  attempts: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** Click id values stay in D1: the query returns only which column is set. */
+async function loadLeadConversion(env: Env, leadId: string): Promise<LeadConversionSqlRow | null> {
+  return env.LEADS.prepare(
+    `SELECT status,
+       CASE WHEN gclid IS NOT NULL THEN 'gclid'
+            WHEN gbraid IS NOT NULL THEN 'gbraid'
+            WHEN wbraid IS NOT NULL THEN 'wbraid'
+            WHEN msclkid IS NOT NULL THEN 'msclkid'
+            ELSE 'none' END AS click_type,
+       value, currency, occurred_at, attempts, last_error, next_attempt_at, created_at, updated_at
+     FROM conversion_uploads WHERE lead_id = ?1`,
+  ).bind(leadId).first<LeadConversionSqlRow>();
+}
+
 /** `base64url("<created_at>|<lead_id>")`. Leads page on `(created_at DESC, lead_id DESC)`. */
 export function encodeLeadCursor(createdAt: string, leadId: string): string {
   return btoa(`${createdAt}|${leadId}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");

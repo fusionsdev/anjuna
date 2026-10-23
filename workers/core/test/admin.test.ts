@@ -202,10 +202,15 @@ describe("AdminService contract", () => {
     const lead = await h.admin(`/admin/leads/${leadId}`, owner);
     const detail = GetLeadResponse.parse(await lead.json()).lead;
     expect(detail).toMatchObject({ lead_id: leadId, outcome: "sold", variant: "a" });
-    expect(detail.applicant.email).toBe("test@example.com");
+    expect(detail.applicant!.email).toBe("test@example.com");
+    expect(detail.profile.state).toBe("TX");
+    expect(detail.conversion).toBeNull();
 
+    // The owner read above released PII, so it is the only audit row so far.
     const audit = await h.admin("/admin/audit", owner);
-    expect(AuditListResponse.parse(await audit.json()).entries).toEqual([]);
+    expect(AuditListResponse.parse(await audit.json()).entries).toMatchObject([
+      { action: "pii.lead_view", actor_id: owner.actor_id, target: { type: "lead", id: leadId } },
+    ]);
   });
 
   it("returns contract errors for missing context, invalid input, conflicts and missing rows", async () => {
@@ -268,13 +273,6 @@ describe("AdminService contract", () => {
         request_id: employee.request_id,
       });
     }
-    const pii = await h.admin("/admin/leads/not-found-but-valid", employee);
-    expect(pii.status).toBe(403);
-    expect(await pii.json()).toEqual({
-      error: "forbidden_role",
-      required_role: "owner",
-      request_id: employee.request_id,
-    });
     expect(await auditCount()).toBe(before);
   });
 
@@ -352,10 +350,11 @@ describe("AdminService contract", () => {
   });
 
   it("keeps PII owner-only and scopes audit visibility by role", async () => {
-    const denied = await h.admin(`/admin/leads/${leadId}`, employee);
-    expect(denied.status).toBe(403);
+    const redacted = await h.admin(`/admin/leads/${leadId}`, employee);
+    expect(redacted.status).toBe(200);
+    expect(GetLeadResponse.parse(await redacted.json()).lead.applicant).toBeNull();
     const allowed = GetLeadResponse.parse(await (await h.admin(`/admin/leads/${leadId}`, owner)).json());
-    expect(allowed.lead.applicant.first_name).toBe("Test");
+    expect(allowed.lead.applicant!.first_name).toBe("Test");
 
     const employeePage = AuditListResponse.parse(await (await h.admin("/admin/audit", employee)).json());
     expect(employeePage.entries.length).toBeGreaterThan(0);
@@ -680,5 +679,155 @@ describe("GET /admin/leads (FUS-376)", () => {
     expect(second.rows).toHaveLength(1);
     expect(second.next_cursor).toBeNull();
     expect([...ids(first), ...ids(second)]).not.toContain("stale-00000001");
+  });
+});
+
+// spec leads
+describe("GET /admin/leads/:lead_id (FUS-376)", () => {
+  const detailId = "lead-0001-detail";
+  const bareId = "lead-0002-bare";
+  const PII_VALUES = ["Test", "Applicant", "test@example.com", "2145550123", "100 Example St", "Dallas", "75201", "1990-01-01"];
+  const PII_KEYS = ['"first_name"', '"last_name"', '"birth_date"', '"email"', '"home_phone"', '"work_phone"', '"address"', '"city"', '"zip"'];
+  const PII_FIELDS = ["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip"];
+  let dh: Harness;
+
+  const auditRows = async () => Number(
+    (await dh.factory.prepare("SELECT count(*) AS count FROM audit_log").first<{ count: number }>())!.count,
+  );
+  const read = async (id: string, context: AdminRequestContext) => {
+    const response = await dh.admin(`/admin/leads/${id}`, context);
+    expect(response.status, `${id} as ${context.actor_role}`).toBe(200);
+    const text = await response.text();
+    return { text, lead: GetLeadResponse.parse(JSON.parse(text)).lead };
+  };
+
+  beforeAll(async () => {
+    dh = await createHarness();
+    await dh.seedBrand("brand-a");
+    await dh.seedLead(detailId, "clkdetail0001", "brand-a");
+    await dh.seedLead(bareId, "clkbare0002", "brand-a");
+    await dh.seedConversion(detailId, { attempts: 2, last_error: "adkit: upstream 500" });
+    await dh.db.prepare(
+      "INSERT INTO postback_events (lead_id, event_type, payout, created_at) VALUES (?1, 'soldLead', 85, '2026-01-01T00:00:30.000Z')",
+    ).bind(detailId).run();
+  });
+  afterAll(async () => { await dh?.mf.dispose(); });
+
+  it("gives an employee the profile block and null applicant, payout and conversion value", async () => {
+    const { text, lead } = await read(detailId, employee);
+    expect(lead.applicant).toBeNull();
+    expect(lead.profile).toEqual({
+      state: "TX", address_length_months: 24, own_home: false, income_type: "EMPLOYMENT",
+      employer: "Example", job_title: "Clerk", employed_months: 24, pay_date1: "2026-10-09",
+      pay_frequency: "BIWEEKLY", direct_deposit: true, monthly_income: 3000,
+    });
+    expect(lead.postbacks).toEqual([{ event_type: "soldLead", payout: null, created_at: "2026-01-01T00:00:30.000Z" }]);
+    expect(lead.conversion).toMatchObject({ status: "pending", attempts: 2, value: null, last_error: null });
+    for (const hidden of [...PII_VALUES, ...PII_KEYS, "adkit: upstream 500", "fixture-click", "clkdetail0001"]) {
+      expect(text, hidden).not.toContain(hidden);
+    }
+  });
+
+  it("gives an owner the applicant block and writes one pii.lead_view row naming fields only", async () => {
+    const before = await auditRows();
+    const { lead } = await read(detailId, owner);
+    expect(lead.applicant).toMatchObject({
+      first_name: "Test", last_name: "Applicant", birth_date: "1990-01-01", email: "test@example.com",
+      home_phone: "2145550123", address: "100 Example St", city: "Dallas", state: "TX", zip: "75201",
+    });
+    expect(lead.postbacks.map((event) => event.payout)).toEqual([85]);
+    expect(lead.conversion).toMatchObject({ value: 25, last_error: "adkit: upstream 500" });
+    expect(await auditRows()).toBe(before + 1);
+
+    const row = await dh.factory.prepare(
+      "SELECT action, actor_id, actor_role, entity_type, entity_id, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1",
+    ).first<Record<string, string>>();
+    expect([row!.action, row!.entity_type, row!.entity_id, row!.actor_id, row!.actor_role])
+      .toEqual(["pii.lead_view", "lead", detailId, owner.actor_id, "owner"]);
+    expect(JSON.parse(row!.after_json!)).toEqual({ fields: PII_FIELDS });
+    for (const pii of [...PII_VALUES, "fixture-click", "clkdetail0001"]) {
+      expect(`${row!.before_json}${row!.after_json}`, pii).not.toContain(pii);
+    }
+  });
+
+  it("writes no audit row for an employee read", async () => {
+    const before = await auditRows();
+    await read(detailId, employee);
+    await read(bareId, employee);
+    expect(await auditRows()).toBe(before);
+  });
+
+  it("reports click_type from the first present click id and never the value", async () => {
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["lead-0003-wbraid", { gclid: null, wbraid: "fixture-wbraid", msclkid: "fixture-msclkid" }, "wbraid"],
+      ["lead-0004-msclkid", { gclid: null, msclkid: "fixture-msclkid" }, "msclkid"],
+      ["lead-0005-noclick", { gclid: null }, "none"],
+    ];
+    for (const [id, overrides] of cases) {
+      await dh.seedLead(id, `clk${id.replace(/-/g, "")}`, "brand-a");
+      await dh.seedConversion(id, overrides);
+    }
+    for (const context of [employee, owner]) {
+      const { text, lead } = await read(detailId, context);
+      expect(lead.conversion!.click_type).toBe("gclid");
+      expect(text).not.toContain("fixture-click");
+      for (const [id, , clickType] of cases) {
+        const other = await read(id, context);
+        expect(other.lead.conversion!.click_type, id).toBe(clickType);
+        expect(other.text).not.toContain("fixture-");
+      }
+    }
+  });
+
+  it("returns conversion null when no upload row exists", async () => {
+    for (const context of [employee, owner]) {
+      const { lead } = await read(bareId, context);
+      expect(lead.conversion, context.actor_role).toBeNull();
+    }
+  });
+
+  it("maps an unknown conversion status to pending and keeps the raw value out", async () => {
+    await dh.db.prepare("UPDATE conversion_uploads SET status = 'weird-drain-state' WHERE lead_id = ?1").bind(detailId).run();
+    try {
+      for (const context of [employee, owner]) {
+        const { text, lead } = await read(detailId, context);
+        expect(lead.conversion!.status, context.actor_role).toBe("pending");
+        expect(text).not.toContain("weird");
+      }
+    } finally {
+      await dh.db.prepare("UPDATE conversion_uploads SET status = 'pending' WHERE lead_id = ?1").bind(detailId).run();
+    }
+  });
+
+  it("renders a lead whose work_phone and updated_at are NULL", async () => {
+    await dh.db.prepare("UPDATE leads SET work_phone = NULL, updated_at = NULL WHERE lead_id = ?1").bind(bareId).run();
+    const { text, lead } = await read(bareId, owner);
+    expect(lead.applicant!.work_phone).toBeNull();
+    expect(lead.updated_at).toBeNull();
+    expect(text).not.toContain('"null"');
+  });
+
+  it("rejects the owner read with no PII when the audit insert fails, which the panel answers as 502", async () => {
+    // Takes audit_log away for these calls only; RENAME keeps its append-only triggers for the restore.
+    await dh.factory.prepare("ALTER TABLE audit_log RENAME TO audit_log_offline").run();
+    let ownerResult: { response: Response | null; error: unknown } = { response: null, error: null };
+    let redacted: { text: string; lead: GetLeadResponse["lead"] };
+    try {
+      ownerResult = await dh.admin(`/admin/leads/${detailId}`, owner)
+        .then((response) => ({ response, error: null }), (error: unknown) => ({ response: null, error }));
+      redacted = await read(detailId, employee);
+    } finally {
+      await dh.factory.prepare("ALTER TABLE audit_log_offline RENAME TO audit_log").run();
+    }
+    // The thrown insert error crosses the service binding as a rejected fetch; callCore maps that to 502.
+    expect(ownerResult.response).toBeNull();
+    expect(ownerResult.error).toBeInstanceOf(Error);
+    const error = ownerResult.error as Error;
+    expect(error.message).toContain("audit_log");
+    for (const hidden of [...PII_VALUES, ...PII_KEYS, "fixture-click"]) {
+      expect(`${error.message}\n${error.stack ?? ""}`, hidden).not.toContain(hidden);
+    }
+    expect(redacted!.lead.applicant).toBeNull();
+    expect(redacted!.lead.profile.state).toBe("TX");
   });
 });
