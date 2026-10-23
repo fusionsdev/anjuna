@@ -260,6 +260,8 @@ describe("GET /admin/conversions", () => {
     for (const [i, template] of templates.entries()) await seed(`template-${i}`, "brand-a", { status: "dead", last_error: template });
     await seed("padded", "brand-a", { status: "dead", last_error: "  Upload Failed \n" });
     await seed("route-money", "brand-a", { status: "dead", last_error: 'no route for brand=x hostname=y {"value":85}' });
+    await seed("route-glued", "brand-a", { status: "dead", last_error: 'no route for brand=x hostname=y,"value":85' });
+    await seed("route-null", "brand-a", { status: "dead", last_error: "no route for brand=null hostname=null" });
     await seed("not-ready", "brand-a", { status: "pending", last_error: "not ready yet: conversion action still propagating" });
     const byId = async (context: AdminRequestContext) =>
       Object.fromEntries((await parsed("", context)).rows.map((r) => [r.lead_id.replace(/^lead-/, ""), r]));
@@ -267,6 +269,8 @@ describe("GET /admin/conversions", () => {
     for (const [i, template] of templates.entries()) expect(asEmployee[`template-${i}`]!.last_error, template).toBe(template);
     expect(asEmployee["padded"]).toMatchObject({ reason_code: "upload_failed", last_error: "Upload Failed" });
     expect(asEmployee["route-money"]).toMatchObject({ reason_code: "no_route", last_error: null });
+    expect(asEmployee["route-glued"]).toMatchObject({ reason_code: "no_route", last_error: null });
+    expect(asEmployee["route-null"]).toMatchObject({ reason_code: "no_route", last_error: "no route for brand=null hostname=null" });
     expect(asEmployee["not-ready"]).toMatchObject({ reason_code: "not_ready", last_error: null });
     const asOwner = await byId(owner);
     expect(asOwner["route-money"]!.last_error).toBe('no route for brand=x hostname=y {"value":85}');

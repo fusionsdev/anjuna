@@ -18,7 +18,7 @@ const EMPLOYEE_ERRORS = new Set([
   "no click id", "no gclid/gbraid/wbraid", "no msclkid", "reclaim: exhausted attempts after stale lease",
   "missing microsoft env (account/conversion_name)", "upload failed",
 ]);
-const NO_ROUTE_ERROR = /^no route for brand=\S{1,64} hostname=\S{1,253}$/i;
+const NO_ROUTE_ERROR = /^no route for brand=[a-z0-9_-]{1,64} hostname=[a-z0-9.-]{1,253}$/i;
 
 interface Row {
   lead_id: string; brand: string; status: ConversionStatus; last_error: string | null;
