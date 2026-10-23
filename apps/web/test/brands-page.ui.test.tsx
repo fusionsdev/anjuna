@@ -101,6 +101,7 @@ const cells = (name: string) => {
     return copy.textContent;
   });
 };
+const sortSelect = () => screen.getByLabelText(/เรียงลำดับ/) as unknown as HTMLSelectElement;
 const funnelPaths = () => requests.filter((r) => r.path.startsWith("/api/funnel?")).map((r) => r.path);
 
 describe("brands table for the Owner", () => {
@@ -129,6 +130,8 @@ describe("brands table for the Owner", () => {
     await waitFor(() => expect(names()[0]).toBe("Alpha Loans"));
     expect(funnelPaths()).toHaveLength(1);
     expect(screen.getByRole("button", { name: "7 วัน" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(sortSelect(), { target: { value: "profit" } });
+    await waitFor(() => expect(names()).toEqual(["FloatMe", "Credit Genie", "Alpha Loans", "Wizard Demo"]));
 
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith("today"));
@@ -137,8 +140,8 @@ describe("brands table for the Owner", () => {
     const today = funnelPaths().at(-1)!;
     const params = new URLSearchParams(today.split("?")[1]);
     expect(Date.parse(params.get("to")!) - Date.parse(params.get("from")!)).toBe(86_400_000);
-    // The default order is not profit, so the period does not move the rows.
-    expect(names()).toEqual(["Alpha Loans", "Credit Genie", "FloatMe", "Wizard Demo"]);
+    // The loss order follows the period: Credit Genie now earns money, FloatMe still loses.
+    await waitFor(() => expect(names()).toEqual(["FloatMe", "Alpha Loans", "Credit Genie", "Wizard Demo"]));
     // The stats row under each brand stays the 7-day one.
     expect(screen.getByRole("group", { name: /สถิติ 7 วัน \(7-day stats\) Credit Genie/ })).toBeTruthy();
   });
@@ -147,7 +150,9 @@ describe("brands table for the Owner", () => {
     spend.mockRejectedValue(new Error("down"));
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(cells("FloatMe")).toEqual(["live", "Keyword Param", "—", "96", "0", "—", "—"]));
-    expect(names()).toEqual(["Alpha Loans", "Credit Genie", "FloatMe", "Wizard Demo"]);
+    // Nothing to rank by, so the API order stays.
+    fireEvent.change(sortSelect(), { target: { value: "profit" } });
+    expect(names()).toEqual(["Credit Genie", "FloatMe", "Alpha Loans", "Wizard Demo"]);
   });
 });
 

@@ -110,6 +110,29 @@ describe("brands list filters and sort", () => {
     expect(screen.getAllByRole("option")).toHaveLength(3);
   });
 
+  it("claims the worst-profit order in the hint only while the owner sorts by profit", async () => {
+    const hint = () => [...document.querySelectorAll("p.hint")].find((p) => p.textContent?.includes("เครื่องหมาย — คือยังไม่มีข้อมูล"))!.textContent!;
+    const claim = "เรียงจากกำไรน้อยที่สุดก่อน";
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    for (const mode of ["issues", "activity", "az"]) {
+      fireEvent.change(sortSelect(), { target: { value: mode } });
+      expect(hint()).not.toContain(claim);
+      expect(hint()).toContain("AdKit");
+    }
+    fireEvent.change(sortSelect(), { target: { value: "profit" } });
+    expect(hint()).toContain(claim);
+    cleanup();
+
+    render(<BrandLifecycle me={employee} />);
+    await loaded(employee);
+    for (const mode of ["issues", "activity", "az"]) {
+      fireEvent.change(sortSelect(), { target: { value: mode } });
+      expect(hint()).not.toContain(claim);
+      expect(hint()).not.toContain("AdKit");
+    }
+  });
+
   it("keeps the worst-profit order when the owner picks it", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);

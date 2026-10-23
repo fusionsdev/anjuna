@@ -1,12 +1,12 @@
-import { type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type InstallOperation, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
+import { type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
-import { StatusBadge, type Tone } from "../components/StatusBadge";
+import { StatusBadge } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
-import { flowGateLabel } from "../labels";
+import { flowGateLabel, operationLabel, statusBadgeTone, statusLabel } from "../labels";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { EmptyState } from "../components/EmptyState";
 import { BRAND_CHIPS, brandHealth, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
@@ -34,22 +34,6 @@ const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: 
   { item: "test_sold", label: "ยืนยัน Test sold (Confirm test sold)" },
   { item: "final_url", label: "Final URL suffix keyword={keyword}", pending: "อัตโนมัติเมื่อ smoke test ของการติดตั้งผ่าน (Automatic when the install smoke test passes)" },
 ];
-
-const statusLabel: Record<string, string> = {
-  draft: "ฉบับร่าง (draft)", queued: "รอคิว (queued)", running: "กำลังทำงาน (running)", ready: "พร้อมใช้งาน (ready)",
-  failed: "ล้มเหลว (failed)", rolled_back: "ย้อนกลับแล้ว (rolled-back)", detached: "ถอดออกแล้ว (detached)", unmanaged: "ไม่ได้จัดการ (unmanaged)", sync_error: "ซิงก์ผิดพลาด (sync_error)",
-  paused: "หยุดชั่วคราว (paused)",
-};
-
-// A redeploy is stored as an upgrade row; the server tells the two apart in `operation`.
-const operationLabel: Record<InstallOperation, string> = {
-  install: "ติดตั้ง (Install)", rollback: "ย้อนกลับ (Rollback)", upgrade: "อัปเกรดทุกแบรนด์ (Upgrade-all)", redeploy: "ติดตั้งใหม่ (Redeploy)",
-};
-
-// The pill colour of a brand status: live is money green, a failure is red, work in progress is blue, a pause or rollback is amber.
-const statusBadgeTone: Record<string, Tone> = {
-  live: "live", failed: "bad", rolled_back: "warn", installing: "blue", draft: "mute", paused: "warn", unmanaged: "mute", retired: "mute",
-};
 
 /** A whole number with thousands separators. An unknown number is "—". */
 const count = (value: number | null) => (value === null ? "—" : Math.round(value).toLocaleString("en-US"));

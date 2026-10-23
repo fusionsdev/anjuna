@@ -25,6 +25,7 @@
 .brand-chip-count { margin-left: 4px; font-variant-numeric: tabular-nums; }
 .brand-filter-fields { display: flex; gap: 8px; flex-wrap: wrap; }
 .brand-filter-fields label { margin-bottom: 0; }
+
 /* Side panel of the selected brand. */
 .brand-side { border-left: 3px solid var(--money); border-radius: 0; padding-left: 14px; }
 .side-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
