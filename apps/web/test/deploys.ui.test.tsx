@@ -1,6 +1,7 @@
 import { LifecycleBrandSummary, type DeployEvent, type InstallWithReceipts } from "@anjuna/contracts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../src/client/api";
 import { DeploysScreen } from "../src/client/screens/Deploys";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
@@ -40,9 +41,16 @@ const INSTALL_DETAIL: InstallWithReceipts = {
   install_id: "inst-1", brand_id: "brand-a", revision_id: "brand-a_rev_1", operation: "install", status: "ready",
   runtime_sync_status: "ready", receipts: [{ step: "smoke", status: "ready" }],
 };
+// A failed install: `InstallProgress` renders Retry whenever `canRetry` is true, so this row proves the screen passes false.
+const FAILED_DETAIL: InstallWithReceipts = {
+  install_id: "inst-2", brand_id: "brand-b", revision_id: "brand-b_rev_2", operation: "redeploy", status: "failed",
+  runtime_sync_status: "ready", receipts: [{ step: "smoke", status: "failed", error: "Smoke: apex missing expected landing content" }],
+};
 
 let requests: string[];
 let feed: (params: URLSearchParams) => Response;
+let lifecycle: () => Response;
+let installReplies: Record<string, () => Response>;
 const paramsOf = (path: string) => new URLSearchParams(path.includes("?") ? path.split("?")[1]! : "");
 
 beforeEach(() => {
@@ -55,12 +63,14 @@ beforeEach(() => {
     has_more: false,
     unavailable: [],
   });
+  lifecycle = () => json({ brands: LIFECYCLE });
+  installReplies = { "/api/installs/inst-1": () => json(INSTALL_DETAIL) };
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     requests.push(input);
-    if (input === "/api/lifecycle/brands") return json({ brands: LIFECYCLE });
+    if (input === "/api/lifecycle/brands") return lifecycle();
     if (input === "/api/brands") return json({ brands: [], generated_at: "2026-10-21T00:00:00.000Z" });
     if (input.startsWith("/api/deploys")) return feed(paramsOf(input));
-    if (input === "/api/installs/inst-1") return json(INSTALL_DETAIL);
+    if (input in installReplies) return installReplies[input]!();
     throw new Error(`Unexpected test HTTP request: ${input}`);
   }));
 });
@@ -68,6 +78,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const table = () => screen.getByRole("table", { name: "ประวัติการติดตั้ง" });
@@ -82,19 +93,28 @@ describe("deploy history screen", () => {
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
     expect(rows()).toHaveLength(4);
+    expect(within(table()).getAllByRole("columnheader").map((h) => h.textContent))
+      .toEqual(["เวลา", "แบรนด์", "การทำงาน", "สถานะ", "ผู้เริ่ม", "ใช้เวลา", "revision"]);
     const [first, second, third] = rows() as [HTMLElement, HTMLElement, HTMLElement];
     expect(within(first).getByText("a.test")).toBeTruthy();
     expect(within(first).getByText("ติดตั้ง (Install)")).toBeTruthy();
-    expect(within(first).getByText("พร้อมใช้งาน (ready)")).toBeTruthy();
+    // A ready install colours like a live brand; a muted badge means `ready` lost its tone.
+    expect(within(first).getByText("พร้อมใช้งาน (ready)").className).toContain("p-live");
     expect(within(first).getByText("owner-1")).toBeTruthy();
     expect(within(first).getByText("Owner")).toBeTruthy();
     expect(within(first).getByText("4 นาที (4m)")).toBeTruthy();
     expect(within(first).getByText("— → brand-a_rev_1")).toBeTruthy();
     expect(within(second).getByText("brand.profile.update")).toBeTruthy();
+    // The audit row reads its Thai label, not the raw `done` from the contract.
+    expect(within(second).getByText("เสร็จแล้ว (done)")).toBeTruthy();
+    // The audit row is unfinished, so its duration cell is the em dash.
+    expect(within(second).getAllByRole("cell")[5]!.textContent).toBe("—");
     expect(within(third).getByText("ติดตั้งใหม่ (Redeploy)")).toBeTruthy();
     expect(within(third).getByText("ล้มเหลว (failed)")).toBeTruthy();
     expect(within(third).getByText("พนักงาน")).toBeTruthy();
     expect(within(third).getByText("2 นาที (2m)")).toBeTruthy();
+    // `has_more` is false here, so the truncation hint must be absent.
+    expect(screen.queryByText(/รายการล่าสุด/)).toBeNull();
     expect(screen.getByRole("link", { name: /ดูประวัติการแก้ไขทั้งหมด/ }).getAttribute("href")).toBe("/audit");
   });
 
@@ -105,6 +125,8 @@ describe("deploy history screen", () => {
     expect(ghost.closest(".brand-label")).toBeTruthy();
     const select = screen.getByLabelText(/แบรนด์ \(Brand\)/) as unknown as HTMLSelectElement;
     expect([...select.options].map((option) => option.value)).toEqual(["", "brand-a", "brand-b"]);
+    // Options name the brand the way the แบรนด์ column does: the hostname, never the display name or the id.
+    expect([...select.options].map((option) => option.textContent)).toEqual(["ทั้งหมด (All)", "a.test", "b.test"]);
     expect([...select.options].map((option) => option.textContent)).not.toContain("brand-ghost");
   });
 
@@ -152,16 +174,42 @@ describe("deploy history screen", () => {
     expect(detailCalls("inst-1")).toHaveLength(1);
   });
 
-  it("expands an audit row to its changed fields without a second request", async () => {
+  it("offers no Retry on an expanded failed install row", async () => {
+    installReplies["/api/installs/inst-2"] = () => json(FAILED_DETAIL);
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    fireEvent.click(toggleOf(rows()[2]!));
+    expect(await screen.findByText("ทดสอบหน้าเว็บจริง (Smoke test)")).toBeTruthy();
+    expect(detailCalls("inst-2")).toEqual(["/api/installs/inst-2"]);
+    // The screen passes `canRetry={false}`; a failed install would show Retry if it ever passed true.
+    expect(screen.queryByRole("button", { name: /ลองใหม่ \(Retry\)/ })).toBeNull();
+  });
+
+  it("keeps the table and shows the in-row error when the install receipts fail", async () => {
+    installReplies["/api/installs/inst-2"] = () => json({ error: "internal" }, 500);
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    fireEvent.click(toggleOf(rows()[2]!));
+    const alert = await within(rows()[2]!).findByRole("alert");
+    expect(alert.textContent).toContain("โหลดรายละเอียดการติดตั้งไม่สำเร็จ");
+    expect(screen.getByRole("table", { name: "ประวัติการติดตั้ง" })).toBeTruthy();
+    expect(rows()).toHaveLength(4);
+  });
+
+  it("expands an audit row to its action, actor and audit link without a second request", async () => {
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
     fireEvent.click(toggleOf(rows()[1]!));
     const [detail] = details();
     expect(detail).toContain("brand.profile.update");
-    expect(detail).toContain("เดิม (Old)");
-    expect(detail).toContain("ใหม่ (New)");
     expect(detail).toContain("owner-1");
-    expect(detail).toContain("before/after");
+    // The full instant replaces the misleading `เดิม` / `ใหม่` revision rows.
+    expect(detail).toContain("เวลาเริ่ม (Started at)");
+    expect(detail).toContain("2026-10-21T03:00:00.000Z");
+    expect(detail).not.toContain("เดิม (Old)");
+    expect(detail).not.toContain("ใหม่ (New)");
+    const detailNode = document.querySelector(".deploy-detail") as HTMLElement;
+    expect(within(detailNode).getByRole("link", { name: /ประวัติการแก้ไข/ }).getAttribute("href")).toBe("/audit");
     expect(requests.filter((p) => p.startsWith("/api/installs/"))).toEqual([]);
   });
 
@@ -192,5 +240,23 @@ describe("deploy history screen", () => {
     const note = await screen.findByText(/core_audit/);
     expect(note.textContent).toContain("ไทม์ไลน์ไม่ครบ");
     expect(within(table()).getAllByRole("row").slice(1)).toHaveLength(4);
+  });
+
+  it("names any other unavailable source by its raw id", async () => {
+    // The contract only knows `core_audit` today; a new source id must still be named, not dropped.
+    const deploys = vi.spyOn(api, "deploys").mockResolvedValueOnce({ events: FEED, has_more: false, unavailable: ["brand_registry"] } as never);
+    render(<DeploysScreen me={owner} />);
+    const note = await screen.findByText(/brand_registry/);
+    expect(note.textContent).toContain("ไทม์ไลน์ไม่ครบ");
+    expect(note.textContent).toContain("brand_registry");
+    deploys.mockRestore();
+  });
+
+  it("shows a hint next to the brand filter when the lifecycle list fails", async () => {
+    lifecycle = () => json({ error: "internal" }, 500);
+    render(<DeploysScreen me={owner} />);
+    expect(await screen.findByText(/โหลดรายการแบรนด์ไม่สำเร็จ/)).toBeTruthy();
+    expect(screen.getByRole("table", { name: "ประวัติการติดตั้ง" })).toBeTruthy();
+    expect(rows()).toHaveLength(4);
   });
 });

@@ -40,12 +40,11 @@ function EventDetail({ event, detail, error }: { event: DeployEvent; detail: Ins
   if (event.source === "audit") {
     return <div className="deploy-detail deploy-diff"><dl>
       <div><dt>การทำงาน (Action)</dt><dd><code>{event.action ?? "—"}</code></dd></div>
-      <div><dt>เดิม (Old)</dt><dd>{event.from_revision_id ?? "—"}</dd></div>
-      <div><dt>ใหม่ (New)</dt><dd>{event.to_revision_id ?? "—"}</dd></div>
       <div><dt>ผู้เริ่ม (Actor)</dt><dd>{event.started_by} · {actorRole(event.started_role)}</dd></div>
+      <div><dt>เวลาเริ่ม (Started at)</dt><dd><time dateTime={event.started_at}>{event.started_at}</time></dd></div>
       {event.error && <div><dt>ข้อผิดพลาด (Error)</dt><dd>{event.error}</dd></div>}
     </dl>
-    <p className="hint">ไทม์ไลน์นี้ไม่ส่งค่าก่อน/หลังของการแก้ไข ดูค่าก่อน/หลังได้ที่ประวัติการแก้ไข (This feed carries no before/after values; the audit log has them.)</p>
+    <p className="hint">ไทม์ไลน์นี้ไม่ส่งค่าก่อน/หลังของการแก้ไข ดูค่าก่อน/หลังได้ที่ <a href="/audit" onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate("/audit"); }}>ประวัติการแก้ไข (audit log)</a></p>
   </div>;
   }
   return <div className="deploy-detail">
@@ -61,6 +60,7 @@ export function DeploysScreen({ me }: { me: Me }) {
   const [unavailable, setUnavailable] = useState<DeployUnavailableSource[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [brands, setBrands] = useState<LifecycleBrandSummary[]>([]);
+  const [brandsFailed, setBrandsFailed] = useState(false);
   const [brand, setBrand] = useState("");
   const [source, setSource] = useState("");
   const [status, setStatus] = useState("");
@@ -74,7 +74,11 @@ export function DeploysScreen({ me }: { me: Me }) {
   // The brand filter offers every brand the panel knows. An event for an unknown brand still renders its id.
   useEffect(() => {
     let active = true;
-    api.lifecycleBrands().then((r) => { if (active) setBrands(r.brands); }, () => undefined);
+    api.lifecycleBrands().then(
+      (r) => { if (active) setBrands(r.brands); },
+      // The timeline still renders; only the filter loses its options, so say so next to the select.
+      () => { if (active) setBrandsFailed(true); },
+    );
     return () => { active = false; };
   }, []);
 
@@ -151,8 +155,9 @@ export function DeploysScreen({ me }: { me: Me }) {
       <label>แบรนด์ (Brand)
         <select value={brand} onChange={(e) => setBrand(e.target.value)}>
           <option value="">ทั้งหมด (All)</option>
-          {brands.map((b) => <option key={b.brand_id} value={b.brand_id}>{b.name ?? b.hostnames[0] ?? b.brand_id}</option>)}
+          {brands.map((b) => <option key={b.brand_id} value={b.brand_id}>{b.hostnames[0] ?? b.brand_id}</option>)}
         </select>
+        {brandsFailed && <span className="hint">โหลดรายการแบรนด์ไม่สำเร็จ (Could not load the brand list.)</span>}
       </label>
       <label>แหล่งที่มา (Source)
         <select value={source} onChange={(e) => setSource(e.target.value)}>
@@ -176,7 +181,9 @@ export function DeploysScreen({ me }: { me: Me }) {
         </section>
         <div className="deploys-foot">
           {hasMore && <p className="hint">แสดง {events.length} รายการล่าสุด</p>}
-          {unavailable.includes("core_audit") && <p className="note">ไทม์ไลน์ไม่ครบ: อ่านประวัติจาก Core ไม่ได้ (core_audit) การแก้ไขค่าของแบรนด์ที่ Core บันทึกอยู่อาจหายไป (Part of the timeline is missing: the core audit source is unavailable.)</p>}
+          {unavailable.length > 0 && <p className="note">{unavailable.map((source) => source === "core_audit"
+            ? "ไทม์ไลน์ไม่ครบ: อ่านประวัติจาก Core ไม่ได้ (core_audit) การแก้ไขค่าของแบรนด์ที่ Core บันทึกอยู่อาจหายไป (Part of the timeline is missing: the core audit source is unavailable.)"
+            : `ไทม์ไลน์ไม่ครบ: แหล่งข้อมูล ${source} ไม่พร้อมใช้งาน (Part of the timeline is missing: ${source} is unavailable.)`).join(" ")}</p>}
           <p className="hint"><a href="/audit" onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate("/audit"); }}>ดูประวัติการแก้ไขทั้งหมด (Full audit log)</a></p>
         </div>
       </>}
