@@ -68,7 +68,8 @@ function coreEnv(entries: unknown[], seen: URL[] = []) {
   return makeEnv({ MOCK_CORE: undefined, CORE: core });
 }
 
-const deploys = async (path: string, cookie: string, testEnv = makeEnv()) => {
+// Core answers with no rows unless a case supplies them, so factory-only cases do not depend on the mock core fixture.
+const deploys = async (path: string, cookie: string, testEnv = coreEnv([])) => {
   const response = await call(path, { cookie, env: testEnv });
   expect(response.status).toBe(200);
   return DeployHistoryResponse.parse(await response.json());
@@ -81,7 +82,7 @@ describe("GET /api/deploys", () => {
   });
 
   it("merges install rows and audit rows newest first", async () => {
-    const body = await deploys("/api/deploys", owner);
+    const body = await deploys("/api/deploys", owner, coreEnv([]));
     expect(ids(body)).toEqual(["inst-b2", "audit-101", "inst-a1", "inst-b1", "audit-104", "inst-a2", "audit-105"]);
     expect(body.unavailable).toEqual([]);
     expect(body.has_more).toBe(false);
@@ -114,6 +115,20 @@ describe("GET /api/deploys", () => {
     expect(ids(await deploys("/api/deploys?operation=redeploy", owner))).toEqual(["inst-b2"]);
     expect(ids(await deploys("/api/deploys?operation=upgrade", owner))).toEqual([]);
     expect(ids(await deploys("/api/deploys?operation=rollback", owner))).toEqual(["inst-a2"]);
+    expect(ids(await deploys("/api/deploys?operation=install", owner))).toEqual(["inst-a1", "inst-b1"]);
+  });
+
+  it("takes core audit rows from the core action list, not the factory list", async () => {
+    const body = await deploys("/api/deploys?source=audit", owner, coreEnv([
+      coreEntry(910, "brand.update", "brand-a", "core-owner", "2026-10-21T08:00:00.000Z"),
+      coreEntry(911, "brand.pause", "brand-b", "core-owner", "2026-10-21T07:00:00.000Z"),
+      coreEntry(912, "brand.resume", "brand-b", "core-owner", "2026-10-21T06:30:00.000Z"),
+      // Factory vocabulary: core never writes these, so core rows named like this are not timeline events.
+      coreEntry(913, "brand.create", "brand-a", "core-owner", "2026-10-21T09:00:00.000Z"),
+      coreEntry(914, "brand.update.extra", "brand-a", "core-owner", "2026-10-21T09:30:00.000Z"),
+    ]));
+    expect(ids(body)).toEqual(["audit-910", "audit-911", "audit-912", "audit-101", "audit-104", "audit-105"]);
+    expect(body.events.filter((e) => e.event_id.match(/^audit-91[012]$/)).map((e) => e.action)).toEqual(["brand.update", "brand.pause", "brand.resume"]);
   });
 
   it("excludes install.start, redeploy and upgrade audit rows, which the install rows already carry", async () => {
@@ -123,7 +138,7 @@ describe("GET /api/deploys", () => {
       coreEntry(902, "install.failed", "brand-a"),
       coreEntry(903, "upgrade.start", "brand-b"),
       coreEntry(904, "redeploy.failed", "brand-b"),
-      coreEntry(905, "brand.asset.upload", "brand-a"),
+      coreEntry(905, "brand.update", "brand-a"),
     ], seen);
     const body = await deploys("/api/deploys", owner, testEnv);
     const actions = body.events.map((e) => e.action).filter((a) => a !== null);
@@ -137,9 +152,9 @@ describe("GET /api/deploys", () => {
   });
 
   it("keeps an event for a brand with no factory row", async () => {
-    const body = await deploys("/api/deploys", owner, coreEnv([coreEntry(900, "brand.create", "brand-ghost")]));
+    const body = await deploys("/api/deploys", owner, coreEnv([coreEntry(900, "brand.update", "brand-ghost")]));
     expect(ids(body)[0]).toBe("audit-900");
-    expect(body.events[0]).toMatchObject({ source: "audit", brand_id: "brand-ghost", action: "brand.create", status: "done", started_by: "core-owner", started_at: "2026-10-21T05:00:00.000Z" });
+    expect(body.events[0]).toMatchObject({ source: "audit", brand_id: "brand-ghost", action: "brand.update", status: "done", started_by: "core-owner", started_at: "2026-10-21T05:00:00.000Z" });
     expect(body.unavailable).toEqual([]);
   });
 

@@ -19,14 +19,16 @@ const json = (status: number, body: unknown): Response => new Response(JSON.stri
 });
 
 /**
- * Audit actions that belong on the timeline, each matched whole or as a prefix followed by ".".
+ * Factory audit actions that belong on the timeline, each matched whole or as a prefix followed by ".".
  * install.start, install.failed, redeploy.* and upgrade.* are left out: the install row already carries them.
  */
 export const DEPLOY_AUDIT_ACTIONS: readonly string[] = [
   "brand.create", "brand.duplicate", "brand.draft_update", "brand.profile", "brand.asset", "checklist.attest",
 ];
-const isDeployAuditAction = (action: string): boolean =>
-  DEPLOY_AUDIT_ACTIONS.some((a) => action === a || action.startsWith(`${a}.`));
+/** The only brand actions core writes (workers/core/src/admin/index.ts); matched by exact name. */
+export const CORE_DEPLOY_AUDIT_ACTIONS = ["brand.update", "brand.pause", "brand.resume"] as const;
+const isCoreDeployAuditAction = (action: string): boolean =>
+  (CORE_DEPLOY_AUDIT_ACTIONS as readonly string[]).includes(action);
 
 const DEFAULT_LIMIT = 50;
 const CORE_AUDIT_MAX = 200;
@@ -117,7 +119,7 @@ async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHist
   const parsed = AuditListResponse.safeParse(result.body);
   if (!parsed.success) return null;
   return parsed.data.entries
-    .filter((e) => e.target.type === "brand" && isDeployAuditAction(e.action) && BrandId.safeParse(e.target.id).success)
+    .filter((e) => e.target.type === "brand" && isCoreDeployAuditAction(e.action) && BrandId.safeParse(e.target.id).success)
     .filter((e) => (!q.brand || e.target.id === q.brand) && (!onlyActor || e.actor_id === onlyActor))
     .map((e) => auditEvent(e.id, e.target.id, e.action, e.actor_id, e.actor_role, e.at));
 }
