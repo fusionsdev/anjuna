@@ -1,5 +1,5 @@
 import { type BrandRevisionsResponse, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
@@ -51,6 +51,20 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
   core_list_response_invalid: "ข้อมูลรายการแบรนด์จาก Core ไม่ถูกต้อง (Core brand list response is invalid)",
   core_list_account_missing: "ยังไม่ได้ตั้งค่าบัญชีสำหรับรายการแบรนด์ Core (Core brand list account is not configured)",
 };
+
+/**
+ * ConfirmDialog has no disabled option for its confirm button, so the body turns it off while it is mounted.
+ * It is for a question that has no valid answer yes; Cancel stays the way out.
+ */
+function ConfirmButtonOff({ children }: { children: ReactNode }) {
+  const marker = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const confirmButton = marker.current?.closest(".confirm-dialog")?.querySelector<HTMLButtonElement>(".confirm-actions > button:last-child");
+    if (confirmButton) confirmButton.disabled = true;
+    return () => { if (confirmButton) confirmButton.disabled = false; };
+  }, []);
+  return <div ref={marker}>{children}</div>;
+}
 
 /**
  * wizardRequest: a counter the app raises to open the New brand wizard from its menu.
@@ -267,6 +281,12 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     const latest = () => isActive() && revisionsFetch.current?.seq === seq;
     void api.brandRevisions(brandId).then((result) => { if (latest()) setRevisions(result); }, () => { if (latest()) setRevisions(null); });
   }
+  function retryRevisions() {
+    if (!selected) return;
+    const brandId = selected.brand_id;
+    setRevisions(undefined);
+    fetchRevisions(brandId, selected.current_revision_id, () => selectedIdRef.current === brandId);
+  }
   function operationToken() {
     return { selectedId, generation: operationGeneration.current };
   }
@@ -343,8 +363,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     const loaded = revisions?.brand_id === brandId ? revisions : undefined;
     const targetId = loaded?.rollback_target_revision_id ?? null;
     const target = targetId ? loaded?.revisions.find((r) => r.revision_id === targetId) : undefined;
-    const body = !loaded ? "ยังไม่ทราบเวอร์ชันเป้าหมายของการย้อนกลับ (Rollback target unknown: the revision history is loading or could not be loaded)."
-      : !targetId ? "ไม่มีเวอร์ชันเป้าหมายให้ย้อนกลับ (No rollback target for this brand)."
+    // Unknown (loading or failed) keeps the confirm open: the server picks the target and is the authority.
+    const body: ReactNode = !loaded ? "ยังไม่ทราบเวอร์ชันเป้าหมายของการย้อนกลับ (Rollback target unknown: the revision history is loading or could not be loaded)."
+      : !targetId ? <ConfirmButtonOff>ไม่มีเวอร์ชันเป้าหมายให้ย้อนกลับ (No rollback target for this brand).</ConfirmButtonOff>
       : `ย้อนกลับแบรนด์ไปที่เวอร์ชัน ${target ? `#${target.revision} ` : ""}(${targetId}) (Roll the brand back to revision ${target ? `#${target.revision} ` : ""}(${targetId})).`;
     const ok = await confirmForBrand({
       title: "ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า?",
@@ -471,7 +492,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const tableRows = brands.map((brand) => ({
     brand,
     name: brand.name ?? brand.hostnames[0] ?? brand.brand_id,
-    health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id)),
+    health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id), { coreListFailed: coreListError !== null }),
     money: brandMoney(brand.brand_id, runtimeList, periodFunnel, spend),
     stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
   }));
@@ -551,7 +572,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       </section>
       <div className="brands-aside">
         {selected
-          ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} revisions={revisions} onCopyFinalUrl={() => void copyFinalUrl()} manualCopyUrl={manualCopyUrl} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
+          ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} revisions={revisions} onRetryRevisions={retryRevisions} onCopyFinalUrl={() => void copyFinalUrl()} manualCopyUrl={manualCopyUrl} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
           // A failed Core list may hide a Core-only brand, so the id is not known to be missing.
           : listLoaded && !coreListError && routeBrandId
             ? <section className="panel brand-side"><p role="alert">ไม่พบแบรนด์ <code>{routeBrandId}</code> (Brand not found)</p></section>
@@ -575,26 +596,35 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
 
 /**
  * revisions: undefined while loading, null when the request failed; a failed load leaves the rest of the panel working.
+ * onRetryRevisions: the Retry button of a failed revisions load; omitted, the failure shows without one.
  * onCopyFinalUrl: omitted by a caller with no clipboard handling, which then gets no Copy button.
  * manualCopyUrl: the Final URL to show in a read-only input once the clipboard was missing or refused it.
  */
-export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, checklist, revisions, onCopyFinalUrl, manualCopyUrl, leadId, onLeadIdChange, onInstall, onRollback, onRedeploy, onRedeployLatest, onRetry, onRecover, onResumeWizard, onDuplicate, onChecklist }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; checklist: Partial<Record<ChecklistItemName, ChecklistEvidence | undefined>>; revisions?: BrandRevisionsResponse | null; onCopyFinalUrl?: () => void; manualCopyUrl?: string | null; leadId: string; onLeadIdChange: (value: string) => void; onInstall: () => void; onRollback: () => void; onRedeploy: () => void; onRedeployLatest?: () => void; onRetry: () => void; onRecover: () => void; onResumeWizard?: () => void; onDuplicate?: () => void; onChecklist: (item: ChecklistItemName, leadId?: string) => void }) {
+export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, checklist, revisions, onRetryRevisions, onCopyFinalUrl, manualCopyUrl, leadId, onLeadIdChange, onInstall, onRollback, onRedeploy, onRedeployLatest, onRetry, onRecover, onResumeWizard, onDuplicate, onChecklist }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; checklist: Partial<Record<ChecklistItemName, ChecklistEvidence | undefined>>; revisions?: BrandRevisionsResponse | null; onRetryRevisions?: () => void; onCopyFinalUrl?: () => void; manualCopyUrl?: string | null; leadId: string; onLeadIdChange: (value: string) => void; onInstall: () => void; onRollback: () => void; onRedeploy: () => void; onRedeployLatest?: () => void; onRetry: () => void; onRecover: () => void; onResumeWizard?: () => void; onDuplicate?: () => void; onChecklist: (item: ChecklistItemName, leadId?: string) => void }) {
   const lifecycleStatus = state?.lifecycle_status ?? (brand.status === "installing" ? "running" : brand.status === "live" ? "ready" : brand.status);
   const actions = lifecycleMutationAvailability(brand.status, install?.status, pendingOperation, install?.recovery_required === true);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
   const site = siteUrl(brand.hostnames);
+  const finalUrlFieldId = useId();
   return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
     {isManaged && <div className="side-actions">{actions.install && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button className="btn" onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.recover && me.role === "owner" && <button className="btn danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{onResumeWizard && (brand.status === "draft" || brand.status === "failed") && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
     {site && <div className="side-actions">
       <a className="btn" href={site} target="_blank" rel="noopener noreferrer">เปิดเว็บไซต์ (Open site)</a>
       {onCopyFinalUrl && <button type="button" className="btn" onClick={onCopyFinalUrl}>คัดลอก Final URL (Copy Final URL)</button>}
-      {manualCopyUrl && <input className="final-url-field" readOnly autoFocus aria-label="Final URL" value={manualCopyUrl} onFocus={(e) => e.currentTarget.select()} />}
+      {manualCopyUrl && <div className="final-url-manual">
+        <label htmlFor={finalUrlFieldId}>Final URL สำหรับคัดลอกเอง (Final URL to copy by hand)</label>
+        <input id={finalUrlFieldId} className="final-url-field" readOnly autoFocus value={manualCopyUrl} onFocus={(e) => e.currentTarget.select()} />
+      </div>}
     </div>}
     {install && <div className="section"><h3>ความคืบหน้าการติดตั้ง (Install progress)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p><InstallProgress install={install} canRetry={actions.retry} onRetry={onRetry} /></div>}
     {revisions !== undefined && <section className="section"><h3>ประวัติเวอร์ชัน (Revision history)</h3>
-      {revisions === null ? <p className="muted small">ไม่มีประวัติเวอร์ชัน หรือโหลดไม่สำเร็จ (No revision history, or it could not be loaded)</p>
+      {revisions === null
+        // A core-only brand has no factory revisions, so its failed load is a missing history, not an error.
+        ? (isManaged
+          ? <div className="revision-error" role="alert"><span>โหลดประวัติเวอร์ชันไม่สำเร็จ (Could not load the revision history)</span>{onRetryRevisions && <button type="button" className="btn" aria-label="ลองใหม่ (Retry) โหลดประวัติเวอร์ชัน (reload revision history)" onClick={onRetryRevisions}>ลองใหม่ (Retry)</button>}</div>
+          : <p className="muted small">แบรนด์นี้ไม่มีประวัติเวอร์ชันของ factory (No factory revision history for this brand)</p>)
         : revisions.revisions.length === 0 ? <p className="muted small">ยังไม่มีเวอร์ชัน (No revisions yet)</p>
         : <ul className="revision-list">{revisions.revisions.map((r) => <li key={r.revision_id}>
           <div><b>#{r.revision}</b>{r.is_current && <span className="revision-tag current"> ใช้งานอยู่ (Current)</span>}{r.revision_id === revisions.rollback_target_revision_id && <span className="revision-tag target"> เป้าหมายการย้อนกลับ (Rollback target)</span>}</div>

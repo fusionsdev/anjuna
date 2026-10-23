@@ -30,6 +30,19 @@ describe("brandHealth", () => {
   it("flags no_domain when the brand has never installed", () => {
     expect(brandHealth(brand({ status: "draft", current_revision_id: null, runtime_sync_status: "queued" }), undefined).issues).toContain("no_domain");
   });
+  it("does not flag no_domain for a core-only brand, which has no factory revision but is served by core", () => {
+    const health = brandHealth(brand({ status: "unmanaged", current_revision_id: null, bundle_form_version: null, payload_version: null }), { status: "live" });
+    expect(health.issues).not.toContain("no_domain");
+    expect(health.issues).toEqual([]);
+    expect(health.severity).toBe(99);
+  });
+  it("raises sync_error for a live brand, and not while the core list failed", () => {
+    const row = brand({ runtime_sync_status: "sync_error" });
+    expect(brandHealth(row, { status: "live" }).issues).toContain("sync_error");
+    expect(brandHealth(row, { status: "live" }, { coreListFailed: false }).issues).toContain("sync_error");
+    expect(brandHealth(row, { status: "live" }, { coreListFailed: true }).issues).not.toContain("sync_error");
+    expect(brandHealth(row, { status: "live" }, { coreListFailed: true }).severity).toBe(99);
+  });
   it("flags paused from the core runtime row and from the factory status", () => {
     expect(brandHealth(brand(), { status: "paused" }).issues).toContain("paused");
     expect(brandHealth(brand({ status: "paused" }), undefined).issues).toContain("paused");
@@ -41,13 +54,12 @@ describe("brandHealth", () => {
     expect(health.activityAt).toBe("2026-10-20T00:00:00.000Z");
   });
   it("pins the severity index of every issue", () => {
-    const only = (row: LifecycleBrandSummary, runtime: { status: "live" | "paused" } | undefined) => brandHealth(row, runtime);
     const cases = [
-      ["install_failed", 0, only(brand({ status: "failed" }), { status: "live" })],
-      ["sync_error", 1, only(brand({ runtime_sync_status: "sync_error" }), { status: "live" })],
-      ["install_running", 2, only(brand({ status: "installing" }), { status: "live" })],
-      ["no_domain", 3, only(brand({ status: "draft", current_revision_id: null, runtime_sync_status: "queued" }), undefined)],
-      ["paused", 4, only(brand(), { status: "paused" })],
+      ["install_failed", 0, brandHealth(brand({ status: "failed" }), { status: "live" })],
+      ["sync_error", 1, brandHealth(brand({ runtime_sync_status: "sync_error" }), { status: "live" })],
+      ["install_running", 2, brandHealth(brand({ status: "installing" }), { status: "live" })],
+      ["no_domain", 3, brandHealth(brand({ status: "draft", current_revision_id: null, runtime_sync_status: "queued" }), undefined)],
+      ["paused", 4, brandHealth(brand(), { status: "paused" })],
     ] as const;
     for (const [issue, severity, health] of cases) {
       expect(health.issues).toEqual([issue]);
@@ -89,6 +101,13 @@ describe("matchesBrandChip", () => {
     const health = brandHealth(row, undefined);
     expect(matchesBrandChip(health, row, "no_domain")).toBe(true);
     expect(matchesBrandChip(health, row, "failed")).toBe(false);
+  });
+  it("keeps a core-only brand out of no_domain and out of live", () => {
+    const row = brand({ status: "unmanaged", current_revision_id: null });
+    const health = brandHealth(row, { status: "live" });
+    expect(matchesBrandChip(health, row, "no_domain")).toBe(false);
+    expect(matchesBrandChip(health, row, "live")).toBe(false);
+    expect(matchesBrandChip(health, row, "all")).toBe(true);
   });
   it("lists every chip and sort, with profit the only owner-only sort", () => {
     expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["all", "live", "paused", "failed", "no_domain"]);

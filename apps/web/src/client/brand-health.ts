@@ -33,14 +33,17 @@ export interface BrandHealth {
 
 const isFailed = (status: string | undefined) => status === "failed" || status === "rolled_back";
 
-export function brandHealth(brand: LifecycleBrandSummary, runtime: Pick<BrandSummary, "status"> | undefined): BrandHealth {
+/** coreListFailed: the brands list carries core_error. */
+export function brandHealth(brand: LifecycleBrandSummary, runtime: Pick<BrandSummary, "status"> | undefined, options?: { coreListFailed?: boolean }): BrandHealth {
   const latest = brand.latest_install ?? null;
   const has: Record<BrandIssue, boolean> = {
     install_failed: isFailed(brand.status) || isFailed(latest?.status),
-    sync_error: brand.status === "live" && brand.runtime_sync_status === "sync_error",
+    // Without core state every factory brand reads sync_error; core_error already reports that outage once.
+    sync_error: !options?.coreListFailed && brand.status === "live" && brand.runtime_sync_status === "sync_error",
     install_running: brand.status === "installing" || latest?.status === "queued" || latest?.status === "running",
     // "No live domain": no install ever reached ready, so no Custom Domain is attached.
-    no_domain: brand.current_revision_id === null,
+    // A core-only row has no factory revision either, but core is serving its domain.
+    no_domain: brand.status !== "unmanaged" && brand.current_revision_id === null,
     paused: runtime?.status === "paused" || brand.status === "paused",
   };
   const issues = ISSUE_ORDER.filter((issue) => has[issue]);

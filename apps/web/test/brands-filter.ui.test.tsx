@@ -176,6 +176,53 @@ describe("brands list filters and sort", () => {
     expect(chipButton(/ทั้งหมด/).getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("does not count a core-only brand under No live domain, and sorts it with the healthy brands", async () => {
+    // A core-only row always has current_revision_id null; core is serving its domain.
+    const unmanaged = lifecycle("brand-core", "Core Only", "core-only.test", { status: "unmanaged", current_revision_id: null, bundle_form_version: null, payload_version: null, latest_install: null });
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [...lifecycleRows, unmanaged] }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(names()).toHaveLength(5));
+    expect(chipButton(/ทั้งหมด/).textContent).toContain("5");
+    expect(chipButton(/ยังไม่มีโดเมนใช้งาน/).textContent).toContain("1");
+    expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("1");
+    fireEvent.click(chipButton(/ยังไม่มีโดเมนใช้งาน/));
+    expect(names()).toEqual(["Wizard Demo"]);
+    fireEvent.click(chipButton(/ทั้งหมด/));
+    // No issue, so it follows the paused brand and the healthy one with an install, and a brand with no install goes last.
+    expect(names()).toEqual(["FloatMe", "Wizard Demo", "Alpha Loans", "Credit Genie", "Core Only"]);
+  });
+
+  it("does not reorder or uncount live brands by sync_error while the list carries core_error", async () => {
+    // With core state missing, lifecycle.ts reads every non-draft factory brand as sync_error.
+    const synced = lifecycleRows.map((row) => (row.status === "draft" ? row : { ...row, runtime_sync_status: "sync_error" }));
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: synced, core_error: { code: "core_list_fetch_failed", message: "core down" } }));
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Core brand list fetch failed"))).toBe(true);
+    expect(names()).toEqual(["FloatMe", "Wizard Demo", "Alpha Loans", "Credit Genie"]);
+    expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("1");
+  });
+
+  it("raises sync_error when the list carries no core_error", async () => {
+    const synced = lifecycleRows.map((row) => (row.brand_id === "brand-cg" ? { ...row, runtime_sync_status: "sync_error" } : row));
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: synced }));
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    expect(names()).toEqual(["FloatMe", "Credit Genie", "Wizard Demo", "Alpha Loans"]);
+    expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("0");
+  });
+
+  it("offers no Download control in the brand side panel", async () => {
+    render(<BrandLifecycle me={owner} routeBrandId="brand-cg" />);
+    await loaded(owner);
+    const panel = (await screen.findByRole("heading", { level: 2, name: /Credit Genie/ })).closest("section")!;
+    // Non-vacuous: the panel is the loaded detail, with its own actions.
+    expect(within(panel).getByRole("link", { name: /เปิดเว็บไซต์/ })).toBeTruthy();
+    const controls = [...within(panel).queryAllByRole("button"), ...within(panel).queryAllByRole("link")];
+    expect(controls.length).toBeGreaterThan(0);
+    expect(controls.filter((control) => /ดาวน์โหลด|download/i.test(control.textContent ?? "") || /ดาวน์โหลด|download/i.test(control.getAttribute("aria-label") ?? ""))).toEqual([]);
+  });
+
   it("filters by domain search, case-insensitively", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);

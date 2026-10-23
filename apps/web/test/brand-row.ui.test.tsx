@@ -39,6 +39,8 @@ beforeEach(() => {
   for (const row of rows) {
     routes.set(`GET /api/brands/${row.brand_id}/checklist`, () => json({ brand_id: row.brand_id, checklist: [] }));
     routes.set(`GET /api/brands/${row.brand_id}/installs`, () => json({ brand_id: row.brand_id, installs: [] }));
+    // Served, so a failed revisions load does not add a second alert next to the toast under test.
+    routes.set(`GET /api/brands/${row.brand_id}/revisions`, () => json({ brand_id: row.brand_id, current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
   }
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";

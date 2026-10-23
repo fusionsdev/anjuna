@@ -192,6 +192,10 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     expect(within(section).getAllByRole("listitem")[0]!.textContent).toContain("#4");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(calls).toBe(2);
+    // The late rev_3 response must not have overwritten the rev_4 list.
+    const settled = within(section).getAllByRole("listitem");
+    expect(settled).toHaveLength(2);
+    expect(settled[0]!.textContent).toContain("#4");
   });
 
   it("still shows the read-only input and the error toast when a copy fails while a rollback is dispatched", async () => {
@@ -213,23 +217,90 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     expect(document.querySelector(".toast.toast-err")).toBeTruthy();
   });
 
-  it("says the rollback target is unknown when the revisions did not load", async () => {
+  const confirmButton = (dialog: HTMLElement) => within(dialog).getAllByRole("button").find((b) => b.textContent !== "ยกเลิก (Cancel)") as HTMLButtonElement;
+
+  it("says the rollback target is unknown when the revisions did not load, and keeps the confirm enabled", async () => {
     serve(lifecycle("brand-cg", "creditsgene.test"), () => json({ error: "not_found", resource: "brand" }, 404));
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
-    const text = (await answerConfirm(false)).textContent ?? "";
+    const dialog = await screen.findByRole("alertdialog");
+    const text = dialog.textContent ?? "";
     expect(text).toContain("ยังไม่ทราบเวอร์ชันเป้าหมาย");
     expect(text).toContain("Rollback target unknown");
+    // The server picks the target and is the authority.
+    expect(confirmButton(dialog).disabled).toBe(false);
+    await answerConfirm(false);
   });
 
-  it("says there is no rollback target when the response has none", async () => {
+  it("says there is no rollback target when the response has none, and disables the confirm", async () => {
     serve(lifecycle("brand-cg", "creditsgene.test"), () => json({ ...revisions, rollback_target_revision_id: null }));
+    let posted = false;
+    routes.set("POST /api/brands/brand-cg/rollback", () => { posted = true; return json({ install_id: "op-1", brand_id: "brand-cg", status: "ready" }, 201); });
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(screen.getAllByRole("listitem").length).toBe(3));
     fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
-    const text = (await answerConfirm(false)).textContent ?? "";
+    const dialog = await screen.findByRole("alertdialog");
+    const text = dialog.textContent ?? "";
     expect(text).toContain("ไม่มีเวอร์ชันเป้าหมาย");
     expect(text).toContain("No rollback target");
+    const confirmBtn = confirmButton(dialog);
+    expect(confirmBtn.textContent).toContain("Rollback");
+    expect(confirmBtn.disabled).toBe(true);
+    await answerConfirm(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(posted).toBe(false);
+  });
+
+  it("labels the read-only Final URL field and binds the label to it", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    serve(lifecycle("brand-cg", "creditsgene.test"));
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await copyButton());
+    const field = await screen.findByLabelText(/Final URL สำหรับคัดลอกเอง/);
+    expect((field as HTMLInputElement).value).toBe(URL_CG);
+    expect(field.hasAttribute("readonly")).toBe(true);
+    const label = document.querySelector(`label[for="${field.id}"]`);
+    expect(field.id).not.toBe("");
+    expect(label?.textContent).toContain("(Final URL to copy by hand)");
+  });
+
+  it("shows a failed revisions load as an alert with Retry, and Retry refetches", async () => {
+    serve(lifecycle("brand-cg", "creditsgene.test"));
+    let calls = 0;
+    routes.set("GET /api/brands/brand-cg/revisions", () => {
+      calls += 1;
+      return calls === 1 ? json({ error: "boom" }, 500) : json(revisions);
+    });
+    render(<BrandLifecycle me={owner} />);
+    const section = (await screen.findByRole("heading", { name: /ประวัติเวอร์ชัน/ })).closest("section")!;
+    const alert = await within(section).findByRole("alert");
+    expect(alert.textContent).toContain("โหลดประวัติเวอร์ชันไม่สำเร็จ");
+    expect(within(section).queryAllByRole("listitem")).toHaveLength(0);
+    fireEvent.click(within(section).getByRole("button", { name: /ลองใหม่ \(Retry\)/ }));
+    await waitFor(() => expect(within(screen.getByRole("heading", { name: /ประวัติเวอร์ชัน/ }).closest("section")!).getAllByRole("listitem")).toHaveLength(3));
+    expect(calls).toBe(2);
+    expect(within(screen.getByRole("heading", { name: /ประวัติเวอร์ชัน/ }).closest("section")!).queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps a muted note, with no alert and no Retry, for a brand with no revisions", async () => {
+    serve(lifecycle("brand-cg", "creditsgene.test"), () => json({ brand_id: "brand-cg", current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
+    render(<BrandLifecycle me={owner} />);
+    const section = (await screen.findByRole("heading", { name: /ประวัติเวอร์ชัน/ })).closest("section")!;
+    await within(section).findByText(/ยังไม่มีเวอร์ชัน/);
+    expect(within(section).queryByRole("alert")).toBeNull();
+    expect(within(section).queryByRole("button", { name: /ลองใหม่/ })).toBeNull();
+  });
+
+  it("shows a muted note, not an error, for a core-only brand whose revisions request is refused", async () => {
+    serve(
+      lifecycle("brand-b", "www.b.test", { name: undefined, status: "unmanaged", current_revision_id: null, bundle_form_version: null, payload_version: null }),
+      () => json({ error: "not_found", resource: "brand" }, 404),
+    );
+    render(<BrandLifecycle me={owner} />);
+    const section = (await screen.findByRole("heading", { name: /ประวัติเวอร์ชัน/ })).closest("section")!;
+    await within(section).findByText(/ไม่มีประวัติเวอร์ชันของ factory/);
+    expect(within(section).queryByRole("alert")).toBeNull();
+    expect(within(section).queryByRole("button", { name: /ลองใหม่/ })).toBeNull();
   });
 
   it("hides Copy Final URL and Open site when the brand has no hostname", async () => {
