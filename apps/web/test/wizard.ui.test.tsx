@@ -478,7 +478,8 @@ describe("entry points on the Lifecycle screen", () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "Maple Cash" });
     expect(screen.queryByRole("button", { name: /Create draft/ })).toBeNull();
-    expect(screen.queryByRole("combobox")).toBeNull();
+    // The only select left on the screen is the list's sort.
+    expect(screen.getAllByRole("combobox")).toEqual([screen.getByLabelText(/เรียงลำดับ/)]);
     fireEvent.click(screen.getByRole("button", { name: "แบรนด์ใหม่ (New brand)" }));
     await heading("แบรนด์ (Brand)");
     expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();

@@ -17,6 +17,14 @@
 .brand-table .brand-stats { padding: 0; font-size: 12px; }
 .brand-table .brand-stats b { font-weight: 500; }
 
+/* Filter chips, sort and domain search above the table. */
+.brand-filters { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.brand-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.brand-chip { border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 12px; padding: 5px 11px; }
+.brand-chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.brand-chip-count { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.brand-filter-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+.brand-filter-fields label { margin-bottom: 0; }
 /* Side panel of the selected brand. */
 .brand-side { border-left: 3px solid var(--money); border-radius: 0; padding-left: 14px; }
 .side-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }

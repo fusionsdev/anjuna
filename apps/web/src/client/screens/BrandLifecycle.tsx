@@ -8,7 +8,10 @@ import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
 import { flowGateLabel } from "../labels";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
-import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, sortWorstProfitFirst, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
+import { EmptyState } from "../components/EmptyState";
+import { BRAND_CHIPS, brandHealth, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
+import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
+import { BrandFilters } from "./BrandFilters";
 import { BrandWizard } from "./BrandWizard";
 import { ConfigPanel } from "./ConfigPanel";
 import { UpgradeOutcomes } from "./UpgradeOutcomes";
@@ -109,6 +112,10 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
+  // View preferences, not routes: /brands/:id is the only deep link.
+  const [chip, setChip] = useState<BrandChip>("all");
+  const [sort, setSort] = useState<BrandSortMode>("issues");
+  const [search, setSearch] = useState("");
   const owner = me.role === "owner";
   const periodFunnel = usePeriodFunnel(period, refresh, weekFunnel);
   // The spend API answers 403 to an Employee, so only the Owner asks, and only the Owner sees money columns.
@@ -423,11 +430,18 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const tableRows = brands.map((brand) => ({
     brand,
     name: brand.name ?? brand.hostnames[0] ?? brand.brand_id,
+    health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id)),
     money: brandMoney(brand.brand_id, runtimeList, periodFunnel, spend),
     stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
   }));
-  // The Owner sees the brand that loses the most first. An Employee has no profit figure and keeps the list order.
-  const sortedRows = owner ? sortWorstProfitFirst(tableRows, (row) => row.money.profit) : tableRows;
+  // Chip counts follow the search, so a count never promises rows the search has hidden.
+  const searchedRows = tableRows.filter((row) => matchesBrandSearch(row.brand, search));
+  const chipCounts = Object.fromEntries(BRAND_CHIPS.map(({ id }) => [id, searchedRows.filter((row) => matchesBrandChip(row.health, row.brand, id)).length])) as Record<BrandChip, number>;
+  const sortedRows = sortBrands(
+    searchedRows.filter((row) => matchesBrandChip(row.health, row.brand, chip)),
+    sort,
+    (row) => ({ health: row.health, domain: row.brand.hostnames[0] ?? row.brand.brand_id, profit: row.money.profit }),
+  );
   const columns = owner ? 8 : 5;
 
   return <div className="brands-page">
@@ -439,6 +453,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
         <button className="btn pri" onClick={() => (onNewBrand ? onNewBrand() : setWizard({}))}>แบรนด์ใหม่ (New brand)</button>
       </div>
     </div>
+    <BrandFilters chip={chip} onChip={setChip} counts={chipCounts} sort={sort} onSort={setSort} owner={owner} search={search} onSearch={setSearch} />
     {error && <div className="error" role="alert">{error}</div>}
     {pendingOperation?.brandId === selectedId && <p role="status">รหัสติดตั้ง (Install ID): <code>{pendingOperation.installId}</code> · กำลังติดตามสถานะ</p>}
     {installError && <p className="error" role="alert">{installError}</p>}
@@ -484,10 +499,14 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
               </Fragment>;
             })}
             {brands.length === 0 && <tr><td colSpan={columns} className="muted">ยังไม่มีแบรนด์ (No brands yet)</td></tr>}
+            {brands.length > 0 && sortedRows.length === 0 && <tr><td colSpan={columns}>
+              <EmptyState title="ไม่พบแบรนด์ที่ตรงกับตัวกรอง (No brands match the filter)" hint="ลองล้างตัวกรองหรือคำค้นหา (Try clearing the filter or the search)"
+                action={<button type="button" className="btn" onClick={() => { setChip("all"); setSearch(""); }}>ล้างตัวกรอง (Clear filter)</button>} />
+            </td></tr>}
           </tbody>
         </table></div>
         <p className="muted small">การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold</p>
-        <p className="hint">{owner ? "เรียงจากกำไรน้อยที่สุดก่อน ค่าโฆษณาจาก AdKit อัปเดตทุกชั่วโมง " : ""}เครื่องหมาย — คือยังไม่มีข้อมูล</p>
+        <p className="hint">{owner ? `${sort === "profit" ? "เรียงจากกำไรน้อยที่สุดก่อน " : ""}ค่าโฆษณาจาก AdKit อัปเดตทุกชั่วโมง ` : ""}เครื่องหมาย — คือยังไม่มีข้อมูล</p>
       </section>
       <div className="brands-aside">
         {selected
