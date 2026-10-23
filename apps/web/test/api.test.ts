@@ -3,6 +3,7 @@ import {
   AdminError,
   AuditListResponse,
   BRAND_PATCH_FIELD_GROUPS,
+  GetLeadResponse,
   ListBrandsResponse,
   BrandPatchResponse,
 } from "@anjuna/contracts";
@@ -142,7 +143,11 @@ describe("employee is denied what the role table withholds (403 forbidden_role)"
     expect(brand).toMatchObject({ brand: { keyword_default: "Fast Cash Loans", aid: "10001" } });
   });
   it("PII lead detail", async () => {
-    await expectForbidden(await call(`/api/leads/${LEAD_ID}`, { cookie: employee }));
+    // Core redacts by field; the endpoint is open to an employee, who gets no applicant block.
+    const res = await call(`/api/leads/${LEAD_ID}`, { cookie: employee });
+    expect(res.status).toBe(200);
+    const body = GetLeadResponse.parse(await res.json());
+    expect(body.lead.applicant).toBeNull();
   });
   it("user management", async () => {
     await expectForbidden(await call("/api/users", { cookie: employee }));
@@ -200,7 +205,12 @@ describe("owner can do all of it", () => {
   it("reads PII lead detail", async () => {
     const res = await call(`/api/leads/${LEAD_ID}`, { cookie: owner });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ lead: { lead_id: LEAD_ID } });
+    const body = GetLeadResponse.parse(await res.json());
+    expect(body.lead.lead_id).toBe(LEAD_ID);
+    expect(body.lead.applicant).not.toBeNull();
+    expect(body.lead.profile.state).toBe("TX");
+    expect(body.lead.conversion).not.toBeNull();
+    expect(typeof body.lead.conversion?.value).toBe("number");
     expect((await call("/api/leads/00000000-0000-0000-0000-000000000000", { cookie: owner })).status).toBe(404);
   });
 
