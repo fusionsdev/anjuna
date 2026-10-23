@@ -20,17 +20,22 @@ const ESCAPE = /\\(?:(\\)|u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F
 const FORMAT = /[\p{Cf}\u00AD]/gu;
 const MAX_DECODE_ROUNDS = 8;
 const RUN = 8;
-// Real gclid, gbraid and wbraid values are long base64url and msclkid is 32 hex.
-const ID_LIKE = /[A-Za-z0-9_-]{20,}/;
+// Real gclid, gbraid and wbraid values are long base64url and msclkid is 32 hex, so a real one holds a digit.
+// Error codes such as `CONVERSION_PRECEDES_EVENT` are long runs too, but with no digit.
+const ID_LIKE = /[A-Za-z0-9_-]{20,}/g;
+const DIGIT = /[0-9]/;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 interface Row {
   lead_id: string; brand: string; status: ConversionStatus; last_error: string | null;
   gclid: string | null; gbraid: string | null; wbraid: string | null; msclkid: string | null;
+  google_order_id: string | null;
   attempts: number; value: number; currency: string; occurred_at: string; created_at: string;
   updated_at: string | null; next_attempt_at: string | null;
 }
 
 const clickIds = (row: Row) => [row.gclid, row.gbraid, row.wbraid, row.msclkid].filter((id): id is string => !!id);
+const orderIds = (row: Row) => [row.lead_id, row.google_order_id].filter((id): id is string => !!id);
 
 /**
  * Undoes escaping one layer per round, then applies NFKC and drops format characters, so a full-width or
@@ -59,6 +64,20 @@ function sharesRun(text: string, id: string): boolean {
 }
 
 /**
+ * True when `kept` holds a 20+ character run with a digit once the row's order ids and any UUID are taken out.
+ * The Google orderId is the row's lead_id (postback.ts), so a Google error naming it is not an id leak.
+ * Each removal leaves a space, so its neighbours do not join into one run.
+ */
+function holdsIdLikeRun(kept: string, row: Row): boolean {
+  let test = kept.toLowerCase();
+  for (const id of orderIds(row)) {
+    const own = decode(id)?.toLowerCase();
+    if (own) test = test.split(own).join(" ");
+  }
+  return (test.replace(UUID, " ").match(ID_LIKE) ?? []).some((run) => DIGIT.test(run));
+}
+
+/**
  * The drain stores raw AdKit failure text, which can echo the upload payload (click id and value).
  * A non-owner sees only the fixed templates. The owner sees the decoded text cut at the first click id key,
  * or null when it still holds an id-like run or a run of the row's own click ids: click id values never leave core.
@@ -71,7 +90,7 @@ function sanitizeLastError(text: string | null, row: Row, owner: boolean): strin
   const key = CLICK_ID_KEY.exec(decoded);
   const kept = key ? decoded.slice(0, key.index).replace(TRAILING_PUNCTUATION, "") : decoded;
   // A click id behind a key form the search misses (a homoglyph key) still fails closed here.
-  if (ID_LIKE.test(kept)) return null;
+  if (holdsIdLikeRun(kept, row)) return null;
   // The drain cuts `e.message` at 300 characters, so an id can end mid-value or show up with no key in front of it.
   const lower = kept.toLowerCase();
   for (const id of clickIds(row)) {
@@ -100,7 +119,7 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
 
   // updated_at is NULL on a pending row until the drain first claims it (postback.ts does not set it).
   const rows = await env.LEADS.prepare(
-    `SELECT c.lead_id, l.brand, c.status, c.last_error, c.gclid, c.gbraid, c.wbraid, c.msclkid, c.attempts,
+    `SELECT c.lead_id, l.brand, c.status, c.last_error, c.gclid, c.gbraid, c.wbraid, c.msclkid, c.google_order_id, c.attempts,
             c.value, c.currency, c.occurred_at, c.created_at, c.updated_at, c.next_attempt_at
      FROM conversion_uploads c JOIN leads l ON l.lead_id = c.lead_id
      WHERE c.created_at >= ?1 AND c.created_at < ?2
