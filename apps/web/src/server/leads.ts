@@ -67,6 +67,8 @@ export async function handleLeadsRoute(
     const result = await callCore(env, ctx, { endpoint: "leadExport", query: url.searchParams });
     if (result.status !== 200) return fromCore(result);
     const body = LeadExportResponse.parse(result.body);
+    // The columns follow the body and the file name follows the request, so the two must agree.
+    if (body.pii !== pii) return json(502, { error: "bad_gateway", message: "core export pii does not match the request" });
     // Core resolves a missing bound and does not echo the window, so the name falls back.
     const window = q.data.from && q.data.to ? `${q.data.from}_${q.data.to}` : "export";
     const name = `leads-${window}${pii ? "-pii" : ""}.csv`;

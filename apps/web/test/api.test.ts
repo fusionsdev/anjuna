@@ -7,6 +7,7 @@ import {
   ListBrandsResponse,
   BrandPatchResponse,
 } from "@anjuna/contracts";
+import lead from "@anjuna/contracts/fixtures/admin/lead.get.response.json";
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PANEL_ROLE_TABLE } from "../src/server/panel-roles";
@@ -146,8 +147,17 @@ describe("employee is denied what the role table withholds (403 forbidden_role)"
     // Core redacts by field; the endpoint is open to an employee, who gets no applicant block.
     const res = await call(`/api/leads/${LEAD_ID}`, { cookie: employee });
     expect(res.status).toBe(200);
-    const body = GetLeadResponse.parse(await res.json());
+    const text = await res.text();
+    for (const [key, value] of Object.entries(lead.lead.applicant)) {
+      if (["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip"].includes(key) && value !== null) {
+        expect(text, key).not.toContain(String(value));
+      }
+    }
+    const body = GetLeadResponse.parse(JSON.parse(text));
     expect(body.lead.applicant).toBeNull();
+    // Money is owner-only.
+    expect(body.lead.postbacks.map((p) => p.payout)).toEqual([null, null]);
+    expect(body.lead.conversion).toMatchObject({ value: null, last_error: null });
   });
   it("user management", async () => {
     await expectForbidden(await call("/api/users", { cookie: employee }));

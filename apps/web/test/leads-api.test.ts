@@ -5,6 +5,7 @@ import {
   LEAD_EXPORT_PII_COLUMNS,
   LeadsResponse,
 } from "@anjuna/contracts";
+import lead from "@anjuna/contracts/fixtures/admin/lead.get.response.json";
 import leadsExportPii from "@anjuna/contracts/fixtures/admin/leads.export.response.pii.json";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LEAD_ID, call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
@@ -20,6 +21,11 @@ beforeEach(async () => {
   owner = await sessions.owner();
   employee = await sessions.employee();
 });
+
+const PII_KEYS = ["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip"] as const;
+/** The non-null PII values of a row, as [key, text]; a null one cannot be told apart from other nulls. */
+const piiValues = (row: Partial<Record<(typeof PII_KEYS)[number], unknown>>): [string, string][] =>
+  PII_KEYS.flatMap((k) => (row[k] == null ? [] : [[k, String(row[k])] as [string, string]]));
 
 /** A stand-in CORE binding: records each request and answers with `reply`. */
 function fakeCore(reply: (url: URL) => unknown) {
@@ -42,12 +48,16 @@ describe("leads routes (FUS-376)", () => {
     expect(exported.headers.get("content-type")).toBe("text/csv; charset=utf-8");
   });
 
-  it("answers 200 with applicant null to an employee on lead detail", async () => {
+  it("answers 200 with applicant null to an employee on lead detail, with no PII value and no money", async () => {
     const res = await call(`/api/leads/${LEAD_ID}`, { cookie: employee });
     expect(res.status).toBe(200);
-    const body = GetLeadResponse.parse(await res.json());
+    const text = await res.text();
+    for (const [key, value] of piiValues(lead.lead.applicant)) expect(text, key).not.toContain(value);
+    const body = GetLeadResponse.parse(JSON.parse(text));
     expect(body.lead.applicant).toBeNull();
     expect(body.lead.profile.state).toBe("TX");
+    expect(body.lead.postbacks.map((p) => p.payout)).toEqual([null, null]);
+    expect(body.lead.conversion).toMatchObject({ value: null, last_error: null });
   });
 
   it("returns CSV with the declared columns, CRLF rows and the formula guard", async () => {
@@ -74,13 +84,17 @@ describe("leads routes (FUS-376)", () => {
     const { env } = fakeCore(() => ({
       rows: [
         row({ first_name: "=HYPERLINK(\"http://x\")", last_name: "+1", city: "-2", employer: "@SUM(A1)", address: 'a "b", c' }),
+        row({ address: "line1\r\nline2" }),
       ],
       truncated: false,
       pii: true,
     }));
     const guarded = await call("/api/leads/export?pii=1&from=2026-10-01&to=2026-10-02", { cookie: owner, env });
     expect(guarded.status).toBe(200);
-    const g = (await guarded.text()).split("\r\n");
+    const guardedText = await guarded.text();
+    // a cell holding CRLF is quoted and keeps the CRLF inside the quotes
+    expect(guardedText).toContain(',2145550123,,"line1\r\nline2",Dallas,');
+    const g = guardedText.split("\r\n");
     expect(g[0]).toBe(LEAD_EXPORT_PII_COLUMNS.join(","));
     expect(g[1]).toContain(`,"'=HYPERLINK(""http://x"")",`);
     expect(g[1]).toContain(",'+1,");
@@ -92,13 +106,16 @@ describe("leads routes (FUS-376)", () => {
   });
 
   it("is 403 for an employee on pii=1 and sets x-export-truncated for an owner", async () => {
-    const denied = await call("/api/leads/export?pii=1", { cookie: employee });
+    // The panel gate answers on its own: the stand-in core would serve PII if it were asked.
+    const gate = fakeCore(() => leadsExportPii);
+    const denied = await call("/api/leads/export?pii=1", { cookie: employee, env: gate.env });
     expect(denied.status).toBe(403);
     expect(AdminError.parse(await denied.json())).toMatchObject({
       error: "forbidden_role",
       required_role: "owner",
       denied_fields: ["pii"],
     });
+    expect(gate.seen).toHaveLength(0);
 
     const allowed = await call("/api/leads/export?pii=1&from=2026-10-01&to=2026-10-02", { cookie: owner });
     expect(allowed.status).toBe(200);
@@ -117,8 +134,29 @@ describe("leads routes (FUS-376)", () => {
       expect(text, key).not.toContain(String(ownerRow[key]));
     }
 
-    // validation (stage 3) answers before the PII field group (stage 4)
-    expect((await call("/api/leads/export?pii=1&status=bogus", { cookie: employee })).status).toBe(422);
+    // validation (stage 3) answers before the PII field group (stage 4); neither reaches core
+    expect((await call("/api/leads/export?pii=1&status=bogus", { cookie: employee, env: gate.env })).status).toBe(422);
+    expect(gate.seen).toHaveLength(0);
+  });
+
+  it("picks the non-PII columns for a pii: false body even when its rows carry PII keys", async () => {
+    const ownerRow = leadsExportPii.rows[0]!;
+    const { env } = fakeCore(() => ({ rows: [ownerRow], truncated: false, pii: false }));
+    const res = await call("/api/leads/export?pii=0", { cookie: employee, env });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text.split("\r\n")[0]).toBe(LEAD_EXPORT_COLUMNS.join(","));
+    for (const [key, value] of piiValues(ownerRow)) expect(text, key).not.toContain(value);
+  });
+
+  it("answers 502 when core's pii flag disagrees with the request", async () => {
+    const { seen, env } = fakeCore(() => leadsExportPii);
+    const res = await call("/api/leads/export?pii=0", { cookie: employee, env });
+    expect(res.status).toBe(502);
+    expect(seen).toHaveLength(1);
+    const text = await res.text();
+    expect(JSON.parse(text)).toMatchObject({ error: "bad_gateway", message: expect.any(String) });
+    for (const [key, value] of piiValues(leadsExportPii.rows[0]!)) expect(text, key).not.toContain(value);
   });
 
   it("passes the filters through and answers 422 on a bad one", async () => {
@@ -155,7 +193,8 @@ describe("leads routes (FUS-376)", () => {
     });
     expect(exported.headers.get("content-disposition")).toBe('attachment; filename="leads-2026-09-01_2026-09-30.csv"');
     expect(exp.seen[0]!.searchParams.get("status")).toBe("pending");
-    expect((await call("/api/leads/export?from=2026-10-02&to=2026-10-01", { cookie: employee })).status).toBe(422);
+    expect((await call("/api/leads/export?from=2026-10-02&to=2026-10-01", { cookie: employee, env: exp.env })).status).toBe(422);
+    expect(exp.seen).toHaveLength(1); // the export's 422 does not reach core either
   });
 
   it("answers 401 without a session on every leads route", async () => {
