@@ -71,6 +71,24 @@ describe("GET /api/conversions", () => {
     expect(again.rows.every((r) => typeof r.value === "number")).toBe(true);
   });
 
+  it("orders mock rows dead, pending, processing, uploaded, then newest updated_at first", async () => {
+    const rank = { dead: 0, pending: 1, processing: 2, uploaded: 3 } as const;
+    const stamp = (r: { updated_at?: string | null; created_at: string }) => r.updated_at ?? r.created_at;
+    // The fixture file is not sorted, so an unsorted mock would fail here.
+    const fixtureIds = conversionsFixture.rows.map((r) => r.lead_id);
+    for (const cookie of [owner, employee]) {
+      const body = ConversionsReportResponse.parse(await (await call("/api/conversions?period=30d", { cookie })).json());
+      expect(new Set(body.rows.map((r) => r.status))).toEqual(new Set(["dead", "pending", "processing", "uploaded"]));
+      expect(body.rows.map((r) => r.lead_id)).not.toEqual(fixtureIds);
+      for (let i = 1; i < body.rows.length; i++) {
+        const before = body.rows[i - 1]!;
+        const after = body.rows[i]!;
+        expect(rank[before.status], `${before.lead_id} then ${after.lead_id}`).toBeLessThanOrEqual(rank[after.status]);
+        if (before.status === after.status) expect(stamp(before) >= stamp(after), `${before.lead_id} then ${after.lead_id}`).toBe(true);
+      }
+    }
+  });
+
   it("returns 401 without a session", async () => {
     expect((await call("/api/conversions?period=7d")).status).toBe(401);
   });

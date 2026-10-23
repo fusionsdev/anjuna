@@ -187,15 +187,13 @@ describe("GET /admin/conversions", () => {
     expect(text).not.toMatch(/"value_totals"\s*:\s*\{/);
   });
 
-  it("masks the click id for the owner and gives an employee null for a payload echo", async () => {
+  it("cuts the click id for the owner and gives an employee null for a payload echo", async () => {
     const echoed = 'Command failed: adkit manage google conversions upload --data {"conversions":[{"value":85,"gclid":"GCLID-SECRET-123"}]}';
     await seed("echo-dead", "brand-a", { status: "dead", gclid: "GCLID-SECRET-123", value: 85, last_error: echoed });
     const asOwner = await report("", owner);
     const ownerRow = ConversionsReportResponse.parse(JSON.parse(asOwner.text)).rows[0]!;
     expect(ownerRow.reason_code).toBe("platform_error");
-    expect(ownerRow.last_error).toBe(
-      'Command failed: adkit manage google conversions upload --data {"conversions":[{"value":85,"gclid":"[click id]"}]}',
-    );
+    expect(ownerRow.last_error).toBe('Command failed: adkit manage google conversions upload --data {"conversions":[{"value":85 [click id hidden]');
     expect(asOwner.text).not.toContain("GCLID-SECRET-123");
 
     const asEmployee = await report("", employee);
@@ -212,7 +210,7 @@ describe("GET /admin/conversions", () => {
     const asOwner = await report("", owner);
     const ownerRow = ConversionsReportResponse.parse(JSON.parse(asOwner.text)).rows[0]!;
     expect(ownerRow.reason_code).toBe("upload_failed");
-    expect(ownerRow.last_error).toBe('upload failed: {"value":85,"gclid":"[click id]"}');
+    expect(ownerRow.last_error).toBe('upload failed: {"value":85 [click id hidden]');
     expect(asOwner.text).not.toContain("GCLID-SECRET-123");
 
     const asEmployee = await report("", employee);
@@ -223,94 +221,150 @@ describe("GET /admin/conversions", () => {
     expect(asEmployee.text).not.toContain('\\"value\\":85');
   });
 
-  it("masks a click id key whose value differs from the row's own column", async () => {
-    const echoed = 'upload failed for GCLID-ROW-1: {"msclkid": "OTHER-ID-9", "GclId" :"ANOTHER-77", "wbraid":"CUT-OFF-5';
-    await seed("pair-dead", "brand-a", { status: "dead", gclid: "GCLID-ROW-1", last_error: echoed });
-    const { text } = await report("", owner);
-    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-    expect(row.reason_code).toBe("upload_failed");
-    expect(row.last_error).toBe(
-      'upload failed for [click id]: {"msclkid": "[click id]", "GclId" :"[click id]", "wbraid":"[click id]',
-    );
-    for (const secret of ["OTHER-ID-9", "ANOTHER-77", "GCLID-ROW-1", "CUT-OFF-5"]) expect(text).not.toContain(secret);
-  });
+  /**
+   * Owner `last_error` is cut at the first click id key (ruling 2026-10-24). Each case seeds one dead row,
+   * then the raw response body must be free of every secret. The expected text is the part before the key.
+   */
+  describe("owner last_error cut rule", () => {
+    const SECRET = "X-SECRET";
+    const cut = "upload failed [click id hidden]";
+    /** JSON.stringify `times` times, the way an echo passes through nested logging. */
+    const wrap = (text: string, times: number) => {
+      let out = text;
+      for (let i = 0; i < times; i++) out = JSON.stringify(out).slice(1, -1);
+      return out;
+    };
+    /** Seeds one dead row per case. `rowIds` sets the row's own click id column for a case. */
+    async function ownerView(cases: Record<string, string>, rowIds: Record<string, string> = {}) {
+      for (const [name, last_error] of Object.entries(cases)) {
+        await seed(name, "brand-a", { status: "dead", last_error, ...(rowIds[name] === undefined ? {} : { gclid: rowIds[name] }) });
+      }
+      const { response, text } = await report("", owner);
+      expect(response.status).toBe(200);
+      const body = ConversionsReportResponse.parse(JSON.parse(text));
+      const errors: Record<string, string | null> = Object.fromEntries(body.rows.map((r) => [r.lead_id.replace(/^lead-/, ""), r.last_error]));
+      return { text, errors };
+    }
 
-  it("masks a click id pair whose quotes are backslash-escaped", async () => {
-    await seed("escaped", "brand-a", { status: "dead", last_error: String.raw`upload failed: {\"gbraid\":\"ESC-ID-4\",\"value\":85}` });
-    const { text } = await report("", owner);
-    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-    // The owner sees the decoded text, so the escaped quotes read as plain quotes.
-    expect(row.last_error).toBe('upload failed: {"gbraid":"[click id]","value":85}');
-    expect(text).not.toContain("ESC-ID-4");
-  });
+    it("cuts a plain JSON pair and a key that comes first", async () => {
+      const { text, errors } = await ownerView({
+        plain: 'upload failed: {"gclid":"X"}',
+        first: "gclid=X-SECRET, then more text",
+        keyed: 'Command failed: {"value":85,"gbraid":"X-SECRET","wbraid":"X-SECRET-2"}',
+      });
+      // The trailing punctuation set includes the colon, so the colon before the key goes with it.
+      expect(errors["plain"]).toBe(cut);
+      expect(errors["first"]).toBe("[click id hidden]");
+      expect(errors["keyed"]).toBe('Command failed: {"value":85 [click id hidden]');
+      expect(text).not.toContain(SECRET);
+    });
 
-  it("masks a click id written with a unicode escape, a CLI flag or key=value", async () => {
-    await seed("unicode", "brand-a", { status: "dead", last_error: String.raw`upload failed: {"gclid":"\u004fTHER-ID-9"}` });
-    await seed("cli-flag", "brand-a", { status: "dead", last_error: "Command failed: adkit upload --gclid OTHER-ID-7 --json" });
-    await seed("key-eq", "brand-a", { status: "dead", last_error: "upload failed: gclid=OTHER-ID-8, retry later" });
-    const { text } = await report("", owner);
-    const body = ConversionsReportResponse.parse(JSON.parse(text));
-    const errors = Object.fromEntries(body.rows.map((r) => [r.lead_id.replace(/^lead-/, ""), r.last_error]));
-    expect(errors["unicode"]).toBe(String.raw`upload failed: {"gclid":"[click id]"}`);
-    expect(errors["cli-flag"]).toBe("Command failed: adkit upload --gclid [click id] --json");
-    expect(errors["key-eq"]).toBe("upload failed: gclid=[click id], retry later");
-    for (const secret of ["THER-ID-9", "OTHER-ID-7", "OTHER-ID-8"]) expect(text).not.toContain(secret);
-  });
+    it("hides a value written after a space, a bracket prefix, a hex escape or a newline", async () => {
+      const { text, errors } = await ownerView({
+        space: "upload failed: gclid= X-SECRET",
+        bracket: 'upload failed: {"gclid":"[x]X-SECRET"}',
+        hex: String.raw`upload failed: {"gclid":"AB\x41X-SECRET"}`,
+        newline: String.raw`upload failed: {"gclid":"AB\nX-SECRET"}`,
+      });
+      for (const name of ["space", "bracket", "hex", "newline"]) expect(errors[name], name).toBe(cut);
+      expect(text).not.toContain(SECRET);
+    });
 
-  it("masks a click id behind double-escaped quotes and a double-escaped unicode escape", async () => {
-    // Raw text: {\"gclid\":\"\\u0043LICK-SECRET-1\"}. Round 1 gives {"gclid":"\u0043LICK-SECRET-1"}, round 2 gives CLICK-SECRET-1.
-    await seed("double", "brand-a", { status: "dead", gclid: "CLICK-SECRET-1", last_error: String.raw`upload failed: {\"gclid\":\"\\u0043LICK-SECRET-1\"}` });
-    const { text } = await report("", owner);
-    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-    expect(row.last_error).toBe('upload failed: {"gclid":"[click id]"}');
-    expect(text).not.toContain("CLICK-SECRET-1");
-    expect(text).not.toContain("LICK-SECRET-1");
-  });
+    it("hides a value behind a nested object, an arrow, a key suffix or a percent-encoded key", async () => {
+      const { text, errors } = await ownerView({
+        nested: 'upload failed: {"gclid":{"id":"X-SECRET"}}',
+        arrow: 'upload failed: gclid => "X-SECRET"',
+        list: "upload failed: gclid_list=[X-SECRET]",
+        percent: "upload failed: %67clid=X-SECRET",
+        cli: "upload failed: --msclkid X-SECRET --json",
+        single: "upload failed: {'gclid': 'X-SECRET', 'value': 85}",
+        slash: String.raw`upload failed: {"gclid":"SLASH-ONE\/X-SECRET"}`,
+      });
+      for (const name of ["nested", "arrow", "list", "percent", "cli", "single", "slash"]) expect(errors[name], name).toBe(cut);
+      expect(text).not.toContain(SECRET);
+      expect(text).not.toContain("SLASH-ONE");
+    });
 
-  it("masks a click id one escape layer deeper", async () => {
-    // Four backslashes before u0043 need three rounds to reach C.
-    await seed("deeper", "brand-a", { status: "dead", gclid: "CLICK-SECRET-2", last_error: String.raw`upload failed: {\"gclid\":\"\\\\u0043LICK-SECRET-2\"}` });
-    const { text } = await report("", owner);
-    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-    expect(row.last_error).toBe('upload failed: {"gclid":"[click id]"}');
-    expect(text).not.toContain("LICK-SECRET-2");
-  });
+    it("decodes up to 7 escape layers and gives null when the text is still changing in round 8", async () => {
+      const payload = 'upload failed: {"gclid":"X-SECRET"}';
+      const { text, errors } = await ownerView({
+        layers5: wrap(payload, 5),
+        layers7: wrap(payload, 7),
+        layers9: wrap(payload, 9),
+      });
+      expect(errors["layers5"]).toBe(cut);
+      expect(errors["layers7"]).toBe(cut);
+      expect(errors["layers9"]).toBeNull();
+      expect(text).not.toContain(SECRET);
+    });
 
-  it("masks a click id value that holds an escaped slash", async () => {
-    await seed("slash", "brand-a", { status: "dead", gclid: null, last_error: String.raw`upload failed: {"gclid":"SLASH-ONE\/SLASH-SECRET-3"}` });
-    const { text } = await report("", owner);
-    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-    expect(row.last_error).toBe('upload failed: {"gclid":"[click id]"}');
-    expect(text).not.toContain("SLASH-ONE");
-    expect(text).not.toContain("SLASH-SECRET-3");
-  });
+    it("decodes an uppercase unicode backslash chain that spells the key", async () => {
+      // \u005C is a backslash. Round 1 gives \u005Cu0067clid, round 2 gives \u0067clid, round 3 gives gclid.
+      const { text, errors } = await ownerView({ upper: String.raw`upload failed: {"\u005Cu005Cu0067clid":"X-SECRET"}` });
+      expect(errors["upper"]).toBe(cut);
+      expect(text).not.toContain(SECRET);
+    });
 
-  it("masks a single-quoted click id key and value", async () => {
-    await seed("single", "brand-a", { status: "dead", gclid: null, last_error: "upload failed: {'gclid': 'SQ-SECRET-4', 'value': 85}" });
-    const { text } = await report("", owner);
-    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-    expect(row.last_error).toBe("upload failed: {'gclid': '[click id]', 'value': 85}");
-    expect(text).not.toContain("SQ-SECRET-4");
-  });
+    it("cuts a click id behind double-escaped quotes and a double-escaped unicode escape", async () => {
+      // Raw text: {\"gclid\":\"\\u0043LICK-SECRET-1\"}. Round 1 gives {"gclid":"\u0043LICK-SECRET-1"}, round 2 gives CLICK-SECRET-1.
+      await seed("double", "brand-a", { status: "dead", gclid: "CLICK-SECRET-1", last_error: String.raw`upload failed: {\"gclid\":\"\\u0043LICK-SECRET-1\"}` });
+      const { text } = await report("", owner);
+      const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
+      expect(row.last_error).toBe(cut);
+      expect(text).not.toContain("CLICK-SECRET-1");
+      expect(text).not.toContain("LICK-SECRET-1");
+    });
 
-  it("masks every value in a click id array, including one that is not the row's", async () => {
-    await seed("array", "brand-a", { status: "dead", gclid: "ARR-ROW-5", last_error: 'upload failed: {"gclid":["ARR-ROW-5","ARR-OTHER-6"],"value":85}' });
-    await seed("nested", "brand-a", { status: "dead", gclid: null, last_error: 'upload failed: {"gbraid":[["NEST-A-7"],["NEST-B-8"]]}' });
-    const { text } = await report("", owner);
-    const body = ConversionsReportResponse.parse(JSON.parse(text));
-    const errors = Object.fromEntries(body.rows.map((r) => [r.lead_id.replace(/^lead-/, ""), r.last_error]));
-    expect(errors["array"]).toBe('upload failed: {"gclid":["[click id]","[click id]"],"value":85}');
-    expect(errors["nested"]).toBe('upload failed: {"gbraid":[["[click id]"],["[click id]"]]}');
-    for (const secret of ["ARR-ROW-5", "ARR-OTHER-6", "NEST-A-7", "NEST-B-8"]) expect(text).not.toContain(secret);
-  });
+    it("gives null when the kept text holds a row id with a space, a comma or a backslash", async () => {
+      const { text, errors } = await ownerView(
+        {
+          "row-space": "upload failed for AB ROWSP-SECRET",
+          "row-comma": "upload failed for AB,COMMA-SECRET-2",
+          "row-slash": String.raw`upload failed for AB\BSLASH-SECRET-3`,
+          "row-slash-json": String.raw`upload failed for AB\\BSLASH-SECRET-3`,
+        },
+        { "row-space": "AB ROWSP-SECRET", "row-comma": "AB,COMMA-SECRET-2", "row-slash": String.raw`AB\BSLASH-SECRET-3`, "row-slash-json": String.raw`AB\BSLASH-SECRET-3` },
+      );
+      for (const name of ["row-space", "row-comma", "row-slash", "row-slash-json"]) expect(errors[name], name).toBeNull();
+      for (const secret of ["AB ROWSP", "ROWSP-SECRET", "COMMA-SECRET-2", "BSLASH-SECRET-3"]) expect(text).not.toContain(secret);
+    });
 
-  it("returns null for the owner when a click id key is followed by a value it cannot mask", async () => {
-    // \x41 is not a JSON escape, so the decoder leaves it and the token pattern cannot start at a backslash.
-    await seed("closed", "brand-a", { status: "dead", gclid: null, last_error: String.raw`upload failed: {"gclid":"\x41FAIL-SECRET-9"}` });
-    const { text } = await report("", owner);
-    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-    expect(row).toMatchObject({ reason_code: "upload_failed", last_error: null });
-    expect(text).not.toContain("FAIL-SECRET-9");
+    it("cuts before a row id that follows a key, even with a space, a comma or a backslash in it", async () => {
+      const { text, errors } = await ownerView(
+        {
+          "key-space": "upload failed: gclid=AB ROWSP-SECRET, retry",
+          "key-comma": 'upload failed: {"gclid":"AB,COMMA-SECRET-2"}',
+          "key-slash": String.raw`upload failed: {"gclid":"AB\\BSLASH-SECRET-3"}`,
+        },
+        { "key-space": "AB ROWSP-SECRET", "key-comma": "AB,COMMA-SECRET-2", "key-slash": String.raw`AB\BSLASH-SECRET-3` },
+      );
+      for (const name of ["key-space", "key-comma", "key-slash"]) expect(errors[name], name).toBe(cut);
+      for (const secret of ["ROWSP-SECRET", "COMMA-SECRET-2", "BSLASH-SECRET-3"]) expect(text).not.toContain(secret);
+    });
+
+    it("gives null for a row id the drain cut at 300 characters with no key in front", async () => {
+      // "upload failed for " (18) + 270 filler + the first 12 characters of the id = 300.
+      const echoed = `upload failed for ${"z".repeat(270)}TRUNC-ROW-SE`;
+      expect(echoed).toHaveLength(300);
+      const { text, errors } = await ownerView({ trunc: echoed }, { trunc: "TRUNC-ROW-SECRET-1" });
+      expect(errors["trunc"]).toBeNull();
+      expect(text).not.toContain("TRUNC-ROW-SE");
+    });
+
+    it("matches a row id shorter than 8 characters whole", async () => {
+      const { errors } = await ownerView(
+        { whole: "upload failed for ab12 today", partial: "upload failed for ab1 today" },
+        { whole: "ab12", partial: "ab12" },
+      );
+      expect(errors["whole"]).toBeNull();
+      expect(errors["partial"]).toBe("upload failed for ab1 today");
+    });
+
+    it("shows decoded text that holds no click id key and no row id", async () => {
+      const { errors } = await ownerView({ "plain-text": String.raw`upload failed:\n\"timeout\" at 10%25`, money: 'Command failed: {"value":85}' });
+      expect(errors["plain-text"]).toBe('upload failed: "timeout" at 10%');
+      expect(errors["money"]).toBe('Command failed: {"value":85}');
+    });
   });
 
   it("keeps the exact template texts for an employee and nulls anything else", async () => {
