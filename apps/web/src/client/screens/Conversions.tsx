@@ -1,0 +1,178 @@
+import {
+  BrandId, CONVERSIONS_ROW_LIMIT, CONVERSION_STALLED_HOURS, CONVERSION_STATUSES, SPEND_PERIODS,
+  type ConversionsReportResponse, type ConversionStatus, type SpendPeriod,
+} from "@anjuna/contracts";
+import { useEffect, useState } from "react";
+import { ApiError, api, type Me } from "../api";
+import { BrandLabel, buildBrandLabels } from "../brand-labels";
+import { type Column, DataTable } from "../components/DataTable";
+import { EmptyState } from "../components/EmptyState";
+import { Spinner } from "../components/Spinner";
+import { StatusBadge, type Tone } from "../components/StatusBadge";
+import { REASON_TEXT } from "../conversion-labels";
+import { navigate, useSearch, viewPath } from "../router";
+import "./Conversions.css";
+
+type Row = ConversionsReportResponse["rows"][number];
+export interface ConversionFilters { period: SpendPeriod; status: "all" | ConversionStatus; brand: string | null }
+
+const DEFAULT_PERIOD: SpendPeriod = "7d";
+const PERIOD_LABEL: Record<SpendPeriod, string> = { today: "วันนี้", "7d": "7 วัน", "30d": "30 วัน" };
+const STATUS_CHIPS: Array<[ConversionFilters["status"], string]> = [
+  ["all", "ทั้งหมด"], ["pending", "ค้างส่ง (pending)"], ["processing", "กำลังส่ง (processing)"], ["uploaded", "ส่งแล้ว (uploaded)"], ["dead", "ส่งไม่ได้ (dead)"],
+];
+const STATUS_BADGE: Record<ConversionStatus, { tone: Tone; label: string }> = {
+  uploaded: { tone: "live", label: "ส่งแล้ว" },
+  pending: { tone: "blue", label: "ค้างส่ง" },
+  processing: { tone: "mute", label: "กำลังส่ง" },
+  dead: { tone: "bad", label: "ส่งไม่ได้" },
+};
+const COUNT_CELLS: Array<[keyof ConversionsReportResponse["totals"], string]> = [
+  ["pending", "ค้างส่ง"], ["processing", "กำลังส่ง"], ["uploaded", "ส่งแล้ว"], ["dead", "ส่งไม่ได้"],
+];
+
+/** An unknown period or status reads as the default, and a brand that is not a brand id reads as none, so core never answers 422. */
+export function readConversionFilters(search: string): ConversionFilters {
+  const params = new URLSearchParams(search);
+  const period = SPEND_PERIODS.find((value) => value === params.get("period")) ?? DEFAULT_PERIOD;
+  const status = (["all", ...CONVERSION_STATUSES] as const).find((value) => value === params.get("status")) ?? "all";
+  const brand = params.get("brand");
+  return { period, status, brand: brand && BrandId.safeParse(brand).success ? brand : null };
+}
+
+/** Only the values that differ from the defaults, so the default view is a clean /conversions. */
+export function conversionsPath(filters: ConversionFilters): string {
+  const params = new URLSearchParams();
+  if (filters.period !== DEFAULT_PERIOD) params.set("period", filters.period);
+  if (filters.status !== "all") params.set("status", filters.status);
+  if (filters.brand) params.set("brand", filters.brand);
+  const query = params.toString();
+  return query ? `${viewPath("conversions")}?${query}` : viewPath("conversions");
+}
+
+const count = (n: number) => n.toLocaleString("en-US");
+const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("th-TH") : "—");
+
+/** brand_id to domain, like useBrandLabels(), but keeps the entries because the brand select needs the ids. */
+function useBrandDomains(): Map<string, string> {
+  const [domains, setDomains] = useState(() => new Map<string, string>());
+  useEffect(() => {
+    let active = true;
+    void Promise.allSettled([api.lifecycleBrands(), api.brands()]).then(([lifecycle, runtime]) => {
+      if (!active) return;
+      setDomains(buildBrandLabels(lifecycle.status === "fulfilled" ? lifecycle.value.brands : null, runtime.status === "fulfilled" ? runtime.value.brands : null));
+    });
+    return () => { active = false; };
+  }, []);
+  return domains;
+}
+
+function Reason({ row }: { row: Row }) {
+  const reason = row.reason_code ? REASON_TEXT[row.reason_code] : null;
+  // An employee often gets null: core withholds free text that is not on its allow-list.
+  const error = row.last_error?.trim() ? row.last_error : null;
+  if (!reason && !error) return <>—</>;
+  return (
+    <div className="conv-reason">
+      {reason && <><b>{reason.label}</b><p className="note">{reason.fix}</p></>}
+      {error && <details><summary>ข้อความเต็ม</summary><code>{error}</code></details>}
+    </div>
+  );
+}
+
+type Load = { report: ConversionsReportResponse } | { error: string } | null;
+
+export function ConversionsScreen({ me }: { me: Me }) {
+  const owner = me.role === "owner";
+  const { period, status, brand } = readConversionFilters(useSearch());
+  const domains = useBrandDomains();
+  const [load, setLoad] = useState<Load>(null);
+
+  // A late answer for old filters is dropped.
+  useEffect(() => {
+    let current = true;
+    setLoad(null);
+    api.conversions({ period, status: status === "all" ? undefined : status, brand: brand ?? undefined }).then(
+      (report) => current && setLoad({ report }),
+      (e: unknown) => current && setLoad({ error: e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ" }),
+    );
+    return () => { current = false; };
+  }, [period, status, brand]);
+
+  // replace: a filter click edits the open page and adds no history entry.
+  const change = (patch: Partial<ConversionFilters>) => navigate(conversionsPath({ period, status, brand, ...patch }), { replace: true });
+  const labelOf = (id: string) => domains.get(id) ?? id;
+  const options = [...domains].map(([id, domain]) => ({ id, text: domain === id ? id : `${domain} (${id})` })).sort((a, b) => a.text.localeCompare(b.text));
+
+  const columns: Column<Row>[] = [
+    { key: "brand", header: "แบรนด์", cell: (row) => <BrandLabel brandId={row.brand} domain={labelOf(row.brand)} /> },
+    { key: "status", header: "สถานะ", cell: (row) => <StatusBadge {...STATUS_BADGE[row.status]} /> },
+    { key: "reason", header: "เหตุผล", cell: (row) => <Reason row={row} /> },
+    { key: "click", header: "Click", mono: true, cell: (row) => row.click_type ?? "—" },
+    { key: "attempts", header: "ครั้งที่ลอง", align: "right", cell: (row) => count(row.attempts) },
+    // The column follows the role. A number that arrives for an employee is not shown.
+    ...(owner ? [{ key: "value", header: "มูลค่า (Value)", align: "right" as const, cell: (row: Row) => (row.value === null ? "—" : usd(row.value)) }] : []),
+    { key: "created", header: "สร้างเมื่อ", cell: (row) => when(row.created_at) },
+    { key: "next", header: "ลองใหม่", cell: (row) => when(row.next_attempt_at) },
+  ];
+  const report = load && "report" in load ? load.report : null;
+
+  return (
+    <>
+      <div className="head">
+        <div>
+          <h1>คอนเวอร์ชัน</h1>
+          <p className="sub">ลีดที่ขายได้และผลการส่งขึ้น Google Ads / Microsoft Ads (ดูอย่างเดียว)</p>
+        </div>
+        <div className="seg" role="group" aria-label="ช่วงเวลา">
+          {SPEND_PERIODS.map((key) => (
+            <button key={key} type="button" aria-pressed={period === key} onClick={() => change({ period: key })}>{PERIOD_LABEL[key]}</button>
+          ))}
+        </div>
+      </div>
+      <div className="conv-filters">
+        <div className="conv-chips" role="group" aria-label="สถานะ">
+          {STATUS_CHIPS.map(([key, label]) => (
+            <button key={key} type="button" aria-pressed={status === key} onClick={() => change({ status: key })}>{label}</button>
+          ))}
+        </div>
+        <select aria-label="แบรนด์" value={brand ?? ""} onChange={(e) => change({ brand: e.target.value || null })}>
+          <option value="">ทุกแบรนด์</option>
+          {brand && !domains.has(brand) && <option value={brand}>{brand}</option>}
+          {options.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
+        </select>
+      </div>
+      {!load && <Spinner />}
+      {load && "error" in load && <p role="alert">{load.error}</p>}
+      {report && (
+        <div className="conv-stack">
+          <div className="ledger" role="group" aria-label="สรุปคอนเวอร์ชัน">
+            {COUNT_CELLS.map(([key, label]) => (
+              <div className="cell" key={key}><p className="k">{label}</p><p className={key === "dead" && report.totals.dead > 0 ? "v neg" : "v"}>{count(report.totals[key])}</p></div>
+            ))}
+            {report.stalled > 0 && (
+              <div className="cell"><p className="k">ติดค้างนาน</p><p className="v"><StatusBadge tone="warn" label={`ค้างเกิน ${CONVERSION_STALLED_HOURS} ชม. ${count(report.stalled)}`} /></p></div>
+            )}
+            {owner && (
+              <>
+                <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v">{report.value_totals ? usd(report.value_totals.uploaded) : "—"}</p></div>
+                <div className="cell"><p className="k">มูลค่าที่ส่งไม่ได้</p><p className="v">{report.value_totals ? usd(report.value_totals.dead) : "—"}</p></div>
+              </>
+            )}
+          </div>
+          <section className="panel" aria-label="รายการคอนเวอร์ชัน">
+            <DataTable
+              label="รายการคอนเวอร์ชัน (Conversions)"
+              columns={columns}
+              rows={report.rows}
+              rowKey={(row) => row.lead_id}
+              empty={<EmptyState title="ยังไม่มีคอนเวอร์ชันในช่วงนี้" />}
+            />
+            {report.truncated && <p className="note">{`แสดง ${CONVERSIONS_ROW_LIMIT} แถวล่าสุด`}</p>}
+          </section>
+        </div>
+      )}
+    </>
+  );
+}

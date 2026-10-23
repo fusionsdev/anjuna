@@ -1,0 +1,11 @@
+/* Conversions screen only. The shared console classes (.head .sub .panel .ledger .cell .k .v .seg .note .hint .pos .neg) come from styles.css. */
+.conv-stack { display: flex; flex-direction: column; gap: 16px; }
+.conv-filters { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.conv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.conv-chips button { border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: var(--text-sm); padding: 4px 10px; }
+.conv-chips button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.conv-reason b { font-weight: 500; }
+.conv-reason .note { margin-top: 4px; padding: 6px 8px; font-size: var(--text-sm); }
+.conv-reason details { margin-top: 4px; font-size: var(--text-sm); }
+.conv-reason summary { cursor: pointer; color: var(--muted); }
+.conv-reason code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--text-xs); }

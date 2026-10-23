@@ -3,6 +3,7 @@ import { ApiError, api, type Me } from "./api";
 import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
+import { ConversionsScreen } from "./screens/Conversions";
 import { DeploysScreen } from "./screens/Deploys";
 import { FunnelScreen } from "./screens/Funnel";
 import { HomeScreen } from "./screens/Home";
@@ -72,6 +73,7 @@ export function App() {
     { id: "templates", label: "เทมเพลต", show: true },
     { id: "funnel", label: "ฟันเนล", show: true, gap: true },
     { id: "leads", label: "ลีด (Leads)", show: true }, // spec leads
+    { id: "conversions", label: "คอนเวอร์ชัน", show: true },
     { id: "alerts", label: "การแจ้งเตือน", show: true, badge: alertCount !== null ? { count: alertCount, label: `${alertCount} รายการที่ต้องจัดการ` } : null },
     { id: "mailing", label: "รายชื่ออีเมล", show: true },
     { id: "suppressions", label: "อีเมลที่บล็อก (Suppressions)", show: me.role === "owner" }, // spec leads
@@ -113,6 +115,7 @@ export function App() {
       )}
       {view === "builder-keys" && <BuilderKeysScreen me={me} />}
       {view === "funnel" && <FunnelScreen />}
+      {view === "conversions" && <ConversionsScreen me={me} />}
       {view === "alerts" && <AlertsScreen />}
       {view === "mailing" && <MailingScreen />}
       {/* spec leads */}

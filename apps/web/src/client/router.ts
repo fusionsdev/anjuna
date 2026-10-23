@@ -7,6 +7,7 @@ export type Route =
   | { view: "new-brand" }
   | { view: "templates"; templateId: string | null }
   | { view: "funnel" }
+  | { view: "conversions" }
   | { view: "alerts" }
   | { view: "deploys" }
   | { view: "mailing" }
@@ -26,6 +27,7 @@ const STATIC: Record<string, Route> = {
   "/brands/new": { view: "new-brand" },
   "/templates": { view: "templates", templateId: null },
   "/funnel": { view: "funnel" },
+  "/conversions": { view: "conversions" },
   "/alerts": { view: "alerts" },
   "/deploys": { view: "deploys" },
   "/mailing": { view: "mailing" },
@@ -121,6 +123,26 @@ export function useRoute(): Route {
     };
   }, []);
   return route;
+}
+
+/**
+ * The query string of the open page. A fixed route such as /conversions is one shared object, so useRoute() does not re-render
+ * when only the query changes. This hook re-reads it on navigate(), Back and Forward.
+ */
+export function useSearch(): string {
+  const [search, setSearch] = useState(() => window.location.search);
+  useEffect(() => {
+    const update = () => setSearch(window.location.search);
+    window.addEventListener("popstate", update);
+    window.addEventListener(ROUTE_EVENT, update);
+    // A navigate() from a child effect on mount ran before these listeners existed.
+    update();
+    return () => {
+      window.removeEventListener("popstate", update);
+      window.removeEventListener(ROUTE_EVENT, update);
+    };
+  }, []);
+  return search;
 }
 
 /** A modified or middle click keeps the browser default: open the link in a new tab or window. */

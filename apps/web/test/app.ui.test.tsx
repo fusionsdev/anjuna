@@ -24,6 +24,7 @@ vi.mock("../src/client/screens/Home", () => ({
 }));
 vi.mock("../src/client/screens/Templates", () => ({ TemplatesScreen: ({ selectedId }: { selectedId?: string | null }) => <h1>Templates screen {selectedId ?? "-"}</h1> }));
 vi.mock("../src/client/screens/Funnel", () => ({ FunnelScreen: () => <h1>Funnel screen</h1> }));
+vi.mock("../src/client/screens/Conversions", () => ({ ConversionsScreen: ({ me }: { me: { role: string } }) => <h1>Conversions screen {me.role}</h1> }));
 vi.mock("../src/client/screens/Alerts", () => ({ AlertsScreen: () => <h1>Alerts screen</h1> }));
 vi.mock("../src/client/screens/Mailing", () => ({ MailingScreen: () => <h1>Mailing screen</h1> }));
 vi.mock("../src/client/screens/Audit", () => ({ AuditScreen: () => <h1>Audit screen</h1> }));
@@ -65,7 +66,8 @@ describe("Console rail", () => {
     expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
     expect(within(nav).getAllByRole("link").map((link) => link.querySelector("span")?.textContent)).toEqual([
-      "หน้าแรก", "แบรนด์", "ประวัติการติดตั้ง", "สร้างแบรนด์ใหม่", "เทมเพลต", "ฟันเนล", "ลีด (Leads)", "การแจ้งเตือน", "รายชื่ออีเมล", "อีเมลที่บล็อก (Suppressions)", "ประวัติการแก้ไข", "ผู้ใช้", "คีย์ Builder",
+      "หน้าแรก", "แบรนด์", "ประวัติการติดตั้ง", "สร้างแบรนด์ใหม่", "เทมเพลต", "ฟันเนล", "ลีด (Leads)", "คอนเวอร์ชัน", "การแจ้งเตือน", "รายชื่ออีเมล",
+      "อีเมลที่บล็อก (Suppressions)", "ประวัติการแก้ไข", "ผู้ใช้", "คีย์ Builder",
     ]);
     expect(within(nav).getByRole("link", { name: "หน้าแรก" }).getAttribute("aria-current")).toBe("page");
     fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
@@ -77,6 +79,7 @@ describe("Console rail", () => {
     ["แบรนด์", "Brands screen: 0 -"],
     ["เทมเพลต", "Templates screen -"],
     ["ฟันเนล", "Funnel screen"],
+    ["คอนเวอร์ชัน", "Conversions screen owner"],
     ["การแจ้งเตือน", "Alerts screen"],
     ["รายชื่ออีเมล", "Mailing screen"],
     ["ประวัติการแก้ไข", "Audit screen"],
@@ -164,6 +167,8 @@ describe("Console rail", () => {
     ["/brands/new", "Brands screen: 1 -", "สร้างแบรนด์ใหม่"],
     ["/templates/tv-1", "Templates screen tv-1", "เทมเพลต"],
     ["/funnel", "Funnel screen", "ฟันเนล"],
+    ["/conversions", "Conversions screen owner", "คอนเวอร์ชัน"],
+    ["/conversions?period=30d&status=dead", "Conversions screen owner", "คอนเวอร์ชัน"],
     ["/audit", "Audit screen", "ประวัติการแก้ไข"],
     ["/builder-keys", "Builder keys screen", "คีย์ Builder"],
   ])("deep link %s renders its screen", async (path, heading, label) => {
@@ -243,6 +248,17 @@ describe("Console rail", () => {
     fireEvent.click(screen.getByRole("link", { name: "หน้าแรก" }));
     await screen.findByRole("heading", { name: "หน้าแรก" });
     expect(document.title).toBe("หน้าแรก · Control Panel");
+    fireEvent.click(screen.getByRole("link", { name: "คอนเวอร์ชัน" }));
+    await screen.findByRole("heading", { name: "Conversions screen owner" });
+    expect(document.title).toBe("คอนเวอร์ชัน (Conversions) · Control Panel");
+  });
+
+  it("gives an employee the Conversions page, with the role passed to the screen", async () => {
+    vi.mocked(api.me).mockResolvedValue({ ...owner, role: "employee" });
+    window.history.replaceState(null, "", "/conversions");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Conversions screen employee" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "คอนเวอร์ชัน" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("shows Page not found for an unknown path and marks no nav item", async () => {

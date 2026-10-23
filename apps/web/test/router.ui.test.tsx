@@ -2,7 +2,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { api } from "../src/client/api";
-import { isPlainLeftClick, navigate, parseRoute, routePath, useRoute, viewPath } from "../src/client/router";
+import { isPlainLeftClick, navigate, parseRoute, routePath, useRoute, useSearch, viewPath } from "../src/client/router";
 
 afterEach(() => {
   cleanup();
@@ -20,6 +20,7 @@ describe("parseRoute", () => {
     ["/templates", { view: "templates", templateId: null }],
     ["/templates/tv-1", { view: "templates", templateId: "tv-1" }],
     ["/funnel", { view: "funnel" }],
+    ["/conversions", { view: "conversions" }],
     ["/alerts", { view: "alerts" }],
     ["/mailing", { view: "mailing" }],
     ["/audit", { view: "audit" }],
@@ -45,7 +46,7 @@ describe("parseRoute", () => {
 
 describe("routePath", () => {
   it("round-trips every route", () => {
-    for (const path of ["/", "/brands", "/brands/new", "/brands/x%2Fy", "/templates", "/templates/tv-1", "/funnel", "/alerts", "/mailing", "/audit", "/users", "/builder-keys"]) {
+    for (const path of ["/", "/brands", "/brands/new", "/brands/x%2Fy", "/templates", "/templates/tv-1", "/funnel", "/conversions", "/alerts", "/mailing", "/audit", "/users", "/builder-keys"]) {
       expect(routePath(parseRoute(path))).toBe(path);
     }
     expect(viewPath("brands")).toBe("/brands");
@@ -85,6 +86,33 @@ function ProbeWithChildNavigation() {
     </>
   );
 }
+
+function SearchProbe() {
+  return <p data-testid="search">{useSearch()}</p>;
+}
+
+describe("useSearch", () => {
+  it("follows the query string through navigate, replace, back and forward on one route", async () => {
+    window.history.replaceState(null, "", "/conversions");
+    render(<SearchProbe />);
+    expect(screen.getByTestId("search").textContent).toBe("");
+    // The route object is the same for every /conversions URL, so useRoute() alone would not re-render here.
+    act(() => navigate("/conversions?status=dead"));
+    expect(screen.getByTestId("search").textContent).toBe("?status=dead");
+    act(() => navigate("/conversions?status=pending", { replace: true }));
+    expect(screen.getByTestId("search").textContent).toBe("?status=pending");
+    await act(async () => {
+      window.history.back();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    expect(screen.getByTestId("search").textContent).toBe("");
+    await act(async () => {
+      window.history.forward();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    expect(screen.getByTestId("search").textContent).toBe("?status=pending");
+  });
+});
 
 describe("useRoute", () => {
   it("follows navigate, back and the legacy hash", async () => {
