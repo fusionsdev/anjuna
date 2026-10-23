@@ -38,9 +38,8 @@ export function AuditScreen({ me }: { me: Me }) {
       <p className="hint">ทุกการเปลี่ยนแปลงในระบบ ใครทำ ทำอะไร เมื่อไหร่</p>
       <p className="hint">{me.role === "owner" ? "แสดงทุกรายการ" : "แสดงเฉพาะรายการของคุณ"}</p>
       {error && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>{error}</div>}
-      {!entries ? (
-        <Spinner />
-      ) : (
+      {!entries && !error && <Spinner />}
+      {entries && (
         <section className="panel" style={{ marginTop: 16 }}>
           <DataTable label="ประวัติการแก้ไข" columns={auditColumns(labelOf)} rows={entries} rowKey={(e) => String(e.id)} empty={<EmptyState title="ยังไม่มีรายการ" />} />
         </section>

@@ -30,6 +30,7 @@ export function AppShell({ me, title, nav, onSignOut, children }: { me: Me; titl
   const mobile = useMobileViewport();
   const menuButton = useRef<HTMLButtonElement>(null);
   const userMenu = useRef<HTMLDivElement>(null);
+  const main = useRef<HTMLElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
@@ -49,7 +50,12 @@ export function AppShell({ me, title, nav, onSignOut, children }: { me: Me; titl
   }, [menu]);
   return (
     <div className="shell" data-drawer={drawer ? "open" : "closed"}>
-      <aside className="sidebar" id="sidebar" inert={mobile && !drawer} onClick={(e) => { if ((e.target as HTMLElement).closest("a.nav")) setDrawer(false); }}>
+      <aside className="sidebar" id="sidebar" inert={mobile && !drawer} onClick={(e) => {
+        if (!(e.target as HTMLElement).closest("a.nav")) return;
+        // The closed drawer is inert and the clicked link sits inside it, so focus would fall to body: move it to the page.
+        if (drawer) main.current?.focus();
+        setDrawer(false);
+      }}>
         <div className="brandmark"><i aria-hidden="true" />Anjuna</div>
         {nav}
       </aside>
@@ -69,7 +75,7 @@ export function AppShell({ me, title, nav, onSignOut, children }: { me: Me; titl
             )}
           </div>
         </header>
-        <main className="content">{children}</main>
+        <main className="content" ref={main} tabIndex={-1}>{children}</main>
       </div>
     </div>
   );

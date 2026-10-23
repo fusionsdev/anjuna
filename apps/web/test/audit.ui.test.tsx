@@ -58,5 +58,6 @@ describe("Audit screen", () => {
     vi.spyOn(api, "audit").mockRejectedValue(new ApiError(503, { error: "internal" }));
     render(<AuditScreen me={me} />);
     expect(await screen.findByText("เกิดข้อผิดพลาด (503)")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

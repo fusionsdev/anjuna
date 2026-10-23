@@ -177,7 +177,6 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .prog { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .prog i { display: block; height: 100%; background: var(--money); }
 @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } .spinner-ring { animation: none; } }
 
 .confirm-dialog { display: grid; gap: var(--space-3); box-shadow: var(--shadow-2); }
 .confirm-dialog:focus { outline: none; }
@@ -188,6 +187,7 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .data-table td { height: var(--row-h); padding-block: 6px; }
 .data-table .mono { font-family: var(--mono); font-size: var(--text-sm); }
 .data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table td:not(.num), .data-table th:not(.num) { text-align: left; }
 .status-badge { display: inline-flex; gap: 4px; align-items: center; }
 .empty-state { padding: var(--space-5); text-align: center; color: var(--muted); }
 .empty-title { margin: 0 0 4px; color: var(--ink); font-weight: 500; }
@@ -200,3 +200,5 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 
 .brand-label { display: inline-flex; flex-direction: column; }
 .brand-label .brand-id { font-family: var(--mono); font-size: var(--text-xs); color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } .spinner-ring { animation: none; } }

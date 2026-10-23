@@ -5,6 +5,8 @@ import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailabili
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
+import { Toast } from "../components/Toast";
+import { flowGateLabel } from "../labels";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, sortWorstProfitFirst, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandWizard } from "./BrandWizard";
@@ -93,6 +95,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
   const operationGeneration = useRef(0);
   const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
@@ -354,6 +358,25 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     await dispatchOperation(() => api.recover(brandId));
   }
 
+  /** Pause or resume from the table row. The confirm text matches the ConfigPanel button. */
+  async function toggleStatus(runtime: BrandSummary) {
+    const pausing = runtime.status === "live";
+    const ok = await confirm({
+      title: pausing ? "หยุดแบรนด์นี้ชั่วคราว?" : "เปิดแบรนด์นี้ต่อ?",
+      body: pausing ? "Pause stops new leads on this brand until it is resumed." : "Resume starts taking leads again.",
+      confirmLabel: pausing ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)",
+      tone: pausing ? "danger" : "default",
+    });
+    if (!ok) return;
+    try {
+      await api.setStatus(runtime.brand_id, pausing ? "pause" : "resume");
+      setToast({ kind: "ok", text: pausing ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว" });
+      await load();
+    } catch (e) {
+      setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "ไม่สำเร็จ" });
+    }
+  }
+
   async function startUpgradeAll() {
     const ok = await confirm({
       title: "เริ่มอัปเกรดทุกแบรนด์?",
@@ -379,7 +402,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }));
   // The Owner sees the brand that loses the most first. An Employee has no profit figure and keeps the list order.
   const sortedRows = owner ? sortWorstProfitFirst(tableRows, (row) => row.money.profit) : tableRows;
-  const columns = owner ? 7 : 4;
+  const columns = owner ? 8 : 5;
 
   return <div className="brands-page">
     <div className="brands-head">
@@ -399,7 +422,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       <section className="panel lifecycle-list">
         <div className="tw"><table className="brand-table">
           <thead><tr>
-            <th>แบรนด์ (Brand)</th><th>สถานะ (Status)</th>
+            <th>แบรนด์ (Brand)</th><th>สถานะ (Status)</th><th>โฟลว์ (Flow gate)</th>
             {owner && <th>ค่าโฆษณา (Spend)</th>}
             <th>คลิก (Clicks)</th><th>ลีด (Leads)</th>
             {owner && <><th>ต้นทุน/ลีด (Cost per lead)</th><th>กำไร (Profit)</th></>}
@@ -408,10 +431,19 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
             {sortedRows.map(({ brand, name, money, stats }) => {
               const isSelected = brand.brand_id === selectedId;
               const select = () => { setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); };
+              const runtime = runtimeBrands.find((r) => r.brand_id === brand.brand_id);
+              const canToggle = runtime && (runtime.status === "paused" || (runtime.status === "live" && owner));
               return <Fragment key={brand.brand_id}>
                 <tr className={isSelected ? "click sel" : "click"} onClick={select}>
                   <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</button></td>
-                  <td><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></td>
+                  <td>
+                    <StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} />
+                    {runtime && canToggle && <button type="button" className={runtime.status === "live" ? "btn warn row-action" : "btn pri row-action"}
+                      onClick={(e) => { e.stopPropagation(); void toggleStatus(runtime); }}>
+                      {runtime.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
+                    </button>}
+                  </td>
+                  <td>{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
                   {owner && <td className="blue">{usd(money.spend)}</td>}
                   <td>{count(money.clicks)}</td>
                   <td>{count(money.leads)}</td>
@@ -448,6 +480,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
     {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
+    {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
     {confirmDialog}
   </div>;
 }

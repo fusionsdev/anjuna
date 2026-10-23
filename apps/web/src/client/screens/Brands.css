@@ -12,6 +12,7 @@
 .brand-table .brand-pick b { font-weight: 500; }
 .brand-table .brand-pick:focus-visible { outline: 2px solid var(--leak); outline-offset: 2px; }
 .brand-table tr.sel td { background: var(--paper); }
+.brand-table .btn.row-action { margin-left: 8px; padding: 3px 8px; font-size: 12px; }
 .brand-table tr.stats td { border-top: 0; padding: 0 8px 8px 0; text-align: left; }
 .brand-table .brand-stats { padding: 0; font-size: 12px; }
 .brand-table .brand-stats b { font-weight: 500; }

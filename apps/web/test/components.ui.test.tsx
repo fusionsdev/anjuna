@@ -61,6 +61,20 @@ describe("Toast", () => {
     expect(onDismiss).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps its timer when the parent passes a new onDismiss, and calls the newest one", () => {
+    vi.useFakeTimers();
+    const first = vi.fn();
+    const second = vi.fn();
+    const view = render(<Toast kind="err" text="ไม่สำเร็จ" onDismiss={first} timeoutMs={1000} />);
+    act(() => { vi.advanceTimersByTime(600); });
+    view.rerender(<Toast kind="err" text="ไม่สำเร็จ" onDismiss={second} timeoutMs={1000} />);
+    act(() => { vi.advanceTimersByTime(399); });
+    expect(second).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
   it("uses role=status for a success", () => {
     render(<Toast kind="ok" text="บันทึกแล้ว" onDismiss={() => undefined} />);
     expect(screen.getByRole("status").textContent).toContain("บันทึกแล้ว");

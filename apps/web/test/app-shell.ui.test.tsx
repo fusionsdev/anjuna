@@ -75,6 +75,23 @@ describe("AppShell", () => {
     }
   });
 
+  it("moves focus to main when a nav link closes the mobile drawer", () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      renderShell();
+      fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
+      const link = screen.getByRole("link", { name: /การแจ้งเตือน/ });
+      link.focus();
+      fireEvent.click(link);
+      expect(document.activeElement).toBe(document.querySelector("main"));
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it("closes the user menu on a pointerdown outside it", () => {
     renderShell();
     fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));

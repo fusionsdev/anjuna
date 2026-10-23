@@ -55,6 +55,16 @@ it.each(["wrangler.deploy.aduplift.jsonc", "wrangler.deploy.maimax.jsonc"])("%s 
   expect(config.r2_buckets).toEqual([{ binding: "ARTIFACTS", bucket_name: "anjuna-artifacts" }]);
 });
 
+describe("styles.css", () => {
+  it("ends with the reduced-motion block, after every animated rule", () => {
+    const css = readFileSync(path.join(root, "src/client/styles.css"), "utf8");
+    const reduced = css.lastIndexOf("@media (prefers-reduced-motion: reduce)");
+    expect(reduced).toBeGreaterThan(-1);
+    expect(reduced).toBeGreaterThan(css.indexOf(".spinner-ring {"));
+    expect(css.slice(reduced)).toContain(".spinner-ring { animation: none; }");
+  });
+});
+
 describe("SPA build", () => {
   it("vite build emits index.html and bundled assets into dist/client", async () => {
     await build({ configFile: path.join(root, "vite.config.ts"), logLevel: "silent" });
