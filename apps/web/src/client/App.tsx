@@ -14,6 +14,7 @@ import { UsersScreen } from "./screens/Users";
 import { navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
 import { AppShell, pageTitle } from "./components/AppShell";
 import { SidebarNav, type NavItem } from "./components/SidebarNav";
+import { Spinner } from "./components/Spinner";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -51,7 +52,7 @@ export function App() {
     return () => { cancelled = true; };
   }, [me, view]);
 
-  if (loading) return <div className="center muted">กำลังโหลด…</div>;
+  if (loading) return <div className="center"><Spinner /></div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
 
   const open = (id: Exclude<View, "not-found">) => {

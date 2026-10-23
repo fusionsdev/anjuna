@@ -4,6 +4,7 @@ import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
+import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, sortWorstProfitFirst, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandWizard } from "./BrandWizard";
@@ -40,10 +41,9 @@ const operationLabel: Record<InstallOperation, string> = {
 };
 
 // The pill colour of a brand status: live is money green, a failure is red, work in progress is blue, a pause or rollback is amber.
-const statusTone: Record<string, string> = {
-  live: "p-live", failed: "p-bad", rolled_back: "p-warn", installing: "p-blue", draft: "p-mute", paused: "p-warn", unmanaged: "p-mute", retired: "p-mute",
+const statusBadgeTone: Record<string, Tone> = {
+  live: "live", failed: "bad", rolled_back: "warn", installing: "blue", draft: "mute", paused: "warn", unmanaged: "mute", retired: "mute",
 };
-const tone = (status: string) => `pill ${statusTone[status] ?? "p-mute"}`;
 
 /** A whole number with thousands separators. An unknown number is "—". */
 const count = (value: number | null) => (value === null ? "—" : Math.round(value).toLocaleString("en-US"));
@@ -411,7 +411,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
               return <Fragment key={brand.brand_id}>
                 <tr className={isSelected ? "click sel" : "click"} onClick={select}>
                   <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</button></td>
-                  <td><span className={tone(brand.status)}>{statusLabel[brand.status] ?? brand.status}</span></td>
+                  <td><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></td>
                   {owner && <td className="blue">{usd(money.spend)}</td>}
                   <td>{count(money.clicks)}</td>
                   <td>{count(money.leads)}</td>
@@ -457,7 +457,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const actions = lifecycleMutationAvailability(brand.status, install?.status, pendingOperation, install?.recovery_required === true);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
-  return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={tone(brand.status)}>{statusLabel[brand.status] ?? brand.status}</span></div>
+  return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
     {isManaged && <div className="side-actions">{actions.install && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button className="btn" onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.recover && me.role === "owner" && <button className="btn danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{onResumeWizard && (brand.status === "draft" || brand.status === "failed") && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
     {install && <div className="section"><h3>ความคืบหน้าการติดตั้ง (Install progress)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p><InstallProgress install={install} canRetry={actions.retry} onRetry={onRetry} /></div>}

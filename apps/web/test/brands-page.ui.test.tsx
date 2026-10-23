@@ -94,7 +94,12 @@ const names = () => [...document.querySelectorAll(".brand-table button.brand-pic
 /** The cells of a brand's table row after the name: status, then the numbers. */
 const cells = (name: string) => {
   const row = [...document.querySelectorAll(".brand-table button.brand-pick")].find((button) => button.querySelector("b")?.textContent === name)!.closest("tr")!;
-  return [...row.querySelectorAll("td")].slice(1).map((cell) => cell.textContent);
+  // Read the text a person reads: the status badge icon is aria-hidden.
+  return [...row.querySelectorAll("td")].slice(1).map((cell) => {
+    const copy = cell.cloneNode(true) as Element;
+    copy.querySelectorAll('[aria-hidden="true"]').forEach((icon) => icon.remove());
+    return copy.textContent;
+  });
 };
 const funnelPaths = () => requests.filter((r) => r.path.startsWith("/api/funnel?")).map((r) => r.path);
 

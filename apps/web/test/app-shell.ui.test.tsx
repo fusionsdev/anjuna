@@ -43,6 +43,48 @@ describe("AppShell", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("returns focus to the menu button when Escape closes the drawer", () => {
+    renderShell();
+    const toggle = screen.getByRole("button", { name: "เมนู (Menu)" });
+    fireEvent.click(toggle);
+    screen.getByRole("link", { name: "หน้าแรก" }).focus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("marks the closed sidebar inert on a mobile viewport only", () => {
+    const original = window.matchMedia;
+    const stub = (matches: boolean) => {
+      window.matchMedia = ((query: string) => ({
+        matches, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+      })) as unknown as typeof window.matchMedia;
+    };
+    try {
+      stub(true);
+      renderShell();
+      const sidebar = () => document.querySelector("aside.sidebar")!;
+      expect(sidebar().hasAttribute("inert")).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
+      expect(sidebar().hasAttribute("inert")).toBe(false);
+      cleanup();
+      stub(false);
+      renderShell();
+      expect(sidebar().hasAttribute("inert")).toBe(false);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it("closes the user menu on a pointerdown outside it", () => {
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
+    expect(screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" }));
+    expect(screen.queryByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeNull();
+  });
+
   it("closes the drawer when a nav link is used", () => {
     const { onOpen } = renderShell();
     fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
