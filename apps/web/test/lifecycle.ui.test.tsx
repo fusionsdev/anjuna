@@ -75,6 +75,8 @@ beforeEach(() => {
     ["GET /api/brands/brand-a", () => json({ brand: config })],
     ["GET /api/brands/brand-a/site-text", () => json({ brand_id: "brand-a", defaults: null })],
     ["GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: [] })],
+    // Served, so a failed revisions load does not add a second alert to the screens that look for one.
+    ["GET /api/brands/brand-a/revisions", () => json({ brand_id: "brand-a", current_revision_id: null, rollback_target_revision_id: null, revisions: [] })],
     ["GET /api/brands/brand-a/assets", () => json({ brand_id: "brand-a", assets: [] })],
     ["GET /api/brands/brand-a/edit", () => json({ brand_id: "brand-a", status: "live", template_version_id: "tv-1", microsoft_ads_account: null })],
     ["GET /api/templates/sealed", () => json({ templates: [{ template_version_id: "tv-1", name: "Harbor", version: 1, status: "sealed" }] })],

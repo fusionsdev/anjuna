@@ -29,6 +29,7 @@ import type { Env } from "./env.js";
 import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
+import { handleDeployRoute } from "./deploys.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleLeadsRoute } from "./leads.js";
@@ -111,6 +112,10 @@ async function route(
 
   const lifecycle = await handleLifecycleRoute(request, env, url, path, ctx);
   if (lifecycle) return lifecycle;
+
+  // spec brands (FUS-377): cross-brand deploy timeline.
+  const deploys = await handleDeployRoute(request, env, url, path, ctx);
+  if (deploys) return deploys;
 
   const wizard = await handleWizardRoute(request, env, path, ctx);
   if (wizard) return wizard;

@@ -8,6 +8,7 @@ export type Route =
   | { view: "templates"; templateId: string | null }
   | { view: "funnel" }
   | { view: "alerts" }
+  | { view: "deploys" }
   | { view: "mailing" }
   | { view: "audit" }
   | { view: "users" }
@@ -26,6 +27,7 @@ const STATIC: Record<string, Route> = {
   "/templates": { view: "templates", templateId: null },
   "/funnel": { view: "funnel" },
   "/alerts": { view: "alerts" },
+  "/deploys": { view: "deploys" },
   "/mailing": { view: "mailing" },
   "/audit": { view: "audit" },
   "/users": { view: "users" },

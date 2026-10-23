@@ -23,6 +23,7 @@ import {
   BrandPatchResponse,
   BrandStatusChangeRequest,
   BrandStatusChangeResponse,
+  DeployHistoryResponse,
   FunnelQuery,
   FunnelReportResponse,
   GetBrandResponse,
@@ -91,6 +92,7 @@ describe("golden fixtures validate", () => {
     ["error.not-found.json", AdminError],
     ["error.conflict.json", AdminError],
     ["error.invalid.json", AdminError],
+    ["deploys.response.json", DeployHistoryResponse],
   ];
 
   it.each(cases)("%s", (f, schema) => {

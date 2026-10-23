@@ -1,0 +1,70 @@
+{
+  "events": [
+    {
+      "source": "audit",
+      "event_id": "audit-12",
+      "brand_id": "brand-a",
+      "operation": null,
+      "action": "brand.profile.update",
+      "status": "done",
+      "from_revision_id": null,
+      "to_revision_id": null,
+      "is_canary": false,
+      "started_by": "owner-1",
+      "started_role": "owner",
+      "started_at": "2026-10-21T03:00:00.000Z",
+      "finished_at": null,
+      "error": null
+    },
+    {
+      "source": "install",
+      "event_id": "inst-3",
+      "brand_id": "brand-b",
+      "operation": "rollback",
+      "action": null,
+      "status": "ready",
+      "from_revision_id": "brand-b_rev_2",
+      "to_revision_id": "brand-b_rev_1",
+      "is_canary": false,
+      "started_by": "owner-1",
+      "started_role": "owner",
+      "started_at": "2026-10-21T02:00:00.000Z",
+      "finished_at": "2026-10-21T02:03:00.000Z",
+      "error": null
+    },
+    {
+      "source": "install",
+      "event_id": "inst-2",
+      "brand_id": "brand-a",
+      "operation": "redeploy",
+      "action": null,
+      "status": "failed",
+      "from_revision_id": "brand-a_rev_1",
+      "to_revision_id": "brand-a_rev_2",
+      "is_canary": false,
+      "started_by": "employee-1",
+      "started_role": "employee",
+      "started_at": "2026-10-21T01:00:00.000Z",
+      "finished_at": "2026-10-21T01:02:00.000Z",
+      "error": "worker_deploy: version upload rejected"
+    },
+    {
+      "source": "install",
+      "event_id": "inst-1",
+      "brand_id": "brand-a",
+      "operation": "install",
+      "action": null,
+      "status": "ready",
+      "from_revision_id": null,
+      "to_revision_id": "brand-a_rev_1",
+      "is_canary": false,
+      "started_by": "owner-1",
+      "started_role": "owner",
+      "started_at": "2026-10-20T01:00:00.000Z",
+      "finished_at": "2026-10-20T01:04:00.000Z",
+      "error": null
+    }
+  ],
+  "has_more": false,
+  "unavailable": []
+}

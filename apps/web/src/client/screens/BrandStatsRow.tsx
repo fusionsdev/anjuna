@@ -2,6 +2,7 @@
 import type { BrandSummary, FunnelReportResponse, SpendReportResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+export { sortWorstProfitFirst } from "../brand-health";
 
 export interface BrandStats {
   clicks: number | null;
@@ -103,15 +104,6 @@ export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funn
     costPerLead: cost !== null && leads ? cost / leads : null,
     profit: cost !== null && revenue !== null ? revenue - cost : null,
   };
-}
-
-/** Worst profit first. A brand whose profit is unknown goes last, in its original order. */
-export function sortWorstProfitFirst<T>(items: T[], profit: (item: T) => number | null): T[] {
-  return [...items].sort((a, b) => {
-    const left = profit(a);
-    const right = profit(b);
-    return left === null ? (right === null ? 0 : 1) : right === null ? -1 : left - right;
-  });
 }
 
 const CELLS: Array<{ key: keyof BrandStats; label: string }> = [

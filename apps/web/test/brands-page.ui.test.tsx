@@ -13,7 +13,7 @@ const lifecycle = (id: string, name: string, host: string) => LifecycleBrandSumm
   brand_id: id, name, account: "test-account", hostnames: [host], status: "live", current_revision_id: "rev-1",
   runtime_sync_status: "ready", bundle_form_version: "form@abcdef1", payload_version: "2026-01",
 });
-// API order: Credit Genie, FloatMe, Alpha Loans, Wizard Demo. Worst profit first is FloatMe, Credit Genie, Alpha Loans, Wizard Demo.
+// API order: Credit Genie, FloatMe, Alpha Loans, Wizard Demo. All four are healthy, so the default issues-first sort falls back to domain A-Z: Alpha Loans, Credit Genie, FloatMe, Wizard Demo.
 const lifecycleRows = [
   lifecycle("brand-cg", "Credit Genie", "creditsgene.test"),
   lifecycle("brand-fm", "FloatMe", "floatsme.test"),
@@ -65,6 +65,17 @@ beforeEach(() => {
   for (const row of lifecycleRows) {
     routes.set(`GET /api/brands/${row.brand_id}/checklist`, () => json({ brand_id: row.brand_id, checklist: [] }));
     routes.set(`GET /api/brands/${row.brand_id}/installs`, () => json({ brand_id: row.brand_id, installs: [] }));
+    routes.set(`GET /api/brands/${row.brand_id}/revisions`, () => json({
+      // A real earlier revision as the target: the Rollback confirm is disabled when the server names none.
+      brand_id: row.brand_id, current_revision_id: row.current_revision_id, rollback_target_revision_id: row.current_revision_id ? `${row.current_revision_id}-prev` : null,
+      revisions: row.current_revision_id ? [{
+        revision_id: row.current_revision_id, revision: 2, template_version_id: "tpl-v2", form_artifact_id: "fa-2",
+        bundle_form_version: "form@abcdef1", worker_version_id: "wv-2", created_by: "owner", created_at: "2026-10-02T00:00:00.000Z", is_current: true,
+      }, {
+        revision_id: `${row.current_revision_id}-prev`, revision: 1, template_version_id: "tpl-v1", form_artifact_id: "fa-1",
+        bundle_form_version: "form@abcdef0", worker_version_id: "wv-1", created_by: "owner", created_at: "2026-10-01T00:00:00.000Z", is_current: false,
+      }] : [],
+    }));
   }
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -101,12 +112,13 @@ const cells = (name: string) => {
     return copy.textContent;
   });
 };
+const sortSelect = () => screen.getByLabelText(/เรียงลำดับ/) as unknown as HTMLSelectElement;
 const funnelPaths = () => requests.filter((r) => r.path.startsWith("/api/funnel?")).map((r) => r.path);
 
 describe("brands table for the Owner", () => {
-  it("lists spend, clicks, leads, cost per lead and profit with the biggest loss first", async () => {
+  it("lists spend, clicks, leads, cost per lead and profit, issues first", async () => {
     render(<BrandLifecycle me={owner} />);
-    await waitFor(() => expect(names()).toEqual(["FloatMe", "Credit Genie", "Alpha Loans", "Wizard Demo"]));
+    await waitFor(() => expect(names()).toEqual(["Alpha Loans", "Credit Genie", "FloatMe", "Wizard Demo"]));
     expect(cells("FloatMe")).toEqual(["live", "Keyword Param", "$620", "96", "0", "—", "−$620"]);
     expect(cells("Credit Genie")).toEqual(["live", "Keyword Param", "$800", "212", "10", "$80", "−$546"]);
     expect(cells("Alpha Loans")).toEqual(["live", "Keyword Param", "$100", "50", "5", "$20", "$300"]);
@@ -126,9 +138,11 @@ describe("brands table for the Owner", () => {
 
   it("serves the 7-day table and the 7-day stats row with one funnel request, and refetches both sources for another period", async () => {
     render(<BrandLifecycle me={owner} />);
-    await waitFor(() => expect(names()[0]).toBe("FloatMe"));
+    await waitFor(() => expect(names()[0]).toBe("Alpha Loans"));
     expect(funnelPaths()).toHaveLength(1);
     expect(screen.getByRole("button", { name: "7 วัน" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(sortSelect(), { target: { value: "profit" } });
+    await waitFor(() => expect(names()).toEqual(["FloatMe", "Credit Genie", "Alpha Loans", "Wizard Demo"]));
 
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith("today"));
@@ -148,6 +162,7 @@ describe("brands table for the Owner", () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(cells("FloatMe")).toEqual(["live", "Keyword Param", "—", "96", "0", "—", "—"]));
     // Nothing to rank by, so the API order stays.
+    fireEvent.change(sortSelect(), { target: { value: "profit" } });
     expect(names()).toEqual(["Credit Genie", "FloatMe", "Alpha Loans", "Wizard Demo"]);
   });
 });
@@ -156,7 +171,7 @@ describe("brands table for an Employee", () => {
   it("has no money column, never asks for spend and shows no dollar amount", async () => {
     render(<BrandLifecycle me={employee} />);
     await waitFor(() => expect(cells("Credit Genie")).toEqual(["live", "Keyword Param", "212", "10"]));
-    expect(names()).toEqual(["Credit Genie", "FloatMe", "Alpha Loans", "Wizard Demo"]);
+    expect(names()).toEqual(["Alpha Loans", "Credit Genie", "FloatMe", "Wizard Demo"]);
     expect(screen.queryByRole("columnheader", { name: /ค่าโฆษณา/ })).toBeNull();
     expect(screen.queryByRole("columnheader", { name: /ต้นทุน/ })).toBeNull();
     expect(screen.queryByRole("columnheader", { name: /กำไร/ })).toBeNull();
@@ -172,7 +187,7 @@ describe("side panel of the selected brand", () => {
     render(<BrandLifecycle me={owner} />);
     // The default selection is the first brand of the API list, not the first table row.
     await screen.findByRole("heading", { name: "Credit Genie" });
-    await waitFor(() => expect(names()[0]).toBe("FloatMe"));
+    await waitFor(() => expect(names()[0]).toBe("Alpha Loans"));
 
     fireEvent.click(screen.getByRole("button", { name: /FloatMe/ }));
     const heading = await screen.findByRole("heading", { name: "FloatMe" });

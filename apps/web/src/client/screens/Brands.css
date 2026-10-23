@@ -17,12 +17,30 @@
 .brand-table .brand-stats { padding: 0; font-size: 12px; }
 .brand-table .brand-stats b { font-weight: 500; }
 
+/* Filter chips, sort and domain search above the table. */
+.brand-filters { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.brand-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.brand-chip { border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 12px; padding: 5px 11px; }
+.brand-chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.brand-chip-count { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.brand-filter-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+.brand-filter-fields label { margin-bottom: 0; }
+
 /* Side panel of the selected brand. */
 .brand-side { border-left: 3px solid var(--money); border-radius: 0; padding-left: 14px; }
 .side-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .side-head h2 { margin: 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .side-head p { margin: 2px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 .side-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.final-url-manual { flex: 1 1 100%; display: grid; gap: 4px; }
+.final-url-manual label { font-size: 12px; color: var(--muted); }
+.final-url-field { flex: 1 1 220px; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+.revision-error { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; color: var(--danger); font-size: 13px; }
+.revision-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.revision-list li { overflow-wrap: anywhere; }
+.revision-tag { font-size: 12px; font-weight: 500; }
+.revision-tag.current { color: var(--money); }
+.revision-tag.target { color: var(--muted); }
 .brand-side .status-grid { margin: 12px 0; }
 .brand-side .status-grid div { background: var(--paper); }
 .brand-side .section { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 12px 0 0; margin: 12px 0 0; }
