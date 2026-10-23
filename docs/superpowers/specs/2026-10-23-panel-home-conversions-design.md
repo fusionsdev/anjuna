@@ -70,7 +70,7 @@ ConversionsReportResponse = strictObject({
   value_totals: strictObject({ uploaded: Money, dead: Money }).nullable(),   // null for non-owner
   stalled: Count,          // status pending and created_at older than 6 h, any age; same rule as the conversion_stalled alert
   rows: array(strictObject({
-    lead_id: LeadId, brand: BrandId, status: enum(["pending","processing","uploaded","dead"]),
+    lead_id: LeadId, brand: string().min(1), status: enum(["pending","processing","uploaded","dead"]),
     reason_code: ConversionReasonCode.nullable(), last_error: string().max(300).nullable(),
     click_type: enum(["gclid","gbraid","wbraid","msclkid"]).nullable(),   // which id is present, never its value
     attempts: Count, value: Money.nullable(), currency: string().length(3),
