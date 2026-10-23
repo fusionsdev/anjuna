@@ -199,6 +199,16 @@ describe("Lead detail screen", () => {
     expect(screen.queryByText(/last_error|ข้อผิดพลาดล่าสุด/)).toBeNull();
   });
 
+  it("shows no last_error row to an employee even when the data carries one", async () => {
+    const lead = employeeLead();
+    lead.conversion = { ...lead.conversion!, last_error: "transient: upload endpoint answered 503" };
+    respondWith(lead);
+    const { container } = await renderScreen(employee);
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).not.toContain("transient");
+    expect(screen.queryByText(/last_error|ข้อผิดพลาดล่าสุด|Last error/)).toBeNull();
+  });
+
   it("renders null work_phone, keyword and updated_at as empty cells", async () => {
     const lead = ownerLead();
     lead.applicant!.work_phone = null;

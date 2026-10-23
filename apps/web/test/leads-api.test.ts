@@ -197,6 +197,20 @@ describe("leads routes (FUS-376)", () => {
     expect(exp.seen).toHaveLength(1); // the export's 422 does not reach core either
   });
 
+  it("answers 422 with a fixed message and no key name when an unknown parameter name is an email", async () => {
+    const { seen, env } = fakeCore(() => ({ rows: [], next_cursor: null }));
+    const email = "leaky.person@example.com";
+    for (const path of ["/api/leads", "/api/leads/export"]) {
+      const res = await call(`${path}?${encodeURIComponent(email)}=1`, { cookie: owner, env });
+      expect(res.status, path).toBe(422);
+      const text = await res.text();
+      expect(JSON.parse(text), path).toMatchObject({ error: "invalid", issues: [{ message: "Unrecognized query parameter" }] });
+      expect(text, path).not.toContain(email);
+      expect(text, path).not.toContain("leaky");
+    }
+    expect(seen).toHaveLength(0);
+  });
+
   it("answers 401 without a session on every leads route", async () => {
     for (const path of ["/api/leads", "/api/leads/export", `/api/leads/${LEAD_ID}`]) {
       expect((await call(path)).status, path).toBe(401);

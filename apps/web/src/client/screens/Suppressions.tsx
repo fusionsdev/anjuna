@@ -18,8 +18,13 @@ const reasons: Record<SuppressionReason, [string, Tone]> = {
 const sources: Record<SuppressionSource, string> = { listmonk: "Listmonk", ses: "SES", manual: "ด้วยมือ (Manual)" };
 type SuppressionRow = SuppressionsResponse["rows"][number];
 const NO_FILTER: SuppressionFilterState = { q: "", reason: "", source: "" };
-// ApiError.thai joins the response issues, which can echo the searched email, so this screen never renders it.
-const message = (e: unknown) => e instanceof ApiError && e.status === 422 ? "ค่าค้นหาไม่ถูกต้อง (Invalid search)" : "ค้นหาไม่สำเร็จ (Search failed)";
+// Keyed on the HTTP status only: ApiError.thai and the body can echo the searched email, so this screen never renders them.
+const MESSAGES: Record<number, string> = {
+  401: "เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง (Session expired)",
+  403: "สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)",
+  422: "ค่าค้นหาไม่ถูกต้อง (Invalid search)",
+};
+const message = (e: unknown) => (e instanceof ApiError ? MESSAGES[e.status] : undefined) ?? "ค้นหาไม่สำเร็จ (Search failed)";
 const fmt = (iso: string) => new Date(iso).toLocaleString("th-TH", { hour12: false });
 
 /** An employee never reaches the owner screen, so no hook of it runs and no request is made. */

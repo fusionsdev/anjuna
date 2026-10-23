@@ -81,7 +81,7 @@ function Conversion({ conversion, owner }: { conversion: LeadConversion; owner: 
     ["สกุลเงิน (Currency)", conversion.currency],
   ];
   if (owner) rows.push(["มูลค่า (Value)", conversion.value === null ? "" : money(conversion.value)]);
-  if (conversion.last_error !== null) {
+  if (owner && conversion.last_error !== null) {
     rows.push(["ข้อผิดพลาดล่าสุด (Last error)", (
       <details>
         <summary>ดูข้อความ (Show)</summary>

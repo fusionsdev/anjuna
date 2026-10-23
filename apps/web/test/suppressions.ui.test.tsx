@@ -142,12 +142,20 @@ describe("Suppressions screen", () => {
     expect(container.textContent).not.toContain("null");
   });
 
-  it("shows a fixed Thai message when the request fails", async () => {
-    fetchMock.mockImplementation(async () => Response.json({ error: "forbidden_role" }, { status: 403 }));
-    render(<SuppressionsScreen me={owner} />);
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("ค้นหาไม่สำเร็จ (Search failed)");
-    expect(screen.queryByText(BOUNCED)).toBeNull();
+  it("shows a fixed Thai message per HTTP status when the request fails", async () => {
+    // The body's error code disagrees with the status: the message follows the status only.
+    for (const [status, shown] of [
+      [401, "เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง (Session expired)"],
+      [403, "สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)"],
+      [500, "ค้นหาไม่สำเร็จ (Search failed)"],
+    ] as const) {
+      fetchMock.mockImplementation(async () => Response.json({ error: "invalid", issues: [{ path: "q", message: BOUNCED }] }, { status }));
+      const view = render(<SuppressionsScreen me={owner} />);
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent, String(status)).toBe(shown);
+      expect(view.container.textContent, String(status)).not.toContain(BOUNCED);
+      view.unmount();
+    }
   });
 
   it("never renders the email an invalid-search response echoes in its issues", async () => {

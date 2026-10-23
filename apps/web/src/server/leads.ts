@@ -32,7 +32,11 @@ const invalid = (error: z.ZodError, requestId: string): Response =>
   json(422, {
     error: "invalid",
     request_id: requestId,
-    issues: error.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })),
+    // An unrecognized_keys message names the key, and a key can be an email.
+    issues: error.issues.map((i) => ({
+      path: i.path.map(String).join("."),
+      message: i.code === "unrecognized_keys" ? "Unrecognized query parameter" : i.message,
+    })),
   });
 
 export async function handleLeadsRoute(

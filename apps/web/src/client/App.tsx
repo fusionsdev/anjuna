@@ -113,9 +113,18 @@ export function App() {
       {view === "alerts" && <AlertsScreen />}
       {view === "mailing" && <MailingScreen />}
       {/* spec leads */}
+      {/* The detail entry's history state keeps the list's filter query string for the Back button. */}
       {route.view === "leads" && (route.leadId
-        ? <LeadDetailScreen me={me} leadId={route.leadId} onBack={() => navigate(routePath({ view: "leads", leadId: null }))} />
-        : <LeadsScreen me={me} selectedId={null} onSelect={(id) => navigate(routePath({ view: "leads", leadId: id }))} />)}
+        ? <LeadDetailScreen me={me} leadId={route.leadId} onBack={() => {
+            const search = (window.history.state as { leadsSearch?: unknown } | null)?.leadsSearch;
+            navigate(routePath({ view: "leads", leadId: null }) + (typeof search === "string" && search.startsWith("?") ? search : ""));
+          }} />
+        : <LeadsScreen me={me} selectedId={null} onSelect={(id) => {
+            const leadsSearch = window.location.search;
+            const path = routePath({ view: "leads", leadId: id });
+            navigate(path);
+            window.history.replaceState({ leadsSearch }, "", path);
+          }} />)}
       {view === "suppressions" && <SuppressionsScreen me={me} />}
       {view === "audit" && <AuditScreen me={me} />}
       {view === "users" && (me.role === "owner"

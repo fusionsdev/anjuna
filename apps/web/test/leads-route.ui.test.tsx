@@ -82,6 +82,20 @@ describe("Leads and Suppressions routes", () => {
     expect(screen.queryByText("Postback Inspector")).toBeNull();
   });
 
+  it("keeps the list's filter query string when the Back button returns to the list", async () => {
+    vi.spyOn(api, "me").mockResolvedValue(owner);
+    window.history.replaceState(null, "", "/leads?status=sold");
+    render(<App />);
+    fireEvent.click(await screen.findByTitle(LEAD_ID));
+    expect(window.location.pathname).toBe(`/leads/${LEAD_ID}`);
+    await screen.findByText("Postback Inspector");
+    fireEvent.click(screen.getByRole("button", { name: "← กลับรายการลีด (Back to leads)" }));
+    expect(window.location.pathname).toBe("/leads");
+    expect(window.location.search).toBe("?status=sold");
+    await screen.findByTitle(LEAD_ID);
+    expect(screen.queryByText("Postback Inspector")).toBeNull();
+  });
+
   it("shows the Leads nav item to both roles and Suppressions only to an owner", async () => {
     window.history.replaceState(null, "", "/funnel");
     const me = vi.spyOn(api, "me").mockResolvedValue(owner);

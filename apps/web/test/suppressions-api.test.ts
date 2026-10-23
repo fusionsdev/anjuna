@@ -98,6 +98,18 @@ describe("suppressions route (FUS-376)", () => {
     expect(seen).toHaveLength(0); // neither the 401 nor a 422 reaches core
   });
 
+  it("answers 422 with a fixed message and no key name when an unknown parameter name is an email", async () => {
+    const { seen, env } = fakeCore(() => suppressionsList);
+    const email = "leaky.person@example.com";
+    const res = await call(`/api/suppressions?${encodeURIComponent(email)}=1`, { cookie: owner, env });
+    expect(res.status).toBe(422);
+    const text = await res.text();
+    expect(JSON.parse(text)).toMatchObject({ error: "invalid", issues: [{ message: "Unrecognized query parameter" }] });
+    expect(text).not.toContain(email);
+    expect(text).not.toContain("leaky");
+    expect(seen).toHaveLength(0);
+  });
+
   it("does not answer a method other than GET", async () => {
     const { seen, env } = fakeCore(() => suppressionsList);
     const res = await call("/api/suppressions", { cookie: owner, env, method: "POST", body: {} });

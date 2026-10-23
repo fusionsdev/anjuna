@@ -475,7 +475,7 @@ const leadWindowOrdered = (q: LeadWindow) => q.from === undefined || q.to === un
 const leadWindowShort = (q: LeadWindow) =>
   q.from === undefined || q.to === undefined || (Date.parse(q.to) - Date.parse(q.from)) / 86_400_000 + 1 <= LEAD_AGGREGATES_MAX_DAYS;
 
-/** Opaque to the contract; the shape (`base64url(created_at|lead_id)` or `base64url(email)`) is core's. */
+/** Opaque to the contract; the shape (`base64url(created_at|lead_id)`) is core's. */
 export const LeadCursor = z.string().regex(/^[A-Za-z0-9_-]{1,344}$/);
 
 /** What a decoded lead cursor must hold: the same `created_at` and `lead_id` shapes a list row has. */

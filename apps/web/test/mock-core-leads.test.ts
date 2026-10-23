@@ -108,7 +108,9 @@ describe("mock core leads endpoints (FUS-376)", () => {
       expect(leaves, `leaked ${JSON.stringify(secret)}`).not.toContain(secret);
       // A number can also leak as text ("85" in a message or a string field).
       expect(stringLeaves, `leaked ${JSON.stringify(secret)} as a string`).not.toContain(String(secret));
-      expect(text).not.toContain(String(secret));
+      // A digit boundary: the payout 85 must not match "850" or a timestamp's "1985".
+      if (typeof secret === "number") expect(text).not.toMatch(new RegExp(`(?<![\\d.])${String(secret).replace(".", "\\.")}(?![\\d.])`));
+      else expect(text).not.toContain(String(secret));
     }
   });
 
