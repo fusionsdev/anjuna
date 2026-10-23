@@ -30,6 +30,8 @@ Out of scope: the Download menu (needs an artifact exposure audit), Duplicate (t
 
 `brands.domain` is `NOT NULL UNIQUE` and `LifecycleBrandSummary.hostnames` is `min(1)`, so a brand with no domain string cannot exist. The chip therefore filters brands whose domain is not serving yet: `current_revision_id === null`, i.e. no install ever reached `ready`, so no Custom Domain is attached. Label: `ยังไม่มีโดเมนใช้งาน (No live domain)`.
 
+Amendment (whole-branch review): the premise holds only for factory-managed brands. A core-only row (`status: "unmanaged"`) always carries `current_revision_id: null` because it has no factory revision, yet core is serving its domain. `no_domain` therefore excludes `unmanaged` rows. Likewise, while the brands list carries `core_error`, every factory brand reads `runtime_sync_status: "sync_error"` because core state is missing; `sync_error` is not raised as a per-brand issue then, since `core_error` already reports the outage once.
+
 ### D2. Issues-first is the default sort; worst profit stays an owner option
 
 FUS-377 asks for issues-first. Dropping `sortWorstProfitFirst` would regress the FUS-365 loss-first list the owner uses, so it becomes a fourth option, owner-only (an employee has no profit figure). Default for both roles: issues-first.
@@ -52,6 +54,8 @@ Factory installs and factory brand audit rows come from the panel's own `FACTORY
 ### D4b. Timestamps on the wire are UTC
 
 `Timestamp` in contracts is `z.iso.datetime()`, which rejects an offset such as `+07:00`. Every writer in the repo produces `new Date().toISOString()`, so stored rows are `Z` and the response parses. The deploy feed still orders by instant, not by text: `julianday(started_at)` in SQL so the `LIMIT` boundary keeps the newest rows, and `Date.parse` in the merge. Text order and instant order can disagree in both directions, and ordering by the raw column could drop a newer row at the `LIMIT` cut.
+
+Amendment (whole-branch review): one rule for both readers. `latest_install` on the brands list orders by `julianday(started_at)` and normalises offsets through the same helper as the deploy feed, so the list and `/deploys` agree on which install is newest. A stored timestamp that does not parse at all is skipped for that row (the row is dropped from the feed, or `latest_install` is `null`), never a 500 for the whole response.
 
 ### D5. No cursor on the deploy feed
 
