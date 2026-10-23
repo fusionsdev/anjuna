@@ -52,7 +52,7 @@ UI text per code (Thai first, English in parentheses), with one fix line each:
 
 ## Core: `conversionsReport`
 
-Contract in `packages/contracts/src/conversions.ts`, endpoint added to `AdminApi` in `admin-api.ts`:
+Reason codes and statuses live in `packages/contracts/src/conversions.ts`. Query and response schemas sit in `admin-api.ts` next to `FunnelReportResponse` (they need `LeadId`, `Count`, `Timestamp` from that file), with the endpoint in `AdminApi`. Row `brand` is `z.string().min(1)` because old `leads.brand` values may not match `BrandId`.
 
 ```ts
 conversionsReport: { method: "GET", path: "/admin/conversions", min_role: "employee",
