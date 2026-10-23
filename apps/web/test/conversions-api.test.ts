@@ -89,6 +89,22 @@ describe("GET /api/conversions", () => {
     }
   });
 
+  it("orders mock rows with the same status and updated_at by lead_id", async () => {
+    // The fixture file has no tie, so two dead rows with one updated_at go in, the larger lead_id first.
+    const dead = conversionsFixture.rows.find((r) => r.status === "dead")!;
+    const tied = ["ffff0000-0000-4000-8000-000000000002", "aaaa0000-0000-4000-8000-000000000001"].map((lead_id) => ({
+      ...dead, lead_id, updated_at: "2026-10-22T00:00:00.000Z",
+    }));
+    conversionsFixture.rows.push(...tied);
+    try {
+      const body = ConversionsReportResponse.parse(await (await call("/api/conversions?period=30d&status=dead", { cookie: owner })).json());
+      const ids = body.rows.map((r) => r.lead_id);
+      expect(ids.indexOf(tied[1]!.lead_id)).toBe(ids.indexOf(tied[0]!.lead_id) - 1);
+    } finally {
+      conversionsFixture.rows.splice(-tied.length);
+    }
+  });
+
   it("returns 401 without a session", async () => {
     expect((await call("/api/conversions?period=7d")).status).toBe(401);
   });

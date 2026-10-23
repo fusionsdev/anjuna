@@ -9,14 +9,19 @@ const cents = (value: number) => Math.round(value * 100) / 100;
 // Older rows may carry an offset ("+00:00") or no milliseconds. The contract wants canonical UTC.
 const iso = (value: string) => { const ms = Date.parse(value); return Number.isNaN(ms) ? value : new Date(ms).toISOString(); };
 
-const CLICK_ID_KEY = /gclid|gbraid|wbraid|msclkid/i;
+// `click_?id` also covers `ClickId` and `MicrosoftClickId`.
+const CLICK_ID_KEY = /gclid|gbraid|wbraid|msclkid|click_?id/i;
 const HIDDEN = "[click id hidden]";
-const TRAILING_PUNCTUATION = /[\s{}[\]"'\\,:=>()-]+$/;
-// One layer of escaping: `\\`, `\uXXXX`, `\xXX`, `\/`, `\"`, `\'`, `\n` `\r` `\t` and `%XX`.
+const TRAILING_PUNCTUATION = /[\s{}[\]"'\\,:=>()_-]+$/;
+// One layer of escaping: `\\`, `\uXXXX`, `\u{H..}`, `\xXX`, `\/`, `\"`, `\'`, `\n` `\r` `\t`, `%XX`, `&#NN;` and `&#xHH;`.
 // One pass over the text, so `\\u0041` becomes `\u0041` and needs the next round to become `A`.
-const ESCAPE = /\\(?:(\\)|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([/"'])|([nrt]))|%([0-9a-fA-F]{2})/g;
+const ESCAPE = /\\(?:(\\)|u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([/"'])|([nrt]))|%([0-9a-fA-F]{2})|&#(?:([0-9]{1,7})|[xX]([0-9a-fA-F]{1,6}));/g;
+// Format characters: zero-width spaces and joiners, bidi marks, the soft hyphen (U+00AD).
+const FORMAT = /[\p{Cf}\u00AD]/gu;
 const MAX_DECODE_ROUNDS = 8;
 const RUN = 8;
+// Real gclid, gbraid and wbraid values are long base64url and msclkid is 32 hex.
+const ID_LIKE = /[A-Za-z0-9_-]{20,}/;
 
 interface Row {
   lead_id: string; brand: string; status: ConversionStatus; last_error: string | null;
@@ -27,12 +32,19 @@ interface Row {
 
 const clickIds = (row: Row) => [row.gclid, row.gbraid, row.wbraid, row.msclkid].filter((id): id is string => !!id);
 
-/** Undoes escaping one layer per round, byte by byte. Null when the text still changes in the last round. */
+/**
+ * Undoes escaping one layer per round, then applies NFKC and drops format characters, so a full-width or
+ * zero-width key reads as plain ASCII. Null when the text still changes in the last round.
+ */
 function decode(text: string): string | null {
   let current = text;
   for (let round = 0; round < MAX_DECODE_ROUNDS; round++) {
-    const next = current.replace(ESCAPE, (_, backslash?: string, unicode?: string, hex?: string, plain?: string, space?: string, percent?: string) =>
-      backslash ?? plain ?? (space ? " " : String.fromCharCode(parseInt(unicode ?? hex ?? percent!, 16))));
+    const next = current.replace(ESCAPE, (match, backslash?: string, braced?: string, unicode?: string, hex?: string, plain?: string, space?: string, percent?: string, decimal?: string, entity?: string) => {
+      if (backslash ?? plain) return (backslash ?? plain)!;
+      if (space) return " ";
+      const code = decimal ? parseInt(decimal, 10) : parseInt((braced ?? unicode ?? hex ?? percent ?? entity)!, 16);
+      return code > 0x10ffff ? match : String.fromCodePoint(code);
+    }).normalize("NFKC").replace(FORMAT, "");
     if (next === current) return current;
     current = next;
   }
@@ -49,7 +61,7 @@ function sharesRun(text: string, id: string): boolean {
 /**
  * The drain stores raw AdKit failure text, which can echo the upload payload (click id and value).
  * A non-owner sees only the fixed templates. The owner sees the decoded text cut at the first click id key,
- * or null when it still holds a run of the row's own click ids: click id values never leave core.
+ * or null when it still holds an id-like run or a run of the row's own click ids: click id values never leave core.
  */
 function sanitizeLastError(text: string | null, row: Row, owner: boolean): string | null {
   if (!owner) return employeeLastError(text);
@@ -58,10 +70,13 @@ function sanitizeLastError(text: string | null, row: Row, owner: boolean): strin
   if (decoded === null) return null;
   const key = CLICK_ID_KEY.exec(decoded);
   const kept = key ? decoded.slice(0, key.index).replace(TRAILING_PUNCTUATION, "") : decoded;
+  // A click id behind a key form the search misses (a homoglyph key) still fails closed here.
+  if (ID_LIKE.test(kept)) return null;
   // The drain cuts `e.message` at 300 characters, so an id can end mid-value or show up with no key in front of it.
+  const lower = kept.toLowerCase();
   for (const id of clickIds(row)) {
     const own = decode(id);
-    if (own === null || sharesRun(kept, own)) return null;
+    if (own === null || sharesRun(lower, own.toLowerCase())) return null;
   }
   return (key ? (kept ? `${kept} ${HIDDEN}` : HIDDEN) : kept).slice(0, 300);
 }

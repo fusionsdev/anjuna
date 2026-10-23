@@ -365,6 +365,59 @@ describe("GET /admin/conversions", () => {
       expect(errors["plain-text"]).toBe('upload failed: "timeout" at 10%');
       expect(errors["money"]).toBe('Command failed: {"value":85}');
     });
+
+    it("hides a foreign id behind an HTML entity, a full-width, zero-width or braced unicode key, or a ClickId key", async () => {
+      const cases = {
+        decimal: "upload failed: &#103;clid=X-SECRET",
+        "hex-entity": "upload failed: &#x67;clid=X-SECRET",
+        "hex-upper": "upload failed: &#X67;clid=X-SECRET",
+        "full-width": "upload failed: ｇｃｌｉｄ=X-SECRET",
+        "zero-width": "upload failed: gc​lid=X-SECRET",
+        "zero-width-escape": String.raw`upload failed: gc​lid=X-SECRET`,
+        "soft-hyphen": "upload failed: gc­lid=X-SECRET",
+        braced: String.raw`upload failed: \u{67}clid=X-SECRET`,
+        "click-id": "upload failed: click_id=X-SECRET",
+        // NFKC and the format strip run in every round, so an escape split by U+200B or a full-width backslash decodes next round.
+        "split-escape": String.raw`upload failed: \u00` + "​" + String.raw`67clid=X-SECRET`,
+        "wide-backslash": "upload failed: ＼u0067clid=X-SECRET",
+      };
+      // The seeded row id is `gclid-<name>`, so a name holding "microsoft" would match the kept text.
+      const { text, errors } = await ownerView({ ...cases, "ms-key": "upload failed: MicrosoftClickId: X-SECRET" });
+      for (const name of Object.keys(cases)) expect(errors[name], name).toBe(cut);
+      expect(errors["ms-key"]).toBe("upload failed: Microsoft [click id hidden]");
+      expect(text).not.toContain(SECRET);
+    });
+
+    it("gives null for a long id behind a homoglyph key and for an id-like run with no key", async () => {
+      const foreign = "Cj0KCQjw7ZO0BhDYARIsAFttkChVb3Xq9LmN2pQr";
+      expect(foreign).toHaveLength(40);
+      // U+0456 is the Cyrillic і. NFKC keeps it, so the key search misses it and the 20-character run rule applies.
+      const { text, errors } = await ownerView({
+        "cyrillic-long": `upload failed: gclіd=${foreign}`,
+        "bare-run": "upload failed for Cj0KCQjw7ZO0BhDYARIsAFttkCh",
+      });
+      expect(errors["cyrillic-long"]).toBeNull();
+      expect(errors["bare-run"]).toBeNull();
+      expect(text).not.toContain("Cj0KCQjw");
+    });
+
+    it("accepted residual: short foreign value behind a homoglyph key shows", async () => {
+      // Ruling 2026-10-24, round 3: the drain echoes only the row's own id, and the row id check catches that one.
+      const { errors } = await ownerView({ cyrillic: "upload failed: gclіd=X-SECRET" });
+      expect(errors["cyrillic"]).toBe("upload failed: gclіd=X-SECRET");
+    });
+
+    it("gives null for a lowercase echo of an uppercase row msclkid", async () => {
+      await seed("ms-case", "brand-a", { status: "dead", gclid: null, msclkid: "ROWCASE-SECRET-77", last_error: "upload failed for rowcase-secret-77" });
+      const { text } = await report("", owner);
+      expect(ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!.last_error).toBeNull();
+      expect(text.toLowerCase()).not.toContain("rowcase-secret");
+    });
+
+    it("strips an underscore left before the key", async () => {
+      const { errors } = await ownerView({ invalid: "INVALID_GCLID: The gclid could not be decoded" });
+      expect(errors["invalid"]).toBe("INVALID [click id hidden]");
+    });
   });
 
   it("keeps the exact template texts for an employee and nulls anything else", async () => {
