@@ -1,6 +1,6 @@
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 
-export type ConfirmOptions = { title: string; body?: ReactNode; confirmLabel: string; tone?: "danger" | "default" };
+export type ConfirmOptions = { title: string; body?: ReactNode; confirmLabel: string; tone?: "danger" | "default"; confirmDisabled?: boolean };
 type Pending = ConfirmOptions & { resolve: (ok: boolean) => void };
 const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
@@ -65,7 +65,7 @@ function Dialog({ pending, onClose }: { pending: Pending; onClose: (ok: boolean)
         {pending.body && <div id={bodyId} className="confirm-body">{pending.body}</div>}
         <div className="confirm-actions">
           <button type="button" className="btn" autoFocus onClick={() => onClose(false)}>ยกเลิก (Cancel)</button>
-          <button type="button" className={pending.tone === "danger" ? "btn danger" : "btn pri"} onClick={() => onClose(true)}>{pending.confirmLabel}</button>
+          <button type="button" className={pending.tone === "danger" ? "btn danger" : "btn pri"} disabled={pending.confirmDisabled} onClick={() => onClose(true)}>{pending.confirmLabel}</button>
         </div>
       </div>
     </div>

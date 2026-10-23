@@ -66,10 +66,14 @@ beforeEach(() => {
     routes.set(`GET /api/brands/${row.brand_id}/checklist`, () => json({ brand_id: row.brand_id, checklist: [] }));
     routes.set(`GET /api/brands/${row.brand_id}/installs`, () => json({ brand_id: row.brand_id, installs: [] }));
     routes.set(`GET /api/brands/${row.brand_id}/revisions`, () => json({
-      brand_id: row.brand_id, current_revision_id: row.current_revision_id, rollback_target_revision_id: null,
+      // A real earlier revision as the target: the Rollback confirm is disabled when the server names none.
+      brand_id: row.brand_id, current_revision_id: row.current_revision_id, rollback_target_revision_id: row.current_revision_id ? `${row.current_revision_id}-prev` : null,
       revisions: row.current_revision_id ? [{
-        revision_id: row.current_revision_id, revision: 1, template_version_id: "tpl-v1", form_artifact_id: "fa-1",
-        bundle_form_version: "form@abcdef1", worker_version_id: "wv-1", created_by: "owner", created_at: "2026-10-01T00:00:00.000Z", is_current: true,
+        revision_id: row.current_revision_id, revision: 2, template_version_id: "tpl-v2", form_artifact_id: "fa-2",
+        bundle_form_version: "form@abcdef1", worker_version_id: "wv-2", created_by: "owner", created_at: "2026-10-02T00:00:00.000Z", is_current: true,
+      }, {
+        revision_id: `${row.current_revision_id}-prev`, revision: 1, template_version_id: "tpl-v1", form_artifact_id: "fa-1",
+        bundle_form_version: "form@abcdef0", worker_version_id: "wv-1", created_by: "owner", created_at: "2026-10-01T00:00:00.000Z", is_current: false,
       }] : [],
     }));
   }

@@ -137,6 +137,22 @@ describe("useConfirm", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
+  it("confirmDisabled disables the confirm button, ignores a click on it, and leaves Cancel working", async () => {
+    let asked!: Promise<boolean>;
+    function Disabled() {
+      const [confirm, dialog] = useConfirm();
+      return <><button onClick={() => { asked = confirm({ title: "ลบ?", confirmLabel: "ลบ (Delete)", confirmDisabled: true }); }}>ask</button>{dialog}</>;
+    }
+    render(<Disabled />);
+    fireEvent.click(screen.getByText("ask"));
+    const dialog = await answerConfirm(true);
+    const accept = within(dialog).getByText("ลบ (Delete)") as HTMLButtonElement;
+    expect(accept.disabled).toBe(true);
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    await answerConfirm(false);
+    await expect(asked).resolves.toBe(false);
+  });
+
   it("cancel() resolves an open dialog as false and removes it, and does nothing when none is open", async () => {
     let asked!: Promise<boolean>;
     let cancel!: () => void;

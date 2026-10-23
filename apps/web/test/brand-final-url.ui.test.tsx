@@ -246,9 +246,12 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     const confirmBtn = confirmButton(dialog);
     expect(confirmBtn.textContent).toContain("Rollback");
     expect(confirmBtn.disabled).toBe(true);
-    await answerConfirm(false);
+    // A click on the disabled button must not post: React drops it only when the disabled prop is set.
+    await answerConfirm(true);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(posted).toBe(false);
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    await answerConfirm(false);
   });
 
   it("labels the read-only Final URL field and binds the label to it", async () => {
@@ -280,6 +283,33 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     await waitFor(() => expect(within(screen.getByRole("heading", { name: /ประวัติเวอร์ชัน/ }).closest("section")!).getAllByRole("listitem")).toHaveLength(3));
     expect(calls).toBe(2);
     expect(within(screen.getByRole("heading", { name: /ประวัติเวอร์ชัน/ }).closest("section")!).queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the revision section and the focused Retry button, with a loading note, while Retry is in flight", async () => {
+    serve(lifecycle("brand-cg", "creditsgene.test"));
+    let calls = 0;
+    let release!: (response: Response) => void;
+    routes.set("GET /api/brands/brand-cg/revisions", () => {
+      calls += 1;
+      return calls === 1 ? json({ error: "boom" }, 500) : new Promise<Response>((resolve) => { release = resolve; });
+    });
+    render(<BrandLifecycle me={owner} />);
+    const heading = await screen.findByRole("heading", { name: /ประวัติเวอร์ชัน/ });
+    const section = heading.closest("section")!;
+    const retry = await within(section).findByRole("button", { name: /ลองใหม่ \(Retry\)/ });
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(calls).toBe(2));
+    expect(screen.getByRole("heading", { name: /ประวัติเวอร์ชัน/ }).closest("section")).toBe(section);
+    expect(within(section).getByRole("status").textContent).toContain("กำลังโหลดประวัติเวอร์ชัน");
+    expect(within(section).queryByRole("alert")).toBeNull();
+    expect(document.activeElement).toBe(retry);
+    // A second click while the first is in flight does not fetch again.
+    fireEvent.click(retry);
+    expect(calls).toBe(2);
+    release(json(revisions));
+    await waitFor(() => expect(within(section).getAllByRole("listitem")).toHaveLength(3));
+    expect(within(section).queryByRole("status")).toBeNull();
   });
 
   it("keeps a muted note, with no alert and no Retry, for a brand with no revisions", async () => {
