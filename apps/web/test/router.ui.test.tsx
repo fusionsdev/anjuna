@@ -107,6 +107,19 @@ describe("useRoute", () => {
     expect(window.location.pathname).toBe("/audit");
   });
 
+  it("adds one history entry for two navigate() calls to the same path", () => {
+    render(<Probe />);
+    // A push drops any forward entry an earlier test left, so the length below counts only this test.
+    act(() => navigate("/alerts"));
+    const before = window.history.length;
+    act(() => {
+      navigate("/funnel");
+      navigate("/funnel");
+    });
+    expect(window.history.length).toBe(before + 1);
+    expect(screen.getByText(JSON.stringify({ view: "funnel" }))).toBeTruthy();
+  });
+
   it("keeps a navigate() made by a child effect on mount", () => {
     render(<ProbeWithChildNavigation />);
     expect(screen.getByText(JSON.stringify({ view: "funnel" }))).toBeTruthy();

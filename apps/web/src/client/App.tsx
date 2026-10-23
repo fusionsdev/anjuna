@@ -116,8 +116,9 @@ export function App() {
           <BrandLifecycle
             me={me}
             wizardRequest={wizardRequest}
+            wizardRoute={view === "new-brand"}
             routeBrandId={route.view === "brands" ? route.brandId : null}
-            onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }))}
+            onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }), { replace: window.location.pathname === "/brands/new" })}
             onWizardClosed={() => { if (window.location.pathname === "/brands/new") navigate("/brands", { replace: true }); }}
           />
         )}

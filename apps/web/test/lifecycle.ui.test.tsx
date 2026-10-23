@@ -121,6 +121,24 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("heading", { name: "renderable.test" })).toBeNull();
   });
 
+  it("says a route brand id is not found when the brand list is empty", async () => {
+    lifecycleRows = [];
+    render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    expect(await screen.findByText(/ไม่พบแบรนด์/)).toBeTruthy();
+    expect(screen.getByText("brand_missing")).toBeTruthy();
+  });
+
+  it("shows the wizard while wizardRoute is true and closes it when it turns false", async () => {
+    routes.set("GET /api/templates", () => json({ templates: [] }));
+    routes.set("GET /api/wizard/defaults", () => json({ amount_buckets: [100, 200, 300], form_route: "/request" }));
+    const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" });
+    const view = render(<BrandLifecycle me={owner} wizardRoute />);
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
+    await waitFor(() => expect(wizard()).toBeNull());
+    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
+  });
+
   it("reloads latest outcomes immediately after an accepted upgrade-all", async () => {
     routes.set("POST /api/upgrade-all", () => json({ instance_id: "new-upgrade" }, 201));
     render(<BrandLifecycle me={owner} />);

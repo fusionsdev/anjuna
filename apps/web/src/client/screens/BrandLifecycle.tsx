@@ -62,11 +62,13 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
 
 /**
  * wizardRequest: a counter the app raises to open the New brand wizard from its menu.
+ * wizardRoute: true while the URL is /brands/new, so back and forward open and close the wizard.
  * routeBrandId: the brand id in the URL path; onSelectBrand and onWizardClosed keep the URL in step with the screen.
  */
-export function BrandLifecycle({ me, wizardRequest = 0, routeBrandId, onSelectBrand, onWizardClosed }: {
+export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, routeBrandId, onSelectBrand, onWizardClosed }: {
   me: Me;
   wizardRequest?: number;
+  wizardRoute?: boolean;
   routeBrandId?: string | null;
   onSelectBrand?: (brandId: string) => void;
   onWizardClosed?: () => void;
@@ -74,6 +76,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, routeBrandId, onSelectBr
   const [wizard, setWizard] = useState<{ brandId?: string; initialStep?: number } | null>(null);
   const [duplicateOf, setDuplicateOf] = useState<LifecycleBrandSummary | null>(null);
   const [brands, setBrands] = useState<LifecycleBrandSummary[]>([]);
+  const [listLoaded, setListLoaded] = useState(false);
   const [runtimeBrands, setRuntimeBrands] = useState<BrandSummary[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [coreListError, setCoreListError] = useState<CoreListError | null>(null);
@@ -99,6 +102,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, routeBrandId, onSelectBr
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
+  // A resumed draft (brandId set) is not the new-brand route, so leaving /brands/new keeps it open.
+  useEffect(() => setWizard((w) => (wizardRoute ? (w ?? {}) : w && !w.brandId ? null : w)), [wizardRoute]);
   useEffect(() => { if (routeBrandId && routeBrandId !== selectedId) setSelectedId(routeBrandId); }, [routeBrandId]);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
@@ -108,6 +113,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, routeBrandId, onSelectBr
       if (lifecycle.status === "rejected") throw lifecycle.reason;
       const result = lifecycle.value;
       setBrands(result.brands);
+      setListLoaded(true);
       setCoreListError(result.core_error ?? null);
       if (runtime.status === "fulfilled") {
         setRuntimeBrands(runtime.value.brands);
@@ -375,7 +381,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, routeBrandId, onSelectBr
       <div className="brands-aside">
         {selected
           ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
-          : brands.length > 0 && routeBrandId
+          : listLoaded && routeBrandId
             ? <section className="panel brand-side"><p role="alert">ไม่พบแบรนด์ <code>{routeBrandId}</code> (Brand not found)</p></section>
             : <section className="panel brand-side"><p className="muted">เลือกแบรนด์จากตารางเพื่อดูและแก้ไข</p></section>}
         {runtimeBrand && <section className="panel" aria-label="การตั้งค่าและสถิติรันไทม์ (Runtime config and statistics)">
@@ -386,7 +392,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, routeBrandId, onSelectBr
         </section>}
       </div>
     </div>
-    {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); }} />}
+    {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); onSelectBrand?.(brandId); }} />}
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
     {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}

@@ -6,7 +6,13 @@ import { api } from "../src/client/api";
 
 // Exercise the shell's navigation without triggering unrelated screen requests.
 vi.mock("../src/client/screens/BrandLifecycle", () => ({
-  BrandLifecycle: ({ wizardRequest, routeBrandId }: { wizardRequest: number; routeBrandId?: string | null }) => <h1>Brands screen: {wizardRequest} {routeBrandId ?? "-"}</h1>,
+  BrandLifecycle: ({ wizardRequest, routeBrandId, wizardRoute, onSelectBrand }: { wizardRequest: number; routeBrandId?: string | null; wizardRoute?: boolean; onSelectBrand?: (id: string) => void }) => (
+    <>
+      <h1>Brands screen: {wizardRequest} {routeBrandId ?? "-"}</h1>
+      <p>wizardRoute {String(wizardRoute)}</p>
+      <button type="button" onClick={() => onSelectBrand?.("brand_new")}>Pick brand_new</button>
+    </>
+  ),
 }));
 vi.mock("../src/client/screens/Home", () => ({
   HomeScreen: ({ onGo }: { onGo?: (target: "funnel") => void }) => (
@@ -165,6 +171,54 @@ describe("Console rail", () => {
     expect(await screen.findByRole("heading", { name: heading })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
     expect(within(nav).getByRole("link", { name: new RegExp(`^${label}`) }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("back from /brands/new to /brands turns wizardRoute off", async () => {
+    window.history.replaceState(null, "", "/brands");
+    render(<App />);
+    await screen.findByText("wizardRoute false");
+    fireEvent.click(screen.getByRole("link", { name: "สร้างแบรนด์ใหม่" }));
+    expect(await screen.findByText("wizardRoute true")).toBeTruthy();
+    expect(window.location.pathname).toBe("/brands/new");
+    await act(async () => {
+      window.history.back();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    expect(window.location.pathname).toBe("/brands");
+    expect(await screen.findByText("wizardRoute false")).toBeTruthy();
+  });
+
+  it("forward to /brands/new turns wizardRoute on", async () => {
+    window.history.replaceState(null, "", "/brands");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "สร้างแบรนด์ใหม่" }));
+    await screen.findByText("wizardRoute true");
+    await act(async () => {
+      window.history.back();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    await screen.findByText("wizardRoute false");
+    await act(async () => {
+      window.history.forward();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    expect(window.location.pathname).toBe("/brands/new");
+    expect(await screen.findByText("wizardRoute true")).toBeTruthy();
+  });
+
+  it("replaces /brands/new when the wizard selects the new brand, so back skips the wizard", async () => {
+    window.history.replaceState(null, "", "/brands");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("link", { name: "สร้างแบรนด์ใหม่" }));
+    await screen.findByText("wizardRoute true");
+    fireEvent.click(screen.getByRole("button", { name: "Pick brand_new" }));
+    expect(window.location.pathname).toBe("/brands/brand_new");
+    expect(await screen.findByText("wizardRoute false")).toBeTruthy();
+    await act(async () => {
+      window.history.back();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    expect(window.location.pathname).toBe("/brands");
   });
 
   it("changes the URL on navigation and follows the back button", async () => {

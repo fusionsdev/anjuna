@@ -79,7 +79,9 @@ export function viewPath(view: Exclude<View, "not-found">): string {
 const ROUTE_EVENT = "anjuna:route";
 
 export function navigate(path: string, options: { replace?: boolean } = {}): void {
-  if (options.replace) window.history.replaceState(null, "", path);
+  // A click on the page already open must not add a second history entry.
+  const samePage = !window.location.hash && path === window.location.pathname + window.location.search;
+  if (options.replace || samePage) window.history.replaceState(null, "", path);
   else window.history.pushState(null, "", path);
   window.dispatchEvent(new Event(ROUTE_EVENT));
 }

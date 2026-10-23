@@ -515,11 +515,23 @@ describe("entry points on the Lifecycle screen", () => {
     expect(screen.getByRole("button", { name: "ทำสำเนา (Duplicate)" })).toBeTruthy();
   });
 
+  it("keeps a resumed draft wizard open when the new-brand route turns off", async () => {
+    hold({ contact: CONTACT, copy: {}, ads: {} });
+    const view = render(<BrandLifecycle me={employee} wizardRoute={false} />);
+    await screen.findByRole("heading", { name: "Maple Cash" });
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    await heading("ตรวจสอบ (Review)");
+    view.rerender(<BrandLifecycle me={employee} wizardRoute />);
+    view.rerender(<BrandLifecycle me={employee} wizardRoute={false} />);
+    expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+  });
+
   it("duplicates a brand with a new domain and opens the copy at the Brand step", async () => {
     routes.set("POST /api/brands/brand_live/duplicate", () => json({ ...draftBody({ name: "Copy Cash" }), duplicated_from: "brand_live" }, 201));
     hold({ contact: CONTACT, copy: {}, ads: {} });
     held.name = "Copy Cash";
-    render(<BrandLifecycle me={employee} />);
+    const onSelectBrand = vi.fn();
+    render(<BrandLifecycle me={employee} onSelectBrand={onSelectBrand} />);
     await screen.findByRole("heading", { name: "Maple Cash" });
     fireEvent.click(screen.getByRole("button", { name: /Live Cash/ }));
     await screen.findByRole("heading", { name: "Live Cash" });
@@ -540,6 +552,8 @@ describe("entry points on the Lifecycle screen", () => {
     await heading("แบรนด์ (Brand)");
     expect(sent("POST", "/api/brands/brand_live/duplicate")[0]!.body).toEqual({ domain: "copy.test", name: "Copy Cash" });
     expect(text("ชื่อแบรนด์ (Brand name)").value).toBe("Copy Cash");
+    // The URL follows the copy, not the brand it was copied from.
+    expect(onSelectBrand).toHaveBeenCalledWith("brand_new");
   });
 
   it("reports a taken domain in the duplicate dialog and keeps it open", async () => {
