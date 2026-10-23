@@ -278,14 +278,17 @@ async function startInstall(request: Request, env: Env, ctx: AdminRequestContext
   return dispatch(env, ctx, installId, brandId, "/install", { install_id: installId, brand_id: brandId, revision_id: revision.revision_id, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }
 
+// Shared by rollback() and GET /api/brands/:id/revisions so the panel never shows a target the rollback would not pick.
+export async function rollbackTargetRevisionId(db: D1Database, brandId: string, currentRevisionId: string | null): Promise<string | null> {
+  if (!currentRevisionId) return null;
+  const previous = await db.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY finished_at DESC LIMIT 1").bind(brandId, currentRevisionId).first<{ to_revision_id: string | null }>();
+  return previous?.to_revision_id ?? null;
+}
+
 async function rollback(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
-  let target: string | null = null;
-  if (brand.current_revision_id) {
-    const previous = await env.FACTORY.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY finished_at DESC LIMIT 1").bind(brandId, brand.current_revision_id).first<{ to_revision_id: string | null }>();
-    target = previous?.to_revision_id ?? null;
-  }
+  const target = await rollbackTargetRevisionId(env.FACTORY, brandId, brand.current_revision_id);
   const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const now = new Date().toISOString();
   const claim = await env.FACTORY.prepare(`INSERT INTO installs

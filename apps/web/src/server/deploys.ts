@@ -2,6 +2,7 @@
 import {
   AuditListResponse,
   BrandId,
+  BrandRevisionsResponse,
   DeployHistoryQuery,
   DeployHistoryResponse,
   type AdminRequestContext,
@@ -11,7 +12,7 @@ import {
 import { z } from "zod";
 import { callCore } from "./core.js";
 import type { Env } from "./env.js";
-import { installOperation } from "./lifecycle.js";
+import { decodePathSegment, installOperation, rollbackTargetRevisionId } from "./lifecycle.js";
 import { authorizePanel } from "./panel-roles.js";
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), {
@@ -128,8 +129,38 @@ async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHist
 const byInstantDesc = (a: DeployEvent, b: DeployEvent): number =>
   Date.parse(b.started_at) - Date.parse(a.started_at) || (a.event_id < b.event_id ? 1 : a.event_id > b.event_id ? -1 : 0);
 
+interface RevisionRow {
+  revision_id: string; revision: number; template_version_id: string; form_artifact_id: string;
+  bundle_form_version: string | null; worker_version_id: string | null; created_by: string; created_at: string;
+}
+
+async function brandRevisions(env: Env, ctx: AdminRequestContext, rawBrandId: string): Promise<Response> {
+  const gate = authorizePanel("installBrand", ctx.actor_role);
+  if (!gate.ok) return json(403, { ...gate.error, request_id: ctx.request_id });
+  const brandId = decodePathSegment(rawBrandId);
+  if (brandId === null) return json(400, { error: "invalid_brand_id" });
+  const brand = await env.FACTORY.prepare("SELECT brand_id, current_revision_id FROM brands WHERE brand_id = ?1")
+    .bind(brandId).first<{ brand_id: string; current_revision_id: string | null }>();
+  if (!brand) return json(404, { error: "not_found", resource: "brand" });
+  const { results } = await env.FACTORY.prepare(
+    `SELECT r.revision_id, r.revision, r.template_version_id, r.form_artifact_id, fa.bundle_form_version, r.worker_version_id, r.created_by, r.created_at
+       FROM brand_revisions r LEFT JOIN form_artifacts fa ON fa.form_artifact_id = r.form_artifact_id
+       WHERE r.brand_id = ?1 ORDER BY r.revision DESC LIMIT 100`,
+  ).bind(brandId).all<RevisionRow>();
+  const rollbackTarget = await rollbackTargetRevisionId(env.FACTORY, brandId, brand.current_revision_id);
+  return json(200, BrandRevisionsResponse.parse({
+    brand_id: brand.brand_id,
+    current_revision_id: brand.current_revision_id,
+    rollback_target_revision_id: rollbackTarget,
+    revisions: results.map((r) => ({ ...r, created_at: asTimestamp(r.created_at), is_current: r.revision_id === brand.current_revision_id })),
+  }));
+}
+
 export async function handleDeployRoute(request: Request, env: Env, url: URL, path: string, ctx: AdminRequestContext): Promise<Response | undefined> {
-  if (path !== "/api/deploys" || request.method !== "GET") return undefined;
+  if (request.method !== "GET") return undefined;
+  const revisions = path.match(/^\/api\/brands\/([^/]+)\/revisions$/);
+  if (revisions) return brandRevisions(env, ctx, revisions[1]!);
+  if (path !== "/api/deploys") return undefined;
   const gate = authorizePanel("installBrand", ctx.actor_role);
   if (!gate.ok) return json(403, { ...gate.error, request_id: ctx.request_id });
   const parsed = DeployHistoryQuery.safeParse(Object.fromEntries(url.searchParams));
