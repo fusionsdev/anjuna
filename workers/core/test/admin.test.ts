@@ -756,7 +756,8 @@ describe("GET /admin/leads (FUS-376)", () => {
 describe("GET /admin/leads/:lead_id (FUS-376)", () => {
   const detailId = "lead-0001-detail";
   const bareId = "lead-0002-bare";
-  const PII_VALUES = ["Test", "Applicant", "test@example.com", "2145550123", "100 Example St", "Dallas", "75201", "1990-01-01"];
+  const WORK_PHONE = "2145550777";
+  const PII_VALUES = ["Test", "Applicant", "test@example.com", "2145550123", "100 Example St", "Dallas", "75201", "1990-01-01", WORK_PHONE];
   const PII_KEYS = ['"first_name"', '"last_name"', '"birth_date"', '"email"', '"home_phone"', '"work_phone"', '"address"', '"city"', '"zip"'];
   const PII_FIELDS = ["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip"];
   let dh: Harness;
@@ -777,6 +778,7 @@ describe("GET /admin/leads/:lead_id (FUS-376)", () => {
     await dh.seedLead(detailId, "clkdetail0001", "brand-a");
     await dh.seedLead(bareId, "clkbare0002", "brand-a");
     await dh.seedConversion(detailId, { attempts: 2, last_error: "adkit: upstream 500" });
+    await dh.db.prepare("UPDATE leads SET work_phone = ?1 WHERE lead_id = ?2").bind(WORK_PHONE, detailId).run();
     await dh.db.prepare(
       "INSERT INTO postback_events (lead_id, event_type, payout, created_at) VALUES (?1, 'soldLead', 85, '2026-01-01T00:00:30.000Z')",
     ).bind(detailId).run();
@@ -851,6 +853,18 @@ describe("GET /admin/leads/:lead_id (FUS-376)", () => {
         expect(other.lead.conversion!.click_type, id).toBe(clickType);
         expect(other.text).not.toContain("fixture-");
       }
+    }
+  });
+
+  it("truncates a long last_error to the contract limit for an owner", async () => {
+    const original = "adkit: upstream 500";
+    await dh.db.prepare("UPDATE conversion_uploads SET last_error = ?1 WHERE lead_id = ?2").bind("e".repeat(400), detailId).run();
+    try {
+      const { lead } = await read(detailId, owner);
+      expect(lead.conversion!.last_error).toHaveLength(300);
+      expect(lead.conversion!.last_error).toBe("e".repeat(300));
+    } finally {
+      await dh.db.prepare("UPDATE conversion_uploads SET last_error = ?1 WHERE lead_id = ?2").bind(original, detailId).run();
     }
   });
 
@@ -1065,5 +1079,45 @@ describe("GET /admin/leads/export (FUS-376)", () => {
     const { text, body } = await exportAs(`${WINDOW}&q=clkexpsold0001&pii=1`, owner);
     expect(body.rows.map((row) => row.lead_id)).toEqual(["exp-0001-sold"]);
     expect(text).not.toContain("clkexpsold0001");
+
+    // The audit row keeps the actor's own query string as typed, and no click value seeded by the harness.
+    const audit = await lastAudit();
+    expect(audit!.action).toBe("pii.lead_export");
+    const after = JSON.parse(audit!.after_json!);
+    expect(after.filters.q).toBe("clkexpsold0001");
+    for (const hidden of ["fixture-click", "gclid", "click_id"]) {
+      expect(audit!.after_json, hidden).not.toContain(hidden);
+    }
+  });
+
+  it("audits the resolved 30-day window when from and to are absent", async () => {
+    const today = () => new Date().toISOString().slice(0, 10);
+    const first = today();
+    await exportAs("", owner);
+    const last = today();
+    const audit = await lastAudit();
+    const { filters } = JSON.parse(audit!.after_json!) as { filters: { from: string | null; to: string | null } };
+    expect(filters.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(filters.to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Two reads of the clock bracket the handler's own, so a midnight crossing cannot flake this.
+    expect([first, last]).toContain(filters.to);
+    const days = (Date.parse(filters.to!) - Date.parse(filters.from!)) / 86_400_000 + 1;
+    expect(days).toBe(30);
+    expect(audit!.entity_id).toBe(`${filters.from}..${filters.to}:all`);
+  });
+
+  it("returns no PII body when the export audit insert fails", async () => {
+    await xh.factory.prepare("ALTER TABLE audit_log RENAME TO audit_log_offline").run();
+    let outcome: { status: number | null; text: string };
+    try {
+      outcome = await xh.admin(`/admin/leads/export?${WINDOW}&pii=1`, owner).then(
+        async (response) => ({ status: response.status, text: await response.text() }),
+        (error: unknown) => ({ status: null, text: `${(error as Error).message}\n${(error as Error).stack ?? ""}` }),
+      );
+    } finally {
+      await xh.factory.prepare("ALTER TABLE audit_log_offline RENAME TO audit_log").run();
+    }
+    expect(outcome!.status).not.toBe(200);
+    for (const hidden of [...PII_VALUES, "2145550999"]) expect(outcome!.text, hidden).not.toContain(hidden);
   });
 });

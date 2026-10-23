@@ -648,7 +648,8 @@ async function getLead(
       created_at: upload.created_at,
       updated_at: upload.updated_at,
       value: isOwner ? Number(upload.value) : null,
-      last_error: isOwner ? upload.last_error : null,
+      // The drain stores its raw error; the contract caps it at 300 and the panel rejects the whole page past that.
+      last_error: isOwner ? (upload.last_error?.slice(0, 300) ?? null) : null,
     },
     created_at: row.created_at,
     updated_at: row.updated_at,
