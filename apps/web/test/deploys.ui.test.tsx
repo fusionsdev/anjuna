@@ -19,7 +19,8 @@ const audit = (over: Partial<DeployEvent> = {}): DeployEvent => ({
   status: "done", from_revision_id: null, to_revision_id: null, finished_at: null, ...over,
 });
 
-// Newest first, the order the feed answers with: brand-a install, brand-a audit, brand-b failed redeploy, a brand the factory does not know.
+// Newest first, the order the feed answers with: brand-a install, brand-a audit, brand-b failed redeploy, a brand the factory
+// does not know, then the two work-in-progress states (running and queued) that must both read blue.
 const FEED: DeployEvent[] = [
   install(),
   audit(),
@@ -28,6 +29,8 @@ const FEED: DeployEvent[] = [
     from_revision_id: "brand-b_rev_1", to_revision_id: "brand-b_rev_2", started_at: "2026-10-21T01:00:00.000Z", finished_at: "2026-10-21T01:02:00.000Z", error: "smoke check failed",
   }),
   install({ event_id: "inst-3", brand_id: "brand-ghost", started_at: "2026-10-20T10:00:00.000Z", finished_at: "2026-10-20T10:00:30.000Z" }),
+  install({ event_id: "inst-4", brand_id: "brand-a", status: "running", to_revision_id: "brand-a_rev_2", started_at: "2026-10-19T09:00:00.000Z", finished_at: null }),
+  install({ event_id: "inst-5", brand_id: "brand-a", operation: "rollback", status: "queued", from_revision_id: "brand-a_rev_2", to_revision_id: "brand-a_rev_1", started_at: "2026-10-19T08:00:00.000Z", finished_at: null }),
 ];
 
 const brandRow = (id: string, name: string, host: string) => LifecycleBrandSummary.parse({
@@ -92,7 +95,7 @@ describe("deploy history screen", () => {
   it("renders the timeline newest first with domain, operation, status, actor and duration", async () => {
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
-    expect(rows()).toHaveLength(4);
+    expect(rows()).toHaveLength(6);
     expect(within(table()).getAllByRole("columnheader").map((h) => h.textContent))
       .toEqual(["เวลา", "แบรนด์", "การทำงาน", "สถานะ", "ผู้เริ่ม", "ใช้เวลา", "revision"]);
     const [first, second, third] = rows() as [HTMLElement, HTMLElement, HTMLElement];
@@ -103,7 +106,11 @@ describe("deploy history screen", () => {
     expect(within(first).getByText("owner-1")).toBeTruthy();
     expect(within(first).getByText("Owner")).toBeTruthy();
     expect(within(first).getByText("4 นาที (4m)")).toBeTruthy();
-    expect(within(first).getByText("— → brand-a_rev_1")).toBeTruthy();
+    // The revision cell wraps; the full id stays available in a title.
+    const revision = within(first).getAllByRole("cell")[6]!;
+    expect(revision.textContent).toBe("— → brand-a_rev_1");
+    expect(revision.querySelector(".deploy-revision")).toBeTruthy();
+    expect(revision.querySelector('[title="brand-a_rev_1"]')).toBeTruthy();
     expect(within(second).getByText("brand.profile.update")).toBeTruthy();
     // The audit row reads its Thai label, not the raw `done` from the contract.
     expect(within(second).getByText("เสร็จแล้ว (done)")).toBeTruthy();
@@ -113,6 +120,11 @@ describe("deploy history screen", () => {
     expect(within(third).getByText("ล้มเหลว (failed)")).toBeTruthy();
     expect(within(third).getByText("พนักงาน")).toBeTruthy();
     expect(within(third).getByText("2 นาที (2m)")).toBeTruthy();
+    // Work in progress reads blue on both states, never the muted fallback.
+    expect(within(rows()[4]!).getByText("กำลังทำงาน (running)").className).toContain("p-blue");
+    expect(within(rows()[5]!).getByText("รอคิว (queued)").className).toContain("p-blue");
+    // The expand control is the shell's button, not a bespoke small control.
+    expect(toggleOf(first).className).toContain("btn");
     // `has_more` is false here, so the truncation hint must be absent.
     expect(screen.queryByText(/รายการล่าสุด/)).toBeNull();
     expect(screen.getByRole("link", { name: /ดูประวัติการแก้ไขทั้งหมด/ }).getAttribute("href")).toBe("/audit");
@@ -158,6 +170,33 @@ describe("deploy history screen", () => {
     expect(within(rows()[0]!).getByText("ล้มเหลว (failed)")).toBeTruthy();
   });
 
+  it("shows a filtered-empty state that clears all three filters", async () => {
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    const brandSelect = screen.getByLabelText(/แบรนด์ \(Brand\)/) as unknown as HTMLSelectElement;
+    const sourceSelect = screen.getByLabelText(/แหล่งที่มา \(Source\)/) as unknown as HTMLSelectElement;
+    const statusSelect = screen.getByLabelText(/สถานะ \(Status\)/) as unknown as HTMLSelectElement;
+
+    fireEvent.change(brandSelect, { target: { value: "brand-b" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?brand=brand-b"));
+    fireEvent.change(sourceSelect, { target: { value: "install" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?brand=brand-b&source=install"));
+    fireEvent.change(statusSelect, { target: { value: "ready" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?brand=brand-b&source=install&status=ready"));
+
+    // A filtered-out list is not the same as a timeline that never had anything.
+    expect(await screen.findByText("ไม่พบรายการที่ตรงกับตัวกรอง (No deploys match the filters)")).toBeTruthy();
+    expect(screen.queryByText("ยังไม่มีรายการติดตั้ง (No deploys yet)")).toBeNull();
+    expect(rows()).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "ล้างตัวกรอง (Clear filters)" }));
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys"));
+    expect(brandSelect.value).toBe("");
+    expect(sourceSelect.value).toBe("");
+    expect(statusSelect.value).toBe("");
+    expect(rows()).toHaveLength(6);
+  });
+
   it("expands an install row to its receipts and caches them across a second expand", async () => {
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
@@ -174,6 +213,27 @@ describe("deploy history screen", () => {
     expect(detailCalls("inst-1")).toHaveLength(1);
   });
 
+  it("renders the one expanded detail in a full-width region below the table, labelled with its row", async () => {
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    const toggle = toggleOf(rows()[0]!);
+    fireEvent.click(toggle);
+    const region = await screen.findByRole("region", { name: /รายละเอียด \(Details\)/ });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-controls")).toBe(region.id);
+    // The region is a sibling after the table, never a cell inside it.
+    expect(region.closest("table")).toBeNull();
+    expect(table().compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await waitFor(() => expect(region.getAttribute("aria-label")).toContain("a.test"));
+    expect(region.getAttribute("aria-label")).toContain("ติดตั้ง (Install)");
+
+    // Only one row is expanded at a time: the audit row replaces the install detail.
+    fireEvent.click(toggleOf(rows()[1]!));
+    const regions = screen.getAllByRole("region", { name: /รายละเอียด \(Details\)/ });
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.textContent).toContain("brand.profile.update");
+  });
+
   it("offers no Retry on an expanded failed install row", async () => {
     installReplies["/api/installs/inst-2"] = () => json(FAILED_DETAIL);
     render(<DeploysScreen me={owner} />);
@@ -185,18 +245,40 @@ describe("deploy history screen", () => {
     expect(screen.queryByRole("button", { name: /ลองใหม่ \(Retry\)/ })).toBeNull();
   });
 
-  it("keeps the table and shows the in-row error when the install receipts fail", async () => {
+  it("keeps the table and shows the error below it when the install receipts fail", async () => {
     installReplies["/api/installs/inst-2"] = () => json({ error: "internal" }, 500);
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
     fireEvent.click(toggleOf(rows()[2]!));
-    const alert = await within(rows()[2]!).findByRole("alert");
-    expect(alert.textContent).toContain("โหลดรายละเอียดการติดตั้งไม่สำเร็จ");
+    expect(await screen.findByText(/โหลดรายละเอียดการติดตั้งไม่สำเร็จ/)).toBeTruthy();
+    // The install row's own `error` still shows next to it.
+    expect(screen.getByText("smoke check failed")).toBeTruthy();
     expect(screen.getByRole("table", { name: "ประวัติการติดตั้ง" })).toBeTruthy();
-    expect(rows()).toHaveLength(4);
+    expect(rows()).toHaveLength(6);
   });
 
-  it("expands an audit row to its action, actor and audit link without a second request", async () => {
+  it("shows an install row's own error and canary flag, and no Error field on an audit row", async () => {
+    const canary = install({ event_id: "inst-canary", status: "failed", is_canary: true, error: "row-level install failure", started_at: "2026-10-22T03:00:00.000Z" });
+    // The feed never populates `error` on an audit row; the audit detail must render no Error field for it anyway.
+    const auditWithError = audit({ event_id: "audit-99", error: "stale audit error", started_at: "2026-10-22T02:00:00.000Z" });
+    feed = () => json({ events: [canary, auditWithError], has_more: false, unavailable: [] });
+    installReplies["/api/installs/inst-canary"] = () => json({ ...FAILED_DETAIL, install_id: "inst-canary" });
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+
+    fireEvent.click(toggleOf(rows()[0]!));
+    const installDetail = await screen.findByText("row-level install failure");
+    expect(installDetail.textContent).toContain("row-level install failure");
+    expect(within(document.querySelector(".deploy-detail") as HTMLElement).getByText(/canary/i)).toBeTruthy();
+
+    fireEvent.click(toggleOf(rows()[1]!));
+    const auditDetail = document.querySelector(".deploy-detail") as HTMLElement;
+    expect(auditDetail.textContent).toContain("brand.profile.update");
+    expect(auditDetail.textContent).not.toContain("stale audit error");
+    expect(auditDetail.textContent).not.toContain("ข้อผิดพลาด (Error)");
+  });
+
+  it("expands an audit row to its action, actor, audit link and before/after hint without a second request", async () => {
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
     fireEvent.click(toggleOf(rows()[1]!));
@@ -208,6 +290,9 @@ describe("deploy history screen", () => {
     expect(detail).toContain("2026-10-21T03:00:00.000Z");
     expect(detail).not.toContain("เดิม (Old)");
     expect(detail).not.toContain("ใหม่ (New)");
+    // Thai-first copy keeps the English gloss of the sentence around the link.
+    expect(detail).toContain("ไม่ส่งค่าก่อน/หลัง");
+    expect(detail).toContain("This feed carries no before/after values");
     const detailNode = document.querySelector(".deploy-detail") as HTMLElement;
     expect(within(detailNode).getByRole("link", { name: /ประวัติการแก้ไข/ }).getAttribute("href")).toBe("/audit");
     expect(requests.filter((p) => p.startsWith("/api/installs/"))).toEqual([]);
@@ -239,17 +324,19 @@ describe("deploy history screen", () => {
     render(<DeploysScreen me={owner} />);
     const note = await screen.findByText(/core_audit/);
     expect(note.textContent).toContain("ไทม์ไลน์ไม่ครบ");
-    expect(within(table()).getAllByRole("row").slice(1)).toHaveLength(4);
+    expect(note.textContent).toContain("core audit source is unavailable");
+    expect(within(table()).getAllByRole("row").slice(1)).toHaveLength(6);
   });
 
-  it("names any other unavailable source by its raw id", async () => {
-    // The contract only knows `core_audit` today; a new source id must still be named, not dropped.
-    const deploys = vi.spyOn(api, "deploys").mockResolvedValueOnce({ events: FEED, has_more: false, unavailable: ["brand_registry"] } as never);
+  it("keeps the brand-load failure hint out of the select's accessible name", async () => {
+    lifecycle = () => json({ error: "internal" }, 500);
     render(<DeploysScreen me={owner} />);
-    const note = await screen.findByText(/brand_registry/);
-    expect(note.textContent).toContain("ไทม์ไลน์ไม่ครบ");
-    expect(note.textContent).toContain("brand_registry");
-    deploys.mockRestore();
+    const hint = await screen.findByText(/โหลดรายการแบรนด์ไม่สำเร็จ/);
+    // The note is described, not named: the select's accessible name stays the label alone.
+    const select = screen.getByRole("combobox", { name: "แบรนด์ (Brand)" }) as unknown as HTMLSelectElement;
+    expect(select.getAttribute("aria-describedby")).toBe(hint.id);
+    expect(hint.id).toBeTruthy();
+    expect(screen.getByLabelText(/แบรนด์ \(Brand\)/)).toBe(select);
   });
 
   it("shows a hint next to the brand filter when the lifecycle list fails", async () => {
@@ -257,6 +344,6 @@ describe("deploy history screen", () => {
     render(<DeploysScreen me={owner} />);
     expect(await screen.findByText(/โหลดรายการแบรนด์ไม่สำเร็จ/)).toBeTruthy();
     expect(screen.getByRole("table", { name: "ประวัติการติดตั้ง" })).toBeTruthy();
-    expect(rows()).toHaveLength(4);
+    expect(rows()).toHaveLength(6);
   });
 });
