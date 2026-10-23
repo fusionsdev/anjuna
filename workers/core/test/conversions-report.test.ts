@@ -419,27 +419,27 @@ describe("GET /admin/conversions", () => {
       expect(errors["invalid"]).toBe("INVALID [click id hidden]");
     });
 
-    // Ruling 2026-10-24, round 4: the 20-character run rule needs a digit and skips the row order id and UUIDs.
-    it("keeps real drain errors and a foreign UUID for the owner", async () => {
+    // Rulings 2026-10-24, rounds 4 and 5: the 20-character run rule needs a digit and exempts only a whole run
+    // equal to the row's own lead_id or google_order_id.
+    it("keeps real drain errors for the owner", async () => {
       // Neutral names: the seeded row id `gclid-<name>` must not share an 8-character run with the text.
       const real = {
         "real-1": "OfflineConversionTimeInvalid: The conversion time is invalid.",
         "real-2": "CONVERSION_PRECEDES_EVENT",
         "real-3": "adkit manage platform-api-requests failed: exit 1",
-        "real-4": "upload failed: order 3f2a9c1e-7b4d-4e8a-9f01-2c3d4e5f6a7b not found",
       };
       const { errors } = await ownerView(real);
       for (const [name, text] of Object.entries(real)) expect(errors[name], name).toBe(text);
     });
 
-    it("skips the row lead_id and google_order_id in any case and leaves a space in their place", async () => {
+    it("exempts a whole run equal to the row lead_id or google_order_id in any case", async () => {
       const uuid = "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f";
+      const upper = "7a2d3c0f-4b5e-4d6f-9a71-8b9cad0e1f30";
       const rows = [
         { lead_id: uuid, google_order_id: uuid, last_error: `Order ${uuid} rejected: duplicate` },
+        { lead_id: upper, google_order_id: upper, last_error: `Order ${upper.toUpperCase()} rejected: duplicate` },
         { lead_id: "lead-order-20261024001", google_order_id: null, last_error: "Order lead-order-20261024001 rejected: duplicate" },
         { lead_id: "lead-gorder-0001", google_order_id: "ORDER-2026-10-24-000123", last_error: "Google: duplicate order order-2026-10-24-000123" },
-        // With no space the two sides would join into one 20-character run with digits.
-        { lead_id: "lead-join-000000001", google_order_id: null, last_error: "upload failed: x9x9x9x9x9lead-join-000000001y9y9y9y9y9" },
       ];
       for (const [i, row] of rows.entries()) {
         await h.seedLead(row.lead_id, `cid-order-${i}`, "brand-a");
@@ -451,6 +451,24 @@ describe("GET /admin/conversions", () => {
       const body = await parsed();
       const errors = Object.fromEntries(body.rows.map((r) => [r.lead_id, r.last_error]));
       for (const row of rows) expect(errors[row.lead_id], row.lead_id).toBe(row.last_error);
+    });
+
+    it("gives null for a foreign UUID and for a run that holds the row order id plus more", async () => {
+      const uuid = "3f2a9c1e-7b4d-4e8a-9f01-2c3d4e5f6a7b";
+      const rowId = "ROW-ONLY-ZYXWVUTS";
+      const wrapped = `AAAABBBB${uuid}CCCCDDDD`;
+      expect(wrapped).toHaveLength(52);
+      await seed("ffeed-case", "brand-a", { status: "dead", gclid: rowId, google_order_id: "ffeed", last_error: "upload failed for abcde1234567890ffeedcba1234567890ff" });
+      await seed("join-000000001", "brand-a", { status: "dead", gclid: rowId, last_error: "upload failed: x9x9x9x9x9lead-join-000000001y9y9y9y9y9" });
+      const cases = {
+        "uuid-foreign": `upload failed: order ${uuid} not found`,
+        "uuid-cyrillic": `upload failed: gclіd=${uuid}`,
+        "uuid-wrapped": `upload failed: ${wrapped}`,
+        "mid-0001": "upload failed: AAAABBBBlead-mid-0001CCCCDDDD",
+      };
+      const { text, errors } = await ownerView(cases, Object.fromEntries(Object.keys(cases).map((name) => [name, rowId])));
+      for (const name of [...Object.keys(cases), "ffeed-case", "join-000000001"]) expect(errors[name], name).toBeNull();
+      for (const secret of ["3f2a9c1e", "AAAABBBB", "abcde1234567890", "x9x9x9x9x9"]) expect(text).not.toContain(secret);
     });
 
     it("still gives null for a 32-hex foreign msclkid with no key", async () => {

@@ -24,7 +24,6 @@ const RUN = 8;
 // Error codes such as `CONVERSION_PRECEDES_EVENT` are long runs too, but with no digit.
 const ID_LIKE = /[A-Za-z0-9_-]{20,}/g;
 const DIGIT = /[0-9]/;
-const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 interface Row {
   lead_id: string; brand: string; status: ConversionStatus; last_error: string | null;
@@ -64,17 +63,14 @@ function sharesRun(text: string, id: string): boolean {
 }
 
 /**
- * True when `kept` holds a 20+ character run with a digit once the row's order ids and any UUID are taken out.
+ * True when `kept` holds a maximal 20+ character run with a digit that is not the row's own order id.
  * The Google orderId is the row's lead_id (postback.ts), so a Google error naming it is not an id leak.
- * Each removal leaves a space, so its neighbours do not join into one run.
+ * Only a whole run equal to the row's lead_id or google_order_id (any case) is exempt. A run that holds
+ * the order id plus other characters, or any other UUID, counts as an id.
  */
 function holdsIdLikeRun(kept: string, row: Row): boolean {
-  let test = kept.toLowerCase();
-  for (const id of orderIds(row)) {
-    const own = decode(id)?.toLowerCase();
-    if (own) test = test.split(own).join(" ");
-  }
-  return (test.replace(UUID, " ").match(ID_LIKE) ?? []).some((run) => DIGIT.test(run));
+  const own = new Set(orderIds(row).map((id) => decode(id)?.toLowerCase()));
+  return (kept.toLowerCase().match(ID_LIKE) ?? []).some((run) => DIGIT.test(run) && !own.has(run));
 }
 
 /**
