@@ -46,6 +46,9 @@ const rowWhat = (event: DeployEvent): string => (event.operation ? operationLabe
 /** The id of the one detail region a row's expand control points at. */
 const detailRegionId = (eventId: string) => `deploy-detail-${eventId}`;
 
+/** The id of the visible head that names the region, so the name carries the time the head shows. */
+const detailHeadId = (eventId: string) => `deploy-detail-head-${eventId}`;
+
 /** The receipts of an install row, or an audit row's action, actor, time and link to the audit log; an audit row costs no second request. */
 function EventDetail({ event, detail, error }: { event: DeployEvent; detail: InstallWithReceipts | undefined; error: string | undefined }) {
   if (event.source === "audit") {
@@ -54,12 +57,13 @@ function EventDetail({ event, detail, error }: { event: DeployEvent; detail: Ins
       <div><dt>ผู้เริ่ม (Actor)</dt><dd>{event.started_by} · {actorRole(event.started_role)}</dd></div>
       <div><dt>เวลาเริ่ม (Started at)</dt><dd><time dateTime={event.started_at}>{event.started_at}</time></dd></div>
     </dl>
-    <p className="hint">ไทม์ไลน์นี้ไม่ส่งค่าก่อน/หลังของการแก้ไข (This feed carries no before/after values; see the <a href="/audit" onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate("/audit"); }}>ประวัติการแก้ไข (audit log)</a>.)</p>
+    <p className="hint">ไทม์ไลน์นี้ไม่ส่งค่าก่อน/หลังของการแก้ไข ดูค่าก่อน/หลังได้ที่<a href="/audit" onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate("/audit"); }}>ประวัติการแก้ไข (audit log)</a> (This feed carries no before/after values.)</p>
   </div>;
   }
   return <div className="deploy-detail">
     {event.is_canary && <p className="hint">การติดตั้งนี้เป็น canary (Canary install)</p>}
-    {event.error && <p className="error" role="alert">{event.error}</p>}
+    {/* A stored error is history; only the live load failure below is an alert. */}
+    {event.error && <p className="error">{event.error}</p>}
     {detail
       ? <InstallProgress install={detail} canRetry={false} onRetry={() => undefined} />
       : error ? <p className="error" role="alert">{error}</p> : <p className="hint">กำลังโหลดรายละเอียด (Loading details)…</p>}
@@ -68,6 +72,9 @@ function EventDetail({ event, detail, error }: { event: DeployEvent; detail: Ins
 
 export function DeploysScreen({ me }: { me: Me }) {
   const [events, setEvents] = useState<DeployEvent[] | null>(null);
+  // Whether the events on screen came from a filtered query; the empty state must match the shown rows,
+  // not the filters already applied to the next request.
+  const [shownFiltered, setShownFiltered] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [unavailable, setUnavailable] = useState<DeployUnavailableSource[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +88,8 @@ export function DeploysScreen({ me }: { me: Me }) {
   const [detailError, setDetailError] = useState<Record<string, string>>({});
   // Guards a double click before the first receipts answer lands; the state cache covers every later expand.
   const loading = useRef(new Set<string>());
+  const brandSelectRef = useRef<HTMLSelectElement>(null);
+  const detailRegionRef = useRef<HTMLDivElement>(null);
   const labelOf = useBrandLabels();
 
   // The brand filter offers every brand the panel knows. An event for an unknown brand still renders its id.
@@ -100,11 +109,13 @@ export function DeploysScreen({ me }: { me: Me }) {
     if (brand) query.brand = brand;
     if (source) query.source = source as DeploySource;
     if (status) query.status = status as DeployStatus;
+    const fromFilters = brand !== "" || source !== "" || status !== "";
     api.deploys(query).then((r) => {
       if (!active) return;
       setEvents(r.events);
       setHasMore(r.has_more);
       setUnavailable(r.unavailable);
+      setShownFiltered(fromFilters);
       setError(null);
     }, (e: unknown) => {
       // A failed feed is an error line, never a blank timeline that reads as "nothing happened".
@@ -112,10 +123,19 @@ export function DeploysScreen({ me }: { me: Me }) {
       setEvents([]);
       setHasMore(false);
       setUnavailable([]);
+      setShownFiltered(fromFilters);
       setError(e instanceof ApiError ? e.thai : "โหลดประวัติการติดตั้งไม่สำเร็จ (Could not load the deploy history.)");
     });
     return () => { active = false; };
   }, [brand, source, status]);
+
+  // A filter change closes the open row: it may leave the feed, then come back by itself when filters clear.
+  useEffect(() => { setOpenId(null); }, [brand, source, status]);
+
+  // Keep the opened detail in view without stealing focus. jsdom has no scrollIntoView, so guard the call.
+  useEffect(() => {
+    if (openId) detailRegionRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [openId]);
 
   const loadDetail = (event: DeployEvent) => {
     if (event.source !== "install" || details[event.event_id] || loading.current.has(event.event_id)) return;
@@ -130,8 +150,11 @@ export function DeploysScreen({ me }: { me: Me }) {
     setOpenId(open ? event.event_id : null);
     if (open) loadDetail(event);
   };
-  const clearFilters = () => { setBrand(""); setSource(""); setStatus(""); };
-  const filtered = brand !== "" || source !== "" || status !== "";
+  const clearFilters = () => {
+    setBrand(""); setSource(""); setStatus("");
+    // The Clear button is about to leave the screen; put focus back on the first filter.
+    brandSelectRef.current?.focus();
+  };
   const openEvent = events?.find((e) => e.event_id === openId) ?? null;
 
   const columns: Column<DeployEvent>[] = [
@@ -177,7 +200,7 @@ export function DeploysScreen({ me }: { me: Me }) {
     <div className="deploys-filters">
       <div className="deploys-filter">
         <label>แบรนด์ (Brand)
-          <select value={brand} onChange={(e) => setBrand(e.target.value)} aria-describedby={brandsFailed ? "deploys-brand-hint" : undefined}>
+          <select ref={brandSelectRef} value={brand} onChange={(e) => setBrand(e.target.value)} aria-describedby={brandsFailed ? "deploys-brand-hint" : undefined}>
             <option value="">ทั้งหมด (All)</option>
             {brands.map((b) => <option key={b.brand_id} value={b.brand_id}>{b.hostnames[0] ?? b.brand_id}</option>)}
           </select>
@@ -212,7 +235,7 @@ export function DeploysScreen({ me }: { me: Me }) {
             columns={columns}
             rows={events}
             rowKey={(e) => e.event_id}
-            empty={filtered
+            empty={shownFiltered
               ? <EmptyState
                 title="ไม่พบรายการที่ตรงกับตัวกรอง (No deploys match the filters)"
                 hint="ล้างตัวกรองเพื่อดูไทม์ไลน์ทั้งหมด (Clear the filters to see the whole timeline)"
@@ -220,14 +243,15 @@ export function DeploysScreen({ me }: { me: Me }) {
               />
               : <EmptyState title="ยังไม่มีรายการติดตั้ง (No deploys yet)" hint="การติดตั้ง การย้อนกลับ และการแก้ไขค่าจะขึ้นที่นี่" />}
           />
-          {/* One region, full width, directly below the table, labelled with the row it belongs to. */}
+          {/* One region, full width, directly below the table, named by its visible head so the time is in the name. */}
           {openEvent && <div
+            ref={detailRegionRef}
             id={detailRegionId(openEvent.event_id)}
             className="deploy-detail-region"
             role="region"
-            aria-label={`รายละเอียด (Details): ${labelOf(openEvent.brand_id)} · ${rowWhat(openEvent)}`}
+            aria-labelledby={detailHeadId(openEvent.event_id)}
           >
-            <p className="deploy-detail-head">รายละเอียด (Details): {labelOf(openEvent.brand_id)} · {rowWhat(openEvent)} · {fmtTime(openEvent.started_at)}</p>
+            <p id={detailHeadId(openEvent.event_id)} className="deploy-detail-head">รายละเอียด (Details): {labelOf(openEvent.brand_id)} · {rowWhat(openEvent)} · {fmtTime(openEvent.started_at)}</p>
             <EventDetail event={openEvent} detail={details[openEvent.event_id]} error={detailError[openEvent.event_id]} />
           </div>}
         </section>

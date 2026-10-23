@@ -51,7 +51,8 @@ const FAILED_DETAIL: InstallWithReceipts = {
 };
 
 let requests: string[];
-let feed: (params: URLSearchParams) => Response;
+// A case may hold the unfiltered answer open, so the feed is allowed to answer late.
+let feed: (params: URLSearchParams) => Response | Promise<Response>;
 let lifecycle: () => Response;
 let installReplies: Record<string, () => Response>;
 const paramsOf = (path: string) => new URLSearchParams(path.includes("?") ? path.split("?")[1]! : "");
@@ -197,6 +198,54 @@ describe("deploy history screen", () => {
     expect(rows()).toHaveLength(6);
   });
 
+  it("keeps the filtered-empty state until the unfiltered feed answers, then focuses the brand select", async () => {
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    const brandSelect = screen.getByLabelText(/แบรนด์ \(Brand\)/) as unknown as HTMLSelectElement;
+    const statusSelect = screen.getByLabelText(/สถานะ \(Status\)/) as unknown as HTMLSelectElement;
+    fireEvent.change(brandSelect, { target: { value: "brand-b" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?brand=brand-b"));
+    // brand-b has no ready row, so the filtered feed answers with nothing.
+    fireEvent.change(statusSelect, { target: { value: "ready" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?brand=brand-b&status=ready"));
+    expect(await screen.findByText("ไม่พบรายการที่ตรงกับตัวกรอง (No deploys match the filters)")).toBeTruthy();
+
+    // Hold the unfiltered answer open, so a fresh response cannot paper over the click.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const base = feed;
+    feed = (params) => (params.toString() === "" ? gate.then(() => base(params)) : base(params));
+
+    fireEvent.click(screen.getByRole("button", { name: "ล้างตัวกรอง (Clear filters)" }));
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys"));
+    // The unfiltered feed has not answered: the filtered-empty state stays, never "No deploys yet".
+    expect(screen.getByText("ไม่พบรายการที่ตรงกับตัวกรอง (No deploys match the filters)")).toBeTruthy();
+    expect(screen.queryByText("ยังไม่มีรายการติดตั้ง (No deploys yet)")).toBeNull();
+    // Clearing returns focus to the first filter, not to the button it just removed.
+    expect(document.activeElement).toBe(brandSelect);
+
+    release!();
+    await waitFor(() => expect(rows()).toHaveLength(6));
+  });
+
+  it("resets the open row when a filter changes", async () => {
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    fireEvent.click(toggleOf(rows()[0]!));
+    expect(await screen.findByRole("region", { name: /รายละเอียด \(Details\)/ })).toBeTruthy();
+
+    const brandSelect = screen.getByLabelText(/แบรนด์ \(Brand\)/) as unknown as HTMLSelectElement;
+    fireEvent.change(brandSelect, { target: { value: "brand-b" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?brand=brand-b"));
+    expect(screen.queryByRole("region", { name: /รายละเอียด \(Details\)/ })).toBeNull();
+
+    // inst-1 is back in the unfiltered feed, but the filter change closed its row for good.
+    fireEvent.change(brandSelect, { target: { value: "" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys"));
+    expect(rows()).toHaveLength(6);
+    expect(screen.queryByRole("region", { name: /รายละเอียด \(Details\)/ })).toBeNull();
+  });
+
   it("expands an install row to its receipts and caches them across a second expand", async () => {
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
@@ -224,14 +273,59 @@ describe("deploy history screen", () => {
     // The region is a sibling after the table, never a cell inside it.
     expect(region.closest("table")).toBeNull();
     expect(table().compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await waitFor(() => expect(region.getAttribute("aria-label")).toContain("a.test"));
-    expect(region.getAttribute("aria-label")).toContain("ติดตั้ง (Install)");
+    // The region is named by its visible head, so the name carries the time an aria-label would drop.
+    const head = region.querySelector(".deploy-detail-head") as HTMLElement;
+    expect(region.getAttribute("aria-labelledby")).toBe(head.id);
+    expect(region.getAttribute("aria-label")).toBeNull();
+    await waitFor(() => expect(head.textContent).toContain("a.test"));
+    expect(head.textContent).toContain("ติดตั้ง (Install)");
+    expect(screen.getByRole("region", { name: head.textContent! })).toBe(region);
 
     // Only one row is expanded at a time: the audit row replaces the install detail.
     fireEvent.click(toggleOf(rows()[1]!));
     const regions = screen.getAllByRole("region", { name: /รายละเอียด \(Details\)/ });
     expect(regions).toHaveLength(1);
     expect(regions[0]!.textContent).toContain("brand.profile.update");
+  });
+
+  it("names each expanded row's region after its own head, including the time", async () => {
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    fireEvent.click(toggleOf(rows()[0]!));
+    const region = await screen.findByRole("region", { name: /รายละเอียด \(Details\)/ });
+    const firstHead = region.querySelector(".deploy-detail-head") as HTMLElement;
+    await waitFor(() => expect(firstHead.textContent).toContain("a.test"));
+    const firstName = firstHead.textContent!;
+    const firstRegionId = region.id;
+    expect(screen.getByRole("region", { name: firstName })).toBe(region);
+
+    // inst-4 is also a brand-a install: only the time in the head tells the two regions apart.
+    fireEvent.click(toggleOf(rows()[4]!));
+    const secondHead = region.querySelector(".deploy-detail-head") as HTMLElement;
+    expect(region.id).not.toBe(firstRegionId);
+    expect(secondHead.textContent).not.toBe(firstName);
+    expect(screen.getByRole("region", { name: secondHead.textContent! })).toBe(region);
+    expect(screen.queryByRole("region", { name: firstName })).toBeNull();
+  });
+
+  it("scrolls the opened detail into view without moving focus", async () => {
+    const proto = Element.prototype as unknown as { scrollIntoView?: (options?: ScrollIntoViewOptions) => void };
+    const scrollIntoView = vi.fn<(options?: ScrollIntoViewOptions) => void>();
+    proto.scrollIntoView = scrollIntoView;
+    try {
+      render(<DeploysScreen me={owner} />);
+      await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+      const toggle = toggleOf(rows()[0]!);
+      toggle.focus();
+      fireEvent.click(toggle);
+      await screen.findByRole("region", { name: /รายละเอียด \(Details\)/ });
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+      // The detail is scrolled to, never focused: the expand control keeps focus.
+      expect(document.activeElement).toBe(toggle);
+    } finally {
+      // jsdom has no scrollIntoView; leave the prototype as the other cases expect it.
+      delete proto.scrollIntoView;
+    }
   });
 
   it("offers no Retry on an expanded failed install row", async () => {
@@ -251,6 +345,10 @@ describe("deploy history screen", () => {
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
     fireEvent.click(toggleOf(rows()[2]!));
     expect(await screen.findByText(/โหลดรายละเอียดการติดตั้งไม่สำเร็จ/)).toBeTruthy();
+    // A live load failure announces as an alert, and it sits inside the row's own region.
+    const region = screen.getByRole("region", { name: /รายละเอียด \(Details\)/ });
+    const alerts = within(region).getAllByRole("alert").map((node) => node.textContent ?? "");
+    expect(alerts.some((text) => text.includes("โหลดรายละเอียดการติดตั้งไม่สำเร็จ"))).toBe(true);
     // The install row's own `error` still shows next to it.
     expect(screen.getByText("smoke check failed")).toBeTruthy();
     expect(screen.getByRole("table", { name: "ประวัติการติดตั้ง" })).toBeTruthy();
@@ -268,7 +366,11 @@ describe("deploy history screen", () => {
 
     fireEvent.click(toggleOf(rows()[0]!));
     const installDetail = await screen.findByText("row-level install failure");
-    expect(installDetail.textContent).toContain("row-level install failure");
+    // A stored failure is history, not a live event: it must not announce as an alert.
+    expect(installDetail.getAttribute("role")).toBeNull();
+    // And it sits inside the row's detail region, below the table.
+    const region = screen.getByRole("region", { name: /รายละเอียด \(Details\)/ });
+    expect(region.contains(installDetail)).toBe(true);
     expect(within(document.querySelector(".deploy-detail") as HTMLElement).getByText(/canary/i)).toBeTruthy();
 
     fireEvent.click(toggleOf(rows()[1]!));
@@ -292,6 +394,8 @@ describe("deploy history screen", () => {
     expect(detail).not.toContain("ใหม่ (New)");
     // Thai-first copy keeps the English gloss of the sentence around the link.
     expect(detail).toContain("ไม่ส่งค่าก่อน/หลัง");
+    // The Thai sentence names the link instead of dead-ending on the parenthesis.
+    expect(detail).toContain("ดูค่าก่อน/หลังได้ที่ประวัติการแก้ไข");
     expect(detail).toContain("This feed carries no before/after values");
     const detailNode = document.querySelector(".deploy-detail") as HTMLElement;
     expect(within(detailNode).getByRole("link", { name: /ประวัติการแก้ไข/ }).getAttribute("href")).toBe("/audit");
