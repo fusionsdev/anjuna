@@ -2,6 +2,18 @@
 
 Source: backlog and ship order in `2026-10-23-panel-backlog-and-order.md`. Tracking issue: FUS-374.
 
+## Baseline correction (origin/main 21fc1cd)
+
+The backlog inventory was taken from a local `main` that was 56 commits behind `origin/main`. `origin/main` already ships the FUS-365 console redesign (PR 139): Home, the left rail with alert counts, the console color tokens with dark mode, the loss-sorted Brands table with a side panel, and restyled screens. Spec 1 builds on that baseline:
+
+- `/` is Home (it exists now); it does not redirect to `/brands`.
+- Routes also cover the screens added since the inventory: `/brands/new` (wizard), `/templates`, `/templates/:id`, `/builder-keys`.
+- template-mcp links to `/#templates/<id>`; the router keeps that hash working and rewrites it to `/templates/<id>`.
+- Design system: the existing color tokens move to `styles/tokens.css` and gain spacing, radius, shadow and type-scale tokens. The font stays IBM Plex Sans Thai (the FUS-367 theme choice) and is bundled with `@fontsource/ibm-plex-sans-thai`, which removes the Google Fonts request. Inter and Sarabun are not added.
+- The environment badge shows the tenant account from `DEFAULT_ACCOUNT` (`aduplift` or `maimax`), returned by `/api/me`.
+- "Brand card" means the Brands table row plus its side panel. The row gains the flow-gate label and Pause/Resume. The latest install status is the row's status badge (`installing`, `failed`, `rolled_back` come from the latest install).
+- ConfirmDialog replaces all 7 existing `window.confirm` calls and adds a confirm to Rollback, Recover, Upgrade-all, Pause/Resume, flow gate change and role change.
+
 ## Spec 1 design: routing, shell, design system, brand card basics
 
 ### Routing
