@@ -145,6 +145,17 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByText(/ไม่พบแบรนด์/)).toBeNull();
   });
 
+  it("drops an unknown selection when Back leaves it before the brand list arrives", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    routes.set("GET /api/lifecycle/brands", async () => { await gate; return json({ brands: lifecycleRows }); });
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    view.rerender(<BrandLifecycle me={owner} routeBrandId={null} />);
+    await act(async () => { release(); });
+    expect(await screen.findByRole("heading", { name: "renderable.test" })).toBeTruthy();
+    expect(screen.queryByText(/ไม่พบแบรนด์/)).toBeNull();
+  });
+
   it("keeps a valid selection when the route leaves its brand id for /brands", async () => {
     lifecycleRows = [structuredClone(brand), LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] })];
     routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));

@@ -1,9 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { App } from "../src/client/App";
 import { api } from "../src/client/api";
 
-// The real App with the real Brands screen: the New brand button must go through the router.
+// The real App with the real Brands screen: the wizard entry points must go through the router.
 const employee = { id: "employee", email: "employee@example.test", role: "employee" as const };
 const newBrand = "แบรนด์ใหม่ (New brand)";
 const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" });
@@ -13,11 +14,13 @@ const back = () => act(async () => {
   await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
 });
 
+let routes: Record<string, unknown>;
+
 beforeEach(() => {
   window.history.replaceState(null, "", "/brands");
   vi.spyOn(api, "me").mockResolvedValue(employee);
   vi.spyOn(api, "alerts").mockRejectedValue(new Error("Unavailable"));
-  const routes: Record<string, unknown> = {
+  routes = {
     "/api/upgrade-all/latest": { upgrade: null },
     "/api/lifecycle/brands": { brands: [] },
     "/api/brands": { brands: [], generated_at: "2026-10-23T00:00:00Z" },
@@ -55,5 +58,43 @@ describe("New brand button on the Brands page", () => {
     window.history.replaceState(null, "", "/brands/new");
     render(<App />);
     expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+  });
+});
+
+describe("a resumed draft wizard", () => {
+  const row = (id: string, name: string, host: string, status: string) => LifecycleBrandSummary.parse({
+    brand_id: id, name, account: "test-account", hostnames: [host], status, current_revision_id: status === "draft" ? null : "rev-1",
+    runtime_sync_status: status === "draft" ? "queued" : "ready", bundle_form_version: "form@abcdef1", payload_version: "2026-01",
+  });
+  const draft = {
+    brand: { brand_id: "brand_new", name: "Maple Cash", domain: "maple.test", keyword_default: "Quick Loan", status: "draft" },
+    revision: { revision_id: "brand_new_rev_1", revision: 1, template_version_id: "tv-1", form_artifact_id: "fa-1" },
+    profile: { contact: { phone: "+1 (555) 010-0199", address: "12 Main St, Austin, TX 78701", email: "help@maplecash.test" }, copy: {}, ads: {} },
+  };
+  beforeEach(() => {
+    Object.assign(routes, {
+      "/api/lifecycle/brands": { brands: [row("brand_live", "Live Cash", "live.test", "live"), row("brand_new", "Maple Cash", "maple.test", "draft")] },
+      "/api/brands/brand_live/checklist": { brand_id: "brand_live", checklist: [] },
+      "/api/brands/brand_live/installs": { brand_id: "brand_live", installs: [] },
+      "/api/brands/brand_new/checklist": { brand_id: "brand_new", checklist: [] },
+      "/api/brands/brand_new/installs": { brand_id: "brand_new", installs: [] },
+      "/api/wizard/drafts/brand_new": draft,
+      "/api/wizard/zone-check": { zone_active: true, zone_name: "maple.test", nameservers: [], conflicting_records: [] },
+      "/api/templates": { templates: [] },
+    });
+  });
+
+  it("closes when Back returns to /brands, and the draft stays selected", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Live Cash" });
+    fireEvent.click(screen.getByRole("button", { name: /Maple Cash/ }));
+    expect(window.location.pathname).toBe("/brands/brand_new");
+    fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    await back();
+    expect(window.location.pathname).toBe("/brands");
+    await waitFor(() => expect(wizard()).toBeNull());
+    expect(await screen.findByRole("heading", { name: "Maple Cash" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Live Cash" })).toBeNull();
   });
 });

@@ -121,15 +121,15 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   // A resumed draft (brandId set) is not the new-brand route, so leaving /brands/new keeps it open.
   useEffect(() => setWizard((w) => (wizardRoute ? (w ?? {}) : w && !w.brandId ? null : w)), [wizardRoute]);
   useEffect(() => {
-    if (routeBrandId) {
-      if (routeBrandId !== selectedId) setSelectedId(routeBrandId);
-      // A resumed draft edits the brand in the URL: Back to another brand closes it.
-      setWizard((w) => (w?.brandId && w.brandId !== routeBrandId ? null : w));
-    } else if (listLoaded && selectedId && !brands.some((b) => b.brand_id === selectedId)) {
-      // Back from an unknown brand id: drop the dead selection so load() picks the first brand. A valid selection stays.
-      setSelectedId(null);
-    }
+    if (routeBrandId && routeBrandId !== selectedId) setSelectedId(routeBrandId);
+    // The route is the source of truth: a resumed draft stays open only while the URL names its brand. On /brands/new the new-brand wizard takes its place.
+    setWizard((w) => (w?.brandId && w.brandId !== routeBrandId ? (wizardRoute ? {} : null) : w));
   }, [routeBrandId]);
+  // Back from an unknown brand id: drop the dead selection so load() picks the first brand. It also runs when the list arrives
+  // after the route change. A valid selection stays.
+  useEffect(() => {
+    if (!routeBrandId && listLoaded && selectedId && !brands.some((b) => b.brand_id === selectedId)) setSelectedId(null);
+  }, [routeBrandId, listLoaded, brands]);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
@@ -416,7 +416,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const runtimeBrand = runtimeBrands.find((brand) => brand.brand_id === selectedId);
 
   // The install the wizard started is picked up by the brand's history recovery, which polls it.
-  if (wizard) return <BrandWizard me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); onWizardClosed?.(); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); onSelectBrand?.(brandId); }} />;
+  if (wizard) return <BrandWizard key={wizard.brandId ?? "new"} me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); onWizardClosed?.(); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); onSelectBrand?.(brandId); }} />;
 
   const runtimeList = runtimeError ? null : runtimeBrands;
   const tableRows = brands.map((brand) => ({

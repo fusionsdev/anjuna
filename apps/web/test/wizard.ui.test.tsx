@@ -541,6 +541,28 @@ describe("entry points on the Lifecycle screen", () => {
     expect(await screen.findByRole("heading", { name: "Live Cash" })).toBeTruthy();
   });
 
+  it("closes a resumed draft wizard when the route turns to /brands, and the draft stays selected", async () => {
+    hold({ contact: CONTACT, copy: {}, ads: {} });
+    const view = render(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
+    await screen.findByRole("heading", { name: "Maple Cash" });
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    await heading("ตรวจสอบ (Review)");
+    view.rerender(<BrandLifecycle me={employee} routeBrandId={null} />);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeNull());
+    expect(await screen.findByRole("heading", { name: "Maple Cash" })).toBeTruthy();
+  });
+
+  it("opens the new-brand wizard in place of a resumed draft when the route turns to /brands/new", async () => {
+    hold({ contact: CONTACT, copy: {}, ads: {} });
+    const view = render(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
+    await screen.findByRole("heading", { name: "Maple Cash" });
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    await heading("ตรวจสอบ (Review)");
+    view.rerender(<BrandLifecycle me={employee} routeBrandId={null} wizardRoute />);
+    await heading("แบรนด์ (Brand)");
+    expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+  });
+
   it("keeps a resumed draft wizard open while the route stays on its brand", async () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const view = render(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
