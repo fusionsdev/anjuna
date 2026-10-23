@@ -16,6 +16,7 @@ import {
   LeadsResponse,
   ListBrandsResponse,
   MailingStatusResponse,
+  SuppressionsResponse,
   type AdminRequestContext,
 } from "@anjuna/contracts";
 import { decodeLeadCursor, encodeLeadCursor, likeEscape, resolveLeadWindow } from "../src/admin/index.js";
@@ -1119,5 +1120,195 @@ describe("GET /admin/leads/export (FUS-376)", () => {
     }
     expect(outcome!.status).not.toBe(200);
     for (const hidden of [...PII_VALUES, "2145550999"]) expect(outcome!.text, hidden).not.toContain(hidden);
+  });
+});
+
+describe("GET /admin/suppressions (FUS-376)", () => {
+  const SEEDED = [
+    "100%_off@promo.example",
+    "alice@example.com",
+    "bob@example.com",
+    "carol@test.example",
+    "dave@example.com",
+    "o\\brien@example.com",
+  ];
+  let sh: Harness;
+
+  const auditRows = async () => Number(
+    (await sh.factory.prepare("SELECT count(*) AS count FROM audit_log").first<{ count: number }>())!.count,
+  );
+  const lastAudit = () => sh.factory.prepare(
+    "SELECT action, actor_id, actor_role, entity_type, entity_id, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1",
+  ).first<Record<string, string | null>>();
+  const search = async (query: string, context: AdminRequestContext = owner) => {
+    const response = await sh.admin(`/admin/suppressions${query ? `?${query}` : ""}`, context);
+    expect(response.status, query).toBe(200);
+    return SuppressionsResponse.parse(await response.json());
+  };
+  const emails = (page: SuppressionsResponse) => page.rows.map((row) => row.email);
+  const cursorOf = (email: string) =>
+    btoa(String.fromCharCode(...new TextEncoder().encode(email))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  beforeAll(async () => {
+    sh = await createHarness();
+    const seed = async (email: string, reason: string, source: string, createdAt: string, updatedAt: string | null) => {
+      await sh.db.prepare(
+        "INSERT INTO suppressions (email, reason, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+      ).bind(email, reason, source, createdAt, updatedAt).run();
+    };
+    await seed("alice@example.com", "blocklisted", "listmonk", "2026-10-01T00:00:00.000Z", "2026-10-02T00:00:00.000Z");
+    await seed("bob@example.com", "unsubscribed", "listmonk", "2026-10-01T00:00:00.000Z", null);
+    await seed("carol@test.example", "bounce", "ses", "2026-10-03T00:00:00.000Z", null);
+    await seed("100%_off@promo.example", "complaint", "manual", "2026-10-04T00:00:00.000Z", null);
+    await seed("dave@example.com", "manual", "manual", "2026-10-05T00:00:00.000Z", null);
+    await seed("o\\brien@example.com", "manual", "manual", "2026-10-06T00:00:00.000Z", null);
+  });
+  afterAll(async () => { await sh?.mf.dispose(); });
+
+  it("is 403 forbidden_role for an employee", async () => {
+    const before = await auditRows();
+    for (const query of ["", "q=alice", "limit=0", "reason=spam", "cursor=@@@"]) {
+      const denied = await sh.admin(`/admin/suppressions${query ? `?${query}` : ""}`, employee);
+      expect(denied.status, query).toBe(403);
+      const text = await denied.text();
+      expect(JSON.parse(text), query).toEqual({
+        error: "forbidden_role", required_role: "owner", request_id: employee.request_id,
+      });
+      for (const hidden of SEEDED) expect(text, hidden).not.toContain(hidden);
+    }
+    expect(await auditRows()).toBe(before);
+  });
+
+  it("searches by q as a substring, by reason and by source", async () => {
+    expect(emails(await search(""))).toEqual(SEEDED);
+    expect(emails(await search("q=example.com"))).toEqual([
+      "alice@example.com", "bob@example.com", "dave@example.com", "o\\brien@example.com",
+    ]);
+    expect(emails(await search("q=b"))).toEqual(["bob@example.com", "o\\brien@example.com"]);
+    expect(emails(await search("reason=bounce"))).toEqual(["carol@test.example"]);
+    expect(emails(await search("reason=manual"))).toEqual(["dave@example.com", "o\\brien@example.com"]);
+    expect(emails(await search("source=listmonk"))).toEqual(["alice@example.com", "bob@example.com"]);
+    expect(emails(await search("source=manual&q=example.com"))).toEqual(["dave@example.com", "o\\brien@example.com"]);
+    expect(emails(await search("reason=bounce&source=listmonk"))).toEqual([]);
+
+    const page = await search("q=alice");
+    expect(page).toEqual({
+      rows: [{
+        email: "alice@example.com", reason: "blocklisted", source: "listmonk",
+        created_at: "2026-10-01T00:00:00.000Z", updated_at: "2026-10-02T00:00:00.000Z",
+      }],
+      next_cursor: null,
+    });
+    expect((await search("q=bob")).rows[0]!.updated_at).toBeNull();
+  });
+
+  it("lowercases q and treats %, _ and \\ as literal characters", async () => {
+    expect(emails(await search("q=ALICE@"))).toEqual(["alice@example.com"]);
+    expect(emails(await search("q=E@"))).toEqual(["alice@example.com", "dave@example.com"]);
+
+    // Each of these would match all six rows if it were a wildcard. Each matches only the one address that holds the character.
+    expect(emails(await search("q=%25"))).toEqual(["100%_off@promo.example"]);
+    expect(emails(await search("q=_"))).toEqual(["100%_off@promo.example"]);
+    expect(emails(await search("q=%5C"))).toEqual(["o\\brien@example.com"]);
+    // Literal pairs that no address holds return nothing, not the whole column.
+    expect(emails(await search("q=%25%25"))).toEqual([]);
+    expect(emails(await search("q=%25a"))).toEqual([]);
+    expect(emails(await search("q=__"))).toEqual([]);
+    expect(emails(await search("q=_%25"))).toEqual([]);
+    expect(emails(await search("q=%5C%25"))).toEqual([]);
+    expect(emails(await search("q=a%25%25@"))).toEqual([]);
+    expect(emails(await search("q=%25_off"))).toEqual(["100%_off@promo.example"]);
+    expect(emails(await search("q=%25%5F"))).toEqual(["100%_off@promo.example"]);
+  });
+
+  it("pages ascending by email with no overlap", async () => {
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    const sizes: number[] = [];
+    const cursors: Array<string | null> = [];
+    do {
+      const page: SuppressionsResponse = await search(`limit=2${cursor === null ? "" : `&cursor=${cursor}`}`);
+      sizes.push(page.rows.length);
+      cursors.push(page.next_cursor);
+      seen.push(...emails(page));
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    expect(seen).toEqual(SEEDED);
+    expect(sizes).toEqual([2, 2, 2]);
+    expect(cursors[0]).toBe(cursorOf("alice@example.com"));
+    expect(cursors[1]).toBe(cursorOf("carol@test.example"));
+    expect(cursors[2]).toBeNull();
+
+    // Filters and the cursor combine.
+    const filtered = await search(`q=example.com&limit=2&cursor=${cursorOf("alice@example.com")}`);
+    expect(emails(filtered)).toEqual(["bob@example.com", "dave@example.com"]);
+    expect(filtered.next_cursor).toBe(cursorOf("dave@example.com"));
+    expect(emails(await search(`q=example.com&limit=2&cursor=${filtered.next_cursor}`))).toEqual(["o\\brien@example.com"]);
+    expect((await search("limit=6")).next_cursor).toBeNull();
+    expect((await search("limit=5")).next_cursor).toBe(cursorOf("dave@example.com"));
+  });
+
+  it("is 422 invalid for a cursor that is not a stored-email shape, and writes no audit row", async () => {
+    const before = await auditRows();
+    const bad = [
+      "@@@",
+      cursorOf("\u0000"),
+      cursorOf("a b@example.com"),
+      cursorOf("a\nb@example.com"),
+      cursorOf("a".repeat(255)),
+      "_w", // the single byte 0xFF, which is not UTF-8
+    ];
+    for (const cursor of bad) {
+      const response = await sh.admin(`/admin/suppressions?cursor=${cursor}`, owner);
+      expect(response.status, cursor).toBe(422);
+      expect(await response.json(), cursor).toMatchObject({ error: "invalid" });
+    }
+    expect((await sh.admin("/admin/suppressions?reason=spam", owner)).status).toBe(422);
+    expect((await sh.admin("/admin/suppressions?q=", owner)).status).toBe(422);
+    expect(await auditRows()).toBe(before);
+  });
+
+  it("writes one pii.suppression_search row with the query and the count and no email", async () => {
+    const before = await auditRows();
+    const page = await search("q=EXAMPLE.com&reason=manual&source=manual&limit=1");
+    expect(page.rows).toHaveLength(1);
+    expect(await auditRows()).toBe(before + 1);
+
+    const row = await lastAudit();
+    expect([row!.action, row!.entity_type, row!.entity_id, row!.actor_id, row!.actor_role])
+      .toEqual(["pii.suppression_search", "suppression", "search", owner.actor_id, "owner"]);
+    expect(row!.before_json).toBeNull();
+    // `q` is the actor's own input, kept as typed. `rows` counts the page returned, not the extra look-ahead row.
+    expect(JSON.parse(row!.after_json!)).toEqual({ q: "EXAMPLE.com", reason: "manual", source: "manual", rows: 1 });
+    for (const email of SEEDED) expect(row!.after_json, email).not.toContain(email);
+
+    await search("");
+    expect(JSON.parse((await lastAudit())!.after_json!)).toEqual({ q: null, reason: null, source: null, rows: 6 });
+    await search("q=%25");
+    expect(JSON.parse((await lastAudit())!.after_json!)).toEqual({ q: "%", reason: null, source: null, rows: 1 });
+    await search("q=nobody-matches-this");
+    expect(JSON.parse((await lastAudit())!.after_json!)).toMatchObject({ rows: 0 });
+    expect(await auditRows()).toBe(before + 4);
+
+    const listed = await sh.admin("/admin/audit?target_type=suppression", owner);
+    const [entry] = AuditListResponse.parse(await listed.json()).entries;
+    expect(AuditEntry.parse(entry)).toMatchObject({
+      action: "pii.suppression_search", target: { type: "suppression", id: "search" }, old: null,
+    });
+  });
+
+  it("returns no addresses when the audit insert fails", async () => {
+    await sh.factory.prepare("ALTER TABLE audit_log RENAME TO audit_log_offline").run();
+    let outcome: { status: number | null; text: string };
+    try {
+      outcome = await sh.admin("/admin/suppressions", owner).then(
+        async (response) => ({ status: response.status, text: await response.text() }),
+        (error: unknown) => ({ status: null, text: `${(error as Error).message}\n${(error as Error).stack ?? ""}` }),
+      );
+    } finally {
+      await sh.factory.prepare("ALTER TABLE audit_log_offline RENAME TO audit_log").run();
+    }
+    expect(outcome!.status).not.toBe(200);
+    for (const email of SEEDED) expect(outcome!.text, email).not.toContain(email);
   });
 });

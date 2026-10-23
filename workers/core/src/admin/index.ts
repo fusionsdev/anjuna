@@ -22,6 +22,7 @@ import {
   LeadExportQuery,
   LeadId,
   LeadsQuery,
+  SuppressionsQuery,
   adminContextFromHeaders,
   authorize,
   leadOutcome,
@@ -42,6 +43,7 @@ import {
   type LeadExportRow,
   type LeadListRow,
   type LeadsResponse,
+  type SuppressionsResponse,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
@@ -950,6 +952,82 @@ async function leadExport(url: URL, env: Env, context: AdminRequestContext): Pro
   return json(response);
 }
 
+/** `base64url(email)`. Suppressions page on `email ASC`, their primary key. */
+function encodeSuppressionCursor(email: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(email)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** A cursor must decode to something a stored address can be: non-empty, at most 254 characters, valid UTF-8, no whitespace or control characters. */
+function decodeSuppressionCursor(cursor: string): string | null {
+  try {
+    const binary = atob(cursor.replace(/-/g, "+").replace(/_/g, "/"));
+    const email = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+    return email.length >= 1 && email.length <= 254 && !/[\s\p{Cc}]/u.test(email) ? email : null;
+  } catch {
+    return null;
+  }
+}
+
+interface SuppressionSqlRow {
+  email: string;
+  reason: string;
+  source: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** Owner-only at the endpoint table: every row is an email address, so there is no non-PII view. */
+async function listSuppressions(url: URL, env: Env, context: AdminRequestContext): Promise<Response> {
+  const query = parseWith(SuppressionsQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+
+  const cursor = query.cursor === undefined ? null : decodeSuppressionCursor(query.cursor);
+  if (query.cursor !== undefined && cursor === null) {
+    return invalid(context, [{ path: "cursor", message: "Invalid cursor" }]);
+  }
+
+  const bindings: unknown[] = [];
+  const add = (value: unknown): string => {
+    bindings.push(value);
+    return `?${bindings.length}`;
+  };
+  const clauses: string[] = [];
+  // `q` is not restricted by the schema, so `%`, `_` and `\` reach this pattern and must be escaped.
+  if (query.q !== undefined) clauses.push(`email LIKE ${add(`%${likeEscape(query.q.toLowerCase())}%`)} ESCAPE '\\'`);
+  if (query.reason !== undefined) clauses.push(`reason = ${add(query.reason)}`);
+  if (query.source !== undefined) clauses.push(`source = ${add(query.source)}`);
+  if (cursor !== null) clauses.push(`email > ${add(cursor)}`);
+  const limit = query.limit ?? 50;
+
+  const result = await env.LEADS.prepare(
+    `SELECT email, reason, source, created_at, updated_at
+     FROM suppressions
+     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY email ASC
+     LIMIT ${add(limit + 1)}`,
+  ).bind(...bindings).all<SuppressionSqlRow>();
+
+  const page = result.results.slice(0, limit);
+  const last = page[page.length - 1];
+  // Fails closed, as getLead does: no try/catch. The row holds the actor's own query and a count, never an address from the rows.
+  await writeAudit(
+    env,
+    context,
+    "pii.suppression_search",
+    "suppression",
+    "search",
+    null,
+    { q: query.q ?? null, reason: query.reason ?? null, source: query.source ?? null, rows: page.length },
+    new Date().toISOString(),
+  );
+  const response: SuppressionsResponse = {
+    rows: page as SuppressionsResponse["rows"],
+    next_cursor: result.results.length > limit && last ? encodeSuppressionCursor(last.email) : null,
+  };
+  return json(response);
+}
+
 function encodeCursor(id: number): string {
   return btoa(String(id)).replace(/=+$/, "");
 }
@@ -1062,6 +1140,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   // spec leads
   if (route.endpoint === "listLeads") return listLeads(new URL(request.url), env, context);
   if (route.endpoint === "leadExport") return leadExport(new URL(request.url), env, context);
+  if (route.endpoint === "listSuppressions") return listSuppressions(new URL(request.url), env, context);
 
   if (route.endpoint === "listBrands") return listBrands(env);
   if (route.endpoint === "leadAggregates") return leadAggregates(new URL(request.url), env, context);
