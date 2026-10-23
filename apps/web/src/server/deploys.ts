@@ -131,8 +131,8 @@ async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHist
     .filter((e) => e.target.type === "brand" && isCoreDeployAuditAction(e.action) && BrandId.safeParse(e.target.id).success)
     .filter((e) => (!q.brand || e.target.id === q.brand) && (!onlyActor || e.actor_id === onlyActor))
     .flatMap((e) => auditEvent(`core-audit-${e.id}`, e.target.id, e.action, e.actor_id, e.actor_role, e.at) ?? []);
-  // Below the cap the extra row already makes the merged length exceed limit; only the capped request needs the cursor.
-  return { events, more: limit + 1 > CORE_AUDIT_MAX && parsed.data.next_cursor !== null };
+  // The filters above can drop rows from the limit+1 page, so only core's cursor says whether it holds more.
+  return { events, more: parsed.data.next_cursor !== null };
 }
 
 // Newest instant first; the text of the timestamp is no guide because offsets differ between rows.

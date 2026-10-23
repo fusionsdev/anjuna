@@ -282,7 +282,7 @@ async function startInstall(request: Request, env: Env, ctx: AdminRequestContext
 // Shared by rollback() and GET /api/brands/:id/revisions so the panel never shows a target the rollback would not pick.
 export async function rollbackTargetRevisionId(db: D1Database, brandId: string, currentRevisionId: string | null): Promise<string | null> {
   if (!currentRevisionId) return null;
-  const previous = await db.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY finished_at DESC LIMIT 1").bind(brandId, currentRevisionId).first<{ to_revision_id: string | null }>();
+  const previous = await db.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY julianday(finished_at) DESC LIMIT 1").bind(brandId, currentRevisionId).first<{ to_revision_id: string | null }>();
   return previous?.to_revision_id ?? null;
 }
 

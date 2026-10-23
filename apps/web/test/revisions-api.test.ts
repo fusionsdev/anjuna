@@ -20,12 +20,14 @@ beforeEach(async () => {
   const install = (id: string, brand: string, kind: string, status: string, to: string, finishedAt: string, startedAt = new Date(Date.parse(finishedAt) - 3_600_000).toISOString()) =>
     env.FACTORY.prepare("INSERT OR IGNORE INTO installs (install_id,brand_id,kind,from_revision_id,to_revision_id,status,started_by,started_role,started_at,finished_at) VALUES (?1,?2,?3,NULL,?4,?5,'seed-owner','owner',?6,?7)").bind(id, brand, kind, to, status, startedAt, finishedAt);
   await env.FACTORY.batch([
+    env.FACTORY.prepare("DELETE FROM brand_revisions WHERE revision_id = 'brand-b_rev_bad'"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-1','abcdef1','forms/fa-1','manifest','2026-01','form@abcdef1','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-a','Brand A','test-account','a.test','live','brand-a_rev_3','owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-b','Brand B','test-account','b.test','live','brand-b_rev_1','owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-c','Brand C','test-account','c.test','live','brand-c_rev_3','owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-e','Brand E','test-account','e.test','live','brand-e_rev_3','owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-d','Brand D','test-account','d.test','draft',NULL,'owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
   ]);
   await env.FACTORY.batch([
@@ -37,6 +39,9 @@ beforeEach(async () => {
     rev("brand-c_rev_2", "brand-c", 2),
     rev("brand-c_rev_3", "brand-c", 3),
     rev("brand-d_rev_1", "brand-d", 1),
+    rev("brand-e_rev_1", "brand-e", 1),
+    rev("brand-e_rev_2", "brand-e", 2),
+    rev("brand-e_rev_3", "brand-e", 3),
   ]);
   await env.FACTORY.batch([
     install("rev-a1", "brand-a", "install", "ready", "brand-a_rev_1", "2026-10-10T00:00:00.000Z"),
@@ -50,6 +55,11 @@ beforeEach(async () => {
     install("rev-c3", "brand-c", "rollback", "ready", "brand-c_rev_1", "2026-10-12T00:00:00.000Z", "2026-10-09T00:00:00.000Z"),
     install("rev-c2", "brand-c", "upgrade", "ready", "brand-c_rev_2", "2026-10-11T00:00:00.000Z"),
     install("rev-c4", "brand-c", "upgrade", "ready", "brand-c_rev_3", "2026-10-13T00:00:00.000Z"),
+    // brand-e: rev-e1 finished 2026-10-12T00:00Z, rev-e2 finished 2026-10-12T04:00Z. Text order puts rev-e1 first
+    // ("...-12T00" > "...-11T23"); instant order puts rev-e2 first.
+    install("rev-e1", "brand-e", "install", "ready", "brand-e_rev_1", "2026-10-12T00:00:00.000Z"),
+    install("rev-e2", "brand-e", "upgrade", "ready", "brand-e_rev_2", "2026-10-11T23:00:00-05:00"),
+    install("rev-e3", "brand-e", "upgrade", "ready", "brand-e_rev_3", "2026-10-14T00:00:00.000Z"),
   ]);
 });
 
@@ -101,6 +111,24 @@ describe("GET /api/brands/:id/revisions", () => {
     const { install_id } = await started.json() as { install_id: string };
     const row = await env.FACTORY.prepare("SELECT to_revision_id FROM installs WHERE install_id = ?1").bind(install_id).first<{ to_revision_id: string | null }>();
     expect(row?.to_revision_id).toBe("brand-c_rev_1");
+  });
+
+  it("orders the rollback target by instant across mixed offsets, in the route and in the queued rollback", async () => {
+    const body = await revisions("/api/brands/brand-e/revisions", employee);
+    expect(body.current_revision_id).toBe("brand-e_rev_3");
+    expect(body.rollback_target_revision_id).toBe("brand-e_rev_2");
+    const worker = { fetch: async () => Response.json({ instance_id: "rollback" }) } as unknown as Fetcher;
+    const started = await call("/api/brands/brand-e/rollback", { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER: worker }) });
+    expect(started.status).toBe(201);
+    const { install_id } = await started.json() as { install_id: string };
+    const row = await env.FACTORY.prepare("SELECT to_revision_id FROM installs WHERE install_id = ?1").bind(install_id).first<{ to_revision_id: string | null }>();
+    expect(row?.to_revision_id).toBe("brand-e_rev_2");
+  });
+
+  it("skips a revision whose created_at is not a date and still answers 200", async () => {
+    await env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES ('brand-b_rev_bad','brand-b',2,'tv-1','fa-1','{}','owner','not a date')").run();
+    const body = await revisions("/api/brands/brand-b/revisions", employee);
+    expect(body.revisions.map((r) => r.revision_id)).toEqual(["brand-b_rev_1"]);
   });
 
   it("returns null current and target for a brand that was never installed", async () => {

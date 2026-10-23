@@ -92,6 +92,17 @@ describe("latest_install on the lifecycle brand rows", () => {
     expect(latest).toMatchObject({ install_id: "inst-b2", status: "failed", started_at: "2026-10-21T04:30:00.000Z", finished_at: null });
   });
 
+  it("treats an offset without a colon and an expanded year as unparsable, so latest_install stays null", async () => {
+    // Date.parse reads both, julianday() reads neither: only the shared ISO rule keeps SQL order and JS parsing in step.
+    await env.FACTORY.batch([
+      install("inst-a6", "brand-a", "install", "ready", "brand-a_rev_1", "2026-10-21T01:00:00+0700", null),
+      install("inst-b4", "brand-b", "install", "ready", "brand-b_rev_1", "+010000-01-01T00:00:00Z", null),
+    ]);
+    const brands = await listBrands();
+    expect(brands.find((b) => b.brand_id === "brand-a")!.latest_install).toBeNull();
+    expect(brands.find((b) => b.brand_id === "brand-b")!.latest_install).toBeNull();
+  });
+
   it("keeps latest_install with a null finished_at when finished_at is unparsable", async () => {
     await env.FACTORY.batch([install("inst-b3", "brand-b", "install", "ready", "brand-b_rev_1", "2026-10-21T01:00:00.000Z", "garbage")]);
     const brands = await listBrands();

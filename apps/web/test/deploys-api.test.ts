@@ -27,7 +27,7 @@ beforeEach(async () => {
   const audit = (id: number, actor: string, role: string, action: string, entityType: string, entityId: string, at: string) =>
     env.FACTORY.prepare("INSERT OR IGNORE INTO audit_log (id,actor_id,actor_role,action,entity_type,entity_id,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)").bind(id, actor, role, action, entityType, entityId, at);
   await env.FACTORY.batch([
-    env.FACTORY.prepare("DELETE FROM installs WHERE install_id IN ('inst-bad', 'inst-fin')"),
+    env.FACTORY.prepare("DELETE FROM installs WHERE install_id IN ('inst-bad', 'inst-fin', 'inst-exp', 'inst-off')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-1','abcdef1','forms/fa-1','manifest','2026-01','form@abcdef1','2026-10-01T00:00:00Z')"),
@@ -167,6 +167,29 @@ describe("GET /api/deploys", () => {
     expect(body.events.find((e) => e.event_id === "inst-fin")!.finished_at).toBeNull();
   });
 
+  it("drops install rows whose started_at is an expanded year or an offset without a colon, and still answers 200", async () => {
+    // Date.parse reads both; julianday() reads neither, so the two layers would disagree about where the row belongs.
+    const insert = (id: string, startedAt: string) =>
+      env.FACTORY.prepare("INSERT INTO installs (install_id,brand_id,kind,status,to_revision_id,started_by,started_role,started_at,finished_at) VALUES (?1,'brand-a','install','ready','brand-a_rev_1','seed-owner','owner',?2,NULL)").bind(id, startedAt);
+    await env.FACTORY.batch([insert("inst-exp", "+010000-01-01T00:00:00Z"), insert("inst-off", "2026-10-21T01:00:00+0700")]);
+    const body = await deploys("/api/deploys?source=install&limit=50", owner);
+    expect(ids(body)).toEqual(["inst-b2", "inst-a1", "inst-b1", "inst-a2"]);
+  });
+
+  it("reports has_more when core holds more rows but the filters drop rows below the cap", async () => {
+    const core = { fetch: async () => Response.json({
+      entries: [
+        coreEntry(3001, "brand.update", "brand-ghost"),
+        coreEntry(3002, "install.start", "brand-ghost"),
+        coreEntry(3003, "install.failed", "brand-ghost"),
+      ],
+      next_cursor: "next",
+    }) } as unknown as Fetcher;
+    const body = await deploys("/api/deploys?brand=brand-ghost&limit=3", owner, makeEnv({ MOCK_CORE: undefined, CORE: core }));
+    expect(ids(body)).toEqual(["core-audit-3001"]);
+    expect(body.has_more).toBe(true);
+  });
+
   it("reports has_more at limit=200 when core holds more rows than its 200-row cap", async () => {
     const all = Array.from({ length: 201 }, (_, i) =>
       coreEntry(2000 + i, "brand.update", "brand-ghost", "core-owner", new Date(Date.UTC(2026, 9, 21, 12) - i * 60_000).toISOString()));
@@ -244,5 +267,12 @@ describe("GET /api/deploys", () => {
     expect(ids(body)).toContain("core-audit-910");
     expect(body.events.find((e) => e.event_id === "audit-910")!.action).toBe("brand.create");
     expect(body.events.find((e) => e.event_id === "core-audit-910")!.action).toBe("brand.update");
+  });
+
+  it("skips a factory audit row whose created_at is not a date and still answers 200", async () => {
+    await env.FACTORY.prepare("INSERT OR IGNORE INTO audit_log (id,actor_id,actor_role,action,entity_type,entity_id,created_at) VALUES (920,?1,'owner','brand.create','brand','brand-a','not a date')").bind(ownerId).run();
+    const body = await deploys("/api/deploys?source=audit&limit=50", owner);
+    expect(ids(body)).toContain("audit-101");
+    expect(ids(body)).not.toContain("audit-920");
   });
 });
