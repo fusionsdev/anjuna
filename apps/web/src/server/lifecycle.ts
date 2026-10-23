@@ -19,6 +19,8 @@ import {
   type CoreListError,
   type CoreListErrorCode,
   type InstallOperation,
+  type InstallStatus,
+  type LatestInstall,
   type BrandConfig,
   type GetBrandResponse,
 } from "@anjuna/contracts";
@@ -498,7 +500,9 @@ async function runtimeBrands(env: Env, ctx: AdminRequestContext, account: string
 
 type NewestForm = { form_artifact_id: string; bundle_form_version: string; created_at: string };
 
-function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never, newest: NewestForm | null): LifecycleBrandSummary {
+type LatestInstallRow = { install_id: string; brand_id: string; kind: string; status: InstallStatus; to_revision_id: string | null; started_by: string; started_at: string; finished_at: string | null };
+
+function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runtimeBrands> extends Promise<infer M> ? M : never, newest: NewestForm | null, latestInstalls: Map<string, LatestInstall>): LifecycleBrandSummary {
   const state = runtime.get(row.brand_id);
   return LifecycleBrandSummary.parse({
     brand_id: row.brand_id, name: typeof row.name === "string" && row.name ? row.name : undefined, account: row.account,
@@ -509,6 +513,7 @@ function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runti
     newer_form: newest && newest.form_artifact_id !== row.form_artifact_id && (typeof row.form_created_at !== "string" || newest.created_at > row.form_created_at)
       ? { form_artifact_id: newest.form_artifact_id, bundle_form_version: newest.bundle_form_version } : undefined,
     runtime_sync_status: state ? (state.applied_revision_id === row.current_revision_id ? "ready" : "sync_error") : row.status === "draft" ? "queued" : "sync_error",
+    latest_install: latestInstalls.get(row.brand_id) ?? null,
   });
 }
 
@@ -516,6 +521,17 @@ async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{
   const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version,fa.created_at AS form_created_at FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1)) LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
   const defaults = tenantDefaults(env);
   const newest = defaults ? await env.FACTORY.prepare(`SELECT form_artifact_id, bundle_form_version, created_at FROM form_artifacts WHERE ${COMPATIBLE_FORM} ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1`).bind(defaults.payload_version).first<NewestForm>() : null;
+  // spec brands (FUS-377): the newest install of every brand in one query. ROW_NUMBER with an install_id
+  // tie-break, not MAX(started_at): two installs of one brand can share started_at, and the higher id wins.
+  const installs = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,status,to_revision_id,started_by,started_at,finished_at FROM (SELECT *,ROW_NUMBER() OVER (PARTITION BY brand_id ORDER BY started_at DESC,install_id DESC) AS rn FROM installs) WHERE rn=1").all<LatestInstallRow>();
+  const latestInstalls = new Map<string, LatestInstall>(installs.results.map((row) => [row.brand_id, {
+    install_id: row.install_id,
+    operation: installOperation(row.kind, row.brand_id, row.to_revision_id),
+    status: row.status,
+    started_at: row.started_at,
+    finished_at: row.finished_at,
+    started_by: row.started_by,
+  }]));
   const account = env.DEFAULT_ACCOUNT ?? results[0]?.account;
   let runtime: Awaited<ReturnType<typeof runtimeBrands>> = new Map();
   let coreError: CoreListError | null = null;
@@ -528,8 +544,8 @@ async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{
       : { code: "core_list_fetch_failed", message: "Core brand list fetch failed" };
   }
   const factoryIds = new Set(results.map((row) => row.brand_id));
-  const merged = results.map((row) => withRuntimeState(row, runtime, newest));
-  for (const [brandId, state] of runtime) if (!factoryIds.has(brandId)) merged.push(LifecycleBrandSummary.parse({ brand_id: brandId, account, status: "unmanaged", current_revision_id: null, bundle_form_version: state.bundle_form_version, payload_version: null, hostnames: state.hostnames, runtime_sync_status: "ready" }));
+  const merged = results.map((row) => withRuntimeState(row, runtime, newest, latestInstalls));
+  for (const [brandId, state] of runtime) if (!factoryIds.has(brandId)) merged.push(LifecycleBrandSummary.parse({ brand_id: brandId, account, status: "unmanaged", current_revision_id: null, bundle_form_version: state.bundle_form_version, payload_version: null, hostnames: state.hostnames, runtime_sync_status: "ready", latest_install: null }));
   return { brands: merged, core_error: coreError };
 }
 
