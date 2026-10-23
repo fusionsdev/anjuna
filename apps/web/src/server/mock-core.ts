@@ -41,6 +41,7 @@ import suppressionsList from "@anjuna/contracts/fixtures/admin/suppressions.list
 import aggregates from "@anjuna/contracts/fixtures/admin/leads.aggregates.response.json";
 import alertsReport from "@anjuna/contracts/fixtures/admin/alerts.response.json";
 import brandsList from "@anjuna/contracts/fixtures/admin/brands.list.response.json";
+import conversionsReport from "@anjuna/contracts/fixtures/admin/conversions.response.json";
 import funnelReport from "@anjuna/contracts/fixtures/admin/funnel.response.json";
 import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.json";
 import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
@@ -336,6 +337,8 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, mailingStatus);
     case "spendReport":
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
+    case "conversionsReport":
+      return json(200, conversionsReport);
     case "trafficRisk":
       return json(200, trafficRisk);
     case "trafficRiskExport": {

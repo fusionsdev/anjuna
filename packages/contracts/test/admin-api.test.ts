@@ -23,6 +23,7 @@ import {
   BrandPatchResponse,
   BrandStatusChangeRequest,
   BrandStatusChangeResponse,
+  ConversionsReportResponse,
   DeployHistoryResponse,
   FunnelQuery,
   FunnelReportResponse,
@@ -84,6 +85,7 @@ describe("golden fixtures validate", () => {
     ["alerts.response.json", AlertsReportResponse],
     ["mailing.response.json", MailingStatusResponse],
     ["spend.response.json", SpendReportResponse],
+    ["conversions.response.json", ConversionsReportResponse],
     ["traffic-risk.response.json", TrafficRiskResponse],
     ["traffic-risk.export.response.json", TrafficRiskExportResponse],
     ["error.unauthorized.json", AdminError],
@@ -118,6 +120,7 @@ describe("golden fixtures validate", () => {
     expect(AdminApi.alertsReport.response.safeParse(fixture(A("alerts.response.json"))).success).toBe(true);
     expect(AdminApi.mailingStatus.response.safeParse(fixture(A("mailing.response.json"))).success).toBe(true);
     expect(AdminApi.spendReport.response.safeParse(fixture(A("spend.response.json"))).success).toBe(true);
+    expect(AdminApi.conversionsReport.response.safeParse(fixture(A("conversions.response.json"))).success).toBe(true);
     expect(AdminApi.trafficRisk.response.safeParse(fixture(A("traffic-risk.response.json"))).success).toBe(true);
     expect(AdminApi.trafficRiskExport.response.safeParse(fixture(A("traffic-risk.export.response.json"))).success).toBe(true);
   });
@@ -308,6 +311,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "Search the email suppression list", employee: "no", covered_by: ["listSuppressions"] },
   { action: "View audit log", employee: "own", covered_by: ["listAudit"] },
   { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport"] },
+  { action: "View conversion upload status, money hidden from employees (FUS-375)", employee: "yes", covered_by: ["conversionsReport"] },
 ];
 const PLAN_ROWS_OUT_OF_SCOPE = [
   "Add a brand (domain + keyword) and run install", // T10
@@ -395,6 +399,7 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/alerts")).toEqual({ endpoint: "alertsReport", params: {} });
     expect(matchAdminRoute("GET", "/admin/mailing")).toEqual({ endpoint: "mailingStatus", params: {} });
     expect(matchAdminRoute("GET", "/admin/spend")).toEqual({ endpoint: "spendReport", params: {} });
+    expect(matchAdminRoute("GET", "/admin/conversions")).toEqual({ endpoint: "conversionsReport", params: {} });
     expect(matchAdminRoute("GET", "/admin/traffic/risk")).toEqual({ endpoint: "trafficRisk", params: {} });
     expect(matchAdminRoute("GET", "/admin/traffic/risk/export")).toEqual({ endpoint: "trafficRiskExport", params: {} });
     expect(matchAdminRoute("DELETE", "/admin/brands/brand-a")).toBeNull();
@@ -403,7 +408,7 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/leads")).toEqual({ endpoint: "listLeads", params: {} });
     expect(matchAdminRoute("GET", "/admin/leads/export")).toEqual({ endpoint: "leadExport", params: {} });
     expect(matchAdminRoute("GET", "/admin/suppressions")).toEqual({ endpoint: "listSuppressions", params: {} });
-    expect(ADMIN_ENDPOINTS).toHaveLength(18);
+    expect(ADMIN_ENDPOINTS).toHaveLength(19);
   });
 });
 
