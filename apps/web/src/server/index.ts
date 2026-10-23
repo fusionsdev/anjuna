@@ -15,7 +15,6 @@ import {
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
-  LeadId,
   authorize,
   type AdminError,
   type AdminRequestContext,
@@ -32,6 +31,8 @@ import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
+import { handleLeadsRoute } from "./leads.js";
+import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
 import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleWizardRoute } from "./wizard.js";
@@ -185,16 +186,11 @@ async function route(
     return fromCore(await callCore(env, ctx, { endpoint: "leadAggregates", query: url.searchParams }));
   }
 
-  if ((m = path.match(/^\/api\/leads\/([^/]+)$/)) && method === "GET") {
-    // PII: owner only (plan: "View individual leads with PII").
-    const g = authorize("getLead", ctx.actor_role);
-    if (!g.ok) return forbidden(g.error, rid);
-    const rawLead = decodePathSegment(m[1]!);
-    if (rawLead === null) return notFound("lead", rid);
-    const id = LeadId.safeParse(rawLead);
-    if (!id.success) return notFound("lead", rid);
-    return fromCore(await callCore(env, ctx, { endpoint: "getLead", params: { lead_id: id.data } }));
-  }
+  // spec leads: after the aggregates arm above, or the lead id pattern captures it.
+  const leads = await handleLeadsRoute(request, env, url, path, ctx);
+  if (leads) return leads;
+  const suppressions = await handleSuppressionsRoute(request, env, url, path, ctx);
+  if (suppressions) return suppressions;
 
   // --- audit: core's rows (brand/config) plus the panel's own (sign-in, users) ---
   if (path === "/api/audit" && method === "GET") {

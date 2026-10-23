@@ -11,6 +11,7 @@ import {
   type AdminRequestContext,
 } from "@anjuna/contracts";
 import { callCore, type CoreResult } from "./core.js";
+import { csvRows } from "./csv.js";
 import type { Env } from "./env.js";
 
 const json = (status: number, body: unknown): Response =>
@@ -20,22 +21,13 @@ const json = (status: number, body: unknown): Response =>
   });
 const fromCore = (r: CoreResult): Response => json(r.status, r.body);
 
-/**
- * One CSV cell. A leading = + - @ or control character gets a ' so a spreadsheet does not run it
- * as a formula; a cell with a comma, quote or line break is quoted.
- */
-export function csvCell(value: string | number | null): string {
-  let text = value === null ? "" : String(value);
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
+export { csvCell } from "./csv.js";
 
 export function riskCsv(body: TrafficRiskExportResponse): string {
-  const lines = [RISK_EXPORT_COLUMNS.join(",")];
-  for (const row of body.rows) {
-    lines.push([row.gclid, row.hostname, row.score, row.signals.join(";"), row.created_at].map(csvCell).join(","));
-  }
-  return `${lines.join("\r\n")}\r\n`;
+  return csvRows(
+    RISK_EXPORT_COLUMNS,
+    body.rows.map((row) => ({ ...row, signals: row.signals.join(";") })),
+  );
 }
 
 export async function handleTrafficRiskRoute(

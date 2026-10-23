@@ -3,9 +3,11 @@ import {
   AdminError,
   AuditListResponse,
   BRAND_PATCH_FIELD_GROUPS,
+  GetLeadResponse,
   ListBrandsResponse,
   BrandPatchResponse,
 } from "@anjuna/contracts";
+import lead from "@anjuna/contracts/fixtures/admin/lead.get.response.json";
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PANEL_ROLE_TABLE } from "../src/server/panel-roles";
@@ -142,7 +144,20 @@ describe("employee is denied what the role table withholds (403 forbidden_role)"
     expect(brand).toMatchObject({ brand: { keyword_default: "Fast Cash Loans", aid: "10001" } });
   });
   it("PII lead detail", async () => {
-    await expectForbidden(await call(`/api/leads/${LEAD_ID}`, { cookie: employee }));
+    // Core redacts by field; the endpoint is open to an employee, who gets no applicant block.
+    const res = await call(`/api/leads/${LEAD_ID}`, { cookie: employee });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    for (const [key, value] of Object.entries(lead.lead.applicant)) {
+      if (["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip"].includes(key) && value !== null) {
+        expect(text, key).not.toContain(String(value));
+      }
+    }
+    const body = GetLeadResponse.parse(JSON.parse(text));
+    expect(body.lead.applicant).toBeNull();
+    // Money is owner-only.
+    expect(body.lead.postbacks.map((p) => p.payout)).toEqual([null, null]);
+    expect(body.lead.conversion).toMatchObject({ value: null, last_error: null });
   });
   it("user management", async () => {
     await expectForbidden(await call("/api/users", { cookie: employee }));
@@ -200,7 +215,12 @@ describe("owner can do all of it", () => {
   it("reads PII lead detail", async () => {
     const res = await call(`/api/leads/${LEAD_ID}`, { cookie: owner });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ lead: { lead_id: LEAD_ID } });
+    const body = GetLeadResponse.parse(await res.json());
+    expect(body.lead.lead_id).toBe(LEAD_ID);
+    expect(body.lead.applicant).not.toBeNull();
+    expect(body.lead.profile.state).toBe("TX");
+    expect(body.lead.conversion).not.toBeNull();
+    expect(typeof body.lead.conversion?.value).toBe("number");
     expect((await call("/api/leads/00000000-0000-0000-0000-000000000000", { cookie: owner })).status).toBe(404);
   });
 

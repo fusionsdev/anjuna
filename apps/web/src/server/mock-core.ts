@@ -17,6 +17,9 @@ import {
   SpendQuery,
   TrafficRiskExportQuery,
   TrafficRiskQuery,
+  LeadsQuery,
+  LeadExportQuery,
+  SuppressionsQuery,
   TrafficBreakdownQuery,
   trafficWindow,
   adminContextFromHeaders,
@@ -30,6 +33,11 @@ import {
 import auditOwner from "@anjuna/contracts/fixtures/admin/audit.list.response.owner.json";
 import brandA from "@anjuna/contracts/fixtures/admin/brand.get.response.json";
 import lead from "@anjuna/contracts/fixtures/admin/lead.get.response.json";
+import leadEmployee from "@anjuna/contracts/fixtures/admin/lead.get.response.employee.json";
+import leadsList from "@anjuna/contracts/fixtures/admin/leads.list.response.json";
+import leadsExport from "@anjuna/contracts/fixtures/admin/leads.export.response.json";
+import leadsExportPii from "@anjuna/contracts/fixtures/admin/leads.export.response.pii.json";
+import suppressionsList from "@anjuna/contracts/fixtures/admin/suppressions.list.response.json";
 import aggregates from "@anjuna/contracts/fixtures/admin/leads.aggregates.response.json";
 import alertsReport from "@anjuna/contracts/fixtures/admin/alerts.response.json";
 import brandsList from "@anjuna/contracts/fixtures/admin/brands.list.response.json";
@@ -142,6 +150,9 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   let patch: BrandPatchRequest | undefined;
   let reason: string | undefined;
   let auditQuery: AuditQuery | undefined;
+  // spec leads
+  let leadsQuery: LeadsQuery | undefined;
+  let leadExportQuery: LeadExportQuery | undefined;
   if (endpoint === "patchBrand") {
     const p = BrandPatchRequest.safeParse(raw);
     if (!p.success) return err({ error: "invalid", request_id: rid, issues: issues(p.error) });
@@ -169,6 +180,18 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "trafficRisk" || endpoint === "trafficRiskExport") {
     const q = (endpoint === "trafficRisk" ? TrafficRiskQuery : TrafficRiskExportQuery).safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "listLeads") {
+    // spec leads
+    const q = LeadsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+    leadsQuery = q.data;
+  } else if (endpoint === "leadExport") {
+    const q = LeadExportQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+    leadExportQuery = q.data;
+  } else if (endpoint === "listSuppressions") {
+    const q = SuppressionsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   }
 
   if (endpoint === "trafficBreakdown") {
@@ -182,6 +205,11 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   if (endpoint === "patchBrand" && patch) {
     const fields = authorize(endpoint, ctx.actor_role, patch);
     if (!fields.ok) return err({ ...fields.error, request_id: rid });
+  }
+  // spec leads: a boolean, because the parsed `pii` is the string "0" | "1" and "0" is truthy.
+  if (endpoint === "leadExport" && leadExportQuery) {
+    const pii = authorize(endpoint, ctx.actor_role, { pii: leadExportQuery.pii === "1" });
+    if (!pii.ok) return err({ ...pii.error, request_id: rid });
   }
   if (endpoint === "listAudit" && ctx.actor_role !== "owner" && auditQuery?.actor_id && auditQuery.actor_id !== ctx.actor_id) {
     return err({ error: "forbidden_role", required_role: "owner", request_id: rid });
@@ -268,7 +296,27 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, aggregates);
     case "getLead":
       if (params.lead_id !== lead.lead.lead_id) return err({ error: "not_found", resource: "lead", request_id: rid });
-      return json(200, lead);
+      // The two fixtures differ exactly in the PII and money fields, so no redaction happens here.
+      return json(200, ctx.actor_role !== "owner" ? leadEmployee : lead);
+    // spec leads
+    // The mock filters by brand and status only. It ignores the day window, `q`, `limit` and the
+    // cursor, so `next_cursor` is always null; that is not a bug. It writes no audit row either:
+    // real core owns the PII audit and the mock has no factory D1 to write it to.
+    case "listLeads": {
+      const rows = leadsList.rows.filter(
+        (r) => (!leadsQuery?.brand || r.brand === leadsQuery.brand) && (!leadsQuery?.status || r.outcome === leadsQuery.status),
+      );
+      return json(200, { rows, next_cursor: null });
+    }
+    case "leadExport": {
+      const source = leadExportQuery?.pii === "1" ? leadsExportPii : leadsExport;
+      const rows = source.rows.filter(
+        (r) => (!leadExportQuery?.brand || r.brand === leadExportQuery.brand) && (!leadExportQuery?.status || r.outcome === leadExportQuery.status),
+      );
+      return json(200, { ...source, rows });
+    }
+    case "listSuppressions":
+      return json(200, { ...suppressionsList, next_cursor: null });
     case "listAudit": {
       const own = gate.ok && gate.scope === "own";
       const limit = auditQuery?.limit ?? 50;

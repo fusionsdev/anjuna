@@ -354,7 +354,7 @@ export const LeadAggregatesResponse = z.strictObject({
 });
 export type LeadAggregatesResponse = z.infer<typeof LeadAggregatesResponse>;
 
-// --- GET /admin/leads/:lead_id (owner only, PII) -------------------------------------------------
+// --- GET /admin/leads/:lead_id (PII fields owner-only, redacted by core) -------------------------
 
 export const LeadId = z.string().regex(/^[A-Za-z0-9-]{8,64}$/, "Invalid lead_id");
 
@@ -383,9 +383,45 @@ export const LeadApplicant = z.strictObject({
 });
 export type LeadApplicant = z.infer<typeof LeadApplicant>;
 
+// spec leads (declared here because LeadDetail below needs both before the main block)
+/** Eligibility fields that identify nobody on their own. Both roles receive them. */
+export const LeadProfile = LeadApplicant.pick({
+  state: true,
+  address_length_months: true,
+  own_home: true,
+  income_type: true,
+  employer: true,
+  job_title: true,
+  employed_months: true,
+  pay_date1: true,
+  pay_frequency: true,
+  direct_deposit: true,
+  monthly_income: true,
+});
+export type LeadProfile = z.infer<typeof LeadProfile>;
+
+/** Which click id the conversion upload carries. Never the id itself. */
+export const LEAD_CLICK_TYPES = ["gclid", "gbraid", "wbraid", "msclkid", "none"] as const;
+
+/** One `conversion_uploads` row as lead detail shows it. `value` and `last_error` are owner-only. */
+export const LeadConversion = z.strictObject({
+  status: z.enum(["pending", "processing", "uploaded", "dead"]),
+  click_type: z.enum(LEAD_CLICK_TYPES),
+  currency: z.string().length(3),
+  occurred_at: Timestamp,
+  attempts: Count,
+  next_attempt_at: Timestamp.nullable(),
+  created_at: Timestamp,
+  updated_at: Timestamp.nullable(),
+  value: z.number().min(0).nullable(),
+  last_error: z.string().max(300).nullable(),
+});
+export type LeadConversion = z.infer<typeof LeadConversion>;
+
 export const LeadPostbackEvent = z.strictObject({
   event_type: z.string().max(32),
-  payout: z.number().min(0),
+  /** Null for any role other than owner. */
+  payout: z.number().min(0).nullable(),
   created_at: Timestamp,
 });
 
@@ -403,8 +439,12 @@ export const LeadDetail = z.strictObject({
   keyword: z.string().max(60).nullable(),
   requested_amount: z.number().int().positive(),
   loan_purpose: z.string(),
-  applicant: LeadApplicant,
+  /** Null unless the caller is the owner. */
+  applicant: LeadApplicant.nullable(),
+  profile: LeadProfile,
   postbacks: z.array(LeadPostbackEvent),
+  /** Null when no `conversion_uploads` row exists. */
+  conversion: LeadConversion.nullable(),
   created_at: Timestamp,
   updated_at: Timestamp.nullable(),
 });
@@ -413,10 +453,150 @@ export type LeadDetail = z.infer<typeof LeadDetail>;
 export const GetLeadResponse = z.strictObject({ lead: LeadDetail });
 export type GetLeadResponse = z.infer<typeof GetLeadResponse>;
 
+// spec leads
+// --- GET /admin/leads, GET /admin/leads/export, GET /admin/suppressions (FUS-376) ----------------
+
+/**
+ * Shared lead filter. `q` matches `lead_id` by prefix or `click_id` exactly and never an email or
+ * a phone number. No refinement here so `.extend()` stays legal; the window rules sit on each
+ * query below. With both days absent core uses the last 30 days.
+ */
+export const LeadFilter = z.strictObject({
+  brand: BrandId.optional(),
+  from: Day.optional(),
+  to: Day.optional(),
+  status: LeadOutcome.optional(),
+  q: z.string().regex(/^[A-Za-z0-9-]{4,64}$/).optional(),
+});
+export type LeadFilter = z.infer<typeof LeadFilter>;
+
+type LeadWindow = { from?: string | undefined; to?: string | undefined };
+const leadWindowOrdered = (q: LeadWindow) => q.from === undefined || q.to === undefined || q.from <= q.to;
+const leadWindowShort = (q: LeadWindow) =>
+  q.from === undefined || q.to === undefined || (Date.parse(q.to) - Date.parse(q.from)) / 86_400_000 + 1 <= LEAD_AGGREGATES_MAX_DAYS;
+
+/** Opaque to the contract; the shape (`base64url(created_at|lead_id)`) is core's. */
+export const LeadCursor = z.string().regex(/^[A-Za-z0-9_-]{1,344}$/);
+
+/** What a decoded lead cursor must hold: the same `created_at` and `lead_id` shapes a list row has. */
+export const LeadCursorKey = z.strictObject({ created_at: Timestamp, lead_id: LeadId });
+export type LeadCursorKey = z.infer<typeof LeadCursorKey>;
+
+export const LeadsQuery = LeadFilter.extend({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  cursor: LeadCursor.optional(),
+})
+  .refine(leadWindowOrdered, "from must not be after to")
+  .refine(leadWindowShort, `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days`);
+export type LeadsQuery = z.infer<typeof LeadsQuery>;
+
+/** No PII for any role, so the bytes are the same for an employee and an owner. */
+export const LeadListRow = z.strictObject({
+  lead_id: LeadId,
+  /** Not `BrandId`: old `leads.brand` values predate the pattern. */
+  brand: z.string().min(1),
+  hostname: Hostname,
+  status: z.string().max(32),
+  outcome: LeadOutcome,
+  requested_amount: z.number().int().positive(),
+  loan_purpose: z.string(),
+  state: z.string().length(2),
+  keyword: z.string().max(60).nullable(),
+  variant: VariantId.nullable(),
+  form_variant: z.string().max(64),
+  has_conversion: z.boolean(),
+  postback_count: Count,
+  created_at: Timestamp,
+});
+export type LeadListRow = z.infer<typeof LeadListRow>;
+
+export const LeadsResponse = z.strictObject({
+  rows: z.array(LeadListRow),
+  next_cursor: z.string().nullable(),
+});
+export type LeadsResponse = z.infer<typeof LeadsResponse>;
+
+export const LEAD_EXPORT_LIMIT = 5_000;
+
+export const LeadExportQuery = LeadFilter.extend({
+  pii: z.enum(["0", "1"]).default("0"),
+  limit: z.coerce.number().int().min(1).max(LEAD_EXPORT_LIMIT).default(LEAD_EXPORT_LIMIT),
+})
+  .refine(leadWindowOrdered, "from must not be after to")
+  .refine(leadWindowShort, `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days`);
+export type LeadExportQuery = z.infer<typeof LeadExportQuery>;
+
+/**
+ * One schema for both column sets: the PII fields are present only when `pii` is true. The row
+ * never carries `click_id` or any click id value.
+ */
+export const LeadExportRow = LeadListRow.extend(
+  LeadApplicant.omit({ state: true }).partial().shape,
+);
+export type LeadExportRow = z.infer<typeof LeadExportRow>;
+
+/** CSV column order without PII. */
+export const LEAD_EXPORT_COLUMNS = [
+  "lead_id", "brand", "hostname", "status", "outcome", "requested_amount", "loan_purpose",
+  "state", "keyword", "variant", "form_variant", "has_conversion", "postback_count", "created_at",
+] as const satisfies readonly (keyof LeadExportRow)[];
+
+/** CSV column order with PII: `LEAD_EXPORT_COLUMNS` first, then the nine PII fields and the profile fields. */
+export const LEAD_EXPORT_PII_COLUMNS = [
+  ...LEAD_EXPORT_COLUMNS,
+  "first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip",
+  "address_length_months", "own_home", "income_type", "employer", "job_title", "employed_months",
+  "pay_date1", "pay_frequency", "direct_deposit", "monthly_income",
+] as const satisfies readonly (keyof LeadExportRow)[];
+
+export const LeadExportResponse = z.strictObject({
+  rows: z.array(LeadExportRow),
+  /** True when more than `LEAD_EXPORT_LIMIT` rows matched; core returns the newest ones. */
+  truncated: z.boolean(),
+  pii: z.boolean(),
+});
+export type LeadExportResponse = z.infer<typeof LeadExportResponse>;
+
+export const SuppressionReason = z.enum(["blocklisted", "unsubscribed", "complaint", "bounce", "manual"]);
+export type SuppressionReason = z.infer<typeof SuppressionReason>;
+export const SuppressionSource = z.enum(["listmonk", "ses", "manual"]);
+export type SuppressionSource = z.infer<typeof SuppressionSource>;
+
+/** `base64url(email)`. 254 characters of up to 4 UTF-8 bytes each is 1,016 bytes, 1,355 base64url characters. */
+export const SuppressionCursor = z.string().regex(/^[A-Za-z0-9_-]{1,1356}$/);
+
+export const SuppressionsQuery = z.strictObject({
+  /** Matched as a lowercased substring of the email. */
+  q: z.string().min(1).max(254).optional(),
+  reason: SuppressionReason.optional(),
+  source: SuppressionSource.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  cursor: SuppressionCursor.optional(),
+});
+export type SuppressionsQuery = z.infer<typeof SuppressionsQuery>;
+
+/** Every row is an email, so the endpoint is owner-only. */
+export const SuppressionsResponse = z.strictObject({
+  rows: z.array(
+    z.strictObject({
+      email: z.string().max(254),
+      reason: SuppressionReason,
+      source: SuppressionSource,
+      created_at: Timestamp,
+      updated_at: Timestamp.nullable(),
+    }),
+  ),
+  next_cursor: z.string().nullable(),
+});
+export type SuppressionsResponse = z.infer<typeof SuppressionsResponse>;
+
 // --- GET /admin/audit ----------------------------------------------------------------------------
 
 /** Actions core writes for this API. Factory rows (install.start, template.seal, ...) also appear. */
-export const ADMIN_AUDIT_ACTIONS = ["brand.update", "brand.pause", "brand.resume"] as const;
+export const ADMIN_AUDIT_ACTIONS = [
+  "brand.update", "brand.pause", "brand.resume",
+  "pii.lead_view", "pii.lead_export", "lead.export", "pii.suppression_search",
+] as const;
 
 export const AuditActorRole = z.enum(["owner", "employee", "system"]);
 
@@ -676,8 +856,33 @@ export const AdminApi = {
   getLead: {
     method: "GET",
     path: "/admin/leads/:lead_id",
-    min_role: "owner",
+    /** Endpoint floor. The PII fields inside stay owner-only: core redacts them by role. */
+    min_role: "employee",
     response: GetLeadResponse,
+  },
+  // spec leads
+  listLeads: {
+    method: "GET",
+    path: "/admin/leads",
+    min_role: "employee",
+    query: LeadsQuery,
+    response: LeadsResponse,
+  },
+  /** `pii=1` is owner-only, enforced by `authorize()`; every export is audited. */
+  leadExport: {
+    method: "GET",
+    path: "/admin/leads/export",
+    min_role: "employee",
+    query: LeadExportQuery,
+    response: LeadExportResponse,
+  },
+  /** Every row is an email: owner-only, and every search is audited. */
+  listSuppressions: {
+    method: "GET",
+    path: "/admin/suppressions",
+    min_role: "owner",
+    query: SuppressionsQuery,
+    response: SuppressionsResponse,
   },
   listAudit: {
     method: "GET",
@@ -827,7 +1032,10 @@ export type AuthorizeResult =
 /**
  * Role check for one call. For `patchBrand` pass the (parsed or raw) body: every present key
  * whose group needs a higher role is listed in `denied_fields`. An unknown key is treated as
- * owner-only, so the check fails closed. `scope: "own"` means core must filter to the actor's
+ * owner-only, so the check fails closed. For `leadExport` pass `{ pii }`: a truthy `pii` from a
+ * non-owner is denied. Pass a boolean, for example `{ pii: query.pii === "1" }`:
+ * `LeadExportQuery.pii` is the string `"0" | "1"`, and `"0"` is truthy, so the parsed query
+ * object would deny a non-PII export. `scope: "own"` means core must filter to the actor's
  * own rows (audit log).
  */
 export function authorize(endpoint: AdminEndpoint, role: AdminRole, patch?: Record<string, unknown>): AuthorizeResult {
@@ -846,16 +1054,24 @@ export function authorize(endpoint: AdminEndpoint, role: AdminRole, patch?: Reco
       return { ok: false, status: 403, error: { error: "forbidden_role", required_role: "owner", denied_fields: denied } };
     }
   }
+  // spec leads
+  if (endpoint === "leadExport" && patch?.pii && !roleAtLeast(role, "owner")) {
+    return { ok: false, status: 403, error: { error: "forbidden_role", required_role: "owner", denied_fields: ["pii"] } };
+  }
   const ownOnly = "audit_scope" in def && def.audit_scope === "own_for_employee" && role !== "owner";
   return { ok: true, scope: ownOnly ? "own" : "all" };
 }
 
-/** Match a request to an endpoint (core router and the panel's mock core). */
+/**
+ * Match a request to an endpoint (core router and the panel's mock core). A path with no `:param`
+ * wins over one with params, whatever the table order: `/admin/leads/export` is not a lead id.
+ */
 export function matchAdminRoute(
   method: string,
   pathname: string,
 ): { endpoint: AdminEndpoint; params: Record<string, string> } | null {
   const parts = pathname.replace(/\/+$/, "").split("/");
+  let withParams: { endpoint: AdminEndpoint; params: Record<string, string> } | null = null;
   for (const e of ADMIN_ENDPOINTS) {
     const def = AdminApi[e];
     if (def.method !== method.toUpperCase()) continue;
@@ -871,7 +1087,9 @@ export function matchAdminRoute(
         else params[t.slice(1)] = decodeURIComponent(p);
       } else if (t !== p) ok = false;
     }
-    if (ok) return { endpoint: e, params };
+    if (!ok) continue;
+    if (Object.keys(params).length === 0) return { endpoint: e, params };
+    withParams ??= { endpoint: e, params };
   }
-  return null;
+  return withParams;
 }

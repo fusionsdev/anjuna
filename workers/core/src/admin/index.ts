@@ -14,7 +14,15 @@ import {
   BrandPatchRequest,
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
+  LEAD_AGGREGATES_MAX_DAYS,
+  LEAD_EXPORT_COLUMNS,
+  LEAD_EXPORT_PII_COLUMNS,
+  LeadConversion,
+  LeadCursorKey,
+  LeadExportQuery,
   LeadId,
+  LeadsQuery,
+  SuppressionsQuery,
   adminContextFromHeaders,
   authorize,
   leadOutcome,
@@ -29,7 +37,13 @@ import {
   type BrandStatus,
   type BrandStatusChangeResponse,
   type LeadAggregateRow,
+  type LeadApplicant,
   type LeadDetail,
+  type LeadExportResponse,
+  type LeadExportRow,
+  type LeadListRow,
+  type LeadsResponse,
+  type SuppressionsResponse,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
@@ -269,22 +283,26 @@ async function getBrandRow(db: D1Database, brandId: string): Promise<BrandRow | 
 async function writeAudit(
   env: Env,
   context: AdminRequestContext,
-  action: "brand.update" | "brand.pause" | "brand.resume",
-  brandId: string,
-  oldValue: JsonRecord,
+  action:
+    | "brand.update" | "brand.pause" | "brand.resume"
+    | "pii.lead_view" | "pii.lead_export" | "lead.export" | "pii.suppression_search",
+  entityType: "brand" | "lead" | "lead_export" | "suppression",
+  entityId: string,
+  oldValue: JsonRecord | null,
   newValue: JsonRecord,
   at: string,
 ): Promise<number> {
   const result = await env.FACTORY.prepare(
     `INSERT INTO audit_log
       (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
-     VALUES (?1, ?2, ?3, 'brand', ?4, ?5, ?6, ?7)`,
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
   ).bind(
     context.actor_id,
     context.actor_role,
     action,
-    brandId,
-    JSON.stringify(oldValue),
+    entityType,
+    entityId,
+    oldValue === null ? null : JSON.stringify(oldValue),
     JSON.stringify(newValue),
     at,
   ).run();
@@ -456,7 +474,7 @@ async function patchBrand(
       newValue[change.field] = change.next;
     }
   }
-  const auditId = await writeAudit(env, context, "brand.update", brandId, oldValue, newValue, updatedAt);
+  const auditId = await writeAudit(env, context, "brand.update", "brand", brandId, oldValue, newValue, updatedAt);
   const updated = await getBrandRow(env.LEADS, brandId);
   if (!updated) throw new Error("Updated brand disappeared");
 
@@ -510,7 +528,7 @@ async function changeBrandStatus(
   const action = status === "paused" ? "brand.pause" : "brand.resume";
   const newValue: JsonRecord = { status };
   if (parsed.reason !== undefined) newValue.reason = parsed.reason;
-  const auditId = await writeAudit(env, context, action, brandId, { status: current }, newValue, updatedAt);
+  const auditId = await writeAudit(env, context, action, "brand", brandId, { status: current }, newValue, updatedAt);
   const response: BrandStatusChangeResponse = { brand_id: brandId, status, changed: true, audit_id: auditId };
   return json(response);
 }
@@ -559,25 +577,15 @@ async function getLead(
   context: AdminRequestContext,
   leadId: string,
 ): Promise<Response> {
+  const isOwner = context.actor_role === "owner";
   const row = await env.LEADS.prepare("SELECT * FROM leads WHERE lead_id = ?1").bind(leadId).first<LeadRow>();
   if (!row) return adminError(context, { error: "not_found", resource: "lead" });
   const postbacks = await env.LEADS.prepare(
     "SELECT event_type, payout, created_at FROM postback_events WHERE lead_id = ?1 ORDER BY created_at, id",
   ).bind(leadId).all<{ event_type: string; payout: number; created_at: string }>();
-  const detail: LeadDetail = {
-    lead_id: row.lead_id,
-    brand_id: row.brand,
-    hostname: row.hostname,
-    status: row.status,
-    outcome: leadOutcome(row.status),
-    form_version: row.form_version,
-    form_variant: row.form_variant,
-    experiment_id: row.experiment_id,
-    variant: row.variant?.toLowerCase() ?? null,
-    keyword: row.keyword,
-    requested_amount: Number(row.requested_amount),
-    loan_purpose: row.loan_purpose,
-    applicant: {
+  const upload = await loadLeadConversion(env, leadId);
+  const applicant: LeadApplicant | null = isOwner
+    ? {
       first_name: row.first_name,
       last_name: row.last_name,
       birth_date: row.birth_date,
@@ -598,16 +606,426 @@ async function getLead(
       pay_frequency: row.pay_frequency,
       direct_deposit: row.direct_deposit === 1,
       monthly_income: Number(row.monthly_income),
+    }
+    : null;
+  const detail: LeadDetail = {
+    lead_id: row.lead_id,
+    brand_id: row.brand,
+    hostname: row.hostname,
+    status: row.status,
+    outcome: leadOutcome(row.status),
+    form_version: row.form_version,
+    form_variant: row.form_variant,
+    experiment_id: row.experiment_id,
+    variant: row.variant?.toLowerCase() ?? null,
+    keyword: row.keyword,
+    requested_amount: Number(row.requested_amount),
+    loan_purpose: row.loan_purpose,
+    applicant,
+    profile: {
+      state: row.state,
+      address_length_months: Number(row.address_length_months),
+      own_home: row.own_home === 1,
+      income_type: row.income_type,
+      employer: row.employer,
+      job_title: row.job_title,
+      employed_months: Number(row.employed_months),
+      pay_date1: row.pay_date1,
+      pay_frequency: row.pay_frequency,
+      direct_deposit: row.direct_deposit === 1,
+      monthly_income: Number(row.monthly_income),
     },
     postbacks: postbacks.results.map((event) => ({
       event_type: event.event_type,
-      payout: Number(event.payout),
+      payout: isOwner ? Number(event.payout) : null,
       created_at: event.created_at,
     })),
+    conversion: upload === null ? null : {
+      status: conversionStatus(upload.status),
+      click_type: upload.click_type,
+      currency: upload.currency,
+      occurred_at: upload.occurred_at,
+      attempts: Number(upload.attempts),
+      next_attempt_at: upload.next_attempt_at,
+      created_at: upload.created_at,
+      updated_at: upload.updated_at,
+      value: isOwner ? Number(upload.value) : null,
+      // The drain stores its raw error; the contract caps it at 300 and the panel rejects the whole page past that.
+      last_error: isOwner ? (upload.last_error?.slice(0, 300) ?? null) : null,
+    },
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+  // Fails closed: no try/catch, so an audit insert that throws keeps the PII body unsent. The throw
+  // crosses the service binding as a rejected fetch, not a 500, and the panel's callCore maps that to
+  // 502 bad_gateway, so core has no status code of its own to assert for this path.
+  if (applicant !== null) {
+    await writeAudit(env, context, "pii.lead_view", "lead", leadId, null, { fields: PII_LEAD_FIELDS }, new Date().toISOString());
+  }
   return json({ lead: detail });
+}
+
+// spec leads
+/** Names of the lead columns that are PII. An audit row records these names, never the values. */
+export const PII_LEAD_FIELDS = [
+  "first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip",
+] as const satisfies ReadonlyArray<keyof LeadApplicant>;
+
+/** `conversion_uploads.status` is free text the drain writes; anything unknown reads as pending. */
+function conversionStatus(raw: string): LeadConversion["status"] {
+  const parsed = LeadConversion.shape.status.safeParse(raw);
+  return parsed.success ? parsed.data : "pending";
+}
+
+interface LeadConversionSqlRow {
+  status: string;
+  click_type: LeadConversion["click_type"];
+  value: number;
+  currency: string;
+  occurred_at: string;
+  attempts: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** Click id values stay in D1: the query returns only which column is set. */
+async function loadLeadConversion(env: Env, leadId: string): Promise<LeadConversionSqlRow | null> {
+  return env.LEADS.prepare(
+    `SELECT status,
+       CASE WHEN gclid IS NOT NULL THEN 'gclid'
+            WHEN gbraid IS NOT NULL THEN 'gbraid'
+            WHEN wbraid IS NOT NULL THEN 'wbraid'
+            WHEN msclkid IS NOT NULL THEN 'msclkid'
+            ELSE 'none' END AS click_type,
+       value, currency, occurred_at, attempts, last_error, next_attempt_at, created_at, updated_at
+     FROM conversion_uploads WHERE lead_id = ?1`,
+  ).bind(leadId).first<LeadConversionSqlRow>();
+}
+
+/** `base64url("<created_at>|<lead_id>")`. Leads page on `(created_at DESC, lead_id DESC)`. */
+export function encodeLeadCursor(createdAt: string, leadId: string): string {
+  return btoa(`${createdAt}|${leadId}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function decodeLeadCursor(cursor: string): { created_at: string; lead_id: string } | null {
+  try {
+    const text = atob(cursor.replace(/-/g, "+").replace(/_/g, "/"));
+    const separator = text.indexOf("|");
+    if (separator < 0) return null;
+    // A malformed timestamp would reach SQL as a string comparison and return a wrong page, not an error.
+    const parsed = LeadCursorKey.safeParse({
+      created_at: text.slice(0, separator),
+      lead_id: text.slice(separator + 1),
+    });
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Escapes `%`, `_` and `\` for a `LIKE ... ESCAPE '\'` pattern so user input cannot widen a match. */
+export function likeEscape(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+/** UTC calendar days, `YYYY-MM-DD`, both inclusive. */
+export interface LeadWindow {
+  from: string;
+  to: string;
+}
+
+/**
+ * Fills a missing bound so no request scans unbounded history: `to` defaults to today and `from`
+ * to 29 days before `to` (a 30-day span). Then it applies the same two refusals the query schemas
+ * apply, to the resolved pair, because the schemas cannot see a defaulted bound. Callers read
+ * `from` and `to` from the result (the audit target id of an export, for one) and pass the result
+ * to `leadFilterSql`, so the default is computed once per request.
+ */
+export function resolveLeadWindow(
+  query: Pick<LeadsQuery, "from" | "to">,
+  now: Date = new Date(),
+): LeadWindow | { issue: { path: string; message: string } } {
+  const to = query.to ?? now.toISOString().slice(0, 10);
+  const from = query.from ?? new Date(Date.parse(to) - 29 * 86_400_000).toISOString().slice(0, 10);
+  if (from > to) return { issue: { path: "from", message: "from must not be after to" } };
+  if ((Date.parse(to) - Date.parse(from)) / 86_400_000 + 1 > LEAD_AGGREGATES_MAX_DAYS) {
+    return { issue: { path: "from", message: `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days` } };
+  }
+  return { from, to };
+}
+
+/**
+ * `WHERE` body (without the word) shared by the lead list and the lead export. Columns are
+ * qualified with the alias `l`. Pushes its binds onto `bindings`; each placeholder is taken from
+ * the bind it pushes, so indexes cannot drift. Holds no cursor and no limit.
+ */
+export function leadFilterSql(
+  query: LeadsQuery | LeadExportQuery,
+  window: LeadWindow,
+  bindings: unknown[],
+): string {
+  const add = (value: unknown): string => {
+    bindings.push(value);
+    return `?${bindings.length}`;
+  };
+  const toExclusive = new Date(`${window.to}T00:00:00.000Z`);
+  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+  const clauses: string[] = [
+    `julianday(l.created_at) >= julianday(${add(`${window.from}T00:00:00.000Z`)})`,
+    `julianday(l.created_at) < julianday(${add(toExclusive.toISOString())})`,
+  ];
+  if (query.brand !== undefined) clauses.push(`l.brand = ${add(query.brand)}`);
+  if (query.status === "sold") clauses.push("l.status = 'soldLead'");
+  else if (query.status === "rejected") clauses.push("l.status = 'rejectLead'");
+  else if (query.status === "pending") clauses.push("l.status NOT IN ('soldLead', 'rejectLead')");
+  if (query.q !== undefined) {
+    const prefix = add(`${likeEscape(query.q)}%`);
+    clauses.push(`(l.lead_id LIKE ${prefix} ESCAPE '\\' OR l.click_id = ${add(query.q)})`);
+  }
+  return clauses.join(" AND ");
+}
+
+interface LeadListSqlRow {
+  lead_id: string;
+  brand: string;
+  hostname: string;
+  status: string;
+  requested_amount: number;
+  loan_purpose: string;
+  state: string;
+  keyword: string | null;
+  variant: string | null;
+  form_variant: string;
+  created_at: string;
+  has_conversion: number;
+  postback_count: number;
+}
+
+function leadListRow(row: LeadListSqlRow): LeadListRow {
+  return {
+    lead_id: row.lead_id,
+    brand: row.brand,
+    hostname: row.hostname,
+    status: row.status,
+    outcome: leadOutcome(row.status),
+    requested_amount: Number(row.requested_amount),
+    loan_purpose: row.loan_purpose,
+    state: row.state,
+    keyword: row.keyword,
+    variant: row.variant?.toLowerCase() ?? null,
+    form_variant: row.form_variant,
+    has_conversion: Number(row.has_conversion) === 1,
+    postback_count: Number(row.postback_count),
+    created_at: row.created_at,
+  };
+}
+
+async function listLeads(url: URL, env: Env, context: AdminRequestContext): Promise<Response> {
+  const query = parseWith(LeadsQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+
+  const cursor = query.cursor === undefined ? null : decodeLeadCursor(query.cursor);
+  if (query.cursor !== undefined && cursor === null) {
+    return invalid(context, [{ path: "cursor", message: "Invalid cursor" }]);
+  }
+
+  const window = resolveLeadWindow(query);
+  if ("issue" in window) return invalid(context, [window.issue]);
+
+  const bindings: unknown[] = [];
+  const clauses = [leadFilterSql(query, window, bindings)];
+  if (cursor !== null) {
+    bindings.push(cursor.created_at, cursor.lead_id);
+    const at = bindings.length - 1;
+    const id = bindings.length;
+    clauses.push(`(l.created_at < ?${at} OR (l.created_at = ?${at} AND l.lead_id < ?${id}))`);
+  }
+  const limit = query.limit ?? 50;
+  bindings.push(limit + 1);
+
+  const result = await env.LEADS.prepare(
+    `SELECT l.lead_id, l.brand, l.hostname, l.status, l.requested_amount, l.loan_purpose,
+       l.state, l.keyword, l.variant, l.form_variant, l.created_at,
+       EXISTS (SELECT 1 FROM conversion_uploads c WHERE c.lead_id = l.lead_id) AS has_conversion,
+       (SELECT COUNT(*) FROM postback_events p WHERE p.lead_id = l.lead_id) AS postback_count
+     FROM leads l
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY l.created_at DESC, l.lead_id DESC
+     LIMIT ?${bindings.length}`,
+  ).bind(...bindings).all<LeadListSqlRow>();
+
+  const page = result.results.slice(0, limit);
+  const last = page[page.length - 1];
+  const response: LeadsResponse = {
+    rows: page.map(leadListRow),
+    next_cursor: result.results.length > limit && last ? encodeLeadCursor(last.created_at, last.lead_id) : null,
+  };
+  return json(response);
+}
+
+type LeadExportSqlRow = LeadListSqlRow & Partial<LeadRow>;
+
+/** PII columns as `leads` names them, in contract order. Selected only for an owner who asked for them. */
+const LEAD_EXPORT_PII_SQL = LEAD_EXPORT_PII_COLUMNS.slice(LEAD_EXPORT_COLUMNS.length).map((column) => `l.${column}`);
+
+function leadExportPiiFields(row: LeadExportSqlRow): Partial<LeadExportRow> {
+  return {
+    first_name: row.first_name,
+    last_name: row.last_name,
+    birth_date: row.birth_date,
+    email: row.email,
+    home_phone: row.home_phone,
+    work_phone: row.work_phone ?? null,
+    address: row.address,
+    city: row.city,
+    zip: row.zip,
+    address_length_months: Number(row.address_length_months),
+    own_home: row.own_home === 1,
+    income_type: row.income_type,
+    employer: row.employer,
+    job_title: row.job_title,
+    employed_months: Number(row.employed_months),
+    pay_date1: row.pay_date1,
+    pay_frequency: row.pay_frequency,
+    direct_deposit: row.direct_deposit === 1,
+    monthly_income: Number(row.monthly_income),
+  };
+}
+
+async function leadExport(url: URL, env: Env, context: AdminRequestContext): Promise<Response> {
+  const query = parseWith(LeadExportQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+
+  const window = resolveLeadWindow(query);
+  if ("issue" in window) return invalid(context, [window.issue]);
+
+  const permission = authorize("leadExport", context.actor_role, { pii: query.pii === "1" });
+  if (!permission.ok) return adminError(context, permission.error);
+  const pii = query.pii === "1" && context.actor_role === "owner";
+
+  const bindings: unknown[] = [];
+  const where = leadFilterSql(query, window, bindings);
+  bindings.push(query.limit + 1);
+  const result = await env.LEADS.prepare(
+    `SELECT l.lead_id, l.brand, l.hostname, l.status, l.requested_amount, l.loan_purpose,
+       l.state, l.keyword, l.variant, l.form_variant, l.created_at,
+       EXISTS (SELECT 1 FROM conversion_uploads c WHERE c.lead_id = l.lead_id) AS has_conversion,
+       (SELECT COUNT(*) FROM postback_events p WHERE p.lead_id = l.lead_id) AS postback_count
+       ${pii ? `, ${LEAD_EXPORT_PII_SQL.join(", ")}` : ""}
+     FROM leads l
+     WHERE ${where}
+     ORDER BY l.created_at DESC, l.lead_id DESC
+     LIMIT ?${bindings.length}`,
+  ).bind(...bindings).all<LeadExportSqlRow>();
+
+  const truncated = result.results.length > query.limit;
+  const rows = result.results.slice(0, query.limit).map((row): LeadExportRow => ({
+    ...leadListRow(row),
+    ...(pii ? leadExportPiiFields(row) : {}),
+  }));
+  // Fails closed, as getLead does: no try/catch, so an export whose audit insert throws is never sent.
+  // The row holds counts and the resolved filters, never a value from the rows.
+  await writeAudit(
+    env,
+    context,
+    pii ? "pii.lead_export" : "lead.export",
+    "lead_export",
+    `${window.from}..${window.to}:${query.brand ?? "all"}`,
+    null,
+    {
+      rows: rows.length,
+      truncated,
+      pii,
+      filters: {
+        brand: query.brand ?? null,
+        from: window.from,
+        to: window.to,
+        status: query.status ?? null,
+        q: query.q ?? null,
+      },
+    },
+    new Date().toISOString(),
+  );
+  const response: LeadExportResponse = { rows, truncated, pii };
+  return json(response);
+}
+
+/** `base64url(email)`. Suppressions page on `email ASC`, their primary key. */
+function encodeSuppressionCursor(email: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(email)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** A cursor must decode to something a stored address can be: non-empty, at most 254 characters, valid UTF-8, no whitespace or control characters. */
+function decodeSuppressionCursor(cursor: string): string | null {
+  try {
+    const binary = atob(cursor.replace(/-/g, "+").replace(/_/g, "/"));
+    const email = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+    return email.length >= 1 && email.length <= 254 && !/[\s\p{Cc}]/u.test(email) ? email : null;
+  } catch {
+    return null;
+  }
+}
+
+interface SuppressionSqlRow {
+  email: string;
+  reason: string;
+  source: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** Owner-only at the endpoint table: every row is an email address, so there is no non-PII view. */
+async function listSuppressions(url: URL, env: Env, context: AdminRequestContext): Promise<Response> {
+  const query = parseWith(SuppressionsQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+
+  const cursor = query.cursor === undefined ? null : decodeSuppressionCursor(query.cursor);
+  if (query.cursor !== undefined && cursor === null) {
+    return invalid(context, [{ path: "cursor", message: "Invalid cursor" }]);
+  }
+
+  const bindings: unknown[] = [];
+  const add = (value: unknown): string => {
+    bindings.push(value);
+    return `?${bindings.length}`;
+  };
+  const clauses: string[] = [];
+  // `q` is not restricted by the schema, so `%`, `_` and `\` reach this pattern and must be escaped.
+  if (query.q !== undefined) clauses.push(`email LIKE ${add(`%${likeEscape(query.q.toLowerCase())}%`)} ESCAPE '\\'`);
+  if (query.reason !== undefined) clauses.push(`reason = ${add(query.reason)}`);
+  if (query.source !== undefined) clauses.push(`source = ${add(query.source)}`);
+  if (cursor !== null) clauses.push(`email > ${add(cursor)}`);
+  const limit = query.limit ?? 50;
+
+  const result = await env.LEADS.prepare(
+    `SELECT email, reason, source, created_at, updated_at
+     FROM suppressions
+     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY email ASC
+     LIMIT ${add(limit + 1)}`,
+  ).bind(...bindings).all<SuppressionSqlRow>();
+
+  const page = result.results.slice(0, limit);
+  const last = page[page.length - 1];
+  // Fails closed, as getLead does: no try/catch. The row holds the actor's own query and a count, never an address from the rows.
+  await writeAudit(
+    env,
+    context,
+    "pii.suppression_search",
+    "suppression",
+    "search",
+    null,
+    { q: query.q ?? null, reason: query.reason ?? null, source: query.source ?? null, rows: page.length },
+    new Date().toISOString(),
+  );
+  const response: SuppressionsResponse = {
+    rows: page as SuppressionsResponse["rows"],
+    next_cursor: result.results.length > limit && last ? encodeSuppressionCursor(last.email) : null,
+  };
+  return json(response);
 }
 
 function encodeCursor(id: number): string {
@@ -718,6 +1136,11 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     if (route.endpoint === "pauseBrand") return changeBrandStatus(request, env, context, brandId, "paused");
     if (route.endpoint === "resumeBrand") return changeBrandStatus(request, env, context, brandId, "live");
   }
+
+  // spec leads
+  if (route.endpoint === "listLeads") return listLeads(new URL(request.url), env, context);
+  if (route.endpoint === "leadExport") return leadExport(new URL(request.url), env, context);
+  if (route.endpoint === "listSuppressions") return listSuppressions(new URL(request.url), env, context);
 
   if (route.endpoint === "listBrands") return listBrands(env);
   if (route.endpoint === "leadAggregates") return leadAggregates(new URL(request.url), env, context);
