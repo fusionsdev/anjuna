@@ -37,7 +37,8 @@ const usd = (value: Value): string => {
   return `${amount < 0 ? "−$" : "$"}${text}`;
 };
 
-interface FunnelTotals { clicks: number; go: number; form: number; leads: number; sold: number; revenue: number }
+/** `revenue` is null when core withheld it (every row null), so the ledger shows "—" and never `$0`. */
+interface FunnelTotals { clicks: number; go: number; form: number; leads: number; sold: number; revenue: number | null }
 
 function sumFunnel(report: FunnelReportResponse): FunnelTotals {
   const total: FunnelTotals = { clicks: 0, go: 0, form: 0, leads: 0, sold: 0, revenue: 0 };
@@ -47,8 +48,9 @@ function sumFunnel(report: FunnelReportResponse): FunnelTotals {
     total.form += row.form_views;
     total.leads += row.submits;
     total.sold += row.sold;
-    total.revenue += row.revenue;
+    total.revenue = (total.revenue ?? 0) + (row.revenue ?? 0);
   }
+  if (report.rows.length > 0 && report.rows.every((row) => row.revenue === null)) total.revenue = null;
   return total;
 }
 
@@ -162,7 +164,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
 
   const leads = funnel === undefined ? undefined : funnel?.leads ?? null;
   const spendCost: Value = spend === undefined ? undefined : spend?.cost ?? null;
-  const revenue: Value = funnel === undefined ? undefined : funnel?.revenue ?? null;
+  const revenue: Value = funnel === undefined ? undefined : funnel === null ? null : funnel.revenue;
   const costPerLead: Value = spendCost === undefined || leads === undefined ? undefined : spendCost === null || !leads ? null : spendCost / leads;
   const profit: Value = spendCost === undefined || revenue === undefined ? undefined : spendCost === null || revenue === null ? null : revenue - spendCost;
   const pending: Value = alerts === undefined ? undefined : alerts === null ? null : pendingLeads(alerts);

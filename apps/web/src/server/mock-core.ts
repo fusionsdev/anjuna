@@ -330,7 +330,7 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, { entries, next_cursor: null });
     }
     case "funnelReport":
-      return json(200, funnelReport);
+      return json(200, ctx.actor_role === "owner" ? funnelReport : { ...funnelReport, rows: funnelReport.rows.map((r) => ({ ...r, revenue: null })) });
     case "alertsReport":
       return json(200, alertsReport);
     case "mailingStatus":

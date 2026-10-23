@@ -7,6 +7,7 @@ import {
   AlertsReportResponse,
   FunnelReportResponse,
   MailingStatusResponse,
+  type AdminRole,
   type AlertsQuery,
   type FunnelQuery,
 } from "@anjuna/contracts";
@@ -22,9 +23,11 @@ import { listmonkConfigured } from "../listmonk-config.js";
 const EMPTY_EVENTS = new InMemoryFunnelEvents([]);
 const EMPTY_SUBMIT_ERRORS = new InMemorySubmitErrorCounts([]);
 
-export async function loadFunnel(env: Env, filter: FunnelQuery): Promise<FunnelReportResponse> {
+/** Only the owner sees money. Every other role gets `revenue: null` on every row. */
+export async function loadFunnel(env: Env, filter: FunnelQuery, role: AdminRole): Promise<FunnelReportResponse> {
   const report = await funnelReport(env.LEADS, EMPTY_EVENTS, filter);
-  return FunnelReportResponse.parse(report);
+  const shown = role === "owner" ? report : { ...report, rows: report.rows.map((row) => ({ ...row, revenue: null })) };
+  return FunnelReportResponse.parse(shown);
 }
 
 export async function loadAlerts(env: Env, query: AlertsQuery): Promise<AlertsReportResponse> {

@@ -703,7 +703,8 @@ export const FunnelReportResponse = z.strictObject({
       form_views: Count,
       submits: Count,
       sold: Count,
-      revenue: z.number().finite().min(0),
+      /** USD. null for a non-owner. */
+      revenue: z.number().finite().min(0).nullable(),
       submit_rate: z.number().finite().min(0).nullable(),
       sold_rate: z.number().finite().min(0).nullable(),
     }),

@@ -7,7 +7,7 @@ const owner = { id: "o", email: "o@example.test", role: "owner" } as Me;
 const employee = { id: "e", email: "e@example.test", role: "employee" } as Me;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const row = (brand: string, clicks: number, go: number, form: number, submits: number, sold: number, revenue: number) => ({
+const row = (brand: string, clicks: number, go: number, form: number, submits: number, sold: number, revenue: number | null) => ({
   brand, keyword: null, variant: null, clicks, go_count: go, form_views: form, submits, sold, revenue, submit_rate: null, sold_rate: null,
 });
 // 7 days: reached 283, /go 131, form 94, leads 17, sold 4, revenue 410. The biggest drop is form -> lead (82%).
@@ -152,6 +152,14 @@ describe("Home screen, owner", () => {
     expect(document.querySelector(".note")).toBeNull();
   });
 
+  it("shows — for revenue and profit when every funnel row has null revenue instead of $0", async () => {
+    funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    expect(ledgerValue("รายได้").text).toBe("—");
+    expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "—", className: "v" });
+  });
+
   it("shows a real 0 for no leads and — for the cost per lead it cannot divide", async () => {
     funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [] });
     render(<HomeScreen me={owner} />);
@@ -195,6 +203,19 @@ describe("Home screen, employee", () => {
     // Only the owner can approve a template.
     expect(screen.queryByText("อนุมัติเทมเพลต")).toBeNull();
     expect(await within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).findByText("1 แบรนด์")).toBeTruthy();
+  });
+
+  it("employee sees no revenue", async () => {
+    funnel = (from) => json({ ...(from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D), rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<HomeScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(ledgerValue("รอผล").text).toBe("5"));
+
+    expect(screen.queryByText("รายได้")).toBeNull();
+    expect(screen.queryByText("กำไร/ขาดทุน")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/\$0(?!\.)/);
+    expect(document.body.textContent).not.toContain("$");
+    expect(document.body.textContent).not.toContain("NaN");
   });
 
   it("shows — for pending when the alerts API fails", async () => {

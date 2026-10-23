@@ -170,7 +170,7 @@ export function FunnelScreen() {
         <div className="tw"><table><thead><tr><th>แบรนด์</th><th>คีย์เวิร์ด</th><th>ตัวแปร</th><th>คลิก</th><th>/go</th><th>เปิดฟอร์ม</th><th>ส่ง</th><th>ขายได้</th>{owner && <th>รายได้</th>}<th>อัตราส่ง</th><th>อัตราขาย</th></tr></thead>
           <tbody>{report.rows.map((r) => <tr key={JSON.stringify([r.brand, r.keyword, r.variant])}>
             <td><BrandLabel brandId={r.brand} domain={labelOf(r.brand)} /></td><td>{r.keyword ?? "—"}</td><td>{r.variant ?? "—"}</td><td>{r.clicks}</td><td>{r.go_count}</td><td>{r.form_views}</td><td>{r.submits}</td><td>{r.sold}</td>
-            {owner && <td>{r.revenue.toFixed(2)}</td>}<td>{rate(r.submit_rate)}</td><td>{rate(r.sold_rate)}</td>
+            {owner && <td>{r.revenue === null ? "—" : r.revenue.toFixed(2)}</td>}<td>{rate(r.submit_rate)}</td><td>{rate(r.sold_rate)}</td>
           </tr>)}{report.rows.length === 0 && <tr><td colSpan={owner ? 11 : 10} className="hint">ไม่มีข้อมูลในช่วงนี้</td></tr>}</tbody>
         </table></div>}
     </section>

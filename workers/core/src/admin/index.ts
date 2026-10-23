@@ -1159,7 +1159,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   if (route.endpoint === "funnelReport") {
     const filter = parseWith(FunnelQuery, parseQuery(new URL(request.url)), context);
     if (filter instanceof Response) return filter;
-    return json(FunnelReportResponse.parse(await loadFunnel(env, filter)));
+    return json(FunnelReportResponse.parse(await loadFunnel(env, filter, context.actor_role)));
   }
   if (route.endpoint === "alertsReport") {
     const query = parseWith(AlertsQuery, parseQuery(new URL(request.url)), context);
