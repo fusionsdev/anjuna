@@ -286,6 +286,13 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
   async function rollback() {
     if (!selected) return;
+    const ok = await confirm({
+      title: "ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า?",
+      body: "Roll the brand back to its previous version.",
+      confirmLabel: "ย้อนกลับ (Rollback)",
+      tone: "danger",
+    });
+    if (!ok) return;
     await dispatchOperation(() => api.rollbackLifecycle(selected.brand_id));
   }
   // Pause lives in core and the factory brand stays live, so a paused brand can be redeployed; it stays paused.
@@ -323,7 +330,25 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
   async function recover() {
     if (!selected) return;
+    const ok = await confirm({
+      title: "กู้คืนแบรนด์นี้?",
+      body: "Recover runs the compensation install for this brand.",
+      confirmLabel: "กู้คืน (Recover)",
+      tone: "danger",
+    });
+    if (!ok) return;
     await dispatchOperation(() => api.recover(selected.brand_id));
+  }
+
+  async function startUpgradeAll() {
+    const ok = await confirm({
+      title: "เริ่มอัปเกรดทุกแบรนด์?",
+      body: `Upgrade every brand from ${upgrade.from_template_version_id || "—"} to ${upgrade.to_template_version_id || "—"}, canary ${upgrade.canary_brand_id || "—"} first.`,
+      confirmLabel: "เริ่มอัปเกรด (Start upgrade)",
+      tone: "danger",
+    });
+    if (!ok) return;
+    await act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); });
   }
 
   const runtimeBrand = runtimeBrands.find((brand) => brand.brand_id === selectedId);
@@ -407,7 +432,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     </div>
     {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); onSelectBrand?.(brandId); }} />}
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
-    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
+    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
     {confirmDialog}
   </div>;

@@ -9,6 +9,7 @@ import { replaceTemplateBrand } from "../../shared/site-text-preview";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import { ApiError, api, type Me } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
+import { flowGateLabel } from "../labels";
 import { BrandAssetsSection, TemplateVersionSection } from "./BrandEditSections";
 
 /** The UI hides what the role cannot do; the server enforces it regardless. */
@@ -66,7 +67,17 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
       <Section title="สถานะ (Pause / Resume)">
         {(brand.status !== "live" || me.role === "owner") && <button
           className={brand.status === "live" ? "btn warn" : "btn pri"}
-          onClick={() => act(() => api.setStatus(brandId, brand.status === "live" ? "pause" : "resume"), brand.status === "live" ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว")}
+          onClick={async () => {
+            const pausing = brand.status === "live";
+            const ok = await confirm({
+              title: pausing ? "หยุดแบรนด์นี้ชั่วคราว?" : "เปิดแบรนด์นี้ต่อ?",
+              body: pausing ? "Pause stops new leads on this brand until it is resumed." : "Resume starts taking leads again.",
+              confirmLabel: pausing ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)",
+              tone: pausing ? "danger" : "default",
+            });
+            if (!ok) return;
+            await act(() => api.setStatus(brandId, pausing ? "pause" : "resume"), pausing ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว");
+          }}
         >
           {brand.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
         </button>}
@@ -123,9 +134,21 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
       {can(me, "amount_buckets") && <BucketsSection key={`b${brand.updated_at}`} brand={brand} onSave={(b) => save({ amount_buckets: b })} />}
       {can(me, "flow_gate_mode") && (
         <Section title="เกตของโฟลว์ (Flow gate)">
-          <select value={brand.flow_gate_mode} onChange={(e) => save({ flow_gate_mode: e.target.value as FlowGateMode })}>
-            <option value="param">param</option>
-            <option value="signed_cookie">signed_cookie</option>
+          <select
+            value={brand.flow_gate_mode}
+            onChange={async (e) => {
+              const next = e.target.value as FlowGateMode;
+              const ok = await confirm({
+                title: `เปลี่ยนเกตของโฟลว์เป็น ${flowGateLabel[next]}?`,
+                body: "Changes how visitors move from the landing page to the form.",
+                confirmLabel: "เปลี่ยน (Change)",
+              });
+              if (!ok) return;
+              await save({ flow_gate_mode: next });
+            }}
+          >
+            <option value="param">{flowGateLabel.param}</option>
+            <option value="signed_cookie">{flowGateLabel.signed_cookie}</option>
           </select>
         </Section>
       )}

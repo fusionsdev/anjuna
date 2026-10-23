@@ -155,6 +155,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
     const before = reads();
     fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)" }));
+    await answerConfirm(true);
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
   });
 
@@ -170,8 +171,10 @@ describe("mounted lifecycle UI with API responses", () => {
     await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
     fireEvent.click(await within(panel).findByRole("button", { name: pauseName }));
+    await answerConfirm(true);
     expect(within(panel).getByRole("button", { name: /Rollback/ })).toBeDefined();
     fireEvent.click(await within(panel).findByRole("button", { name: resumeName }));
+    await answerConfirm(true);
     await within(panel).findByRole("button", { name: pauseName });
     expect(requests.some((r) => r.path.endsWith("/pause") && r.method === "POST")).toBe(true);
     expect(requests.some((r) => r.path.endsWith("/resume") && r.method === "POST")).toBe(true);
@@ -190,6 +193,7 @@ describe("mounted lifecycle UI with API responses", () => {
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ ab_config: { variants: [{ id: "lite_v1", weight: 70 }, { id: "full_v1", weight: 30 }] } }));
 
     fireEvent.change(section(panel, flowGateSection).getByRole("combobox"), { target: { value: "signed_cookie" } });
+    await answerConfirm(true);
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ flow_gate_mode: "signed_cookie" }));
     fireEvent.click(within(panel).getByRole("button", { name: closeName }));
     expect(screen.queryByRole("complementary", { name: configLabel })).toBeNull();
@@ -524,6 +528,7 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   detail({ ...failed, install_id: "recovery-1", revision_id: null, status: "rolled_back", runtime_sync_status: "ready", receipts: [{ step: "receipt", status: "ready" }] });
   render(<BrandLifecycle me={owner} />);
   fireEvent.click(await screen.findByRole("button", { name: recoverName }));
+  await answerConfirm(true);
   await waitFor(() => expect(requests.filter((r) => r.path === "/api/brands/brand-a/recover")).toHaveLength(1));
   await screen.findByText("recovery-1");
   await screen.findByRole("button", { name: installName });

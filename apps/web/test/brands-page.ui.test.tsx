@@ -4,6 +4,7 @@ import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { api } from "../src/client/api";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 import { brandMoney, periodWindow, sortWorstProfitFirst, type SpendReport } from "../src/client/screens/BrandStatsRow";
+import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
@@ -173,6 +174,7 @@ describe("side panel of the selected brand", () => {
     const panel = within(heading.closest("section")!);
     await waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-fm/installs")).toBe(true));
     fireEvent.click(await panel.findByRole("button", { name: "ย้อนกลับ (Rollback)" }));
+    await answerConfirm(true);
     await waitFor(() => expect(requests.filter((r) => r.method === "POST").map((r) => r.path)).toEqual(["/api/brands/brand-fm/rollback"]));
   });
 

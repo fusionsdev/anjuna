@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useConfirm } from "../src/client/components/ConfirmDialog";
 import { answerConfirm } from "./confirm";
 
@@ -41,7 +41,8 @@ describe("useConfirm", () => {
     fireEvent.click(screen.getByText("ask a"));
     await screen.findByRole("alertdialog");
     expect(document.activeElement?.textContent).toBe("ยกเลิก (Cancel)");
-    fireEvent.keyDown(document, { key: "Escape" });
+    // Focus is inside the dialog, so Escape is handled by the dialog itself.
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(await screen.findByText("a:false")).toBeTruthy();
     fireEvent.click(screen.getByText("ask a"));
     fireEvent.click(document.querySelector(".modal-wrap")!);
@@ -56,5 +57,64 @@ describe("useConfirm", () => {
     expect(await screen.findByText("a:false")).toBeTruthy();
     await answerConfirm(true);
     expect(await screen.findByText("a:false,b:true")).toBeTruthy();
+  });
+
+  it("handles Escape inside the dialog and hides it from a document Escape listener", async () => {
+    const outer = vi.fn();
+    document.addEventListener("keydown", outer);
+    try {
+      render(<Harness />);
+      fireEvent.click(screen.getByText("ask a"));
+      await screen.findByRole("alertdialog");
+      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+      expect(await screen.findByText("a:false")).toBeTruthy();
+      expect(outer).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", outer);
+    }
+  });
+
+  it("keeps Tab inside the dialog: last to first, and Shift+Tab first to last", async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByText("ask a"));
+    const dialog = await screen.findByRole("alertdialog");
+    const [cancel, accept] = within(dialog).getAllByRole("button");
+    accept!.focus();
+    expect(fireEvent.keyDown(accept!, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(cancel);
+    expect(fireEvent.keyDown(cancel!, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(accept);
+    // Inside the cycle the browser moves focus, so the key is left alone.
+    expect(fireEvent.keyDown(accept!, { key: "Tab", shiftKey: true })).toBe(true);
+    cancel!.focus();
+    expect(fireEvent.keyDown(cancel!, { key: "Tab" })).toBe(true);
+  });
+
+  it("returns focus to the first opener after a second confirm replaces the first and closes", async () => {
+    render(<Harness />);
+    const opener = screen.getByText("ask a");
+    opener.focus();
+    fireEvent.click(opener);
+    await screen.findByRole("alertdialog");
+    expect(document.activeElement?.textContent).toBe("ยกเลิก (Cancel)");
+    // The second confirm starts while focus sits on dialog 1's Cancel button.
+    await act(async () => { fireEvent.click(screen.getByText("ask b")); });
+    expect(await screen.findByText("a:false")).toBeTruthy();
+    await answerConfirm(false);
+    expect(await screen.findByText("a:false,b:false")).toBeTruthy();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("resolves an open dialog as false when the screen unmounts", async () => {
+    let asked!: Promise<boolean>;
+    function Once() {
+      const [confirm, dialog] = useConfirm();
+      return <><button onClick={() => { asked = confirm({ title: "ลบ?", confirmLabel: "ลบ (Delete)" }); }}>ask</button>{dialog}</>;
+    }
+    const view = render(<Once />);
+    fireEvent.click(screen.getByText("ask"));
+    await screen.findByRole("alertdialog");
+    view.unmount();
+    await expect(asked).resolves.toBe(false);
   });
 });
