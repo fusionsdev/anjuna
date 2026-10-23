@@ -28,7 +28,7 @@ describe("Audit screen", () => {
     const table = await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
-    const brandCell = within(rows[0]!).getByText("one.example");
+    const brandCell = await within(rows[0]!).findByText("one.example");
     expect(brandCell.closest(".brand-label")).toBeTruthy();
     expect(within(rows[0]!).getByText("b1").tagName).toBe("CODE");
     expect(within(rows[1]!).getByText("user:u9")).toBeTruthy();

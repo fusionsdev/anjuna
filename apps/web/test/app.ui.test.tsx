@@ -235,6 +235,16 @@ describe("Console rail", () => {
     expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
   });
 
+  it("titles the browser tab with the current page and follows navigation", async () => {
+    window.history.replaceState(null, "", "/funnel");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Funnel screen" });
+    expect(document.title).toBe("ฟันเนล · Control Panel");
+    fireEvent.click(screen.getByRole("link", { name: "หน้าแรก" }));
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    expect(document.title).toBe("หน้าแรก · Control Panel");
+  });
+
   it("shows Page not found for an unknown path and marks no nav item", async () => {
     window.history.replaceState(null, "", "/nope");
     render(<App />);

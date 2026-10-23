@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
@@ -49,7 +49,7 @@ beforeEach(() => {
   }));
 });
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("brand row basics", () => {
   it("shows the flow-gate label on each row", async () => {
@@ -85,11 +85,66 @@ describe("brand row basics", () => {
     expect(within(await rowOf("paused.example")).getByRole("button", { name: resumeName })).toBeTruthy();
   });
 
-  it("shows a failed pause as an error toast", async () => {
+  it("shows a failed pause as an error toast with the API error, after one request", async () => {
     pauseStatus = 500;
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(within(await rowOf("live.example")).getByRole("button", { name: pauseName }));
     await answerConfirm(true);
-    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(within(await screen.findByRole("alert")).getByText("เกิดข้อผิดพลาด (500)")).toBeTruthy();
+    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+  });
+
+  it("keeps the row button off while its request is in flight, so a second click sends nothing", async () => {
+    let release!: () => void;
+    routes.set("POST /api/brands/b-live/pause", () => new Promise<Response>((resolve) => { release = () => resolve(json({ ok: true })); }));
+    render(<BrandLifecycle me={owner} />);
+    const button = within(await rowOf("live.example")).getByRole("button", { name: pauseName }) as HTMLButtonElement;
+    fireEvent.click(button);
+    await answerConfirm(true);
+    await waitFor(() => expect(button.disabled).toBe(true));
+    fireEvent.click(button);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+    release();
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+  });
+
+  it("gives a second toast with the same text its own full countdown", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<BrandLifecycle me={owner} />);
+    const button = within(await rowOf("live.example")).getByRole("button", { name: pauseName }) as HTMLButtonElement;
+    const pause = async (count: number) => {
+      await waitFor(() => expect(button.disabled).toBe(false));
+      fireEvent.click(button);
+      await answerConfirm(true);
+      await waitFor(() => expect(posts("/api/brands/b-live/pause")).toHaveLength(count));
+      await screen.findByText("หยุดแบรนด์แล้ว");
+    };
+    await pause(1);
+    act(() => { vi.advanceTimersByTime(3000); });
+    await pause(2);
+    // The first toast's 5 s ran out 2 s ago; the second one, shown 3 s ago, is still up.
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(screen.getByText("หยุดแบรนด์แล้ว")).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(2500); });
+    expect(screen.queryByText("หยุดแบรนด์แล้ว")).toBeNull();
+  });
+});
+
+describe("brand row status badge", () => {
+  it("shows the paused badge for a factory-live brand that core reports as paused", async () => {
+    routes.set("GET /api/brands", () => json({ brands: [runtimeRow("b-live", "paused", "param"), runtimeRow("b-paused", "paused", "signed_cookie")], generated_at: "2026-10-06T00:00:00Z" }));
+    render(<BrandLifecycle me={owner} />);
+    const row = await rowOf("live.example");
+    const badge = (await within(row).findByText("หยุดชั่วคราว (paused)")).closest(".pill")!;
+    expect(badge.className).toContain("p-warn");
+    expect(within(row).queryByText("live")).toBeNull();
+  });
+
+  it("keeps the live badge while core reports the brand live", async () => {
+    render(<BrandLifecycle me={owner} />);
+    const badge = (await within(await rowOf("live.example")).findByText("live")).closest(".pill")!;
+    expect(badge.className).toContain("p-live");
   });
 });

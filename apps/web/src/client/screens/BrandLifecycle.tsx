@@ -35,6 +35,7 @@ const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: 
 const statusLabel: Record<string, string> = {
   draft: "ฉบับร่าง (draft)", queued: "รอคิว (queued)", running: "กำลังทำงาน (running)", ready: "พร้อมใช้งาน (ready)",
   failed: "ล้มเหลว (failed)", rolled_back: "ย้อนกลับแล้ว (rolled-back)", detached: "ถอดออกแล้ว (detached)", unmanaged: "ไม่ได้จัดการ (unmanaged)", sync_error: "ซิงก์ผิดพลาด (sync_error)",
+  paused: "หยุดชั่วคราว (paused)",
 };
 
 // A redeploy is stored as an upgrade row; the server tells the two apart in `operation`.
@@ -67,14 +68,16 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
  * wizardRequest: a counter the app raises to open the New brand wizard from its menu.
  * wizardRoute: true while the URL is /brands/new, so back and forward open and close the wizard.
  * routeBrandId: the brand id in the URL path; onSelectBrand and onWizardClosed keep the URL in step with the screen.
+ * onNewBrand: the app opens /brands/new for the New brand button, so the wizard has a URL. Without it the button opens the wizard here.
  */
-export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, routeBrandId, onSelectBrand, onWizardClosed }: {
+export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, routeBrandId, onSelectBrand, onWizardClosed, onNewBrand }: {
   me: Me;
   wizardRequest?: number;
   wizardRoute?: boolean;
   routeBrandId?: string | null;
   onSelectBrand?: (brandId: string) => void;
   onWizardClosed?: () => void;
+  onNewBrand?: () => void;
 }) {
   const [wizard, setWizard] = useState<{ brandId?: string; initialStep?: number } | null>(null);
   const [duplicateOf, setDuplicateOf] = useState<LifecycleBrandSummary | null>(null);
@@ -95,8 +98,13 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Each toast has its own id, which keys the Toast: an equal text from a second action restarts the full countdown.
+  const [toast, setToast] = useState<{ id: number; kind: "ok" | "err"; text: string } | null>(null);
+  const toastSeq = useRef(0);
+  const showToast = (kind: "ok" | "err", text: string) => setToast({ id: (toastSeq.current += 1), kind, text });
   const dismissToast = useCallback(() => setToast(null), []);
+  // Brands whose pause or resume request is in flight; the row button stays off so one confirm sends one request.
+  const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
   const operationGeneration = useRef(0);
   const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
@@ -112,7 +120,16 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useEffect(() => { if (wizard) cancelConfirm(); }, [wizard]);
   // A resumed draft (brandId set) is not the new-brand route, so leaving /brands/new keeps it open.
   useEffect(() => setWizard((w) => (wizardRoute ? (w ?? {}) : w && !w.brandId ? null : w)), [wizardRoute]);
-  useEffect(() => { if (routeBrandId && routeBrandId !== selectedId) setSelectedId(routeBrandId); }, [routeBrandId]);
+  useEffect(() => {
+    if (routeBrandId) {
+      if (routeBrandId !== selectedId) setSelectedId(routeBrandId);
+      // A resumed draft edits the brand in the URL: Back to another brand closes it.
+      setWizard((w) => (w?.brandId && w.brandId !== routeBrandId ? null : w));
+    } else if (listLoaded && selectedId && !brands.some((b) => b.brand_id === selectedId)) {
+      // Back from an unknown brand id: drop the dead selection so load() picks the first brand. A valid selection stays.
+      setSelectedId(null);
+    }
+  }, [routeBrandId]);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
@@ -368,12 +385,20 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       tone: pausing ? "danger" : "default",
     });
     if (!ok) return;
+    const brandId = runtime.brand_id;
+    setToggling((previous) => new Set(previous).add(brandId));
     try {
-      await api.setStatus(runtime.brand_id, pausing ? "pause" : "resume");
-      setToast({ kind: "ok", text: pausing ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว" });
+      await api.setStatus(brandId, pausing ? "pause" : "resume");
+      showToast("ok", pausing ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว");
       await load();
     } catch (e) {
-      setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "ไม่สำเร็จ" });
+      showToast("err", e instanceof ApiError ? e.thai : "ไม่สำเร็จ");
+    } finally {
+      setToggling((previous) => {
+        const next = new Set(previous);
+        next.delete(brandId);
+        return next;
+      });
     }
   }
 
@@ -410,7 +435,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       <div className="brands-actions">
         <div className="seg" role="group" aria-label="ช่วงเวลา">{BRAND_PERIODS.map(([key, label]) => <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div>
         <button className="btn" onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช (Refresh)</button>
-        <button className="btn pri" onClick={() => setWizard({})}>แบรนด์ใหม่ (New brand)</button>
+        <button className="btn pri" onClick={() => (onNewBrand ? onNewBrand() : setWizard({}))}>แบรนด์ใหม่ (New brand)</button>
       </div>
     </div>
     {error && <div className="error" role="alert">{error}</div>}
@@ -433,12 +458,14 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
               const select = () => { setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); };
               const runtime = runtimeBrands.find((r) => r.brand_id === brand.brand_id);
               const canToggle = runtime && (runtime.status === "paused" || (runtime.status === "live" && owner));
+              // Pause lives in core and the factory brand stays live, so a paused brand's factory status still reads live.
+              const badgeStatus = brand.status === "live" && runtime?.status === "paused" ? "paused" : brand.status;
               return <Fragment key={brand.brand_id}>
                 <tr className={isSelected ? "click sel" : "click"} onClick={select}>
                   <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</button></td>
                   <td>
-                    <StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} />
-                    {runtime && canToggle && <button type="button" className={runtime.status === "live" ? "btn warn row-action" : "btn pri row-action"}
+                    <StatusBadge tone={statusBadgeTone[badgeStatus] ?? "mute"} label={statusLabel[badgeStatus] ?? badgeStatus} />
+                    {runtime && canToggle && <button type="button" className={runtime.status === "live" ? "btn warn row-action" : "btn pri row-action"} disabled={toggling.has(brand.brand_id)}
                       onClick={(e) => { e.stopPropagation(); void toggleStatus(runtime); }}>
                       {runtime.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
                     </button>}
@@ -480,7 +507,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
     {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
-    {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
+    {toast && <Toast key={toast.id} kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
     {confirmDialog}
   </div>;
 }

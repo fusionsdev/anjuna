@@ -29,19 +29,29 @@ export function AppShell({ me, title, nav, onSignOut, children }: { me: Me; titl
   const [menu, setMenu] = useState(false);
   const mobile = useMobileViewport();
   const menuButton = useRef<HTMLButtonElement>(null);
+  const userButton = useRef<HTMLButtonElement>(null);
   const userMenu = useRef<HTMLDivElement>(null);
+  const sidebar = useRef<HTMLElement>(null);
   const main = useRef<HTMLElement>(null);
+  // Where focus lands after the drawer closes. The page behind is inert while the drawer is open, so the move runs after the commit.
+  const afterClose = useRef<"menu" | "main">("menu");
+  const drawerWasOpen = useRef(false);
+  const closeDrawer = (focus: "menu" | "main" = "menu") => { afterClose.current = focus; setDrawer(false); };
+  useEffect(() => {
+    if (drawer) sidebar.current?.querySelector<HTMLElement>("a.nav")?.focus();
+    else if (drawerWasOpen.current) (afterClose.current === "main" ? main : menuButton).current?.focus();
+    drawerWasOpen.current = drawer;
+  }, [drawer]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // The closed drawer is inert, so focus inside it would be lost: send it back to the button that opened it.
-      if (drawer) menuButton.current?.focus();
-      setDrawer(false);
+      if (drawer) closeDrawer();
+      else if (menu) userButton.current?.focus();
       setMenu(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [drawer]);
+  }, [drawer, menu]);
   useEffect(() => {
     if (!menu) return;
     const onPointerDown = (e: PointerEvent) => { if (!userMenu.current?.contains(e.target as Node)) setMenu(false); };
@@ -50,23 +60,22 @@ export function AppShell({ me, title, nav, onSignOut, children }: { me: Me; titl
   }, [menu]);
   return (
     <div className="shell" data-drawer={drawer ? "open" : "closed"}>
-      <aside className="sidebar" id="sidebar" inert={mobile && !drawer} onClick={(e) => {
+      <aside className="sidebar" id="sidebar" ref={sidebar} inert={mobile && !drawer} onClick={(e) => {
         if (!(e.target as HTMLElement).closest("a.nav")) return;
         // The closed drawer is inert and the clicked link sits inside it, so focus would fall to body: move it to the page.
-        if (drawer) main.current?.focus();
-        setDrawer(false);
+        closeDrawer("main");
       }}>
         <div className="brandmark"><i aria-hidden="true" />Anjuna</div>
         {nav}
       </aside>
-      {drawer && <div className="scrim shell-scrim" onClick={() => setDrawer(false)} />}
-      <div className="main-col">
+      {drawer && <div className="scrim shell-scrim" onClick={() => closeDrawer()} />}
+      <div className="main-col" inert={mobile && drawer}>
         <header className="topbar">
-          <button type="button" className="menu-btn" ref={menuButton} aria-label="เมนู (Menu)" aria-controls="sidebar" aria-expanded={drawer} onClick={() => setDrawer((v) => !v)}>☰</button>
+          <button type="button" className="menu-btn" ref={menuButton} aria-label="เมนู (Menu)" aria-controls="sidebar" aria-expanded={drawer} onClick={() => (drawer ? closeDrawer() : setDrawer(true))}>☰</button>
           <span className="topbar-title">{title}</span>
           {me.account && <span className="pill p-blue env-badge">{me.account}</span>}
           <div className="user-menu" ref={userMenu}>
-            <button type="button" className="btn" aria-controls="user-pop" aria-expanded={menu} onClick={() => setMenu((v) => !v)}>{me.email}</button>
+            <button type="button" className="btn" ref={userButton} aria-controls="user-pop" aria-expanded={menu} onClick={() => setMenu((v) => !v)}>{me.email}</button>
             {menu && (
               <div className="user-pop" id="user-pop">
                 <div className="who"><div>{me.email}</div><div>{me.role === "owner" ? "Owner" : "พนักงาน"}</div></div>

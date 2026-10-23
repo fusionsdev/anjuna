@@ -51,6 +51,7 @@ export function App() {
     });
     return () => { cancelled = true; };
   }, [me, view]);
+  useEffect(() => { document.title = me ? `${pageTitle[view]} · Control Panel` : "Control Panel"; }, [me, view]);
 
   if (loading) return <div className="center"><Spinner /></div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
@@ -92,6 +93,7 @@ export function App() {
           routeBrandId={route.view === "brands" ? route.brandId : null}
           onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }), { replace: window.location.pathname === "/brands/new" })}
           onWizardClosed={() => { if (window.location.pathname === "/brands/new") navigate("/brands", { replace: true }); }}
+          onNewBrand={() => open("new-brand")}
         />
       )}
       {view === "templates" && (

@@ -56,12 +56,34 @@ it.each(["wrangler.deploy.aduplift.jsonc", "wrangler.deploy.maimax.jsonc"])("%s 
 });
 
 describe("styles.css", () => {
+  const css = readFileSync(path.join(root, "src/client/styles.css"), "utf8");
+
   it("ends with the reduced-motion block, after every animated rule", () => {
-    const css = readFileSync(path.join(root, "src/client/styles.css"), "utf8");
     const reduced = css.lastIndexOf("@media (prefers-reduced-motion: reduce)");
     expect(reduced).toBeGreaterThan(-1);
     expect(reduced).toBeGreaterThan(css.indexOf(".spinner-ring {"));
     expect(css.slice(reduced)).toContain(".spinner-ring { animation: none; }");
+    // The last animation declaration outside the block sits before it: the block's end is matched by braces.
+    let depth = 0;
+    let end = css.length;
+    for (let i = css.indexOf("{", reduced); i < css.length; i += 1) {
+      if (css[i] === "{") depth += 1;
+      else if (css[i] === "}" && (depth -= 1) === 0) { end = i + 1; break; }
+    }
+    const outside = css.slice(0, reduced) + css.slice(end);
+    const lastAnimation = [...outside.matchAll(/animation(?:-[a-z-]+)?\s*:/g)].at(-1)?.index ?? -1;
+    expect(lastAnimation).toBeGreaterThan(-1);
+    expect(lastAnimation).toBeLessThan(reduced);
+  });
+
+  it("left-aligns the text cells of a DataTable over the right-aligned .tw cells", () => {
+    expect(css).toContain(".data-table td:not(.num), .data-table th:not(.num) { text-align: left; }");
+    expect(css).toMatch(/\.tw th \{[^}]*text-align: right/);
+  });
+
+  it("makes the DataTable wrapper the vertical scroll box so the sticky header sticks", () => {
+    expect(css).toContain(".data-table { max-height: 70vh; overflow: auto; }");
+    expect(css).toContain(".data-table thead th { position: sticky; top: 0;");
   });
 });
 

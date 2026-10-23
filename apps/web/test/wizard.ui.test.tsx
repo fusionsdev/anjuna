@@ -526,6 +526,31 @@ describe("entry points on the Lifecycle screen", () => {
     expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
   });
 
+  it("closes a resumed draft wizard when Back moves the route to another brand", async () => {
+    hold({ contact: CONTACT, copy: {}, ads: {} });
+    const view = render(<BrandLifecycle me={employee} routeBrandId="brand_live" />);
+    await screen.findByRole("heading", { name: "Live Cash" });
+    // The row click moves the URL to the draft; the wizard then resumes that draft.
+    fireEvent.click(screen.getByRole("button", { name: /Maple Cash/ }));
+    view.rerender(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
+    await screen.findByRole("heading", { name: "Maple Cash" });
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    await heading("ตรวจสอบ (Review)");
+    view.rerender(<BrandLifecycle me={employee} routeBrandId="brand_live" />);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeNull());
+    expect(await screen.findByRole("heading", { name: "Live Cash" })).toBeTruthy();
+  });
+
+  it("keeps a resumed draft wizard open while the route stays on its brand", async () => {
+    hold({ contact: CONTACT, copy: {}, ads: {} });
+    const view = render(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
+    await screen.findByRole("heading", { name: "Maple Cash" });
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    await heading("ตรวจสอบ (Review)");
+    view.rerender(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
+    expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+  });
+
   it("duplicates a brand with a new domain and opens the copy at the Brand step", async () => {
     routes.set("POST /api/brands/brand_live/duplicate", () => json({ ...draftBody({ name: "Copy Cash" }), duplicated_from: "brand_live" }, 201));
     hold({ contact: CONTACT, copy: {}, ads: {} });

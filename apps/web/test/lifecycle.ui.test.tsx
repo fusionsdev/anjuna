@@ -137,6 +137,26 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.getByText("brand_missing")).toBeTruthy();
   });
 
+  it("picks the first brand when Back leaves an unknown brand id for /brands", async () => {
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    expect(await screen.findByText(/ไม่พบแบรนด์/)).toBeTruthy();
+    view.rerender(<BrandLifecycle me={owner} routeBrandId={null} />);
+    expect(await screen.findByRole("heading", { name: "renderable.test" })).toBeTruthy();
+    expect(screen.queryByText(/ไม่พบแบรนด์/)).toBeNull();
+  });
+
+  it("keeps a valid selection when the route leaves its brand id for /brands", async () => {
+    lifecycleRows = [structuredClone(brand), LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] })];
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand-b" />);
+    expect(await screen.findByRole("heading", { name: "second.test" })).toBeTruthy();
+    view.rerender(<BrandLifecycle me={owner} routeBrandId={null} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole("heading", { name: "second.test" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "renderable.test" })).toBeNull();
+  });
+
   it("shows the wizard while wizardRoute is true and closes it when it turns false", async () => {
     routes.set("GET /api/templates", () => json({ templates: [] }));
     routes.set("GET /api/wizard/defaults", () => json({ amount_buckets: [100, 200, 300], form_route: "/request" }));

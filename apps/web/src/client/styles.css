@@ -183,6 +183,7 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .confirm-body { color: var(--muted); white-space: pre-line; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
 
+.data-table { max-height: 70vh; overflow: auto; }
 .data-table thead th { position: sticky; top: 0; background: var(--raised); z-index: 1; }
 .data-table td { height: var(--row-h); padding-block: 6px; }
 .data-table .mono { font-family: var(--mono); font-size: var(--text-sm); }

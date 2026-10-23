@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "../src/client/components/AppShell";
 import { SidebarNav, type NavItem } from "../src/client/components/SidebarNav";
 
@@ -90,6 +90,55 @@ describe("AppShell", () => {
     } finally {
       window.matchMedia = original;
     }
+  });
+
+  describe("on a mobile viewport", () => {
+    const original = window.matchMedia;
+    beforeEach(() => {
+      window.matchMedia = ((query: string) => ({
+        matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+      })) as unknown as typeof window.matchMedia;
+    });
+    afterEach(() => { window.matchMedia = original; });
+    const mainCol = () => document.querySelector(".main-col")!;
+
+    it("moves focus to the first nav link and makes the page behind inert while the drawer is open", () => {
+      renderShell();
+      const toggle = screen.getByRole("button", { name: "เมนู (Menu)" });
+      expect(mainCol().hasAttribute("inert")).toBe(false);
+      fireEvent.click(toggle);
+      expect(document.activeElement).toBe(screen.getByRole("link", { name: "หน้าแรก" }));
+      expect(mainCol().hasAttribute("inert")).toBe(true);
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(mainCol().hasAttribute("inert")).toBe(false);
+      expect(document.activeElement).toBe(toggle);
+    });
+
+    it("returns focus to the menu button when the scrim closes the drawer", () => {
+      renderShell();
+      const toggle = screen.getByRole("button", { name: "เมนู (Menu)" });
+      fireEvent.click(toggle);
+      fireEvent.click(document.querySelector(".shell-scrim")!);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(mainCol().hasAttribute("inert")).toBe(false);
+      expect(document.activeElement).toBe(toggle);
+    });
+  });
+
+  it("does not mark the page behind inert on a desktop viewport", () => {
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
+    expect(document.querySelector(".main-col")!.hasAttribute("inert")).toBe(false);
+  });
+
+  it("returns focus to the user menu button when Escape closes the user menu", () => {
+    renderShell();
+    const userButton = screen.getByRole("button", { name: /owner@example.test/ });
+    fireEvent.click(userButton);
+    screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" }).focus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeNull();
+    expect(document.activeElement).toBe(userButton);
   });
 
   it("closes the user menu on a pointerdown outside it", () => {
