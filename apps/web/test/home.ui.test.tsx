@@ -1,3 +1,5 @@
+import conversionsFixture from "@anjuna/contracts/fixtures/admin/conversions.response.json";
+import type { ConversionsReportResponse } from "@anjuna/contracts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, type Me } from "../src/client/api";
@@ -29,9 +31,17 @@ const alertsReport = {
   submit_error_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.05, alert_at: 0.1, samples: [] } },
   reject_rate: { state: "warn", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [{ brand: "Credit Genie", rejected: 5, decided: 13, rate: 0.38 }] } },
 };
+// The Conversions fixture, owner view: uploaded 5, pending 3, dead 4, stalled 1, uploaded value 412.5.
+const CONVERSIONS_OWNER = conversionsFixture as ConversionsReportResponse;
+// 30 days: every count is different so the period switch shows in the card.
+const CONVERSIONS_30D: ConversionsReportResponse = { ...CONVERSIONS_OWNER, period: "30d", totals: { pending: 6, processing: 2, uploaded: 20, dead: 9 }, value_totals: { uploaded: 1800, dead: 400 }, stalled: 2 };
+// Employee view: core withholds every money field.
+const redact = (report: ConversionsReportResponse): ConversionsReportResponse => ({ ...report, value_totals: null, rows: report.rows.map((r) => ({ ...r, value: null })) });
 const template = (id: string, status: string) => ({ template_version_id: id, template_id: id, name: id, version: 1, status, submitted_by_label: null, created_at: "2026-10-20", sealed_at: null, thumbnail_url: null, brands_using: 0 });
 
 let funnel: (from: string) => Response | Promise<Response>;
+let conversions: (period: string) => Response | Promise<Response>;
+let alertsBody: unknown;
 let spend: ReturnType<typeof vi.fn>;
 const realSpend = api.spend;
 let requests: string[];
@@ -41,13 +51,16 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));
   requests = [];
   funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
+  conversions = (period) => json(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER);
+  alertsBody = alertsReport;
   spend =vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
   (api as unknown as { spend: unknown }).spend = spend;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     requests.push(input);
     const url = new URL(input, "http://panel.test");
     if (url.pathname === "/api/funnel") return funnel(url.searchParams.get("from") ?? "");
-    if (url.pathname === "/api/alerts") return json(alertsReport);
+    if (url.pathname === "/api/conversions") return conversions(url.searchParams.get("period") ?? "");
+    if (url.pathname === "/api/alerts") return json(alertsBody);
     if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [{ brand_id: "a", status: "live" }, { brand_id: "b", status: "live" }, { brand_id: "c", status: "draft" }] });
     if (url.pathname === "/api/brands/a/checklist") return json({ brand_id: "a", checklist: [{ item: "test_sold", evidence: {} }, { item: "drain_route", evidence: {} }] });
@@ -60,6 +73,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   api.spend = realSpend;
+  // navigate() moves the jsdom location; the next test starts on Home.
+  window.history.replaceState(null, "", "/");
 });
 
 const ledgerValue = (label: string) => {
@@ -73,6 +88,24 @@ const ledgerDelta = (label: string) => {
   return d ? { text: d.textContent, className: d.className } : null;
 };
 const funnelQueries = () => requests.filter((r) => r.startsWith("/api/funnel")).map((r) => new URL(r, "http://panel.test").searchParams);
+const conversionRequests = () => requests.filter((r) => r.startsWith("/api/conversions"));
+const card = () => within(screen.getByRole("region", { name: "คอนเวอร์ชัน" }));
+/** The big number under a card label. */
+const cardValue = (label: string) => card().getByText(label).parentElement!.querySelector(".v")!.textContent;
+const fixList = () => within(screen.getByRole("region", { name: "ต้องแก้" }));
+const fixTexts = () => [...screen.getByRole("region", { name: "ต้องแก้" }).querySelectorAll(".home-item .t span")].map((s) => s.textContent);
+/**
+ * Clicks a link and says whether the app took the click (default prevented, so no new page loads).
+ * The click is cancelled afterwards so jsdom does not try to navigate.
+ */
+const appTakesClick = (link: Element, init: MouseEventInit = {}) => {
+  let prevented = false;
+  const seen = (event: Event) => { prevented = event.defaultPrevented; event.preventDefault(); };
+  document.addEventListener("click", seen);
+  fireEvent.click(link, init);
+  document.removeEventListener("click", seen);
+  return prevented;
+};
 
 describe("Home screen, owner", () => {
   it("shows spend, leads, cost per lead, the ledger, the money flow and the to-do list", async () => {
@@ -248,9 +281,141 @@ describe("Home screen, owner", () => {
     fireEvent.click(todo.getAllByRole("button", { name: "เปิด" })[1]!);
     expect(onGo.mock.calls.map((c) => c[0])).toEqual(["new-brand", "alerts", "funnel", "templates"]);
   });
+
+  it("shows conversion counts and links the card and the dead count to the Conversions page", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    expect(cardValue("ค้างส่ง")).toBe("3");
+    expect(cardValue("ส่งไม่ได้")).toBe("4");
+    expect(cardValue("ค้างเกิน 6 ชม.")).toBe("1");
+    expect(cardValue("มูลค่าที่ส่งแล้ว")).toBe("$412.50");
+    expect(conversionRequests()).toEqual(["/api/conversions?period=7d"]);
+
+    const dead = card().getByRole("link", { name: "ส่งไม่ได้ 4" });
+    expect(dead.getAttribute("href")).toBe("/conversions?status=dead");
+    expect(appTakesClick(dead)).toBe(true);
+    expect(window.location.pathname).toBe("/conversions");
+    expect(window.location.search).toBe("?status=dead");
+
+    window.history.replaceState(null, "", "/");
+    const all = card().getByRole("link", { name: "ดูทั้งหมด" });
+    expect(all.getAttribute("href")).toBe("/conversions");
+    expect(appTakesClick(all)).toBe(true);
+    expect(window.location.pathname).toBe("/conversions");
+    expect(window.location.search).toBe("");
+  });
+
+  it("keeps the browser default for a ctrl-click, meta-click or middle-click on the card and fix links", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    const dead = card().getByRole("link", { name: "ส่งไม่ได้ 4" });
+    const all = card().getByRole("link", { name: "ดูทั้งหมด" });
+    for (const link of [dead, all]) {
+      expect(appTakesClick(link, { ctrlKey: true })).toBe(false);
+      expect(appTakesClick(link, { metaKey: true })).toBe(false);
+      expect(appTakesClick(link, { shiftKey: true })).toBe(false);
+      expect(appTakesClick(link, { button: 1 })).toBe(false);
+    }
+    await waitFor(() => expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" })).toHaveLength(2));
+    const [deadItem] = fixList().getAllByRole("link", { name: "ดูรายละเอียด" });
+    expect(appTakesClick(deadItem!, { ctrlKey: true })).toBe(false);
+    expect(window.location.pathname + window.location.search).toBe("/");
+
+    // A plain left click on the same link stays in the app.
+    expect(appTakesClick(dead)).toBe(true);
+    expect(window.location.pathname + window.location.search).toBe("/conversions?status=dead");
+  });
+
+  it("asks for the conversions of the chosen period and drops a late answer for an old one", async () => {
+    let releaseOld: (response: Response) => void = () => {};
+    const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
+    conversions = (period) => (period === "7d" ? old : json(CONVERSIONS_30D));
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    // The 7 day answer is still on its way: every cell shows the loading mark.
+    expect(["ส่งแล้ว", "ค้างส่ง", "ส่งไม่ได้", "ค้างเกิน 6 ชม."].map(cardValue)).toEqual(["…", "…", "…", "…"]);
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("20"));
+    expect(cardValue("ส่งไม่ได้")).toBe("9");
+    expect(cardValue("มูลค่าที่ส่งแล้ว")).toBe("$1,800.00");
+    releaseOld(json(CONVERSIONS_OWNER));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cardValue("ส่งแล้ว")).toBe("20");
+    expect(cardValue("ส่งไม่ได้")).toBe("9");
+    expect(conversionRequests()).toEqual(["/api/conversions?period=7d", "/api/conversions?period=30d"]);
+  });
+
+  it("adds dead and stalled conversions to the fix list, bad first, with links to the filtered Conversions page", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันส่งไม่ได้ 4 รายการ"));
+    expect(fixTexts()).toEqual([
+      "คอนเวอร์ชันส่งไม่ได้ 4 รายการ",
+      "คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ",
+      "5 ลีดยังไม่มีผลจาก LeadsGate เกิน 24 ชั่วโมง",
+      "อัตรา reject 38% สูงกว่าค่าปกติ 10%",
+    ]);
+    const dots = [...screen.getByRole("region", { name: "ต้องแก้" }).querySelectorAll(".home-item .dot")].map((d) => d.getAttribute("style") ?? "");
+    expect(dots.map((style) => (style.includes("--bad") ? "bad" : "warn"))).toEqual(["bad", "warn", "warn", "warn"]);
+
+    const links = fixList().getAllByRole("link", { name: "ดูรายละเอียด" });
+    expect(links.map((l) => l.getAttribute("href"))).toEqual(["/conversions?status=dead", "/conversions?status=pending"]);
+    expect(appTakesClick(links[1]!)).toBe(true);
+    expect(window.location.pathname + window.location.search).toBe("/conversions?status=pending");
+    // The alert items keep their button that opens the alerts screen.
+    expect(fixList().getAllByRole("button", { name: "ดูรายละเอียด" })).toHaveLength(2);
+  });
+
+  it("keeps the top 4 of the fix list with bad items before warn items", async () => {
+    const sample = (brand: string) => ({ brand, errors: 2, submits: 8, rate: 0.2 });
+    alertsBody = { ...alertsReport, submit_error_rate: { state: "alert", detail: { window_hours: 24, warn_at: 0.05, alert_at: 0.1, samples: [sample("s1"), sample("s2"), sample("s3")] } } };
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันส่งไม่ได้ 4 รายการ"));
+    expect(fixTexts()).toEqual(["คอนเวอร์ชันส่งไม่ได้ 4 รายการ", "ส่งฟอร์มผิดพลาด 20% (2 จาก 10 ครั้ง)", "ส่งฟอร์มผิดพลาด 20% (2 จาก 10 ครั้ง)", "ส่งฟอร์มผิดพลาด 20% (2 จาก 10 ครั้ง)"]);
+  });
+
+  it("shows the stalled conversions once when the stalled alert reports the same stall", async () => {
+    alertsBody = { ...alertsReport, conversion_stalled: { state: "warn", detail: { max_hours: 6, stuck_count: 2, oldest_created_at: "2026-10-22T01:00:00.000Z" } } };
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ"));
+    expect(fixTexts().filter((t) => /ค้างเกิน|ยังไม่ถูกส่ง/.test(t ?? ""))).toEqual(["คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ"]);
+  });
+
+  it("keeps the stalled alert item when the conversions show no stall or fail", async () => {
+    alertsBody = { ...alertsReport, conversion_stalled: { state: "warn", detail: { max_hours: 6, stuck_count: 2, oldest_created_at: "2026-10-22T01:00:00.000Z" } } };
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { ...CONVERSIONS_OWNER.totals, dead: 0 }, stalled: 0 });
+    const { unmount } = render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixTexts()).toContain("2 คอนเวอร์ชันยังไม่ถูกส่งเกิน 6 ชั่วโมง"));
+    await waitFor(() => expect(cardValue("ส่งไม่ได้")).toBe("0"));
+    expect(fixTexts().some((t) => t?.startsWith("คอนเวอร์ชัน"))).toBe(false);
+    unmount();
+
+    conversions = () => json({ error: "core_unavailable" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("—"));
+    expect(fixTexts()).toContain("2 คอนเวอร์ชันยังไม่ถูกส่งเกิน 6 ชั่วโมง");
+  });
+
+  it("hides the card body behind — when the conversions call fails", async () => {
+    conversions = () => json({ error: "core_unavailable" }, 502);
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("—"));
+    expect(["ส่งแล้ว", "ค้างส่ง", "ส่งไม่ได้", "ค้างเกิน 6 ชม."].map(cardValue)).toEqual(["—", "—", "—", "—"]);
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
+    // The alert items stay; no conversion item appears.
+    await waitFor(() => expect(fixTexts()).toContain("อัตรา reject 38% สูงกว่าค่าปกติ 10%"));
+    expect(fixTexts().some((t) => t?.startsWith("คอนเวอร์ชัน"))).toBe(false);
+  });
 });
 
 describe("Home screen, employee", () => {
+  beforeEach(() => {
+    conversions = (period) => json(redact(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER));
+  });
+
   it("shows visitors, leads, sold and pending with no money and no spend request", async () => {
     render(<HomeScreen me={employee} />);
     await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
@@ -302,6 +467,28 @@ describe("Home screen, employee", () => {
     await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
     await waitFor(() => expect(ledgerDelta("ลีด")).toEqual({ text: "0%", className: "d" }));
     expect(screen.queryByText("รายได้")).toBeNull();
+    expect(document.body.textContent).not.toContain("$");
+  });
+
+  it("employee sees conversion counts without value", async () => {
+    render(<HomeScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    expect(cardValue("ค้างส่ง")).toBe("3");
+    expect(cardValue("ส่งไม่ได้")).toBe("4");
+    expect(cardValue("ค้างเกิน 6 ชม.")).toBe("1");
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
+    expect(card().getByRole("link", { name: "ส่งไม่ได้ 4" }).getAttribute("href")).toBe("/conversions?status=dead");
+    await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันส่งไม่ได้ 4 รายการ"));
+    expect(document.body.textContent).not.toContain("$");
+  });
+
+  it("hides the uploaded value from an employee even if the response carries it", async () => {
+    conversions = () => json(CONVERSIONS_OWNER);
+    render(<HomeScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
     expect(document.body.textContent).not.toContain("$");
   });
 

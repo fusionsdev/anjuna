@@ -1,7 +1,8 @@
-import type { AlertsReportResponse, FunnelReportResponse, SpendReportResponse } from "@anjuna/contracts";
-import { useEffect, useState } from "react";
+import { CONVERSION_STALLED_HOURS, type AlertsReportResponse, type ConversionsReportResponse, type FunnelReportResponse, type SpendReportResponse } from "@anjuna/contracts";
+import { useEffect, useState, type MouseEvent } from "react";
 import { api, type Me } from "../api";
 import { delta, previousRange } from "../home-metrics";
+import { isPlainLeftClick, navigate } from "../router";
 import "./Home.css";
 
 export type HomePeriod = "today" | "7d" | "30d";
@@ -36,6 +37,16 @@ const usd = (value: Value): string => {
   const amount = value as number;
   const text = Math.abs(amount) >= 100 || Number.isInteger(amount) ? Math.round(Math.abs(amount)).toLocaleString("en-US") : Math.abs(amount).toFixed(2);
   return `${amount < 0 ? "−$" : "$"}${text}`;
+};
+
+/** Two decimals like the Conversions page, so the card and the page show the same amount. */
+const usdCents = (amount: number): string => `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** A plain left click moves inside the app; a ctrl-click or middle-click keeps the browser default (a new tab). */
+const inApp = (path: string) => (event: MouseEvent<HTMLAnchorElement>) => {
+  if (!isPlainLeftClick(event)) return;
+  event.preventDefault();
+  navigate(path);
 };
 
 /** `revenue` is null when core withheld it (every row null), so the ledger shows "—" and never `$0`. */
@@ -97,15 +108,22 @@ function leakNote(stages: Stage[], leak: number): string | null {
   return `หลุดมากที่สุดที่ขั้น "${before.label}" ไป "${here.label}": จาก ${num(before.value)} เหลือ ${num(here.value)} (${pct}%)`;
 }
 
-interface FixItem { id: string; level: "bad" | "warn"; brand: string; message: string }
+/** An item with a `path` links there; one without opens the alerts screen. */
+interface FixItem { id: string; level: "bad" | "warn"; brand: string; message: string; path?: string }
 
 const percent = (rate: number) => `${Math.round(rate * 100)}%`;
 
-function fixItems(report: AlertsReportResponse): FixItem[] {
+/** `conversions` is null while loading or when the call failed: then only the alert items show. */
+function fixItems(report: AlertsReportResponse, conversions: ConversionsReportResponse | null): FixItem[] {
   const level = (state: "ok" | "warn" | "alert"): "bad" | "warn" => (state === "alert" ? "bad" : "warn");
   const items: FixItem[] = [];
+  const dead = conversions?.totals.dead ?? 0;
+  const stalledConversions = conversions?.stalled ?? 0;
+  if (dead > 0) items.push({ id: "conversions:dead", level: "bad", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันส่งไม่ได้ ${dead} รายการ`, path: "/conversions?status=dead" });
+  if (stalledConversions > 0) items.push({ id: "conversions:stalled", level: "warn", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันค้างเกิน ${CONVERSION_STALLED_HOURS} ชม. ${stalledConversions} รายการ`, path: "/conversions?status=pending" });
   const stalled = report.conversion_stalled;
-  if (stalled.state !== "ok" && stalled.detail.stuck_count > 0) {
+  // The stalled alert counts the same pending rows as the conversions report, so one entry is enough.
+  if (stalled.state !== "ok" && stalled.detail.stuck_count > 0 && stalledConversions === 0) {
     items.push({ id: "stalled", level: level(stalled.state), brand: "ทุกแบรนด์", message: `${stalled.detail.stuck_count} คอนเวอร์ชันยังไม่ถูกส่งเกิน ${stalled.detail.max_hours} ชั่วโมง` });
   }
   const noPostback = report.brands_without_postbacks;
@@ -136,16 +154,19 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [previousFunnel, setPreviousFunnel] = useState<FunnelTotals | null | undefined>(undefined);
   const [spend, setSpend] = useState<{ cost: number; clicks: number } | null | undefined>(undefined);
   const [alerts, setAlerts] = useState<AlertsReportResponse | null | undefined>(undefined);
+  const [conversions, setConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
   const [testSold, setTestSold] = useState<Value>(undefined);
   const [templates, setTemplates] = useState<Value>(undefined);
   const [drafts, setDrafts] = useState<Value>(undefined);
 
-  // Funnel counts and spend follow the period switch. A late answer for an old period is dropped.
+  // Funnel counts, spend and conversions follow the period switch. A late answer for an old period is dropped.
   useEffect(() => {
     let current = true;
     setFunnel(undefined);
     setPreviousFunnel(undefined);
     setSpend(owner ? undefined : null);
+    setConversions(undefined);
+    api.conversions({ period }).then((report) => current && setConversions(report), () => current && setConversions(null));
     api.funnel(periodRange(period)).then((report) => current && setFunnel(sumFunnel(report)), () => current && setFunnel(null));
     // The window before it feeds the deltas only. If it fails the deltas show a dash and the values stay.
     api.funnel(previousRange(periodRange(period))).then((report) => current && setPreviousFunnel(sumFunnel(report)), () => current && setPreviousFunnel(null));
@@ -182,6 +203,9 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const pending: Value = alerts === undefined ? undefined : alerts === null ? null : pendingLeads(alerts);
   const field = (pick: (f: FunnelTotals) => number): Value => (funnel === undefined ? undefined : funnel === null ? null : pick(funnel));
   const before = (pick: (f: FunnelTotals) => Value): Value => (previousFunnel === undefined ? undefined : previousFunnel === null ? null : pick(previousFunnel));
+  const conversion = (pick: (c: ConversionsReportResponse) => number): Value => (conversions === undefined ? undefined : conversions === null ? null : pick(conversions));
+  // Core sends value_totals to the owner only; the card still checks the role so no other session shows it.
+  const uploadedValue = owner && conversions ? conversions.value_totals?.uploaded : undefined;
 
   const stages: Stage[] = [
     ...(owner ? [{ label: "คลิกที่จ่าย", value: spend === undefined ? undefined : spend?.clicks ?? null, paid: true }] : []),
@@ -195,7 +219,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const note = leakNote(stages, leak);
   const biggest = Math.max(1, ...stages.map((s) => (typeof s.value === "number" ? s.value : 0)));
 
-  const fixes = alerts ? fixItems(alerts) : [];
+  const fixes = alerts ? fixItems(alerts, conversions ?? null) : [];
   const todos: Array<{ id: string; title: string; count: Value; unit: string; target: HomeTarget; show: boolean }> = [
     { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", target: "brands", show: true },
     { id: "templates", title: "อนุมัติเทมเพลต", count: templates, unit: "รายการ", target: "templates", show: owner },
@@ -265,6 +289,19 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
           )}
         </section>
         <div className="home-grid2">
+          <section className="panel home-conv" aria-label="คอนเวอร์ชัน">
+            <div className="home-ptitle">
+              <h2>คอนเวอร์ชัน</h2>
+              <a className="btn" href="/conversions" onClick={inApp("/conversions")}>ดูทั้งหมด</a>
+            </div>
+            <div className="ledger" role="group" aria-label="สรุปคอนเวอร์ชัน">
+              <div className="cell"><p className="k">ส่งแล้ว</p><p className="v">{num(conversion((c) => c.totals.uploaded))}</p></div>
+              <div className="cell"><p className="k">ค้างส่ง</p><p className="v">{num(conversion((c) => c.totals.pending))}</p></div>
+              <a className="cell" href="/conversions?status=dead" onClick={inApp("/conversions?status=dead")}><p className="k">ส่งไม่ได้</p><p className="v">{num(conversion((c) => c.totals.dead))}</p></a>
+              <div className="cell"><p className="k">{`ค้างเกิน ${CONVERSION_STALLED_HOURS} ชม.`}</p><p className="v">{num(conversion((c) => c.stalled))}</p></div>
+              {typeof uploadedValue === "number" && <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v">{usdCents(uploadedValue)}</p></div>}
+            </div>
+          </section>
           <section className="panel" aria-label="ต้องแก้">
             <div className="home-ptitle">
               <h2>ต้องแก้</h2>
@@ -272,12 +309,15 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </div>
             {alerts === undefined && <p className="hint">…</p>}
             {alerts === null && <p className="hint">— โหลดการแจ้งเตือนไม่สำเร็จ</p>}
-            {alerts && fixes.length === 0 && <p className="hint">ไม่มีเรื่องที่ต้องแก้</p>}
+            {/* The conversion items arrive with their own call, so an empty list is only final once it answered. */}
+            {alerts && fixes.length === 0 && <p className="hint">{conversions === undefined ? "…" : "ไม่มีเรื่องที่ต้องแก้"}</p>}
             {fixes.slice(0, 4).map((item) => (
               <div className="home-item" key={item.id}>
                 <span className="dot" style={{ background: item.level === "bad" ? "var(--bad)" : "var(--leak)" }} aria-hidden="true" />
                 <div className="t"><b style={{ fontWeight: 500 }}>{item.brand}</b><span>{item.message}</span></div>
-                <button type="button" className="btn" onClick={go("alerts")}>ดูรายละเอียด</button>
+                {item.path
+                  ? <a className="btn" href={item.path} onClick={inApp(item.path)}>ดูรายละเอียด</a>
+                  : <button type="button" className="btn" onClick={go("alerts")}>ดูรายละเอียด</button>}
               </div>
             ))}
           </section>

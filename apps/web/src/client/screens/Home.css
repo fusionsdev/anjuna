@@ -23,6 +23,12 @@
 .home-item:first-of-type { border-top: 0; }
 .home-item .t { flex: 1; min-width: 0; }
 .home-item .t span { display: block; color: var(--muted); font-size: 12px; }
+/* The conversions card sits alone on the first row; the fix list and the to-do list keep their 1.6 : 1 split below it. */
+.home-conv { grid-column: 1 / -1; }
+.home-conv .ledger { margin-top: 12px; }
+.home-ptitle a.btn, .home-item a.btn { display: inline-block; color: inherit; text-decoration: none; cursor: pointer; }
+a.cell { display: block; color: inherit; text-decoration: none; }
+a.cell:hover .v { text-decoration: underline; }
 @media (max-width: 760px) {
   .home-grid2 { grid-template-columns: 1fr; }
   .home-flow, .home-drops { grid-template-columns: repeat(3, minmax(0, 1fr)); }
