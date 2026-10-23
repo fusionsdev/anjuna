@@ -1,6 +1,7 @@
 import type { AlertsReportResponse, FunnelReportResponse, SpendReportResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { api, type Me } from "../api";
+import { delta, previousRange } from "../home-metrics";
 import "./Home.css";
 
 export type HomePeriod = "today" | "7d" | "30d";
@@ -58,6 +59,13 @@ function sumFunnel(report: FunnelReportResponse): FunnelTotals {
 function spendTotals(report: SpendReport): { cost: number; clicks: number } | null {
   if (report.brands.length === 0 && report.totals.cost === 0 && report.totals.clicks === 0) return null;
   return { cost: report.totals.cost, clicks: report.totals.clicks };
+}
+
+/** Change against the previous window, under a ledger value. Every metric using it is good when up. */
+function Delta({ now, before }: { now: Value; before: Value }) {
+  const d = delta(now, before);
+  if (!d) return null;
+  return <p className={`d${d.dir === "up" ? " pos" : d.dir === "down" ? " neg" : ""}`}>{d.text}</p>;
 }
 
 interface Stage { label: string; value: Value; paid?: boolean }
@@ -125,6 +133,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const go = (target: HomeTarget) => () => onGo?.(target);
   const [period, setPeriod] = useState<HomePeriod>("7d");
   const [funnel, setFunnel] = useState<FunnelTotals | null | undefined>(undefined);
+  const [previousFunnel, setPreviousFunnel] = useState<FunnelTotals | null | undefined>(undefined);
   const [spend, setSpend] = useState<{ cost: number; clicks: number } | null | undefined>(undefined);
   const [alerts, setAlerts] = useState<AlertsReportResponse | null | undefined>(undefined);
   const [testSold, setTestSold] = useState<Value>(undefined);
@@ -135,8 +144,11 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   useEffect(() => {
     let current = true;
     setFunnel(undefined);
+    setPreviousFunnel(undefined);
     setSpend(owner ? undefined : null);
     api.funnel(periodRange(period)).then((report) => current && setFunnel(sumFunnel(report)), () => current && setFunnel(null));
+    // The window before it feeds the deltas only. If it fails the deltas show a dash and the values stay.
+    api.funnel(previousRange(periodRange(period))).then((report) => current && setPreviousFunnel(sumFunnel(report)), () => current && setPreviousFunnel(null));
     // The spend API answers 403 to an employee, so an employee never asks.
     if (owner) api.spend(period).then((report) => current && setSpend(spendTotals(report)), () => current && setSpend(null));
     return () => { current = false; };
@@ -169,6 +181,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const profit: Value = spendCost === undefined || revenue === undefined ? undefined : spendCost === null || revenue === null ? null : revenue - spendCost;
   const pending: Value = alerts === undefined ? undefined : alerts === null ? null : pendingLeads(alerts);
   const field = (pick: (f: FunnelTotals) => number): Value => (funnel === undefined ? undefined : funnel === null ? null : pick(funnel));
+  const before = (pick: (f: FunnelTotals) => Value): Value => (previousFunnel === undefined ? undefined : previousFunnel === null ? null : pick(previousFunnel));
 
   const stages: Stage[] = [
     ...(owner ? [{ label: "คลิกที่จ่าย", value: spend === undefined ? undefined : spend?.clicks ?? null, paid: true }] : []),
@@ -215,14 +228,14 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             <>
               <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{usd(spendCost)}</p></div>
               <div className="cell"><p className="k">ต้นทุนต่อลีด</p><p className="v">{usd(costPerLead)}</p></div>
-              <div className="cell"><p className="k">รายได้</p><p className="v">{usd(revenue)}</p></div>
+              <div className="cell"><p className="k">รายได้</p><p className="v">{usd(revenue)}</p><Delta now={revenue} before={before((f) => f.revenue)} /></div>
               <div className="cell"><p className="k">กำไร/ขาดทุน</p><p className={typeof profit === "number" ? (profit < 0 ? "v neg" : "v pos") : "v"}>{usd(profit)}</p></div>
             </>
           ) : (
             <>
-              <div className="cell"><p className="k">ผู้เข้าเว็บ</p><p className="v">{num(field((f) => f.clicks))}</p></div>
-              <div className="cell"><p className="k">ลีด</p><p className="v">{num(leads)}</p></div>
-              <div className="cell"><p className="k">ขายได้</p><p className="v">{num(field((f) => f.sold))}</p></div>
+              <div className="cell"><p className="k">ผู้เข้าเว็บ</p><p className="v">{num(field((f) => f.clicks))}</p><Delta now={field((f) => f.clicks)} before={before((f) => f.clicks)} /></div>
+              <div className="cell"><p className="k">ลีด</p><p className="v">{num(leads)}</p><Delta now={leads} before={before((f) => f.leads)} /></div>
+              <div className="cell"><p className="k">ขายได้</p><p className="v">{num(field((f) => f.sold))}</p><Delta now={field((f) => f.sold)} before={before((f) => f.sold)} /></div>
               <div className="cell"><p className="k">รอผล</p><p className="v">{num(pending)}</p></div>
             </>
           )}

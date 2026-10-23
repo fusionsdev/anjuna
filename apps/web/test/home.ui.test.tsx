@@ -14,6 +14,10 @@ const row = (brand: string, clicks: number, go: number, form: number, submits: n
 const FUNNEL_7D = { from: "2026-10-16T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", rows: [row("cg", 212, 98, 70, 11, 3, 254), row("d6", 71, 33, 24, 6, 1, 156)] };
 // 30 days: reached 900, leads 60, sold 12, revenue 1500.
 const FUNNEL_30D = { from: "2026-09-23T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", rows: [row("cg", 900, 600, 400, 60, 12, 1500)] };
+// The window before 7d (from 2026-10-09): reached 300, leads 10, sold 2, revenue 600. Against FUNNEL_7D that is visits ▼ 6%, leads ▲ 70%, sold ▲ 100%, revenue ▼ 32%.
+const FUNNEL_BEFORE = { from: "2026-10-09T00:00:00.000Z", to: "2026-10-16T00:00:00.000Z", rows: [row("cg", 200, 90, 60, 8, 2, 500), row("d6", 100, 40, 30, 2, 0, 100)] };
+// The previous range starts one window earlier than the current one: 7d 2026-10-09, 30d 2026-08-24, today 2026-10-21.
+const isPreviousFrom = (from: string) => ["2026-10-09", "2026-08-24", "2026-10-21"].some((day) => from.startsWith(day));
 const spendReport = (cost: number, clicks: number) => ({
   period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost, clicks, impressions: 9000 },
   brands: [{ brand_id: "cg", cost, clicks, impressions: 9000, updated_at: "2026-10-22T09:00:00.000Z" }],
@@ -27,7 +31,7 @@ const alertsReport = {
 };
 const template = (id: string, status: string) => ({ template_version_id: id, template_id: id, name: id, version: 1, status, submitted_by_label: null, created_at: "2026-10-20", sealed_at: null, thumbnail_url: null, brands_using: 0 });
 
-let funnel: (from: string) => Response;
+let funnel: (from: string) => Response | Promise<Response>;
 let spend: ReturnType<typeof vi.fn>;
 const realSpend = api.spend;
 let requests: string[];
@@ -36,8 +40,8 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));
   requests = [];
-  funnel = (from) => json(from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
-  spend = vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
+  funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
+  spend =vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
   (api as unknown as { spend: unknown }).spend = spend;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     requests.push(input);
@@ -63,6 +67,12 @@ const ledgerValue = (label: string) => {
   return { text: cell.querySelector(".v")!.textContent, className: cell.querySelector(".v")!.className };
 };
 const heading = (name: string) => screen.findByRole("heading", { level: 1, name });
+/** The delta line under a ledger value, `null` when the cell has none. */
+const ledgerDelta = (label: string) => {
+  const d = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText(label).parentElement!.querySelector(".d");
+  return d ? { text: d.textContent, className: d.className } : null;
+};
+const funnelQueries = () => requests.filter((r) => r.startsWith("/api/funnel")).map((r) => new URL(r, "http://panel.test").searchParams);
 
 describe("Home screen, owner", () => {
   it("shows spend, leads, cost per lead, the ledger, the money flow and the to-do list", async () => {
@@ -107,22 +117,80 @@ describe("Home screen, owner", () => {
     render(<HomeScreen me={owner} />);
     await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
     expect(screen.getByRole("button", { name: "7 วัน" }).getAttribute("aria-pressed")).toBe("true");
-    const funnelQuery = (n: number) => new URL(requests.filter((r) => r.startsWith("/api/funnel"))[n]!, "http://panel.test").searchParams;
+    // Every period asks the funnel twice: the window itself, then the window of equal length before it.
+    const funnelQuery = (n: number) => funnelQueries()[n]!;
     expect(funnelQuery(0).get("from")).toBe("2026-10-16T00:00:00.000Z");
     expect(funnelQuery(0).get("to")).toBe("2026-10-23T00:00:00.000Z");
+    expect(funnelQuery(1).get("from")).toBe("2026-10-09T00:00:00.000Z");
+    expect(funnelQuery(1).get("to")).toBe("2026-10-16T00:00:00.000Z");
     expect(spend).toHaveBeenLastCalledWith("7d");
 
     fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
     await heading("จ่ายค่าโฆษณา $2,400 ได้ 60 ลีด ต้นทุนลีดละ $40");
     expect(screen.getByRole("button", { name: "30 วัน" }).getAttribute("aria-pressed")).toBe("true");
-    expect(funnelQuery(1).get("from")).toBe("2026-09-23T00:00:00.000Z");
+    expect(funnelQuery(2).get("from")).toBe("2026-09-23T00:00:00.000Z");
+    expect(funnelQuery(3).get("from")).toBe("2026-08-24T00:00:00.000Z");
+    expect(funnelQuery(3).get("to")).toBe("2026-09-23T00:00:00.000Z");
     expect(spend).toHaveBeenLastCalledWith("30d");
 
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
     await waitFor(() => expect(spend).toHaveBeenLastCalledWith("today"));
-    await waitFor(() => expect(requests.filter((r) => r.startsWith("/api/funnel"))).toHaveLength(3));
-    expect(funnelQuery(2).get("from")).toBe("2026-10-22T00:00:00.000Z");
-    expect(funnelQuery(2).get("to")).toBe("2026-10-23T00:00:00.000Z");
+    await waitFor(() => expect(funnelQueries()).toHaveLength(6));
+    expect(funnelQuery(4).get("from")).toBe("2026-10-22T00:00:00.000Z");
+    expect(funnelQuery(4).get("to")).toBe("2026-10-23T00:00:00.000Z");
+    expect(funnelQuery(5).get("from")).toBe("2026-10-21T00:00:00.000Z");
+    expect(funnelQuery(5).get("to")).toBe("2026-10-22T00:00:00.000Z");
+  });
+
+  it("shows the revenue change against the previous window and no delta on spend, cost per lead or profit", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "▼ 32%", className: "d neg" }));
+    expect(ledgerDelta("ค่าโฆษณา")).toBeNull();
+    expect(ledgerDelta("ต้นทุนต่อลีด")).toBeNull();
+    expect(ledgerDelta("กำไร/ขาดทุน")).toBeNull();
+  });
+
+  it("shows a dash instead of a percent when the previous revenue is 0", async () => {
+    funnel = (from) => json(isPreviousFrom(from) ? { ...FUNNEL_BEFORE, rows: [row("cg", 200, 90, 60, 8, 2, 0)] } : FUNNEL_7D);
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
+    expect(document.body.textContent).not.toMatch(/Infinity|NaN/);
+  });
+
+  it("shows a dash for the revenue change when core withheld the revenue", async () => {
+    funnel = () => json({ ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
+    expect(ledgerValue("รายได้").text).toBe("—");
+  });
+
+  it("keeps the current values and shows a dash when the previous window fails", async () => {
+    funnel = (from) => (isPreviousFrom(from) ? json({ error: "core_unavailable" }, 502) : json(FUNNEL_7D));
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
+    expect(ledgerValue("รายได้").text).toBe("$410");
+    expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
+  });
+
+  it("shows no delta while the previous window loads and drops a late answer for an old period", async () => {
+    let releaseOld: (response: Response) => void = () => {};
+    const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
+    funnel = (from) => (from.startsWith("2026-10-09") ? old : json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D));
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    expect(ledgerDelta("รายได้")).toBeNull();
+
+    // The 30 day previous window (1500 now against 600 before) answers; then the 7 day one arrives with a different number.
+    funnel = (from) => json(from.startsWith("2026-08-24") ? { ...FUNNEL_BEFORE, rows: [row("cg", 1, 1, 1, 1, 1, 600)] } : FUNNEL_30D);
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "▲ 150%", className: "d pos" }));
+    releaseOld(json({ ...FUNNEL_BEFORE, rows: [row("cg", 1, 1, 1, 1, 1, 1500)] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(ledgerDelta("รายได้")).toEqual({ text: "▲ 150%", className: "d pos" });
   });
 
   it("shows — for spend, cost per lead and profit when the spend API fails, and keeps revenue", async () => {
@@ -216,6 +284,25 @@ describe("Home screen, employee", () => {
     expect(document.body.textContent).not.toMatch(/\$0(?!\.)/);
     expect(document.body.textContent).not.toContain("$");
     expect(document.body.textContent).not.toContain("NaN");
+  });
+
+  it("shows visits, leads and sold against the previous window and no delta on pending", async () => {
+    render(<HomeScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(ledgerDelta("ผู้เข้าเว็บ")).toEqual({ text: "▼ 6%", className: "d neg" }));
+    expect(ledgerDelta("ลีด")).toEqual({ text: "▲ 70%", className: "d pos" });
+    expect(ledgerDelta("ขายได้")).toEqual({ text: "▲ 100%", className: "d pos" });
+    await waitFor(() => expect(ledgerValue("รอผล").text).toBe("5"));
+    expect(ledgerDelta("รอผล")).toBeNull();
+  });
+
+  it("employee gets no revenue delta when the funnel withholds revenue", async () => {
+    funnel = (from) => json({ ...(isPreviousFrom(from) ? FUNNEL_BEFORE : FUNNEL_7D), rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<HomeScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(ledgerDelta("ลีด")).toEqual({ text: "0%", className: "d" }));
+    expect(screen.queryByText("รายได้")).toBeNull();
+    expect(document.body.textContent).not.toContain("$");
   });
 
   it("shows — for pending when the alerts API fails", async () => {
