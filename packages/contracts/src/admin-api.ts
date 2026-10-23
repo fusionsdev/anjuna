@@ -30,7 +30,8 @@ import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, TrafficRiskResponse } from "./traffic-risk.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
-import { SpendQuery, SpendReportResponse } from "./spend.js";
+import { SpendPeriod, SpendQuery, SpendReportResponse } from "./spend.js";
+import { CONVERSION_STATUSES, ConversionReasonCode, ConversionStatus } from "./conversions.js";
 
 // --- roles and request context ------------------------------------------------------------------
 
@@ -702,13 +703,63 @@ export const FunnelReportResponse = z.strictObject({
       form_views: Count,
       submits: Count,
       sold: Count,
-      revenue: z.number().finite().min(0),
+      /** USD. null for a non-owner. */
+      revenue: z.number().finite().min(0).nullable(),
       submit_rate: z.number().finite().min(0).nullable(),
       sold_rate: z.number().finite().min(0).nullable(),
     }),
   ),
 });
 export type FunnelReportResponse = z.infer<typeof FunnelReportResponse>;
+
+// --- GET /admin/conversions (read-only, money redacted for non-owners) --------------------------
+
+const Money = z.number().finite().min(0);
+
+export const ConversionsQuery = z.strictObject({
+  period: SpendPeriod,
+  status: z.enum(["all", ...CONVERSION_STATUSES]).default("all"),
+  brand: BrandId.optional(),
+  /** Test clock, as in AlertsQuery. Omitted means now. */
+  now: Timestamp.optional(),
+});
+export type ConversionsQuery = z.infer<typeof ConversionsQuery>;
+
+export const ConversionRow = z.strictObject({
+  lead_id: LeadId,
+  brand: z.string().min(1),
+  status: ConversionStatus,
+  reason_code: ConversionReasonCode.nullable(),
+  last_error: z.string().max(300).nullable(),
+  /** Which click id the row has. The id value never leaves core. */
+  click_type: z.enum(["gclid", "gbraid", "wbraid", "msclkid"]).nullable(),
+  attempts: Count,
+  /** USD. null for a non-owner. */
+  value: Money.nullable(),
+  currency: z.string().length(3),
+  occurred_at: Timestamp,
+  created_at: Timestamp,
+  updated_at: Timestamp,
+  next_attempt_at: Timestamp.nullable(),
+});
+export type ConversionRow = z.infer<typeof ConversionRow>;
+
+export const ConversionsReportResponse = z.strictObject({
+  period: SpendPeriod,
+  from: Timestamp,
+  /** Exclusive. */
+  to: Timestamp,
+  /** Period window counts; ignore the status and brand filters. */
+  totals: z.strictObject({ pending: Count, processing: Count, uploaded: Count, dead: Count }),
+  /** USD sums for the period window. null for a non-owner. */
+  value_totals: z.strictObject({ uploaded: Money, dead: Money }).nullable(),
+  /** Rows still pending more than CONVERSION_STALLED_HOURS after creation, any age. */
+  stalled: Count,
+  rows: z.array(ConversionRow),
+  /** True when more than CONVERSIONS_ROW_LIMIT rows matched. */
+  truncated: z.boolean(),
+});
+export type ConversionsReportResponse = z.infer<typeof ConversionsReportResponse>;
 
 /** Optional clock override so tests are deterministic. Omitted means "now". */
 export const AlertsQuery = z.strictObject({
@@ -918,6 +969,13 @@ export const AdminApi = {
     min_role: "owner",
     query: SpendQuery,
     response: SpendReportResponse,
+  },
+  conversionsReport: {
+    method: "GET",
+    path: "/admin/conversions",
+    min_role: "employee",
+    query: ConversionsQuery,
+    response: ConversionsReportResponse,
   },
   /** FUS-372 observe-only click risk totals. */
   trafficRisk: {

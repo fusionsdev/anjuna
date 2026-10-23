@@ -95,7 +95,7 @@ export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funn
   const rows = listed && funnel ? funnel.rows.filter((row) => row.brand === brandId) : null;
   const clicks = rows ? rows.reduce((sum, row) => sum + row.clicks, 0) : null;
   const leads = rows ? rows.reduce((sum, row) => sum + row.submits, 0) : null;
-  const revenue = rows ? rows.reduce((sum, row) => sum + row.revenue, 0) : null;
+  const revenue = rows && !rows.some((row) => row.revenue === null) ? rows.reduce((sum, row) => sum + (row.revenue ?? 0), 0) : null;
   const cost = spend?.brands.find((row) => row.brand_id === brandId)?.cost ?? null;
   return {
     clicks,

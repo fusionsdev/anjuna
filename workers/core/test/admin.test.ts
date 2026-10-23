@@ -103,7 +103,7 @@ describe("AdminService contract", () => {
       to: filter.to,
       rows: [{
         brand: "brand-a", keyword: "Fast Cash Loans", variant: "A",
-        clicks: 0, go_count: 0, form_views: 0, submits: 1, sold: 1, revenue: 85,
+        clicks: 0, go_count: 0, form_views: 0, submits: 1, sold: 1, revenue: null,
         submit_rate: null, sold_rate: 1,
       }],
     });
@@ -113,6 +113,21 @@ describe("AdminService contract", () => {
     const invalid = await h.admin(`/admin/funnel?${query}`, employee);
     expect(invalid.status).toBe(422);
     expect(await invalid.json()).toMatchObject({ error: "invalid", request_id: employee.request_id });
+  });
+
+  it("sends funnel revenue to the owner and null revenue to an employee", async () => {
+    const query = new URLSearchParams({ from: "2026-10-01T00:00:00.000Z", to: "2026-10-02T00:00:00.000Z" });
+    const asOwner = FunnelReportResponse.parse(await (await h.admin(`/admin/funnel?${query}`, owner)).json());
+    const asEmployee = FunnelReportResponse.parse(await (await h.admin(`/admin/funnel?${query}`, employee)).json());
+    expect(asOwner.rows.length).toBeGreaterThan(0);
+    expect(asOwner.rows.every((r) => typeof r.revenue === "number")).toBe(true);
+    expect(asEmployee.rows.map((r) => r.revenue)).toEqual(asOwner.rows.map(() => null));
+    expect(asEmployee.rows.map((r) => r.sold)).toEqual(asOwner.rows.map((r) => r.sold));
+    // Only revenue is withheld: an employee still gets the numbers for clicks, submits and sold.
+    for (const field of ["clicks", "submits", "sold"] as const) {
+      expect(asEmployee.rows.map((r) => r[field]), field).toEqual(asOwner.rows.map((r) => r[field]));
+      expect(asEmployee.rows.every((r) => typeof r[field] === "number"), field).toBe(true);
+    }
   });
 
   it("returns D1 alerts to employees at a deterministic time", async () => {

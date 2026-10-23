@@ -10,6 +10,7 @@ import {
   BrandConfig,
   BrandPatchRequest,
   BrandStatusChangeRequest,
+  ConversionsQuery,
   LeadAggregatesQuery,
   AlertsQuery,
   AuditQuery,
@@ -24,6 +25,7 @@ import {
   trafficWindow,
   adminContextFromHeaders,
   authorize,
+  employeeLastError,
   matchAdminRoute,
   type AdminError,
   type AdminRole,
@@ -41,6 +43,7 @@ import suppressionsList from "@anjuna/contracts/fixtures/admin/suppressions.list
 import aggregates from "@anjuna/contracts/fixtures/admin/leads.aggregates.response.json";
 import alertsReport from "@anjuna/contracts/fixtures/admin/alerts.response.json";
 import brandsList from "@anjuna/contracts/fixtures/admin/brands.list.response.json";
+import conversionsReport from "@anjuna/contracts/fixtures/admin/conversions.response.json";
 import funnelReport from "@anjuna/contracts/fixtures/admin/funnel.response.json";
 import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.json";
 import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
@@ -150,6 +153,7 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   let patch: BrandPatchRequest | undefined;
   let reason: string | undefined;
   let auditQuery: AuditQuery | undefined;
+  let conversionsQuery: ConversionsQuery | undefined;
   // spec leads
   let leadsQuery: LeadsQuery | undefined;
   let leadExportQuery: LeadExportQuery | undefined;
@@ -177,6 +181,10 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "spendReport") {
     const q = SpendQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "conversionsReport") {
+    const q = ConversionsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+    conversionsQuery = q.data;
   } else if (endpoint === "trafficRisk" || endpoint === "trafficRiskExport") {
     const q = (endpoint === "trafficRisk" ? TrafficRiskQuery : TrafficRiskExportQuery).safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
@@ -329,13 +337,30 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, { entries, next_cursor: null });
     }
     case "funnelReport":
-      return json(200, funnelReport);
+      return json(200, ctx.actor_role === "owner" ? funnelReport : { ...funnelReport, rows: funnelReport.rows.map((r) => ({ ...r, revenue: null })) });
     case "alertsReport":
       return json(200, alertsReport);
     case "mailingStatus":
       return json(200, mailingStatus);
     case "spendReport":
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
+    case "conversionsReport": {
+      const q = conversionsQuery!;
+      const owner = ctx.actor_role === "owner";
+      // Same order as core: dead, pending, processing, uploaded; then the latest update first; then lead_id.
+      const rank: Record<string, number> = { dead: 0, pending: 1, processing: 2, uploaded: 3 };
+      const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+      const rows = conversionsReport.rows
+        .filter((r) => q.status === "all" || r.status === q.status)
+        .filter((r) => !q.brand || r.brand === q.brand)
+        .map((r) => ({
+          ...r,
+          value: owner ? r.value : null,
+          last_error: owner ? r.last_error : employeeLastError(r.last_error),
+        }))
+        .sort((a, b) => rank[a.status]! - rank[b.status]! || byText(b.updated_at ?? b.created_at, a.updated_at ?? a.created_at) || byText(a.lead_id, b.lead_id));
+      return json(200, { ...conversionsReport, period: q.period, value_totals: owner ? conversionsReport.value_totals : null, rows });
+    }
     case "trafficRisk":
       return json(200, trafficRisk);
     case "trafficRiskExport": {
