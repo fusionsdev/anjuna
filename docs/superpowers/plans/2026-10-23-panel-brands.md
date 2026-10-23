@@ -37,8 +37,9 @@
 ### Task 1: Contracts for the deploy timeline, revisions and `latest_install`
 
 **Files:**
-- Modify: `packages/contracts/src/lifecycle.ts` (one `// spec brands` block appended after `LifecycleBrandSummary`; `InstallStatus` at line 49 gains `export`; `LifecycleBrandSummary` gains one field)
+- Modify: `packages/contracts/src/lifecycle.ts` (one `// spec brands` block appended after `LifecycleBrandSummary`; `InstallStatus` at line 49 gains `export`; `LatestInstall` is declared immediately **before** `LifecycleBrandSummary`, which gains one field)
 - Create: `packages/contracts/fixtures/admin/deploys.response.json`
+- Modify: `packages/contracts/test/admin-api.test.ts` (one entry in `cases` and its import — see Step 4)
 - Test: `packages/contracts/test/deploys.test.ts`
 
 **Interfaces:**
@@ -147,7 +148,17 @@ Four events newest first, `has_more: false`, `unavailable: []`: a `ready` instal
 
 - [ ] **Step 4: Add the `// spec brands` block to `packages/contracts/src/lifecycle.ts`**
 
-Append after `LifecycleBrandSummary`, in the Interfaces order above. Add `export` to the existing `const InstallStatus` and add the one `latest_install` field to `LifecycleBrandSummary`. `packages/contracts/src/index.ts` already re-exports `./lifecycle.js`, so no export line is needed.
+Append after `LifecycleBrandSummary`, in the Interfaces order above, with one exception: declare `LatestInstall` immediately **before** `LifecycleBrandSummary`. A plain forward reference to a `const` declared later hits the temporal dead zone at module load, and `z.lazy` to work around it puts a lazy schema on the most-parsed object in the file for no gain. Add `export` to the existing `const InstallStatus` and add the one `latest_install: LatestInstall.nullable().optional()` field to `LifecycleBrandSummary`. `packages/contracts/src/index.ts` already re-exports `./lifecycle.js`, so no export line is needed.
+
+- [ ] **Step 4b: Register the fixture in the coverage guard**
+
+`packages/contracts/test/admin-api.test.ts:88` asserts that every file in `fixtures/admin/` appears in its `cases` list, so a new fixture there fails that test until it is registered. Import `DeployHistoryResponse` and append one entry to `cases`:
+
+```ts
+["deploys.response.json", DeployHistoryResponse],
+```
+
+This is the guard working as designed — it exists so no fixture goes unvalidated — and registering the fixture is what satisfies it. The alternative, moving the fixture out of `fixtures/admin/`, would break the path the spec pins and leave the new fixture with no coverage check at all. Append the entry at the end of the list, next to the `error.*` rows, so a lane adding its own fixture conflicts on one line at most.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -157,7 +168,7 @@ Expected: PASS, both green. Every existing contracts test still passes, because 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/contracts/src/lifecycle.ts packages/contracts/fixtures/admin/deploys.response.json packages/contracts/test/deploys.test.ts
+git add packages/contracts/src/lifecycle.ts packages/contracts/fixtures/admin/deploys.response.json packages/contracts/test/admin-api.test.ts packages/contracts/test/deploys.test.ts
 git commit -m "feat(contracts): deploy timeline, brand revisions and latest_install schemas (FUS-377)"
 ```
 
