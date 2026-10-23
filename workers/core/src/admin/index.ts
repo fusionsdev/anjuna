@@ -15,8 +15,11 @@ import {
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
   LEAD_AGGREGATES_MAX_DAYS,
+  LEAD_EXPORT_COLUMNS,
+  LEAD_EXPORT_PII_COLUMNS,
   LeadConversion,
   LeadCursorKey,
+  LeadExportQuery,
   LeadId,
   LeadsQuery,
   adminContextFromHeaders,
@@ -35,7 +38,8 @@ import {
   type LeadAggregateRow,
   type LeadApplicant,
   type LeadDetail,
-  type LeadExportQuery,
+  type LeadExportResponse,
+  type LeadExportRow,
   type LeadListRow,
   type LeadsResponse,
 } from "@anjuna/contracts";
@@ -796,6 +800,25 @@ interface LeadListSqlRow {
   postback_count: number;
 }
 
+function leadListRow(row: LeadListSqlRow): LeadListRow {
+  return {
+    lead_id: row.lead_id,
+    brand: row.brand,
+    hostname: row.hostname,
+    status: row.status,
+    outcome: leadOutcome(row.status),
+    requested_amount: Number(row.requested_amount),
+    loan_purpose: row.loan_purpose,
+    state: row.state,
+    keyword: row.keyword,
+    variant: row.variant?.toLowerCase() ?? null,
+    form_variant: row.form_variant,
+    has_conversion: Number(row.has_conversion) === 1,
+    postback_count: Number(row.postback_count),
+    created_at: row.created_at,
+  };
+}
+
 async function listLeads(url: URL, env: Env, context: AdminRequestContext): Promise<Response> {
   const query = parseWith(LeadsQuery, parseQuery(url), context);
   if (query instanceof Response) return query;
@@ -833,24 +856,96 @@ async function listLeads(url: URL, env: Env, context: AdminRequestContext): Prom
   const page = result.results.slice(0, limit);
   const last = page[page.length - 1];
   const response: LeadsResponse = {
-    rows: page.map((row): LeadListRow => ({
-      lead_id: row.lead_id,
-      brand: row.brand,
-      hostname: row.hostname,
-      status: row.status,
-      outcome: leadOutcome(row.status),
-      requested_amount: Number(row.requested_amount),
-      loan_purpose: row.loan_purpose,
-      state: row.state,
-      keyword: row.keyword,
-      variant: row.variant?.toLowerCase() ?? null,
-      form_variant: row.form_variant,
-      has_conversion: Number(row.has_conversion) === 1,
-      postback_count: Number(row.postback_count),
-      created_at: row.created_at,
-    })),
+    rows: page.map(leadListRow),
     next_cursor: result.results.length > limit && last ? encodeLeadCursor(last.created_at, last.lead_id) : null,
   };
+  return json(response);
+}
+
+type LeadExportSqlRow = LeadListSqlRow & Partial<LeadRow>;
+
+/** PII columns as `leads` names them, in contract order. Selected only for an owner who asked for them. */
+const LEAD_EXPORT_PII_SQL = LEAD_EXPORT_PII_COLUMNS.slice(LEAD_EXPORT_COLUMNS.length).map((column) => `l.${column}`);
+
+function leadExportPiiFields(row: LeadExportSqlRow): Partial<LeadExportRow> {
+  return {
+    first_name: row.first_name,
+    last_name: row.last_name,
+    birth_date: row.birth_date,
+    email: row.email,
+    home_phone: row.home_phone,
+    work_phone: row.work_phone ?? null,
+    address: row.address,
+    city: row.city,
+    zip: row.zip,
+    address_length_months: Number(row.address_length_months),
+    own_home: row.own_home === 1,
+    income_type: row.income_type,
+    employer: row.employer,
+    job_title: row.job_title,
+    employed_months: Number(row.employed_months),
+    pay_date1: row.pay_date1,
+    pay_frequency: row.pay_frequency,
+    direct_deposit: row.direct_deposit === 1,
+    monthly_income: Number(row.monthly_income),
+  };
+}
+
+async function leadExport(url: URL, env: Env, context: AdminRequestContext): Promise<Response> {
+  const query = parseWith(LeadExportQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+
+  const window = resolveLeadWindow(query);
+  if ("issue" in window) return invalid(context, [window.issue]);
+
+  const permission = authorize("leadExport", context.actor_role, { pii: query.pii === "1" });
+  if (!permission.ok) return adminError(context, permission.error);
+  const pii = query.pii === "1" && context.actor_role === "owner";
+
+  const bindings: unknown[] = [];
+  const where = leadFilterSql(query, window, bindings);
+  bindings.push(query.limit + 1);
+  const result = await env.LEADS.prepare(
+    `SELECT l.lead_id, l.brand, l.hostname, l.status, l.requested_amount, l.loan_purpose,
+       l.state, l.keyword, l.variant, l.form_variant, l.created_at,
+       EXISTS (SELECT 1 FROM conversion_uploads c WHERE c.lead_id = l.lead_id) AS has_conversion,
+       (SELECT COUNT(*) FROM postback_events p WHERE p.lead_id = l.lead_id) AS postback_count
+       ${pii ? `, ${LEAD_EXPORT_PII_SQL.join(", ")}` : ""}
+     FROM leads l
+     WHERE ${where}
+     ORDER BY l.created_at DESC, l.lead_id DESC
+     LIMIT ?${bindings.length}`,
+  ).bind(...bindings).all<LeadExportSqlRow>();
+
+  const truncated = result.results.length > query.limit;
+  const rows = result.results.slice(0, query.limit).map((row): LeadExportRow => ({
+    ...leadListRow(row),
+    ...(pii ? leadExportPiiFields(row) : {}),
+  }));
+  // Fails closed, as getLead does: no try/catch, so an export whose audit insert throws is never sent.
+  // The row holds counts and the resolved filters, never a value from the rows.
+  await writeAudit(
+    env,
+    context,
+    pii ? "pii.lead_export" : "lead.export",
+    "lead_export",
+    `${window.from}..${window.to}:${query.brand ?? "all"}`,
+    null,
+    {
+      rows: rows.length,
+      truncated,
+      pii,
+      filters: {
+        brand: query.brand ?? null,
+        from: window.from,
+        to: window.to,
+        status: query.status ?? null,
+        q: query.q ?? null,
+      },
+    },
+    new Date().toISOString(),
+  );
+  const response: LeadExportResponse = { rows, truncated, pii };
   return json(response);
 }
 
@@ -965,6 +1060,7 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
 
   // spec leads
   if (route.endpoint === "listLeads") return listLeads(new URL(request.url), env, context);
+  if (route.endpoint === "leadExport") return leadExport(new URL(request.url), env, context);
 
   if (route.endpoint === "listBrands") return listBrands(env);
   if (route.endpoint === "leadAggregates") return leadAggregates(new URL(request.url), env, context);

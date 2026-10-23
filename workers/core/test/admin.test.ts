@@ -9,7 +9,10 @@ import {
   FunnelReportResponse,
   GetBrandResponse,
   GetLeadResponse,
+  LEAD_EXPORT_COLUMNS,
+  LEAD_EXPORT_PII_COLUMNS,
   LeadAggregatesResponse,
+  LeadExportResponse,
   LeadsResponse,
   ListBrandsResponse,
   MailingStatusResponse,
@@ -901,5 +904,166 @@ describe("GET /admin/leads/:lead_id (FUS-376)", () => {
     }
     expect(redacted!.lead.applicant).toBeNull();
     expect(redacted!.lead.profile.state).toBe("TX");
+  });
+});
+
+// spec leads
+describe("GET /admin/leads/export (FUS-376)", () => {
+  const WINDOW = "from=2026-10-01&to=2026-10-31";
+  const PII_VALUES = ["Test", "Applicant", "test@example.com", "2145550123", "100 Example St", "Dallas", "75201", "1990-01-01"];
+  const PII_KEYS = ['"first_name"', '"last_name"', '"birth_date"', '"email"', '"home_phone"', '"work_phone"', '"address"', '"city"', '"zip"'];
+  const CLICK_VALUES = ["fixture-click", "clkexpsold0001", "clkexppend0002", "clkexpv1era0003", "clkexpbrandb0004"];
+  let xh: Harness;
+
+  const auditRows = async () => Number(
+    (await xh.factory.prepare("SELECT count(*) AS count FROM audit_log").first<{ count: number }>())!.count,
+  );
+  const lastAudit = () => xh.factory.prepare(
+    "SELECT action, actor_id, actor_role, entity_type, entity_id, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1",
+  ).first<Record<string, string | null>>();
+  const exportAs = async (query: string, context: AdminRequestContext) => {
+    const response = await xh.admin(`/admin/leads/export?${query}`, context);
+    expect(response.status, `${query} as ${context.actor_role}`).toBe(200);
+    const text = await response.text();
+    return { text, body: LeadExportResponse.parse(JSON.parse(text)) };
+  };
+
+  beforeAll(async () => {
+    xh = await createHarness();
+    for (const brand of ["brand-a", "brand-b"]) await xh.seedBrand(brand);
+    const seed = async (id: string, click: string, brand: string, createdAt: string, status: string) => {
+      await xh.seedLead(id, click, brand);
+      await xh.db.prepare("UPDATE leads SET created_at = ?1, status = ?2 WHERE lead_id = ?3")
+        .bind(createdAt, status, id).run();
+    };
+    await seed("exp-0001-sold", "clkexpsold0001", "brand-a", "2026-10-05T00:00:00.000Z", "soldLead");
+    await seed("exp-0002-pending", "clkexppend0002", "brand-a", "2026-10-04T00:00:00.000Z", "newLead");
+    await seed("exp-0003-v1era", "clkexpv1era0003", "brand-a", "2026-10-03T00:00:00.000Z", "rejectLead");
+    await seed("exp-0004-brandb", "clkexpbrandb0004", "brand-b", "2026-10-02T00:00:00.000Z", "newLead");
+    await xh.db.prepare(
+      "UPDATE leads SET keyword = 'Fast Cash', variant = 'A', experiment_id = 'exp-2026-10', work_phone = '2145550999' WHERE lead_id = 'exp-0001-sold'",
+    ).run();
+    // A V1-era row: the 0003 columns and work_phone were never written.
+    await xh.db.prepare(
+      "UPDATE leads SET keyword = NULL, variant = NULL, experiment_id = NULL, work_phone = NULL WHERE lead_id = 'exp-0003-v1era'",
+    ).run();
+    await xh.seedConversion("exp-0001-sold");
+    await xh.db.prepare(
+      "INSERT INTO postback_events (lead_id, event_type, payout, created_at) VALUES ('exp-0001-sold', 'soldLead', 85, '2026-10-05T00:00:30.000Z')",
+    ).run();
+  });
+  afterAll(async () => { await xh?.mf.dispose(); });
+
+  it("is 403 forbidden_role for an employee who asks for pii=1 and 200 without it", async () => {
+    const before = await auditRows();
+    const denied = await xh.admin(`/admin/leads/export?${WINDOW}&pii=1`, employee);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({
+      error: "forbidden_role", required_role: "owner", denied_fields: ["pii"], request_id: employee.request_id,
+    });
+    expect(await auditRows()).toBe(before);
+    // The query parses before the role check, so a bad filter is 422 even with pii=1.
+    expect((await xh.admin("/admin/leads/export?from=2026-10-02&to=2026-10-01&pii=1", employee)).status).toBe(422);
+    expect((await xh.admin(`/admin/leads/export?${WINDOW}&pii=yes`, employee)).status).toBe(422);
+
+    for (const query of [WINDOW, `${WINDOW}&pii=0`]) {
+      const { text, body } = await exportAs(query, employee);
+      expect(body.pii).toBe(false);
+      expect(body.rows.map((row) => row.lead_id)).toEqual(["exp-0001-sold", "exp-0002-pending", "exp-0003-v1era", "exp-0004-brandb"]);
+      for (const row of body.rows) expect(Object.keys(row)).toEqual([...LEAD_EXPORT_COLUMNS]);
+      for (const hidden of [...PII_VALUES, ...PII_KEYS, "2145550999"]) expect(text, hidden).not.toContain(hidden);
+    }
+  });
+
+  it("returns the PII columns to an owner and writes pii.lead_export with filters and a row count", async () => {
+    const before = await auditRows();
+    const { body } = await exportAs(`${WINDOW}&brand=brand-a&pii=1`, owner);
+    expect(body.pii).toBe(true);
+    expect(body.truncated).toBe(false);
+    expect(body.rows.map((row) => row.lead_id)).toEqual(["exp-0001-sold", "exp-0002-pending", "exp-0003-v1era"]);
+    for (const row of body.rows) expect(Object.keys(row)).toEqual([...LEAD_EXPORT_PII_COLUMNS]);
+    expect(body.rows[0]).toMatchObject({
+      first_name: "Test", last_name: "Applicant", birth_date: "1990-01-01", email: "test@example.com",
+      home_phone: "2145550123", work_phone: "2145550999", address: "100 Example St", city: "Dallas", zip: "75201",
+      state: "TX", own_home: false, direct_deposit: true, monthly_income: 3000,
+      has_conversion: true, postback_count: 1, outcome: "sold",
+    });
+    expect(await auditRows()).toBe(before + 1);
+
+    const row = await lastAudit();
+    expect([row!.action, row!.entity_type, row!.entity_id, row!.actor_id, row!.actor_role])
+      .toEqual(["pii.lead_export", "lead_export", "2026-10-01..2026-10-31:brand-a", owner.actor_id, "owner"]);
+    expect(row!.before_json).toBeNull();
+    expect(JSON.parse(row!.after_json!)).toEqual({
+      rows: 3, truncated: false, pii: true,
+      filters: { brand: "brand-a", from: "2026-10-01", to: "2026-10-31", status: null, q: null },
+    });
+    for (const hidden of [...PII_VALUES, "2145550999", ...CLICK_VALUES]) {
+      expect(row!.after_json, hidden).not.toContain(hidden);
+    }
+    const listed = await xh.admin("/admin/audit?target_type=lead_export", owner);
+    const [entry] = AuditListResponse.parse(await listed.json()).entries;
+    expect(AuditEntry.parse(entry)).toMatchObject({
+      action: "pii.lead_export", target: { type: "lead_export", id: "2026-10-01..2026-10-31:brand-a" }, old: null,
+    });
+  });
+
+  it("writes lead.export, not pii.lead_export, for a non-PII download", async () => {
+    for (const context of [employee, owner]) {
+      const before = await auditRows();
+      const { text, body } = await exportAs(`${WINDOW}&status=pending`, context);
+      expect(body.pii).toBe(false);
+      expect(body.rows.map((r) => r.lead_id)).toEqual(["exp-0002-pending", "exp-0004-brandb"]);
+      for (const hidden of PII_KEYS) expect(text, `${context.actor_role} ${hidden}`).not.toContain(hidden);
+      expect(await auditRows()).toBe(before + 1);
+      const row = await lastAudit();
+      expect([row!.action, row!.entity_type, row!.entity_id, row!.actor_id])
+        .toEqual(["lead.export", "lead_export", "2026-10-01..2026-10-31:all", context.actor_id]);
+      expect(row!.before_json).toBeNull();
+      expect(JSON.parse(row!.after_json!)).toEqual({
+        rows: 2, truncated: false, pii: false,
+        filters: { brand: null, from: "2026-10-01", to: "2026-10-31", status: "pending", q: null },
+      });
+    }
+  });
+
+  it("sets truncated and returns only the newest rows when more matched", async () => {
+    const page = (await exportAs(`${WINDOW}&limit=2`, owner)).body;
+    expect(page.rows).toHaveLength(2);
+    expect(page.truncated).toBe(true);
+    expect(page.rows.map((row) => row.lead_id)).toEqual(["exp-0001-sold", "exp-0002-pending"]);
+    expect(JSON.parse((await lastAudit())!.after_json!)).toMatchObject({ rows: 2, truncated: true, pii: false });
+
+    const exact = (await exportAs(`${WINDOW}&limit=4`, owner)).body;
+    expect([exact.rows.length, exact.truncated]).toEqual([4, false]);
+    const full = (await exportAs(WINDOW, owner)).body;
+    expect([full.rows.length, full.truncated]).toEqual([4, false]);
+    expect((await xh.admin(`/admin/leads/export?${WINDOW}&limit=5001`, owner)).status).toBe(422);
+  });
+
+  it("exports a V1-era lead with NULL keyword and work_phone as nulls", async () => {
+    for (const query of [`${WINDOW}&q=exp-0003`, `${WINDOW}&q=exp-0003&pii=1`]) {
+      const { text, body } = await exportAs(query, owner);
+      expect(body.rows).toHaveLength(1);
+      const [row] = body.rows;
+      expect(row!.lead_id).toBe("exp-0003-v1era");
+      expect([row!.keyword, row!.variant]).toEqual([null, null]);
+      if (body.pii) expect(row!.work_phone).toBeNull();
+      expect(text).not.toContain('"null"');
+    }
+  });
+
+  it("never includes click_id or a click id value in an export row", async () => {
+    for (const [query, context] of [[WINDOW, employee], [WINDOW, owner], [`${WINDOW}&pii=1`, owner]] as const) {
+      const { text, body } = await exportAs(query, context);
+      expect(body.rows.length).toBe(4);
+      for (const hidden of [...CLICK_VALUES, '"click_id"', '"gclid"', '"gbraid"', '"wbraid"', '"msclkid"']) {
+        expect(text, `${query} ${hidden}`).not.toContain(hidden);
+      }
+    }
+    // q matches click_id exactly; the matched value still does not come back.
+    const { text, body } = await exportAs(`${WINDOW}&q=clkexpsold0001&pii=1`, owner);
+    expect(body.rows.map((row) => row.lead_id)).toEqual(["exp-0001-sold"]);
+    expect(text).not.toContain("clkexpsold0001");
   });
 });
