@@ -27,6 +27,23 @@ const PREFIXES: Array<[string, ConversionReasonCode]> = [
   ["upload failed", "upload_failed"],
 ];
 
+// The only `last_error` texts a non-owner sees: the fixed strings core and the drain write.
+const EMPLOYEE_ERRORS = new Set([
+  "no click id", "no gclid/gbraid/wbraid", "no msclkid", "reclaim: exhausted attempts after stale lease",
+  "missing microsoft env (account/conversion_name)", "upload failed",
+]);
+const NO_ROUTE_ERROR = /^no route for brand=[a-z0-9_-]{1,64} hostname=[a-z0-9.-]{1,253}$/i;
+
+/**
+ * The drain stores raw AdKit failure text, which can echo the upload payload (click id and value).
+ * A non-owner sees only the fixed templates, trimmed; any other text is null. Core and the panel mock core share this.
+ */
+export function employeeLastError(text: string | null): string | null {
+  if (text === null) return null;
+  const trimmed = text.trim();
+  return EMPLOYEE_ERRORS.has(trimmed.toLowerCase()) || NO_ROUTE_ERROR.test(trimmed) ? trimmed : null;
+}
+
 /** Reason code for a row's `last_error`. Uploaded rows and empty text have no reason. */
 export function conversionReasonCode(status: ConversionStatus, lastError: string | null): ConversionReasonCode | null {
   if (status === "uploaded") return null;

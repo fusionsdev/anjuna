@@ -25,6 +25,7 @@ import {
   trafficWindow,
   adminContextFromHeaders,
   authorize,
+  employeeLastError,
   matchAdminRoute,
   type AdminError,
   type AdminRole,
@@ -346,14 +347,18 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
     case "conversionsReport": {
       const q = conversionsQuery!;
       const owner = ctx.actor_role === "owner";
+      // Same order as core: dead, pending, processing, uploaded; then the latest update first; then lead_id.
+      const rank: Record<string, number> = { dead: 0, pending: 1, processing: 2, uploaded: 3 };
+      const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
       const rows = conversionsReport.rows
         .filter((r) => q.status === "all" || r.status === q.status)
         .filter((r) => !q.brand || r.brand === q.brand)
         .map((r) => ({
           ...r,
           value: owner ? r.value : null,
-          last_error: !owner && (r.reason_code === "platform_error" || r.reason_code === "not_ready") ? null : r.last_error,
-        }));
+          last_error: owner ? r.last_error : employeeLastError(r.last_error),
+        }))
+        .sort((a, b) => rank[a.status]! - rank[b.status]! || byText(b.updated_at ?? b.created_at, a.updated_at ?? a.created_at) || byText(a.lead_id, b.lead_id));
       return json(200, { ...conversionsReport, period: q.period, value_totals: owner ? conversionsReport.value_totals : null, rows });
     }
     case "trafficRisk":

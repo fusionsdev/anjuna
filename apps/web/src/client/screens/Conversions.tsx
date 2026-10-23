@@ -4,7 +4,7 @@ import {
 } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { ApiError, api, type Me } from "../api";
-import { BrandLabel, buildBrandLabels } from "../brand-labels";
+import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { type Column, DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
@@ -53,20 +53,6 @@ export function conversionsPath(filters: ConversionFilters): string {
 const count = (n: number) => n.toLocaleString("en-US");
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("th-TH") : "—");
-
-/** brand_id to domain, like useBrandLabels(), but keeps the entries because the brand select needs the ids. */
-function useBrandDomains(): Map<string, string> {
-  const [domains, setDomains] = useState(() => new Map<string, string>());
-  useEffect(() => {
-    let active = true;
-    void Promise.allSettled([api.lifecycleBrands(), api.brands()]).then(([lifecycle, runtime]) => {
-      if (!active) return;
-      setDomains(buildBrandLabels(lifecycle.status === "fulfilled" ? lifecycle.value.brands : null, runtime.status === "fulfilled" ? runtime.value.brands : null));
-    });
-    return () => { active = false; };
-  }, []);
-  return domains;
-}
 
 function Reason({ row }: { row: Row }) {
   const reason = row.reason_code ? REASON_TEXT[row.reason_code] : null;

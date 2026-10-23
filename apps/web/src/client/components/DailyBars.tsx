@@ -10,6 +10,7 @@ const BAR = 10;
 const SCALE = 100;
 const BASELINE = 110;
 const HEIGHT = 120;
+const TOP = BASELINE - SCALE;
 
 /** One entry per UTC day from `from` to `to`, both included. A day with no row is 0. */
 export function dailySeries(response: LeadAggregatesResponse, from: string, to: string): DailyCount[] {
@@ -42,6 +43,8 @@ export function DailyBars({ days }: { days: DailyCount[] }) {
         {days.map((d, i) => (
           <g key={d.day}>
             <title>{`${d.day}: ลีด ${d.leads}, ขายได้ ${d.sold}`}</title>
+            {/* A 0-lead day has no bar to hover, so a transparent slot-wide area carries the title. */}
+            <rect className="bar-hit" x={i * SLOT} y={TOP} width={SLOT} height={SCALE} fill="transparent" />
             <rect className="bar-leads" x={i * SLOT} y={BASELINE - height(d.leads)} width={BAR} height={height(d.leads)} />
             <rect className="bar-sold" x={i * SLOT + BAR + 1} y={BASELINE - height(d.sold)} width={BAR} height={height(d.sold)} />
           </g>

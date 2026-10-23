@@ -51,7 +51,7 @@ const inApp = (path: string) => (event: MouseEvent<HTMLAnchorElement>) => {
   navigate(path);
 };
 
-/** `revenue` is null when core withheld it (every row null), so the ledger shows "—" and never `$0`. */
+/** `revenue` is null when core withheld it for any row, so the ledger shows "—" and never a partial sum or `$0`. */
 interface FunnelTotals { clicks: number; go: number; form: number; leads: number; sold: number; revenue: number | null }
 
 function sumFunnel(report: FunnelReportResponse): FunnelTotals {
@@ -64,7 +64,7 @@ function sumFunnel(report: FunnelReportResponse): FunnelTotals {
     total.sold += row.sold;
     total.revenue = (total.revenue ?? 0) + (row.revenue ?? 0);
   }
-  if (report.rows.length > 0 && report.rows.every((row) => row.revenue === null)) total.revenue = null;
+  if (report.rows.some((row) => row.revenue === null)) total.revenue = null;
   return total;
 }
 
@@ -313,7 +313,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             <h2>ลีดรายวัน</h2>
           </div>
           {daily === undefined && <p className="hint">…</p>}
-          {daily === null && <p className="hint">—</p>}
+          {daily === null && <p className="hint">— โหลดลีดรายวันไม่สำเร็จ</p>}
           {daily && <DailyBars days={daily} />}
         </section>
         <div className="home-grid2">
@@ -338,8 +338,9 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             {alerts === undefined && <p className="hint">…</p>}
             {alerts === null && <p className="hint">— โหลดการแจ้งเตือนไม่สำเร็จ</p>}
             {conversions === null && <p className="hint">— โหลดคอนเวอร์ชันไม่สำเร็จ</p>}
-            {/* Each source shows its items on its own. "Nothing to fix" needs both to have answered, since a missing source may hide items. */}
-            {alerts && conversions === undefined && fixes.length === 0 && <p className="hint">…</p>}
+            {/* Each source shows its items on its own. "Nothing to fix" needs both to have answered, since a missing source may hide items.
+                While alerts load, their own "…" line already stands, so the conversions line waits for alerts to answer or fail. */}
+            {alerts !== undefined && conversions === undefined && fixes.length === 0 && <p className="hint">…</p>}
             {alerts && conversions && fixes.length === 0 && <p className="hint">ไม่มีเรื่องที่ต้องแก้</p>}
             {fixes.slice(0, 4).map((item) => (
               <div className="home-item" key={item.id}>

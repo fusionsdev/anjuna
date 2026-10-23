@@ -12,12 +12,14 @@ const response = (from: string, to: string, rows: Row[]): LeadAggregatesResponse
 describe("dailySeries", () => {
   it("zero-fills missing days and sums statuses per day", () => {
     // 2026-10-20: 3 pending over two brands + 2 sold = 5 leads, 2 sold. 2026-10-22: 1 rejected. 2026-10-21 has no row.
+    // The rows on 2026-10-19 (before `from`) and 2026-10-23 (after `to`) are ignored.
     const rows = [
       cell("brand-a", "2026-10-20", "pending", 2),
       cell("brand-b", "2026-10-20", "pending", 1),
       cell("brand-a", "2026-10-20", "sold", 2),
       cell("brand-a", "2026-10-22", "rejected", 1),
       cell("brand-a", "2026-10-19", "sold", 9),
+      cell("brand-a", "2026-10-23", "sold", 7),
     ];
     expect(dailySeries(response("2026-10-20", "2026-10-22", rows), "2026-10-20", "2026-10-22")).toEqual([
       { day: "2026-10-20", leads: 5, sold: 2 },
@@ -34,13 +36,14 @@ describe("DailyBars", () => {
     { day: "2026-10-22", leads: 1, sold: 0 },
   ];
 
-  it("renders one leads bar and one sold bar per day with a title", () => {
+  it("renders one leads bar, one sold bar and one hover area per day with a title", () => {
     const { container } = render(<DailyBars days={days} />);
     const svg = screen.getByRole("img", { name: "ลีดและยอดขายรายวัน" });
     expect(svg.tagName.toLowerCase()).toBe("svg");
     expect(svg.getAttribute("viewBox")).toBe("0 0 72 120");
     expect(container.querySelectorAll("svg rect.bar-leads")).toHaveLength(3);
     expect(container.querySelectorAll("svg rect.bar-sold")).toHaveLength(3);
+    expect(container.querySelectorAll("svg rect.bar-hit")).toHaveLength(3);
     expect([...container.querySelectorAll("svg g > title")].map((t) => t.textContent)).toEqual([
       "2026-10-20: ลีด 5, ขายได้ 2",
       "2026-10-21: ลีด 0, ขายได้ 0",
@@ -58,6 +61,12 @@ describe("DailyBars", () => {
       { x: "11", y: "70", width: "10", height: "40" },
       { x: "35", y: "110", width: "10", height: "0" },
       { x: "59", y: "110", width: "10", height: "0" },
+    ]);
+    // The hover area is transparent and spans the plot height (y 10 to 110) over the whole day slot, so a 0-lead day still shows its title.
+    expect([...container.querySelectorAll("rect.bar-hit")].map((r) => ({ x: r.getAttribute("x"), y: r.getAttribute("y"), width: r.getAttribute("width"), height: r.getAttribute("height"), fill: r.getAttribute("fill"), parent: r.parentElement!.querySelector("title")!.textContent }))).toEqual([
+      { x: "0", y: "10", width: "24", height: "100", fill: "transparent", parent: "2026-10-20: ลีด 5, ขายได้ 2" },
+      { x: "24", y: "10", width: "24", height: "100", fill: "transparent", parent: "2026-10-21: ลีด 0, ขายได้ 0" },
+      { x: "48", y: "10", width: "24", height: "100", fill: "transparent", parent: "2026-10-22: ลีด 1, ขายได้ 0" },
     ]);
     expect(container.innerHTML).not.toMatch(/NaN|Infinity/);
   });

@@ -12,8 +12,8 @@ export function buildBrandLabels(lifecycle: Source, runtime: Pick<BrandSummary, 
   return map;
 }
 
-/** brand_id to domain. Unknown ids, and ids asked before the lists load, read as the id itself. `enabled: false` skips the fetch. */
-export function useBrandLabels(enabled = true): (brandId: string) => string {
+/** brand_id to domain, empty until the lists load. A screen that needs the ids too (a brand select) reads the map. `enabled: false` skips the fetch. */
+export function useBrandDomains(enabled = true): Map<string, string> {
   const [map, setMap] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
     if (!enabled) return;
@@ -24,6 +24,12 @@ export function useBrandLabels(enabled = true): (brandId: string) => string {
     });
     return () => { active = false; };
   }, [enabled]);
+  return map;
+}
+
+/** brand_id to domain. Unknown ids, and ids asked before the lists load, read as the id itself. */
+export function useBrandLabels(enabled = true): (brandId: string) => string {
+  const map = useBrandDomains(enabled);
   return (brandId) => map.get(brandId) ?? brandId;
 }
 

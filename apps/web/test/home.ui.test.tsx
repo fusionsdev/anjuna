@@ -65,7 +65,7 @@ beforeEach(() => {
   aggregates = (from, to) => json(aggregatesBody(from, to));
   alertsBody = alertsReport;
   alertsReply = () => json(alertsBody);
-  spend =vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
+  spend = vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
   (api as unknown as { spend: unknown }).spend = spend;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     requests.push(input);
@@ -282,6 +282,14 @@ describe("Home screen, owner", () => {
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "—", className: "v" });
   });
 
+  it("shows — for revenue and profit when one funnel row has null revenue instead of a partial sum", async () => {
+    funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, 156)] });
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    expect(ledgerValue("รายได้").text).toBe("—");
+    expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "—", className: "v" });
+  });
+
   it("shows a real 0 for no leads and — for the cost per lead it cannot divide", async () => {
     funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [] });
     render(<HomeScreen me={owner} />);
@@ -461,9 +469,20 @@ describe("Home screen, owner", () => {
 
   it("shows the alert items and an error line when the conversions call fails, and never claims nothing to fix", async () => {
     conversions = () => json({ error: "core_unavailable" }, 502);
-    alertsBody = { ...alertsReport, brands_without_postbacks: { state: "ok", detail: { window_hours: 24, brands: [] } }, reject_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [] } } };
+    // One warn alert (a brand without postbacks) stays, so the list has an item to wait for.
+    alertsBody = { ...alertsReport, brands_without_postbacks: { state: "warn", detail: { window_hours: 24, brands: [{ brand: "demo06", leads: 5 }] } }, reject_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [] } } };
     render(<HomeScreen me={owner} />);
-    await waitFor(() => expect(fixList().getByText("— โหลดคอนเวอร์ชันไม่สำเร็จ")).toBeTruthy());
+    await waitFor(() => expect(fixTexts()).toEqual(["5 ลีดยังไม่มีผลจาก LeadsGate เกิน 24 ชั่วโมง"]));
+    expect(fixList().getByText("— โหลดคอนเวอร์ชันไม่สำเร็จ")).toBeTruthy();
+    expect(fixList().queryByText("ไม่มีเรื่องที่ต้องแก้")).toBeNull();
+  });
+
+  it("shows … for the conversions that still load when the alerts call failed and nothing else is listed", async () => {
+    alertsReply = () => json({ error: "core_unavailable" }, 502);
+    conversions = () => new Promise<Response>(() => {});
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixList().getByText("— โหลดการแจ้งเตือนไม่สำเร็จ")).toBeTruthy());
+    expect(fixList().getAllByText("…")).toHaveLength(1);
     expect(fixTexts()).toEqual([]);
     expect(fixList().queryByText("ไม่มีเรื่องที่ต้องแก้")).toBeNull();
   });
@@ -529,11 +548,11 @@ describe("Home screen, owner", () => {
     expect(dailyPanel().getByText("ลีด", { selector: "li" })).toBeTruthy();
   });
 
-  it("shows — in the daily bars panel when the aggregates call fails and keeps the other panels", async () => {
+  it("shows — and the failure in the daily bars panel when the aggregates call fails and keeps the other panels", async () => {
     aggregates = () => json({ error: "core_unavailable" }, 502);
     render(<HomeScreen me={owner} />);
     await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
-    await waitFor(() => expect(dailyPanel().getByText("—")).toBeTruthy());
+    await waitFor(() => expect(dailyPanel().getByText("— โหลดลีดรายวันไม่สำเร็จ")).toBeTruthy());
     expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
     expect(dailyPanel().queryByText("ยังไม่มีลีดในช่วงนี้")).toBeNull();
 

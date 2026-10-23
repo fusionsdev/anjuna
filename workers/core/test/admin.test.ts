@@ -123,6 +123,11 @@ describe("AdminService contract", () => {
     expect(asOwner.rows.every((r) => typeof r.revenue === "number")).toBe(true);
     expect(asEmployee.rows.map((r) => r.revenue)).toEqual(asOwner.rows.map(() => null));
     expect(asEmployee.rows.map((r) => r.sold)).toEqual(asOwner.rows.map((r) => r.sold));
+    // Only revenue is withheld: an employee still gets the numbers for clicks, submits and sold.
+    for (const field of ["clicks", "submits", "sold"] as const) {
+      expect(asEmployee.rows.map((r) => r[field]), field).toEqual(asOwner.rows.map((r) => r[field]));
+      expect(asEmployee.rows.every((r) => typeof r[field] === "number"), field).toBe(true);
+    }
   });
 
   it("returns D1 alerts to employees at a deterministic time", async () => {

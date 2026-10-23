@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "../fixtures/admin/conversions.response.json";
-import { AdminApi, ConversionsQuery, ConversionsReportResponse, conversionReasonCode } from "../src/index.js";
+import { AdminApi, ConversionsQuery, ConversionsReportResponse, conversionReasonCode, employeeLastError } from "../src/index.js";
 
 describe("conversionReasonCode", () => {
   it.each([
@@ -22,6 +22,37 @@ describe("conversionReasonCode", () => {
     expect(conversionReasonCode("pending", null)).toBeNull();
     expect(conversionReasonCode("pending", "   ")).toBeNull();
     expect(conversionReasonCode("uploaded", "upload failed")).toBeNull();
+  });
+});
+
+describe("employeeLastError", () => {
+  it.each([
+    "no click id", "no gclid/gbraid/wbraid", "no msclkid", "reclaim: exhausted attempts after stale lease",
+    "missing microsoft env (account/conversion_name)", "upload failed",
+    "no route for brand=brand-b hostname=b.example", "no route for brand=null hostname=null",
+  ])("keeps the fixed text %j", (text) => {
+    expect(employeeLastError(text)).toBe(text);
+  });
+
+  it("matches the fixed texts without regard to case and returns them trimmed", () => {
+    expect(employeeLastError("  Upload Failed \n")).toBe("Upload Failed");
+    expect(employeeLastError("missing Microsoft env (ACCOUNT/CONVERSION_NAME)")).toBe("missing Microsoft env (ACCOUNT/CONVERSION_NAME)");
+  });
+
+  it.each([
+    "upload failed: 500",
+    'upload failed: {"value":85,"gclid":"GCLID-SECRET-123"}',
+    "not ready yet: click too recent",
+    "INVALID_GCLID: The gclid could not be decoded",
+    'no route for brand=x hostname=y {"value":85}',
+    'no route for brand=x hostname=y,"value":85',
+    "",
+  ])("returns null for %j", (text) => {
+    expect(employeeLastError(text)).toBeNull();
+  });
+
+  it("returns null for null", () => {
+    expect(employeeLastError(null)).toBeNull();
   });
 });
 
