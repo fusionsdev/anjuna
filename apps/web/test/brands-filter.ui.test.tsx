@@ -51,6 +51,13 @@ beforeEach(() => {
   for (const row of lifecycleRows) {
     routes.set(`GET /api/brands/${row.brand_id}/checklist`, () => json({ brand_id: row.brand_id, checklist: [] }));
     routes.set(`GET /api/brands/${row.brand_id}/installs`, () => json({ brand_id: row.brand_id, installs: [] }));
+    routes.set(`GET /api/brands/${row.brand_id}/revisions`, () => json({
+      brand_id: row.brand_id, current_revision_id: row.current_revision_id, rollback_target_revision_id: null,
+      revisions: row.current_revision_id ? [{
+        revision_id: row.current_revision_id, revision: 1, template_version_id: "tpl-v1", form_artifact_id: "fa-1",
+        bundle_form_version: "form@abcdef1", worker_version_id: "wv-1", created_by: "owner", created_at: "2026-10-01T00:00:00.000Z", is_current: true,
+      }] : [],
+    }));
   }
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";

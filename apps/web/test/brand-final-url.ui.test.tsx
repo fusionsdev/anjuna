@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrandRevisionsResponse, LifecycleBrandSummary } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
+import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const URL_CG = "https://creditsgene.test/?keyword={keyword}";
@@ -68,12 +69,22 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
   });
 
   it("shows the URL in a read-only input when the clipboard is missing", async () => {
-    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
-    serve(lifecycle("brand-cg", "creditsgene.test"));
-    render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await copyButton());
-    expect((await screen.findByDisplayValue(URL_CG)).hasAttribute("readonly")).toBe(true);
-    expect(await screen.findByRole("alert", {}, { timeout: 1000 })).toBeTruthy();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+      serve(lifecycle("brand-cg", "creditsgene.test"));
+      render(<BrandLifecycle me={owner} />);
+      fireEvent.click(await copyButton());
+      expect((await screen.findByDisplayValue(URL_CG)).hasAttribute("readonly")).toBe(true);
+      const toast = document.querySelector(".toast");
+      expect(toast?.getAttribute("role")).toBe("alert");
+      expect(toast?.classList.contains("toast-err")).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 
   it("shows the URL in a read-only input when the clipboard rejects", async () => {
@@ -151,6 +162,74 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog.textContent).toContain("brand-cg_rev_2");
+  });
+
+  it("fetches the revisions again when current_revision_id moves while the first fetch is in flight", async () => {
+    serve(lifecycle("brand-cg", "creditsgene.test"));
+    let release!: (response: Response) => void;
+    let calls = 0;
+    const afterRollback = BrandRevisionsResponse.parse({
+      brand_id: "brand-cg", current_revision_id: "brand-cg_rev_4", rollback_target_revision_id: "brand-cg_rev_3",
+      revisions: [revision(4, { is_current: true }), revision(3, { is_current: false })],
+    });
+    routes.set("GET /api/brands/brand-cg/revisions", () => {
+      calls += 1;
+      return calls === 1 ? new Promise<Response>((resolve) => { release = resolve; }) : json(afterRollback);
+    });
+    let rolledBack = false;
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [lifecycle("brand-cg", "creditsgene.test", { current_revision_id: rolledBack ? "brand-cg_rev_4" : "brand-cg_rev_3" })] }));
+    routes.set("POST /api/brands/brand-cg/rollback", () => { rolledBack = true; return json({ install_id: "op-1", brand_id: "brand-cg", status: "ready" }, 201); });
+    routes.set("GET /api/installs/op-1", () => json({ install_id: "op-1", brand_id: "brand-cg", revision_id: "brand-cg_rev_4", status: "ready", runtime_sync_status: "ready", receipts: [] }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(calls).toBe(1));
+    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    await answerConfirm(true);
+    // The selection moved to rev_4 while the first fetch (issued for rev_3) is still pending.
+    await waitFor(() => expect(calls).toBe(2));
+    release(json(revisions));
+    const section = (await screen.findByRole("heading", { name: /ประวัติเวอร์ชัน/ })).closest("section")!;
+    await waitFor(() => expect(within(section).getAllByRole("listitem").length).toBe(2));
+    expect(within(section).getAllByRole("listitem")[0]!.textContent).toContain("#4");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toBe(2);
+  });
+
+  it("still shows the read-only input and the error toast when a copy fails while a rollback is dispatched", async () => {
+    let reject!: (error: Error) => void;
+    const writeText = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    serve(lifecycle("brand-cg", "creditsgene.test"));
+    let posted = false;
+    routes.set("POST /api/brands/brand-cg/rollback", () => { posted = true; return json({ install_id: "op-1", brand_id: "brand-cg", status: "ready" }, 201); });
+    routes.set("GET /api/installs/op-1", () => json({ install_id: "op-1", brand_id: "brand-cg", revision_id: "brand-cg_rev_2", status: "ready", runtime_sync_status: "ready", receipts: [] }));
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await copyButton());
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    await answerConfirm(true);
+    await waitFor(() => expect(posted).toBe(true));
+    reject(new Error("denied"));
+    expect((await screen.findByDisplayValue(URL_CG)).hasAttribute("readonly")).toBe(true);
+    expect(document.querySelector(".toast.toast-err")).toBeTruthy();
+  });
+
+  it("says the rollback target is unknown when the revisions did not load", async () => {
+    serve(lifecycle("brand-cg", "creditsgene.test"), () => json({ error: "not_found", resource: "brand" }, 404));
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    const text = (await answerConfirm(false)).textContent ?? "";
+    expect(text).toContain("ยังไม่ทราบเวอร์ชันเป้าหมาย");
+    expect(text).toContain("Rollback target unknown");
+  });
+
+  it("says there is no rollback target when the response has none", async () => {
+    serve(lifecycle("brand-cg", "creditsgene.test"), () => json({ ...revisions, rollback_target_revision_id: null }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(screen.getAllByRole("listitem").length).toBe(3));
+    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    const text = (await answerConfirm(false)).textContent ?? "";
+    expect(text).toContain("ไม่มีเวอร์ชันเป้าหมาย");
+    expect(text).toContain("No rollback target");
   });
 
   it("hides Copy Final URL and Open site when the brand has no hostname", async () => {

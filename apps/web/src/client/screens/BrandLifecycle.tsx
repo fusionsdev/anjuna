@@ -98,6 +98,10 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   // Brands whose pause or resume request is in flight; the row button stays off so one confirm sends one request.
   const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
   const operationGeneration = useRef(0);
+  const selectedIdRef = useRef<string | null>(selectedId);
+  selectedIdRef.current = selectedId;
+  // The brand and current_revision_id the latest revisions fetch was issued for, and a sequence number so only the latest fetch commits.
+  const revisionsFetch = useRef<{ brandId: string; currentRevisionId: string | null; seq: number } | null>(null);
   const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
@@ -172,7 +176,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     setRecovering(true);
     const token = operationToken();
     setState(reduceLifecycleState(undefined, { type: "brand", brand: selected }));
-    void api.brandRevisions(selected.brand_id).then((result) => { if (active) setRevisions(result); }, () => { if (active) setRevisions(null); });
+    fetchRevisions(selected.brand_id, selected.current_revision_id, () => active);
     void api.checklist(selected.brand_id).then((result) => {
       if (!active) return;
       const next = {} as Record<ChecklistItemName, ChecklistEvidence | undefined>;
@@ -211,10 +215,14 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useEffect(() => { void load(); }, [load, refresh]);
   // A rollback, redeploy or install moves the brand's current revision without changing the selection: reload so the
   // rollback target named in the confirm is the one the server would pick now.
+  // It compares with the value the latest fetch was issued for, not with the loaded data, so a move that lands while the
+  // first fetch is in flight still gets one more fetch, and a response that stays behind cannot loop.
   useEffect(() => {
-    if (!selected || !revisions || revisions.brand_id !== selected.brand_id || revisions.current_revision_id === selected.current_revision_id) return;
+    if (!selected) return;
+    const last = revisionsFetch.current;
+    if (last && last.brandId === selected.brand_id && last.currentRevisionId === selected.current_revision_id) return;
     let active = true;
-    void api.brandRevisions(selected.brand_id).then((result) => { if (active) setRevisions(result); }, () => { if (active) setRevisions(null); });
+    fetchRevisions(selected.brand_id, selected.current_revision_id, () => active);
     return () => { active = false; };
   }, [selected?.brand_id, selected?.current_revision_id]);
   useEffect(() => {
@@ -253,6 +261,12 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     return stop;
   }, [install, pendingOperation, selectedId, state, load]);
 
+  function fetchRevisions(brandId: string, currentRevisionId: string | null, isActive: () => boolean) {
+    const seq = (revisionsFetch.current?.seq ?? 0) + 1;
+    revisionsFetch.current = { brandId, currentRevisionId, seq };
+    const latest = () => isActive() && revisionsFetch.current?.seq === seq;
+    void api.brandRevisions(brandId).then((result) => { if (latest()) setRevisions(result); }, () => { if (latest()) setRevisions(null); });
+  }
   function operationToken() {
     return { selectedId, generation: operationGeneration.current };
   }
@@ -326,13 +340,15 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   async function rollback() {
     if (!selected) return;
     const brandId = selected.brand_id;
-    const targetId = revisions?.brand_id === brandId ? revisions.rollback_target_revision_id : null;
-    const target = targetId ? revisions?.revisions.find((r) => r.revision_id === targetId) : undefined;
+    const loaded = revisions?.brand_id === brandId ? revisions : undefined;
+    const targetId = loaded?.rollback_target_revision_id ?? null;
+    const target = targetId ? loaded?.revisions.find((r) => r.revision_id === targetId) : undefined;
+    const body = !loaded ? "ยังไม่ทราบเวอร์ชันเป้าหมายของการย้อนกลับ (Rollback target unknown: the revision history is loading or could not be loaded)."
+      : !targetId ? "ไม่มีเวอร์ชันเป้าหมายให้ย้อนกลับ (No rollback target for this brand)."
+      : `ย้อนกลับแบรนด์ไปที่เวอร์ชัน ${target ? `#${target.revision} ` : ""}(${targetId}) (Roll the brand back to revision ${target ? `#${target.revision} ` : ""}(${targetId})).`;
     const ok = await confirmForBrand({
       title: "ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า?",
-      body: targetId
-        ? `Roll the brand back to revision ${target ? `#${target.revision} ` : ""}(${targetId}).`
-        : "Roll the brand back to its previous version.",
+      body,
       confirmLabel: "ย้อนกลับ (Rollback)",
       tone: "danger",
     });
@@ -343,18 +359,19 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     if (!selected) return;
     const url = finalUrl(selected.hostnames);
     if (!url) return;
-    const generation = operationGeneration.current;
+    const brandId = selected.brand_id;
     const domain = selected.hostnames[0];
     // jsdom and a non-HTTPS origin have no navigator.clipboard, and a present one can still reject (permission, focus).
     try {
       const clipboard = navigator.clipboard;
       if (!clipboard) throw new Error("clipboard unavailable");
       await clipboard.writeText(url);
-      if (operationGeneration.current !== generation) return;
+      // An install or rollback bumps operationGeneration for the same brand; only a brand change makes the result stale.
+      if (selectedIdRef.current !== brandId) return;
       setManualCopyUrl(null);
       showToast("ok", `คัดลอก Final URL ของ ${domain} แล้ว (Copied the Final URL for ${domain})`);
     } catch {
-      if (operationGeneration.current !== generation) return;
+      if (selectedIdRef.current !== brandId) return;
       setManualCopyUrl(url);
       showToast("err", `คัดลอกอัตโนมัติไม่ได้ กรุณาคัดลอก Final URL ของ ${domain} จากช่องข้างปุ่มเอง (Could not copy; copy the Final URL from the field by hand)`);
     }
