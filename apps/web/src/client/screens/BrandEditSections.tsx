@@ -2,6 +2,7 @@
 import { BRAND_ASSET_MAX_BYTES, brandInitialSvg, type BrandAssetKind, type BrandAssetSummary, type SealedTemplateVersion } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { useConfirm } from "../components/ConfirmDialog";
 
 const label = (t: Pick<SealedTemplateVersion, "name" | "version">) => `${t.name} v${t.version}`;
 
@@ -58,6 +59,7 @@ export function BrandAssetsSection({ brandId, brandName }: { brandId: string; br
   const [assets, setAssets] = useState<BrandAssetSummary[] | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState<BrandAssetKind | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
   const load = useCallback(() => api.brandAssets(brandId).then((r) => setAssets(r.assets), () => setMessage({ kind: "err", text: "โหลดไฟล์ไม่สำเร็จ (The files did not load)" })), [brandId]);
   useEffect(() => void load(), [load]);
 
@@ -73,6 +75,16 @@ export function BrandAssetsSection({ brandId, brandName }: { brandId: string; br
     } finally {
       setBusy(null);
     }
+  }
+
+  async function remove(kind: BrandAssetKind, title: string) {
+    const ok = await confirm({
+      title: `ลบ${title}?`,
+      body: "Remove it. The brand serves the generated letter icon again.",
+      confirmLabel: "ลบ (Remove)",
+      tone: "danger",
+    });
+    if (ok) await run(kind, () => api.deleteBrandAsset(brandId, kind), `${title}: ลบแล้ว (Removed)`);
   }
 
   return (
@@ -99,14 +111,13 @@ export function BrandAssetsSection({ brandId, brandName }: { brandId: string; br
                   if (file.size > BRAND_ASSET_MAX_BYTES[kind]) return setMessage({ kind: "err", text: `${title}: ไฟล์ใหญ่เกิน ${kb(BRAND_ASSET_MAX_BYTES[kind])} (The file is over ${kb(BRAND_ASSET_MAX_BYTES[kind])})` });
                   void run(kind, () => api.uploadBrandAsset(brandId, kind, file), `${title}: อัปโหลดแล้ว มีผลภายในประมาณ 1 นาที (Uploaded, live within about a minute)`);
                 }} />
-              {stored && <button className="link" disabled={busy !== null} onClick={() => {
-                if (window.confirm(`ลบ${title}? (Remove it. The brand serves the generated letter icon again.)`)) void run(kind, () => api.deleteBrandAsset(brandId, kind), `${title}: ลบแล้ว (Removed)`);
-              }}>ลบ (Remove) {title}</button>}
+              {stored && <button className="link" disabled={busy !== null} onClick={() => void remove(kind, title)}>ลบ (Remove) {title}</button>}
             </div>
             <p className="muted small">PNG, SVG หรือ ICO ไม่เกิน {kb(BRAND_ASSET_MAX_BYTES[kind])} (PNG, SVG or ICO, up to {kb(BRAND_ASSET_MAX_BYTES[kind])})</p>
           </div>
         );
       })}
+      {confirmDialog}
     </section>
   );
 }

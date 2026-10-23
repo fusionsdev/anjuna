@@ -1,6 +1,7 @@
 import type { AlertsReportResponse } from "@anjuna/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 import { ApiError, api } from "../api";
+import { BrandLabel, useBrandLabels } from "../brand-labels";
 
 const LABEL: Record<string, string> = {
   ok: "ปกติ",
@@ -31,6 +32,7 @@ function AlertRow({ state, title, detail, children }: { state: "ok" | "warn" | "
 export function AlertsScreen() {
   const [report, setReport] = useState<AlertsReportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const labelOf = useBrandLabels();
 
   useEffect(() => {
     api.alerts().then(setReport, (e) => setError(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ"));
@@ -53,13 +55,13 @@ export function AlertsScreen() {
               {report.conversion_stalled.detail.oldest_created_at ? `รายการเก่าสุด ${new Date(report.conversion_stalled.detail.oldest_created_at).toLocaleString("th-TH", { hour12: false })}` : "ไม่มีรายการค้าง"}
             </AlertRow>
             <AlertRow state={report.brands_without_postbacks.state} title="แบรนด์ไม่มีโพสต์แบ็ก" detail={`${report.brands_without_postbacks.detail.brands.length} แบรนด์ ใน ${report.brands_without_postbacks.detail.window_hours} ชม.`}>
-              {report.brands_without_postbacks.detail.brands.length ? <ul>{report.brands_without_postbacks.detail.brands.map((b) => <li key={b.brand}>{b.brand} · {b.leads} ลีด</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
+              {report.brands_without_postbacks.detail.brands.length ? <ul>{report.brands_without_postbacks.detail.brands.map((b) => <li key={b.brand}><BrandLabel brandId={b.brand} domain={labelOf(b.brand)} /> · {b.leads} ลีด</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
             </AlertRow>
             <AlertRow state={report.submit_error_rate.state} title="อัตราส่งฟอร์มผิดพลาด" detail={`${report.submit_error_rate.detail.samples.length} แบรนด์เกินเกณฑ์`}>
-              {report.submit_error_rate.detail.samples.length ? <ul>{report.submit_error_rate.detail.samples.map((b) => <li key={b.brand}>{b.brand} · ผิดพลาด {b.errors} · ส่งฟอร์ม {b.submits} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
+              {report.submit_error_rate.detail.samples.length ? <ul>{report.submit_error_rate.detail.samples.map((b) => <li key={b.brand}><BrandLabel brandId={b.brand} domain={labelOf(b.brand)} /> · ผิดพลาด {b.errors} · ส่งฟอร์ม {b.submits} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
             </AlertRow>
             <AlertRow state={report.reject_rate.state} title="อัตราปฏิเสธ" detail={`${report.reject_rate.detail.brands.length} แบรนด์เกินเกณฑ์`}>
-              {report.reject_rate.detail.brands.length ? <ul>{report.reject_rate.detail.brands.map((b) => <li key={b.brand}>{b.brand} · ปฏิเสธ {b.rejected} จาก {b.decided} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
+              {report.reject_rate.detail.brands.length ? <ul>{report.reject_rate.detail.brands.map((b) => <li key={b.brand}><BrandLabel brandId={b.brand} domain={labelOf(b.brand)} /> · ปฏิเสธ {b.rejected} จาก {b.decided} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
             </AlertRow>
             <AlertRow state={report.click_risk.state} title="คลิกเสี่ยงสูง" detail={report.click_risk.detail.hostnames.length
               ? report.click_risk.detail.hostnames.map((h) => `${h.hostname}: ${Math.round(h.rate * 100)}% ของคนเข้าเว็บได้คะแนนเสี่ยงสูง`).join(" · ")

@@ -4,6 +4,7 @@ import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { api } from "../src/client/api";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 import { brandMoney, periodWindow, sortWorstProfitFirst, type SpendReport } from "../src/client/screens/BrandStatsRow";
+import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
@@ -90,10 +91,15 @@ afterEach(() => {
 });
 
 const names = () => [...document.querySelectorAll(".brand-table button.brand-pick")].map((button) => button.querySelector("b")?.textContent);
-/** The cells of a brand's table row after the name: status, then the numbers. */
+/** The cells of a brand's table row after the name: status, flow gate, then the numbers. */
 const cells = (name: string) => {
   const row = [...document.querySelectorAll(".brand-table button.brand-pick")].find((button) => button.querySelector("b")?.textContent === name)!.closest("tr")!;
-  return [...row.querySelectorAll("td")].slice(1).map((cell) => cell.textContent);
+  // Read the text a person reads: the status badge icon is aria-hidden, and the Pause or Resume button is not a status.
+  return [...row.querySelectorAll("td")].slice(1).map((cell) => {
+    const copy = cell.cloneNode(true) as Element;
+    copy.querySelectorAll('[aria-hidden="true"], .row-action').forEach((icon) => icon.remove());
+    return copy.textContent;
+  });
 };
 const funnelPaths = () => requests.filter((r) => r.path.startsWith("/api/funnel?")).map((r) => r.path);
 
@@ -101,19 +107,19 @@ describe("brands table for the Owner", () => {
   it("lists spend, clicks, leads, cost per lead and profit with the biggest loss first", async () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(names()).toEqual(["FloatMe", "Credit Genie", "Alpha Loans", "Wizard Demo"]));
-    expect(cells("FloatMe")).toEqual(["live", "$620", "96", "0", "—", "−$620"]);
-    expect(cells("Credit Genie")).toEqual(["live", "$800", "212", "10", "$80", "−$546"]);
-    expect(cells("Alpha Loans")).toEqual(["live", "$100", "50", "5", "$20", "$300"]);
+    expect(cells("FloatMe")).toEqual(["live", "Keyword Param", "$620", "96", "0", "—", "−$620"]);
+    expect(cells("Credit Genie")).toEqual(["live", "Keyword Param", "$800", "212", "10", "$80", "−$546"]);
+    expect(cells("Alpha Loans")).toEqual(["live", "Keyword Param", "$100", "50", "5", "$20", "$300"]);
     // No spend row: spend, cost per lead and profit are unknown, never 0.
-    expect(cells("Wizard Demo")).toEqual(["live", "—", "40", "4", "—", "—"]);
+    expect(cells("Wizard Demo")).toEqual(["live", "Keyword Param", "—", "40", "4", "—", "—"]);
     expect(screen.getByRole("columnheader", { name: /กำไร/ })).toBeTruthy();
     expect(spend).toHaveBeenCalledWith("7d");
   });
 
   it("shows a loss in the negative colour class and a gain in the positive one", async () => {
     render(<BrandLifecycle me={owner} />);
-    await waitFor(() => expect(cells("FloatMe")[5]).toBe("−$620"));
-    const profitClass = (name: string) => [...document.querySelectorAll(".brand-table button.brand-pick")].find((b) => b.querySelector("b")?.textContent === name)!.closest("tr")!.querySelectorAll("td")[6]!.className;
+    await waitFor(() => expect(cells("FloatMe")[6]).toBe("−$620"));
+    const profitClass = (name: string) => [...document.querySelectorAll(".brand-table button.brand-pick")].find((b) => b.querySelector("b")?.textContent === name)!.closest("tr")!.querySelectorAll("td")[7]!.className;
     expect(profitClass("FloatMe")).toBe("neg");
     expect(profitClass("Alpha Loans")).toBe("pos");
   });
@@ -126,7 +132,7 @@ describe("brands table for the Owner", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith("today"));
-    await waitFor(() => expect(cells("Credit Genie")).toEqual(["live", "$90", "20", "2", "$45", "$410"]));
+    await waitFor(() => expect(cells("Credit Genie")).toEqual(["live", "Keyword Param", "$90", "20", "2", "$45", "$410"]));
     expect(screen.getByRole("button", { name: "วันนี้" }).getAttribute("aria-pressed")).toBe("true");
     const today = funnelPaths().at(-1)!;
     const params = new URLSearchParams(today.split("?")[1]);
@@ -140,7 +146,7 @@ describe("brands table for the Owner", () => {
   it("shows spend, cost per lead and profit as unknown when the spend report fails", async () => {
     spend.mockRejectedValue(new Error("down"));
     render(<BrandLifecycle me={owner} />);
-    await waitFor(() => expect(cells("FloatMe")).toEqual(["live", "—", "96", "0", "—", "—"]));
+    await waitFor(() => expect(cells("FloatMe")).toEqual(["live", "Keyword Param", "—", "96", "0", "—", "—"]));
     // Nothing to rank by, so the API order stays.
     expect(names()).toEqual(["Credit Genie", "FloatMe", "Alpha Loans", "Wizard Demo"]);
   });
@@ -149,7 +155,7 @@ describe("brands table for the Owner", () => {
 describe("brands table for an Employee", () => {
   it("has no money column, never asks for spend and shows no dollar amount", async () => {
     render(<BrandLifecycle me={employee} />);
-    await waitFor(() => expect(cells("Credit Genie")).toEqual(["live", "212", "10"]));
+    await waitFor(() => expect(cells("Credit Genie")).toEqual(["live", "Keyword Param", "212", "10"]));
     expect(names()).toEqual(["Credit Genie", "FloatMe", "Alpha Loans", "Wizard Demo"]);
     expect(screen.queryByRole("columnheader", { name: /ค่าโฆษณา/ })).toBeNull();
     expect(screen.queryByRole("columnheader", { name: /ต้นทุน/ })).toBeNull();
@@ -173,6 +179,7 @@ describe("side panel of the selected brand", () => {
     const panel = within(heading.closest("section")!);
     await waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-fm/installs")).toBe(true));
     fireEvent.click(await panel.findByRole("button", { name: "ย้อนกลับ (Rollback)" }));
+    await answerConfirm(true);
     await waitFor(() => expect(requests.filter((r) => r.method === "POST").map((r) => r.path)).toEqual(["/api/brands/brand-fm/rollback"]));
   });
 

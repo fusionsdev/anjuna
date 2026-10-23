@@ -1,11 +1,13 @@
 import type { AdminRole } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me, type PanelUser } from "../api";
+import { useConfirm } from "../components/ConfirmDialog";
 
 export function UsersScreen({ me }: { me: Me }) {
   const [users, setUsers] = useState<PanelUser[] | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [form, setForm] = useState({ email: "", name: "", password: "", role: "employee" as AdminRole });
+  const [confirm, confirmDialog] = useConfirm();
 
   const load = useCallback(() => api.users().then(setUsers, (e) => setMsg(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ")), []);
   useEffect(() => void load(), [load]);
@@ -43,7 +45,16 @@ export function UsersScreen({ me }: { me: Me }) {
                   aria-label={`สิทธิ์ของ ${u.email}`}
                   value={u.role}
                   disabled={u.id === me.id}
-                  onChange={(e) => run(() => api.setRole(u.id, e.target.value as AdminRole))}
+                  onChange={async (e) => {
+                    const next = e.target.value as AdminRole;
+                    const ok = await confirm({
+                      title: `เปลี่ยนสิทธิ์ของ ${u.email} เป็น ${next === "owner" ? "Owner" : "พนักงาน"}?`,
+                      confirmLabel: "เปลี่ยนสิทธิ์ (Change role)",
+                      tone: next === "owner" ? "danger" : "default",
+                    });
+                    if (!ok) return;
+                    await run(() => api.setRole(u.id, next));
+                  }}
                 >
                   <option value="employee">พนักงาน</option>
                   <option value="owner">Owner</option>
@@ -74,6 +85,7 @@ export function UsersScreen({ me }: { me: Me }) {
         </select></label>
         <button className="btn pri" style={{ justifySelf: "start" }}>เพิ่มผู้ใช้</button>
       </form>
+      {confirmDialog}
     </>
   );
 }

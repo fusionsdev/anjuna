@@ -15,19 +15,12 @@ const statusPill: Record<TemplateReviewStatus, string> = { checking: "p-blue", r
 
 const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? e.thai) : "ไม่สำเร็จ");
 
-function selectedFromHash(): string | null {
-  const match = /^#templates\/(.+)$/.exec(window.location.hash);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]!);
-  } catch {
-    return null; // a malformed escape such as "#templates/%" opens the list
-  }
-}
-
-export function TemplatesScreen({ me }: { me: Me }) {
+export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selectedId?: string | null; onSelect?: (id: string | null) => void }) {
   const [templates, setTemplates] = useState<TemplateVersionSummary[] | null>(null);
-  const [selected, setSelected] = useState<string | null>(selectedFromHash);
+  // Without onSelect the screen keeps its own selection (it renders alone in tests); with it the URL owns the selection.
+  const [ownSelected, setOwnSelected] = useState<string | null>(null);
+  const selected = onSelect ? (selectedId ?? null) : ownSelected;
+  const select = (id: string | null) => (onSelect ? onSelect(id) : setOwnSelected(id));
   const [detail, setDetail] = useState<TemplateDetailResponse | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [form, setForm] = useState({ url: "", template_name: "" });
@@ -38,11 +31,6 @@ export function TemplatesScreen({ me }: { me: Me }) {
 
   const load = useCallback(() => api.templates().then((r) => setTemplates(r.templates), (e) => setMsg({ kind: "err", text: errorText(e) })), []);
   useEffect(() => void load(), [load]);
-  useEffect(() => {
-    const onHash = () => { if (window.location.hash.startsWith("#templates/")) setSelected(selectedFromHash()); };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
   useEffect(() => {
     setDetail(null);
     if (selected) void api.template(selected).then(setDetail, (e) => setMsg({ kind: "err", text: errorText(e) }));
@@ -70,7 +58,7 @@ export function TemplatesScreen({ me }: { me: Me }) {
     try {
       const r = await api.importTemplate(form);
       setImported(r);
-      if (r.template_version_id) setSelected(r.template_version_id);
+      if (r.template_version_id) select(r.template_version_id);
       await load();
     } catch (e) {
       setMsg({ kind: "err", text: errorText(e) });
@@ -99,7 +87,7 @@ export function TemplatesScreen({ me }: { me: Me }) {
         if (value) { setMsg(null); setImported(null); }
       }} onError={(e) => setMsg({ kind: "err", text: errorText(e) })} onResult={async (r) => {
         setImported(r);
-        if (r.template_version_id) setSelected(r.template_version_id);
+        if (r.template_version_id) select(r.template_version_id);
         await load();
       }} />
       <section className="panel" style={{ display: "grid", gap: 10, alignContent: "start" }}>
@@ -122,7 +110,7 @@ export function TemplatesScreen({ me }: { me: Me }) {
           const status = currentDetail?.template.status ?? t.status;
           return (
             <article key={t.template_version_id} className="panel" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column", borderColor: t.template_version_id === selected ? "var(--money)" : "var(--line)" }}>
-              <button type="button" aria-pressed={t.template_version_id === selected} onClick={() => setSelected(t.template_version_id)} style={{ border: 0, padding: 0, background: "transparent", color: "var(--ink)", textAlign: "left", width: "100%", flex: 1 }}>
+              <button type="button" aria-pressed={t.template_version_id === selected} onClick={() => select(t.template_version_id)} style={{ border: 0, padding: 0, background: "transparent", color: "var(--ink)", textAlign: "left", width: "100%", flex: 1 }}>
                 {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name} (Template preview)`} loading="lazy" style={{ width: "100%", aspectRatio: "16 / 10", objectFit: "cover", display: "block", borderBottom: "1px solid var(--line)" }} /> : <span className="hint" style={{ display: "grid", placeItems: "center", aspectRatio: "16 / 10", background: "var(--paper)", borderBottom: "1px solid var(--line)" }}>ไม่มีภาพตัวอย่าง (No preview)</span>}
                 <span style={{ display: "grid", gap: 6, padding: "12px 14px" }}>
                   <span style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}><strong style={{ fontWeight: 500 }}>{t.name}</strong><span>v{t.version}</span></span>

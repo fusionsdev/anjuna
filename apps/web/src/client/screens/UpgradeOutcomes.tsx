@@ -1,6 +1,7 @@
 import type { LatestUpgradeResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { BrandLabel } from "../brand-labels";
 
 // Same cap as the single-install poll in BrandLifecycle: 120 polls x 3s = 6 minutes.
 export const MAX_UPGRADE_POLLS = 120;
@@ -49,7 +50,7 @@ export function UpgradeOutcomes({ refresh }: { refresh: number }) {
       <table className="table">
         <thead><tr><th>แบรนด์ (Brand)</th><th>บทบาท (Role)</th><th>ผลลัพธ์ (Outcome)</th><th>ติดตั้ง (Install)</th><th>รายละเอียด (Details)</th></tr></thead>
         <tbody>{result.upgrade.outcomes.map((row) => <tr key={row.brand_id}>
-          <th scope="row">{row.domain}<br /><code>{row.brand_id}</code></th>
+          <th scope="row"><BrandLabel brandId={row.brand_id} domain={row.domain} /></th>
           <td>{row.is_canary ? "ทดลองก่อน (Canary)" : "—"}</td>
           <td>{outcomeLabel[row.status] ?? row.status}</td>
           <td>{row.install_id ? <code>{row.install_id}</code> : "—"}{row.retry_of && <><br />ลองใหม่จาก (Retry of) <code>{row.retry_of}</code></>}</td>

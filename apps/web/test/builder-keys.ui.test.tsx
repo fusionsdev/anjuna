@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../src/client/api";
 import { BuilderKeysScreen } from "../src/client/screens/BuilderKeys";
+import { answerConfirm } from "./confirm";
 
 const SECRET = `anj_mcp_${"A".repeat(43)}`;
 const NEW_SECRET = `anj_mcp_${"B".repeat(43)}`;
@@ -16,7 +17,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 beforeEach(() => {
   keys = [active];
   requests = [];
-  vi.stubGlobal("confirm", vi.fn(() => true));
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     requests.push({ method, path: input });
@@ -79,6 +79,8 @@ describe("Builder keys screen", () => {
   it("revokes a key after confirmation", async () => {
     render(<BuilderKeysScreen me={owner} />);
     fireEvent.click(await screen.findByRole("button", { name: "ยกเลิกคีย์ Somchai (bolt.new) (Revoke)" }));
+    expect(requests.some((r) => r.path === "/api/builder-keys/bk_1/revoke")).toBe(false);
+    await answerConfirm(true);
     expect(await screen.findByText("ยกเลิกแล้ว (Revoked)")).toBeTruthy();
     expect(requests).toContainEqual({ method: "POST", path: "/api/builder-keys/bk_1/revoke" });
   });

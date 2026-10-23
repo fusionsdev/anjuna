@@ -65,6 +65,11 @@ describe("session", () => {
     expect(await (await call("/api/me", { cookie: employee })).json()).toMatchObject({ user: { role: "employee" } });
     expect(await (await call("/api/me", { cookie: owner })).json()).toMatchObject({ user: { role: "owner" } });
   });
+
+  it("/api/me reports the tenant account from DEFAULT_ACCOUNT", async () => {
+    // makeEnv in test/helpers.ts sets DEFAULT_ACCOUNT to "test-account".
+    expect(await (await call("/api/me", { cookie: owner })).json()).toMatchObject({ user: { account: "test-account" } });
+  });
 });
 
 describe("employee can run the day", () => {

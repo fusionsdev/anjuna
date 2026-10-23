@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary, type BrandConfig, type InstallWithReceipts } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
+import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
@@ -114,6 +115,70 @@ describe("mounted lifecycle UI with API responses", () => {
     await waitFor(() => expect(screen.queryByText(/Core brand list is unavailable/)).toBeNull());
   });
 
+  it("says a route brand id that does not exist is not found", async () => {
+    render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    expect(await screen.findByText(/ไม่พบแบรนด์/)).toBeTruthy();
+    expect(screen.getByText("brand_missing")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "renderable.test" })).toBeNull();
+  });
+
+  it("does not say a route brand is missing while the Core list is unavailable", async () => {
+    lifecycleRows = [];
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [], core_error: { code: "core_list_fetch_failed", message: "Core brand list fetch failed" } }));
+    render(<BrandLifecycle me={owner} routeBrandId="core_only_brand" />);
+    expect(await screen.findByText(/Core brand list is unavailable/)).toBeTruthy();
+    expect(screen.queryByText(/ไม่พบแบรนด์/)).toBeNull();
+  });
+
+  it("says a route brand id is not found when the brand list is empty", async () => {
+    lifecycleRows = [];
+    render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    expect(await screen.findByText(/ไม่พบแบรนด์/)).toBeTruthy();
+    expect(screen.getByText("brand_missing")).toBeTruthy();
+  });
+
+  it("picks the first brand when Back leaves an unknown brand id for /brands", async () => {
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    expect(await screen.findByText(/ไม่พบแบรนด์/)).toBeTruthy();
+    view.rerender(<BrandLifecycle me={owner} routeBrandId={null} />);
+    expect(await screen.findByRole("heading", { name: "renderable.test" })).toBeTruthy();
+    expect(screen.queryByText(/ไม่พบแบรนด์/)).toBeNull();
+  });
+
+  it("drops an unknown selection when Back leaves it before the brand list arrives", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    routes.set("GET /api/lifecycle/brands", async () => { await gate; return json({ brands: lifecycleRows }); });
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    view.rerender(<BrandLifecycle me={owner} routeBrandId={null} />);
+    await act(async () => { release(); });
+    expect(await screen.findByRole("heading", { name: "renderable.test" })).toBeTruthy();
+    expect(screen.queryByText(/ไม่พบแบรนด์/)).toBeNull();
+  });
+
+  it("keeps a valid selection when the route leaves its brand id for /brands", async () => {
+    lifecycleRows = [structuredClone(brand), LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] })];
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand-b" />);
+    expect(await screen.findByRole("heading", { name: "second.test" })).toBeTruthy();
+    view.rerender(<BrandLifecycle me={owner} routeBrandId={null} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole("heading", { name: "second.test" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "renderable.test" })).toBeNull();
+  });
+
+  it("shows the wizard while wizardRoute is true and closes it when it turns false", async () => {
+    routes.set("GET /api/templates", () => json({ templates: [] }));
+    routes.set("GET /api/wizard/defaults", () => json({ amount_buckets: [100, 200, 300], form_route: "/request" }));
+    const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" });
+    const view = render(<BrandLifecycle me={owner} wizardRoute />);
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
+    await waitFor(() => expect(wizard()).toBeNull());
+    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
+  });
+
   it("reloads latest outcomes immediately after an accepted upgrade-all", async () => {
     routes.set("POST /api/upgrade-all", () => json({ instance_id: "new-upgrade" }, 201));
     render(<BrandLifecycle me={owner} />);
@@ -121,6 +186,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
     const before = reads();
     fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)" }));
+    await answerConfirm(true);
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
   });
 
@@ -136,8 +202,10 @@ describe("mounted lifecycle UI with API responses", () => {
     await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
     fireEvent.click(await within(panel).findByRole("button", { name: pauseName }));
+    await answerConfirm(true);
     expect(within(panel).getByRole("button", { name: /Rollback/ })).toBeDefined();
     fireEvent.click(await within(panel).findByRole("button", { name: resumeName }));
+    await answerConfirm(true);
     await within(panel).findByRole("button", { name: pauseName });
     expect(requests.some((r) => r.path.endsWith("/pause") && r.method === "POST")).toBe(true);
     expect(requests.some((r) => r.path.endsWith("/resume") && r.method === "POST")).toBe(true);
@@ -156,10 +224,22 @@ describe("mounted lifecycle UI with API responses", () => {
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ ab_config: { variants: [{ id: "lite_v1", weight: 70 }, { id: "full_v1", weight: 30 }] } }));
 
     fireEvent.change(section(panel, flowGateSection).getByRole("combobox"), { target: { value: "signed_cookie" } });
+    await answerConfirm(true);
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ flow_gate_mode: "signed_cookie" }));
     fireEvent.click(within(panel).getByRole("button", { name: closeName }));
     expect(screen.queryByRole("complementary", { name: configLabel })).toBeNull();
     expect(screen.getByText(/สถิติ 7 วัน · ลีด \(Leads\): 9 · ขายได้ \(Sold\): 3 · รอผล \(Pending\): 2/)).toBeDefined();
+  });
+
+  it("sends no pause request when the Owner cancels Pause in the Runtime config drawer", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await openRuntimeConfig();
+    const panel = await screen.findByRole("complementary", { name: configLabel });
+    fireEvent.click(await within(panel).findByRole("button", { name: pauseName }));
+    await answerConfirm(false);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(requests.some((r) => r.method === "POST" && r.path.endsWith("/pause"))).toBe(false);
+    expect(within(panel).getByRole("button", { name: pauseName })).toBeDefined();
   });
 
   it("keeps employee runtime controls accessible with owner-only controls hidden", async () => {
@@ -179,7 +259,6 @@ describe("mounted lifecycle UI with API responses", () => {
   });
 
   it("labels every control in the config panel as Thai (English)", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true));
     routes.set("PATCH /api/brands/brand-a", () => json({ brand: config, issued_postback_token: "tok_0123456789abcdef" }));
     render(<BrandLifecycle me={owner} />);
     await openRuntimeConfig();
@@ -195,6 +274,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const thaiThenEnglish = /^[฀-๿][^()]*\([A-Za-z][^()]*\)/;
     for (const button of within(panel).getAllByRole("button")) expect(button.textContent, button.textContent ?? "").toMatch(thaiThenEnglish);
     fireEvent.click(within(panel).getByRole("button", { name: rotateName }));
+    await answerConfirm(true);
     const modal = await screen.findByRole("dialog", { name: "โทเคน postback ใหม่ (New postback token)" });
     expect(within(modal).getByRole("heading", { name: "โทเคน postback ใหม่ (New postback token)" })).toBeDefined();
     expect(within(modal).getByRole("button", { name: "คัดลอก (Copy)" })).toBeDefined();
@@ -297,7 +377,6 @@ describe("mounted lifecycle UI with API responses", () => {
     const syncErrorLabel = "ซิงก์ผิดพลาด (sync_error)";
 
     it("clears a sync_error label once the list reports ready, without reselecting the brand", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
       lifecycleRows = [{ ...brand, runtime_sync_status: "sync_error" }];
       routes.set("POST /api/brands/brand-a/redeploy", () => {
         lifecycleRows = [{ ...brand, runtime_sync_status: "ready" }];
@@ -307,13 +386,13 @@ describe("mounted lifecycle UI with API responses", () => {
       render(<BrandLifecycle me={owner} />);
       await waitFor(() => expect(syncCell()).toBe(syncErrorLabel));
       fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+      await answerConfirm(true);
       await screen.findAllByText("redeploy-1", { selector: "code" });
       await waitFor(() => expect(syncCell()).toBe(readyLabel));
       expect(requests.filter((r) => r.method === "GET" && r.path === "/api/brands/brand-a/installs")).toHaveLength(1);
     });
 
     it("does not show ready while the install is still running and the list reloads with ready", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
       routes.set("POST /api/brands/brand-a/redeploy", () => {
         lifecycleRows = [{ ...brand, runtime_sync_status: "ready", current_revision_id: "rev-2" }];
         return json({ install_id: "redeploy-1", brand_id: "brand-a", status: "running" }, 201);
@@ -321,6 +400,7 @@ describe("mounted lifecycle UI with API responses", () => {
       detail({ ...failed, install_id: "redeploy-1", revision_id: "rev-2", status: "running", runtime_sync_status: "running" });
       render(<BrandLifecycle me={owner} />);
       fireEvent.click(await screen.findByRole("button", { name: redeployName }));
+      await answerConfirm(true);
       await screen.findAllByText("redeploy-1", { selector: "code" });
       await waitFor(() => expect(requests.filter((r) => r.path === "/api/lifecycle/brands").length).toBeGreaterThan(1));
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -391,12 +471,12 @@ describe("mounted lifecycle UI with API responses", () => {
     const running = { ...failed, install_id: "redeploy-9", status: "running" as const, runtime_sync_status: "running" as const };
 
     it.each(["ready", "failed", "rolled_back"] as const)("after a redeploy reaches %s", async (status) => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
       routes.set("POST /api/brands/brand-a/redeploy", () => json({ install_id: "redeploy-9", brand_id: "brand-a", status: "running" }, 201));
       detail(running);
       vi.useFakeTimers({ shouldAdvanceTime: true });
       await act(async () => { render(<BrandLifecycle me={owner} />); });
       fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่ (Redeploy)" }));
+      await answerConfirm(true);
       await screen.findAllByText("redeploy-9", { selector: "code" });
       await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
       expect(reads("redeploy-9")).toBeGreaterThan(1);
@@ -456,6 +536,61 @@ describe("mounted lifecycle UI with API responses", () => {
   });
 });
 
+describe("a confirm left open when the operator leaves the brand", () => {
+  const newerForm = { form_artifact_id: "fa-2", bundle_form_version: "form@abcdef2" };
+  const posts = () => requests.filter((r) => r.method === "POST");
+  const otherBrand = () => LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] });
+  const accepted = () => json({ install_id: "op-a", brand_id: "brand-a", status: "running" }, 201);
+  const recoverable = () => {
+    lifecycleRows = [{ ...brand, status: "installing", current_revision_id: null, runtime_sync_status: "failed" }, otherBrand()];
+    history([{ install_id: failed.install_id, status: "failed", error: "Compensation failed" }]);
+    detail({ ...failed, recovery_required: true });
+  };
+
+  beforeEach(() => {
+    lifecycleRows = [{ ...brand, newer_form: newerForm }, otherBrand()];
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    routes.set("POST /api/brands/brand-a/redeploy", accepted);
+    routes.set("POST /api/brands/brand-a/rollback", accepted);
+    routes.set("POST /api/brands/brand-a/recover", accepted);
+    detail({ ...failed, install_id: "op-a", status: "running", runtime_sync_status: "running" });
+  });
+
+  it.each([
+    ["redeploy", "ติดตั้งใหม่ (Redeploy)", false],
+    ["redeploy with the latest form", "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)", false],
+    ["rollback", rollbackName, false],
+    ["recover", recoverName, true],
+  ] as const)("closes the %s dialog on a route change and sends nothing for the old brand", async (_name, button, needsRecovery) => {
+    if (needsRecovery) recoverable();
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: button }));
+    await screen.findByRole("alertdialog");
+    view.rerender(<BrandLifecycle me={owner} routeBrandId="brand-b" />);
+    expect(await screen.findByRole("heading", { name: "second.test" })).toBeDefined();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(posts()).toHaveLength(0);
+    expect(screen.queryByText("op-a", { selector: "code" })).toBeNull();
+  });
+
+  it("closes an open confirm when the wizard opens, and it does not come back when the wizard closes", async () => {
+    routes.set("GET /api/templates", () => json({ templates: [] }));
+    routes.set("GET /api/wizard/defaults", () => json({ amount_buckets: [100, 200, 300], form_route: "/request" }));
+    const view = render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่ (Redeploy)" }));
+    await screen.findByRole("alertdialog");
+    view.rerender(<BrandLifecycle me={owner} wizardRoute />);
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeDefined();
+    view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
+    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeDefined();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posts()).toHaveLength(0);
+  });
+});
+
 describe("a click right after a brand is selected", () => {
   // No wait for the checklist request: the controls of a newly selected brand must keep what the first click does.
   it("keeps the Runtime config drawer opened by an immediate click", async () => {
@@ -490,6 +625,7 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   detail({ ...failed, install_id: "recovery-1", revision_id: null, status: "rolled_back", runtime_sync_status: "ready", receipts: [{ step: "receipt", status: "ready" }] });
   render(<BrandLifecycle me={owner} />);
   fireEvent.click(await screen.findByRole("button", { name: recoverName }));
+  await answerConfirm(true);
   await waitFor(() => expect(requests.filter((r) => r.path === "/api/brands/brand-a/recover")).toHaveLength(1));
   await screen.findByText("recovery-1");
   await screen.findByRole("button", { name: installName });

@@ -2,7 +2,11 @@ import { type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
+import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
+import { StatusBadge, type Tone } from "../components/StatusBadge";
+import { Toast } from "../components/Toast";
+import { flowGateLabel } from "../labels";
 import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, sortWorstProfitFirst, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandWizard } from "./BrandWizard";
@@ -31,6 +35,7 @@ const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: 
 const statusLabel: Record<string, string> = {
   draft: "ฉบับร่าง (draft)", queued: "รอคิว (queued)", running: "กำลังทำงาน (running)", ready: "พร้อมใช้งาน (ready)",
   failed: "ล้มเหลว (failed)", rolled_back: "ย้อนกลับแล้ว (rolled-back)", detached: "ถอดออกแล้ว (detached)", unmanaged: "ไม่ได้จัดการ (unmanaged)", sync_error: "ซิงก์ผิดพลาด (sync_error)",
+  paused: "หยุดชั่วคราว (paused)",
 };
 
 // A redeploy is stored as an upgrade row; the server tells the two apart in `operation`.
@@ -39,10 +44,9 @@ const operationLabel: Record<InstallOperation, string> = {
 };
 
 // The pill colour of a brand status: live is money green, a failure is red, work in progress is blue, a pause or rollback is amber.
-const statusTone: Record<string, string> = {
-  live: "p-live", failed: "p-bad", rolled_back: "p-warn", installing: "p-blue", draft: "p-mute", paused: "p-warn", unmanaged: "p-mute", retired: "p-mute",
+const statusBadgeTone: Record<string, Tone> = {
+  live: "live", failed: "bad", rolled_back: "warn", installing: "blue", draft: "mute", paused: "warn", unmanaged: "mute", retired: "mute",
 };
-const tone = (status: string) => `pill ${statusTone[status] ?? "p-mute"}`;
 
 /** A whole number with thousands separators. An unknown number is "—". */
 const count = (value: number | null) => (value === null ? "—" : Math.round(value).toLocaleString("en-US"));
@@ -60,11 +64,25 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
   core_list_account_missing: "ยังไม่ได้ตั้งค่าบัญชีสำหรับรายการแบรนด์ Core (Core brand list account is not configured)",
 };
 
-/** wizardRequest: a counter the app raises to open the New brand wizard from its menu. */
-export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardRequest?: number }) {
+/**
+ * wizardRequest: a counter the app raises to open the New brand wizard from its menu.
+ * wizardRoute: true while the URL is /brands/new, so back and forward open and close the wizard.
+ * routeBrandId: the brand id in the URL path; onSelectBrand and onWizardClosed keep the URL in step with the screen.
+ * onNewBrand: the app opens /brands/new for the New brand button, so the wizard has a URL. Without it the button opens the wizard here.
+ */
+export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, routeBrandId, onSelectBrand, onWizardClosed, onNewBrand }: {
+  me: Me;
+  wizardRequest?: number;
+  wizardRoute?: boolean;
+  routeBrandId?: string | null;
+  onSelectBrand?: (brandId: string) => void;
+  onWizardClosed?: () => void;
+  onNewBrand?: () => void;
+}) {
   const [wizard, setWizard] = useState<{ brandId?: string; initialStep?: number } | null>(null);
   const [duplicateOf, setDuplicateOf] = useState<LifecycleBrandSummary | null>(null);
   const [brands, setBrands] = useState<LifecycleBrandSummary[]>([]);
+  const [listLoaded, setListLoaded] = useState(false);
   const [runtimeBrands, setRuntimeBrands] = useState<BrandSummary[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [coreListError, setCoreListError] = useState<CoreListError | null>(null);
@@ -80,7 +98,15 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
   const [leadId, setLeadId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Each toast has its own id, which keys the Toast: an equal text from a second action restarts the full countdown.
+  const [toast, setToast] = useState<{ id: number; kind: "ok" | "err"; text: string } | null>(null);
+  const toastSeq = useRef(0);
+  const showToast = (kind: "ok" | "err", text: string) => setToast({ id: (toastSeq.current += 1), kind, text });
+  const dismissToast = useCallback(() => setToast(null), []);
+  // Brands whose pause or resume request is in flight; the row button stays off so one confirm sends one request.
+  const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
   const operationGeneration = useRef(0);
+  const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
   const owner = me.role === "owner";
@@ -90,6 +116,21 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
+  // The wizard replaces this screen's JSX, which hides {confirmDialog}; close an open question so it cannot come back later.
+  useEffect(() => { if (wizard) cancelConfirm(); }, [wizard]);
+  // Entering /brands/new shows the new-brand wizard, in place of a resumed draft (brandId set) if one is open.
+  // A resumed draft is not the new-brand route, so leaving /brands/new keeps it open.
+  useEffect(() => setWizard((w) => (wizardRoute ? (w?.brandId ? {} : (w ?? {})) : w && !w.brandId ? null : w)), [wizardRoute]);
+  useEffect(() => {
+    if (routeBrandId && routeBrandId !== selectedId) setSelectedId(routeBrandId);
+    // The route is the source of truth: a resumed draft stays open only while the URL names its brand. On /brands/new the new-brand wizard takes its place.
+    setWizard((w) => (w?.brandId && w.brandId !== routeBrandId ? (wizardRoute ? {} : null) : w));
+  }, [routeBrandId]);
+  // Back from an unknown brand id: drop the dead selection so load() picks the first brand. It also runs when the list arrives
+  // after the route change. A valid selection stays.
+  useEffect(() => {
+    if (!routeBrandId && listLoaded && selectedId && !brands.some((b) => b.brand_id === selectedId)) setSelectedId(null);
+  }, [routeBrandId, listLoaded, brands]);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
@@ -98,6 +139,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       if (lifecycle.status === "rejected") throw lifecycle.reason;
       const result = lifecycle.value;
       setBrands(result.brands);
+      setListLoaded(true);
       setCoreListError(result.core_error ?? null);
       if (runtime.status === "fulfilled") {
         setRuntimeBrands(runtime.value.brands);
@@ -105,7 +147,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       } else {
         setRuntimeError("โหลด runtime config ไม่สำเร็จ กรุณารีเฟรช");
       }
-      if (!selectedId && result.brands[0]) setSelectedId(result.brands[0].brand_id);
+      if (!selectedId && !routeBrandId && result.brands[0]) setSelectedId(result.brands[0].brand_id);
     } catch (e) {
       if (isCurrentRefresh(token.selectedId, token.generation, selectedId, operationGeneration.current)) {
         setError(e instanceof ApiError ? e.thai : "โหลด lifecycle ไม่สำเร็จ");
@@ -119,6 +161,8 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   useLayoutEffect(() => {
     let active = true;
     operationGeneration.current += 1;
+    // A dialog opened for the previous brand must not stay open over this one.
+    cancelConfirm();
     setState(undefined);
     setInstall(undefined);
     setInstallError(null);
@@ -266,9 +310,23 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       if (canCommit(token, selected.brand_id)) setRecovering(false);
     }
   }
+  /** Asks first. False when declined, or when the brand changed while the dialog was open (the generation moved on). */
+  async function confirmForBrand(options: ConfirmOptions): Promise<boolean> {
+    const generation = operationGeneration.current;
+    const ok = await confirm(options);
+    return ok && operationGeneration.current === generation;
+  }
   async function rollback() {
     if (!selected) return;
-    await dispatchOperation(() => api.rollbackLifecycle(selected.brand_id));
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
+      title: "ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า?",
+      body: "Roll the brand back to its previous version.",
+      confirmLabel: "ย้อนกลับ (Rollback)",
+      tone: "danger",
+    });
+    if (!ok) return;
+    await dispatchOperation(() => api.rollbackLifecycle(brandId));
   }
   // Pause lives in core and the factory brand stays live, so a paused brand can be redeployed; it stays paused.
   function pausedNote() {
@@ -276,14 +334,26 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   }
   async function redeploy() {
     if (!selected) return;
-    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน? (Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.)${pausedNote()}`)) return;
-    await dispatchOperation(() => api.redeploy(selected.brand_id));
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
+      title: "ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน?",
+      body: `Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.${pausedNote()}`,
+      confirmLabel: "ติดตั้งใหม่ (Redeploy)",
+    });
+    if (!ok) return;
+    await dispatchOperation(() => api.redeploy(brandId));
   }
   async function redeployLatest() {
     const target = selected?.newer_form;
     if (!selected || !target) return;
-    if (!window.confirm(`ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}? (Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.)${pausedNote()}`)) return;
-    await dispatchOperation(() => api.redeploy(selected.brand_id, target.form_artifact_id));
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
+      title: `ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}?`,
+      body: `Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.${pausedNote()}`,
+      confirmLabel: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)",
+    });
+    if (!ok) return;
+    await dispatchOperation(() => api.redeploy(brandId, target.form_artifact_id));
   }
   async function startInstall() {
     if (!selected) return;
@@ -295,13 +365,59 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   }
   async function recover() {
     if (!selected) return;
-    await dispatchOperation(() => api.recover(selected.brand_id));
+    const brandId = selected.brand_id;
+    const ok = await confirmForBrand({
+      title: "กู้คืนแบรนด์นี้?",
+      body: "Recover runs the compensation install for this brand.",
+      confirmLabel: "กู้คืน (Recover)",
+      tone: "danger",
+    });
+    if (!ok) return;
+    await dispatchOperation(() => api.recover(brandId));
+  }
+
+  /** Pause or resume from the table row. The confirm text matches the ConfigPanel button. */
+  async function toggleStatus(runtime: BrandSummary) {
+    const pausing = runtime.status === "live";
+    const ok = await confirm({
+      title: pausing ? "หยุดแบรนด์นี้ชั่วคราว?" : "เปิดแบรนด์นี้ต่อ?",
+      body: pausing ? "Pause stops new leads on this brand until it is resumed." : "Resume starts taking leads again.",
+      confirmLabel: pausing ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)",
+      tone: pausing ? "danger" : "default",
+    });
+    if (!ok) return;
+    const brandId = runtime.brand_id;
+    setToggling((previous) => new Set(previous).add(brandId));
+    try {
+      await api.setStatus(brandId, pausing ? "pause" : "resume");
+      showToast("ok", pausing ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว");
+      await load();
+    } catch (e) {
+      showToast("err", e instanceof ApiError ? e.thai : "ไม่สำเร็จ");
+    } finally {
+      setToggling((previous) => {
+        const next = new Set(previous);
+        next.delete(brandId);
+        return next;
+      });
+    }
+  }
+
+  async function startUpgradeAll() {
+    const ok = await confirm({
+      title: "เริ่มอัปเกรดทุกแบรนด์?",
+      body: `Upgrade every brand from ${upgrade.from_template_version_id || "—"} to ${upgrade.to_template_version_id || "—"}, canary ${upgrade.canary_brand_id || "—"} first.`,
+      confirmLabel: "เริ่มอัปเกรด (Start upgrade)",
+      tone: "danger",
+    });
+    if (!ok) return;
+    await act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); });
   }
 
   const runtimeBrand = runtimeBrands.find((brand) => brand.brand_id === selectedId);
 
   // The install the wizard started is picked up by the brand's history recovery, which polls it.
-  if (wizard) return <BrandWizard me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); }} />;
+  if (wizard) return <BrandWizard key={wizard.brandId ?? "new"} me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); onWizardClosed?.(); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); onSelectBrand?.(brandId); }} />;
 
   const runtimeList = runtimeError ? null : runtimeBrands;
   const tableRows = brands.map((brand) => ({
@@ -312,7 +428,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   }));
   // The Owner sees the brand that loses the most first. An Employee has no profit figure and keeps the list order.
   const sortedRows = owner ? sortWorstProfitFirst(tableRows, (row) => row.money.profit) : tableRows;
-  const columns = owner ? 7 : 4;
+  const columns = owner ? 8 : 5;
 
   return <div className="brands-page">
     <div className="brands-head">
@@ -320,7 +436,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       <div className="brands-actions">
         <div className="seg" role="group" aria-label="ช่วงเวลา">{BRAND_PERIODS.map(([key, label]) => <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div>
         <button className="btn" onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช (Refresh)</button>
-        <button className="btn pri" onClick={() => setWizard({})}>แบรนด์ใหม่ (New brand)</button>
+        <button className="btn pri" onClick={() => (onNewBrand ? onNewBrand() : setWizard({}))}>แบรนด์ใหม่ (New brand)</button>
       </div>
     </div>
     {error && <div className="error" role="alert">{error}</div>}
@@ -332,7 +448,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       <section className="panel lifecycle-list">
         <div className="tw"><table className="brand-table">
           <thead><tr>
-            <th>แบรนด์ (Brand)</th><th>สถานะ (Status)</th>
+            <th>แบรนด์ (Brand)</th><th>สถานะ (Status)</th><th>โฟลว์ (Flow gate)</th>
             {owner && <th>ค่าโฆษณา (Spend)</th>}
             <th>คลิก (Clicks)</th><th>ลีด (Leads)</th>
             {owner && <><th>ต้นทุน/ลีด (Cost per lead)</th><th>กำไร (Profit)</th></>}
@@ -340,11 +456,22 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
           <tbody>
             {sortedRows.map(({ brand, name, money, stats }) => {
               const isSelected = brand.brand_id === selectedId;
-              const select = () => setSelectedId(brand.brand_id);
+              const select = () => { setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); };
+              const runtime = runtimeBrands.find((r) => r.brand_id === brand.brand_id);
+              const canToggle = runtime && (runtime.status === "paused" || (runtime.status === "live" && owner));
+              // Pause lives in core and the factory brand stays live, so a paused brand's factory status still reads live.
+              const badgeStatus = brand.status === "live" && runtime?.status === "paused" ? "paused" : brand.status;
               return <Fragment key={brand.brand_id}>
                 <tr className={isSelected ? "click sel" : "click"} onClick={select}>
                   <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</button></td>
-                  <td><span className={tone(brand.status)}>{statusLabel[brand.status] ?? brand.status}</span></td>
+                  <td>
+                    <StatusBadge tone={statusBadgeTone[badgeStatus] ?? "mute"} label={statusLabel[badgeStatus] ?? badgeStatus} />
+                    {runtime && canToggle && <button type="button" className={runtime.status === "live" ? "btn warn row-action" : "btn pri row-action"} disabled={toggling.has(brand.brand_id)}
+                      onClick={(e) => { e.stopPropagation(); void toggleStatus(runtime); }}>
+                      {runtime.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
+                    </button>}
+                  </td>
+                  <td>{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
                   {owner && <td className="blue">{usd(money.spend)}</td>}
                   <td>{count(money.clicks)}</td>
                   <td>{count(money.leads)}</td>
@@ -365,7 +492,10 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       <div className="brands-aside">
         {selected
           ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
-          : <section className="panel brand-side"><p className="muted">เลือกแบรนด์จากตารางเพื่อดูและแก้ไข</p></section>}
+          // A failed Core list may hide a Core-only brand, so the id is not known to be missing.
+          : listLoaded && !coreListError && routeBrandId
+            ? <section className="panel brand-side"><p role="alert">ไม่พบแบรนด์ <code>{routeBrandId}</code> (Brand not found)</p></section>
+            : <section className="panel brand-side"><p className="muted">เลือกแบรนด์จากตารางเพื่อดูและแก้ไข</p></section>}
         {runtimeBrand && <section className="panel" aria-label="การตั้งค่าและสถิติรันไทม์ (Runtime config and statistics)">
           <h2>การตั้งค่า runtime (Runtime config)</h2>
           <p>สถานะ runtime: {runtimeBrand.status}</p>
@@ -374,10 +504,12 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
         </section>}
       </div>
     </div>
-    {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); }} />}
+    {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); onSelectBrand?.(brandId); }} />}
     {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
-    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); })}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
+    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
+    {toast && <Toast key={toast.id} kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
+    {confirmDialog}
   </div>;
 }
 
@@ -386,7 +518,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const actions = lifecycleMutationAvailability(brand.status, install?.status, pendingOperation, install?.recovery_required === true);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
-  return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><span className={tone(brand.status)}>{statusLabel[brand.status] ?? brand.status}</span></div>
+  return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
     {isManaged && <div className="side-actions">{actions.install && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button className="btn" onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.recover && me.role === "owner" && <button className="btn danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{onResumeWizard && (brand.status === "draft" || brand.status === "failed") && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
     {install && <div className="section"><h3>ความคืบหน้าการติดตั้ง (Install progress)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p><InstallProgress install={install} canRetry={actions.retry} onRetry={onRetry} /></div>}

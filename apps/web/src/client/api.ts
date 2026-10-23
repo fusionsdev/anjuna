@@ -31,6 +31,7 @@ export interface Me {
   id: string;
   email: string;
   role: AdminRole;
+  account?: string;
 }
 
 export interface PanelUser {
