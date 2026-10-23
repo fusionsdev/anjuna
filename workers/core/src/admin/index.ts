@@ -15,6 +15,7 @@ import {
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
   LeadId,
+  LeadsQuery,
   adminContextFromHeaders,
   authorize,
   leadOutcome,
@@ -30,6 +31,9 @@ import {
   type BrandStatusChangeResponse,
   type LeadAggregateRow,
   type LeadDetail,
+  type LeadExportQuery,
+  type LeadListRow,
+  type LeadsResponse,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
@@ -610,6 +614,144 @@ async function getLead(
   return json({ lead: detail });
 }
 
+// spec leads
+/** `base64url("<created_at>|<lead_id>")`. Leads page on `(created_at DESC, lead_id DESC)`. */
+export function encodeLeadCursor(createdAt: string, leadId: string): string {
+  return btoa(`${createdAt}|${leadId}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function decodeLeadCursor(cursor: string): { created_at: string; lead_id: string } | null {
+  try {
+    const text = atob(cursor.replace(/-/g, "+").replace(/_/g, "/"));
+    const separator = text.indexOf("|");
+    if (separator < 0) return null;
+    const created_at = text.slice(0, separator);
+    const lead_id = text.slice(separator + 1);
+    if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(created_at)) return null;
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(lead_id)) return null;
+    return { created_at, lead_id };
+  } catch {
+    return null;
+  }
+}
+
+/** Escapes `%`, `_` and `\` for a `LIKE ... ESCAPE '\'` pattern so user input cannot widen a match. */
+export function likeEscape(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+/**
+ * `WHERE` body (without the word) shared by the lead list and the lead export. Columns are
+ * qualified with the alias `l`. Pushes its binds onto `bindings`; each placeholder is taken from
+ * the bind it pushes, so indexes cannot drift. Holds no cursor and no limit.
+ */
+export function leadFilterSql(
+  query: LeadsQuery | LeadExportQuery,
+  bindings: unknown[],
+  now: Date = new Date(),
+): string {
+  const add = (value: unknown): string => {
+    bindings.push(value);
+    return `?${bindings.length}`;
+  };
+  const clauses: string[] = [];
+
+  let from = query.from;
+  if (query.from === undefined && query.to === undefined) {
+    const start = new Date(now);
+    start.setUTCDate(start.getUTCDate() - 29);
+    from = start.toISOString().slice(0, 10);
+  }
+  if (from !== undefined) {
+    clauses.push(`julianday(l.created_at) >= julianday(${add(`${from}T00:00:00.000Z`)})`);
+  }
+  if (query.to !== undefined) {
+    const toExclusive = new Date(`${query.to}T00:00:00.000Z`);
+    toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+    clauses.push(`julianday(l.created_at) < julianday(${add(toExclusive.toISOString())})`);
+  }
+  if (query.brand !== undefined) clauses.push(`l.brand = ${add(query.brand)}`);
+  if (query.status === "sold") clauses.push("l.status = 'soldLead'");
+  else if (query.status === "rejected") clauses.push("l.status = 'rejectLead'");
+  else if (query.status === "pending") clauses.push("l.status NOT IN ('soldLead', 'rejectLead')");
+  if (query.q !== undefined) {
+    const prefix = add(`${likeEscape(query.q)}%`);
+    clauses.push(`(l.lead_id LIKE ${prefix} ESCAPE '\\' OR l.click_id = ${add(query.q)})`);
+  }
+  return clauses.join(" AND ");
+}
+
+interface LeadListSqlRow {
+  lead_id: string;
+  brand: string;
+  hostname: string;
+  status: string;
+  requested_amount: number;
+  loan_purpose: string;
+  state: string;
+  keyword: string | null;
+  variant: string | null;
+  form_variant: string;
+  created_at: string;
+  has_conversion: number;
+  postback_count: number;
+}
+
+async function listLeads(url: URL, env: Env, context: AdminRequestContext): Promise<Response> {
+  const query = parseWith(LeadsQuery, parseQuery(url), context);
+  if (query instanceof Response) return query;
+
+  const cursor = query.cursor === undefined ? null : decodeLeadCursor(query.cursor);
+  if (query.cursor !== undefined && cursor === null) {
+    return invalid(context, [{ path: "cursor", message: "Invalid cursor" }]);
+  }
+
+  const bindings: unknown[] = [];
+  const clauses = [leadFilterSql(query, bindings)];
+  if (cursor !== null) {
+    bindings.push(cursor.created_at, cursor.lead_id);
+    const at = bindings.length - 1;
+    const id = bindings.length;
+    clauses.push(`(l.created_at < ?${at} OR (l.created_at = ?${at} AND l.lead_id < ?${id}))`);
+  }
+  const limit = query.limit ?? 50;
+  bindings.push(limit + 1);
+
+  const result = await env.LEADS.prepare(
+    `SELECT l.lead_id, l.brand, l.hostname, l.status, l.requested_amount, l.loan_purpose,
+       l.state, l.keyword, l.variant, l.form_variant, l.created_at,
+       EXISTS (SELECT 1 FROM conversion_uploads c WHERE c.lead_id = l.lead_id) AS has_conversion,
+       (SELECT COUNT(*) FROM postback_events p WHERE p.lead_id = l.lead_id) AS postback_count
+     FROM leads l
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY l.created_at DESC, l.lead_id DESC
+     LIMIT ?${bindings.length}`,
+  ).bind(...bindings).all<LeadListSqlRow>();
+
+  const page = result.results.slice(0, limit);
+  const last = page[page.length - 1];
+  const response: LeadsResponse = {
+    rows: page.map((row): LeadListRow => ({
+      lead_id: row.lead_id,
+      brand: row.brand,
+      hostname: row.hostname,
+      status: row.status,
+      outcome: leadOutcome(row.status),
+      requested_amount: Number(row.requested_amount),
+      loan_purpose: row.loan_purpose,
+      state: row.state,
+      keyword: row.keyword,
+      variant: row.variant?.toLowerCase() ?? null,
+      form_variant: row.form_variant,
+      has_conversion: Number(row.has_conversion) === 1,
+      postback_count: Number(row.postback_count),
+      created_at: row.created_at,
+    })),
+    next_cursor: result.results.length > limit && last ? encodeLeadCursor(last.created_at, last.lead_id) : null,
+  };
+  return json(response);
+}
+
 function encodeCursor(id: number): string {
   return btoa(String(id)).replace(/=+$/, "");
 }
@@ -718,6 +860,9 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     if (route.endpoint === "pauseBrand") return changeBrandStatus(request, env, context, brandId, "paused");
     if (route.endpoint === "resumeBrand") return changeBrandStatus(request, env, context, brandId, "live");
   }
+
+  // spec leads
+  if (route.endpoint === "listLeads") return listLeads(new URL(request.url), env, context);
 
   if (route.endpoint === "listBrands") return listBrands(env);
   if (route.endpoint === "leadAggregates") return leadAggregates(new URL(request.url), env, context);

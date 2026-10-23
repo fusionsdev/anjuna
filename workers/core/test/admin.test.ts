@@ -9,10 +9,12 @@ import {
   GetBrandResponse,
   GetLeadResponse,
   LeadAggregatesResponse,
+  LeadsResponse,
   ListBrandsResponse,
   MailingStatusResponse,
   type AdminRequestContext,
 } from "@anjuna/contracts";
+import { decodeLeadCursor, encodeLeadCursor, likeEscape } from "../src/admin/index.js";
 import { createHarness, fixtureText, type Harness } from "./helpers.js";
 
 const owner: AdminRequestContext = {
@@ -493,5 +495,190 @@ describe("drain route through the admin API", () => {
     expect(await denied.json()).toMatchObject({ error: "forbidden_role", denied_fields: ["google_ads_account"] });
     expect(await stored()).toEqual(before);
     expect(await auditCount()).toBe(auditBefore);
+  });
+});
+
+// spec leads
+describe("GET /admin/leads (FUS-376)", () => {
+  // seedLead writes a fixed created_at for every lead; each lead below is moved with an UPDATE.
+  const WINDOW = "from=2026-09-01&to=2026-10-31";
+  const DAY_MS = 86_400_000;
+  let lh: Harness;
+
+  const leadsAt = async (path: string, context: AdminRequestContext = owner) => {
+    const response = await lh.admin(path, context);
+    expect(response.status, path).toBe(200);
+    return LeadsResponse.parse(await response.json());
+  };
+  const ids = (page: LeadsResponse) => page.rows.map((row) => row.lead_id);
+
+  beforeAll(async () => {
+    lh = await createHarness();
+    for (const brand of ["brand-a", "brand-b", "brand-c"]) await lh.seedBrand(brand);
+    const seed = async (id: string, brand: string, createdAt: string, status: string, click: string) => {
+      await lh.seedLead(id, click, brand);
+      await lh.db.prepare("UPDATE leads SET created_at = ?1, status = ?2 WHERE lead_id = ?3")
+        .bind(createdAt, status, id).run();
+    };
+    await seed("lead-0001-newest", "brand-a", "2026-10-05T00:00:00.000Z", "soldLead", "clk-sold-0001");
+    await seed("lead-0002-reject", "brand-a", "2026-10-04T23:59:59.999Z", "rejectLead", "clk-rej-0002");
+    await seed("lead-0003-pending", "brand-a", "2026-10-04T08:00:00.000Z", "newLead", "clk-pend-0003");
+    for (const n of [1, 2, 3]) {
+      await seed(`tie-000000000${n}`, "brand-b", "2026-10-03T10:00:00.000Z", "newLead", `clk-tie-000${n}`);
+    }
+    await seed("lead-0009-older", "brand-b", "2026-09-10T00:00:00.000Z", "newLead", "clk-old-0009");
+    // Only the newest lead has keyword/variant; every other row keeps them NULL like a V1-era lead.
+    await lh.db.prepare("UPDATE leads SET keyword = 'Fast Cash', variant = 'A', experiment_id = 'exp-2026-10' WHERE lead_id = 'lead-0001-newest'").run();
+    await lh.seedConversion("lead-0001-newest");
+    await lh.db.batch([
+      lh.db.prepare("INSERT INTO postback_events (lead_id, event_type, payout, created_at) VALUES ('lead-0001-newest', 'newLead', 0, '2026-10-05T00:00:10.000Z')"),
+      lh.db.prepare("INSERT INTO postback_events (lead_id, event_type, payout, created_at) VALUES ('lead-0001-newest', 'soldLead', 85, '2026-10-05T00:00:30.000Z')"),
+    ]);
+  });
+  afterAll(async () => { await lh?.mf.dispose(); });
+
+  it("pages newest first and the cursor returns the next page with no overlap", async () => {
+    const expected = [
+      "lead-0001-newest", "lead-0002-reject", "lead-0003-pending",
+      "tie-0000000003", "tie-0000000002", "tie-0000000001", "lead-0009-older",
+    ];
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    const sizes: number[] = [];
+    do {
+      const page: LeadsResponse = await leadsAt(`/admin/leads?${WINDOW}&limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+      sizes.push(page.rows.length);
+      seen.push(...ids(page));
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(seen).toEqual(expected);
+    expect(sizes).toEqual([2, 2, 2, 1]);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it("pages leads that share a created_at to the millisecond without skipping or repeating one", async () => {
+    const tie = "brand=brand-b&from=2026-10-01&to=2026-10-03";
+    const first = await leadsAt(`/admin/leads?${tie}&limit=2`);
+    expect(ids(first)).toEqual(["tie-0000000003", "tie-0000000002"]);
+    expect(first.next_cursor).not.toBeNull();
+    const second = await leadsAt(`/admin/leads?${tie}&limit=2&cursor=${first.next_cursor}`);
+    expect(ids(second)).toEqual(["tie-0000000001"]);
+    expect(second.next_cursor).toBeNull();
+
+    const single: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: LeadsResponse = await leadsAt(`/admin/leads?${tie}&limit=1${cursor ? `&cursor=${cursor}` : ""}`);
+      single.push(...ids(page));
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(single).toEqual(["tie-0000000003", "tie-0000000002", "tie-0000000001"]);
+  });
+
+  it("filters by brand, day window, outcome and q on a lead_id prefix or an exact click_id", async () => {
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&brand=brand-a`))).toEqual(
+      ["lead-0001-newest", "lead-0002-reject", "lead-0003-pending"],
+    );
+    // Half-open day window: 2026-10-05T00:00:00.000Z belongs to the 5th, 23:59:59.999 to the 4th.
+    expect(ids(await leadsAt("/admin/leads?from=2026-10-04&to=2026-10-04"))).toEqual(
+      ["lead-0002-reject", "lead-0003-pending"],
+    );
+    expect(ids(await leadsAt("/admin/leads?from=2026-10-05&to=2026-10-05"))).toEqual(["lead-0001-newest"]);
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&status=sold`))).toEqual(["lead-0001-newest"]);
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&status=rejected`))).toEqual(["lead-0002-reject"]);
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&status=pending`))).toEqual([
+      "lead-0003-pending", "tie-0000000003", "tie-0000000002", "tie-0000000001", "lead-0009-older",
+    ]);
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&q=lead-0001`))).toEqual(["lead-0001-newest"]);
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&q=tie-`))).toEqual(
+      ["tie-0000000003", "tie-0000000002", "tie-0000000001"],
+    );
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&q=clk-sold-0001`))).toEqual(["lead-0001-newest"]);
+    // click_id is an exact match, not a prefix.
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&q=clk-sold`))).toEqual([]);
+    expect(ids(await leadsAt(`/admin/leads?${WINDOW}&brand=brand-b&status=sold`))).toEqual([]);
+  });
+
+  it("treats %, _ and backslash in q as literal characters", async () => {
+    for (const q of ["%", "_", "%25%25%25%25", "\\"]) {
+      const response = await lh.admin(`/admin/leads?${WINDOW}&q=${encodeURIComponent(q)}`, owner);
+      expect(response.status, q).toBe(422);
+      expect(await response.text()).not.toContain("lead-0001-newest");
+    }
+    expect(likeEscape("a%b_c\\d")).toBe("a\\%b\\_c\\\\d");
+    const count = async (pattern: string) => (await lh.db.prepare(
+      "SELECT COUNT(*) AS n FROM leads WHERE lead_id LIKE ?1 ESCAPE '\\'",
+    ).bind(pattern).first<{ n: number }>())!.n;
+    expect(await count("%")).toBe(7);
+    expect(await count(`${likeEscape("%")}%`)).toBe(0);
+    expect(await count(`${likeEscape("_")}%`)).toBe(0);
+  });
+
+  it("returns the same bytes to an employee and an owner", async () => {
+    const path = `/admin/leads?${WINDOW}&limit=4`;
+    const asOwner = await (await lh.admin(path, owner)).text();
+    const asEmployee = await (await lh.admin(path, employee)).text();
+    expect(asEmployee).toBe(asOwner);
+    LeadsResponse.parse(JSON.parse(asOwner));
+    for (const hidden of [
+      "Test", "Applicant", "test@example.com", "2145550123", "100 Example St", "Dallas", "75201", "1990-01-01",
+      "first_name", "email", "home_phone", "birth_date", "zip", "clk-", "fixture-click",
+    ]) {
+      expect(asOwner, hidden).not.toContain(hidden);
+    }
+  });
+
+  it("reports has_conversion and postback_count per row", async () => {
+    const page = await leadsAt(`/admin/leads?${WINDOW}`);
+    const byId = new Map(page.rows.map((row) => [row.lead_id, row]));
+    expect(byId.get("lead-0001-newest")).toMatchObject({ has_conversion: true, postback_count: 2, outcome: "sold" });
+    expect(byId.get("lead-0002-reject")).toMatchObject({ has_conversion: false, postback_count: 0, outcome: "rejected" });
+    expect(byId.get("tie-0000000001")).toMatchObject({ has_conversion: false, postback_count: 0, outcome: "pending" });
+  });
+
+  it("renders a V1-era lead whose keyword, variant and experiment_id are NULL", async () => {
+    const response = await lh.admin(`/admin/leads?${WINDOW}&brand=brand-b`, employee);
+    const text = await response.text();
+    const page = LeadsResponse.parse(JSON.parse(text));
+    expect(page.rows.length).toBeGreaterThan(0);
+    for (const row of page.rows) expect([row.keyword, row.variant]).toEqual([null, null]);
+    expect(text).not.toContain('"null"');
+    const withTracking = (await leadsAt(`/admin/leads?${WINDOW}&q=lead-0001`)).rows[0]!;
+    expect([withTracking.keyword, withTracking.variant]).toEqual(["Fast Cash", "a"]);
+  });
+
+  it("answers 422 on a bad cursor, a reversed window and limit 201", async () => {
+    const garbage = await lh.admin(`/admin/leads?${WINDOW}&cursor=abcd`, owner);
+    expect(garbage.status).toBe(422);
+    expect(await garbage.json()).toMatchObject({ error: "invalid", issues: [{ path: "cursor" }] });
+    expect((await lh.admin(`/admin/leads?${WINDOW}&cursor=not-a-cursor!`, owner)).status).toBe(422);
+    expect((await lh.admin("/admin/leads?from=2026-10-02&to=2026-10-01", owner)).status).toBe(422);
+    expect((await lh.admin(`/admin/leads?${WINDOW}&limit=201`, owner)).status).toBe(422);
+    expect((await lh.admin(`/admin/leads?${WINDOW}&limit=200`, owner)).status).toBe(200);
+
+    const cursor = encodeLeadCursor("2026-10-04T08:00:00.000Z", "lead-0003-pending");
+    expect(decodeLeadCursor(cursor)).toEqual({ created_at: "2026-10-04T08:00:00.000Z", lead_id: "lead-0003-pending" });
+    expect(cursor).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(decodeLeadCursor("abcd")).toBeNull();
+    expect(decodeLeadCursor(btoa("2026-10-04|x"))).toBeNull();
+  });
+
+  it("defaults to the last 30 days and 50 rows", async () => {
+    const stamp = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+    for (let n = 1; n <= 51; n++) {
+      const id = `recent-${String(n).padStart(8, "0")}`;
+      await lh.seedLead(id, `clk-recent-${n}`, "brand-c");
+      await lh.db.prepare("UPDATE leads SET created_at = ?1 WHERE lead_id = ?2").bind(stamp(1), id).run();
+    }
+    await lh.seedLead("stale-00000001", "clk-stale-1", "brand-c");
+    await lh.db.prepare("UPDATE leads SET created_at = ?1 WHERE lead_id = 'stale-00000001'").bind(stamp(45)).run();
+
+    const first = await leadsAt("/admin/leads?brand=brand-c");
+    expect(first.rows).toHaveLength(50);
+    expect(first.next_cursor).not.toBeNull();
+    const second = await leadsAt(`/admin/leads?brand=brand-c&cursor=${first.next_cursor}`);
+    expect(second.rows).toHaveLength(1);
+    expect(second.next_cursor).toBeNull();
+    expect([...ids(first), ...ids(second)]).not.toContain("stale-00000001");
   });
 });
