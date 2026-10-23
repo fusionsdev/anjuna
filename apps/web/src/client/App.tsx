@@ -5,7 +5,10 @@ import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
 import { FunnelScreen } from "./screens/Funnel";
 import { HomeScreen } from "./screens/Home";
+import { LeadDetailScreen } from "./screens/LeadDetail";
+import { LeadsScreen } from "./screens/Leads";
 import { MailingScreen } from "./screens/Mailing";
+import { SuppressionsScreen } from "./screens/Suppressions";
 import { SignIn } from "./screens/SignIn";
 import { BuilderKeysScreen } from "./screens/BuilderKeys";
 import { NotFound } from "./screens/NotFound";
@@ -66,8 +69,10 @@ export function App() {
     { id: "new-brand", label: "สร้างแบรนด์ใหม่", show: true },
     { id: "templates", label: "เทมเพลต", show: true },
     { id: "funnel", label: "ฟันเนล", show: true, gap: true },
+    { id: "leads", label: "ลีด (Leads)", show: true }, // spec leads
     { id: "alerts", label: "การแจ้งเตือน", show: true, badge: alertCount !== null ? { count: alertCount, label: `${alertCount} รายการที่ต้องจัดการ` } : null },
     { id: "mailing", label: "รายชื่ออีเมล", show: true },
+    { id: "suppressions", label: "อีเมลที่บล็อก (Suppressions)", show: me.role === "owner" }, // spec leads
     { id: "audit", label: "ประวัติการแก้ไข", show: true, gap: true },
     { id: "users", label: "ผู้ใช้", show: me.role === "owner" },
     { id: "builder-keys", label: "คีย์ Builder", show: true },
@@ -107,6 +112,11 @@ export function App() {
       {view === "funnel" && <FunnelScreen />}
       {view === "alerts" && <AlertsScreen />}
       {view === "mailing" && <MailingScreen />}
+      {/* spec leads */}
+      {route.view === "leads" && (route.leadId
+        ? <LeadDetailScreen me={me} leadId={route.leadId} onBack={() => navigate(routePath({ view: "leads", leadId: null }))} />
+        : <LeadsScreen me={me} selectedId={null} onSelect={(id) => navigate(routePath({ view: "leads", leadId: id }))} />)}
+      {view === "suppressions" && <SuppressionsScreen me={me} />}
       {view === "audit" && <AuditScreen me={me} />}
       {view === "users" && (me.role === "owner"
         ? <UsersScreen me={me} />
