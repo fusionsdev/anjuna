@@ -1,0 +1,18 @@
+/* Deploys screen only. The shared console classes (.panel .head .sub .tw .data-table .stack .hint .note .error .pill .p-* .brand-label) come from styles.css. */
+.deploys-page { min-width: 0; }
+.deploys-filters { display: flex; gap: 10px; flex-wrap: wrap; }
+.deploys-filters label { margin-bottom: 0; }
+
+/* The expand control and its detail live in the first cell; the detail needs room of its own. */
+.deploy-when { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.deploy-when time { white-space: nowrap; }
+.deploy-toggle { border: 0; background: transparent; color: var(--muted); font-size: 11px; padding: 0; text-align: left; }
+.deploy-toggle:hover { color: var(--ink); }
+.deploy-detail { min-width: min(620px, 70vw); padding-top: 4px; text-align: left; }
+.deploy-diff dl { display: grid; gap: 4px; margin: 0; }
+.deploy-diff dl > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px; }
+.deploy-diff dt { color: var(--muted); font-size: 12px; }
+.deploy-diff dd { margin: 0; overflow-wrap: anywhere; }
+
+.deploys-foot { display: flex; flex-direction: column; gap: 6px; }
+.deploys-foot .note { margin-top: 0; }

@@ -3,6 +3,7 @@ import { ApiError, api, type Me } from "./api";
 import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
+import { DeploysScreen } from "./screens/Deploys";
 import { FunnelScreen } from "./screens/Funnel";
 import { HomeScreen } from "./screens/Home";
 import { LeadDetailScreen } from "./screens/LeadDetail";
@@ -66,6 +67,7 @@ export function App() {
   const nav: (NavItem & { show: boolean })[] = [
     { id: "home", label: "หน้าแรก", show: true },
     { id: "brands", label: "แบรนด์", show: true },
+    { id: "deploys", label: "ประวัติการติดตั้ง", show: true },
     { id: "new-brand", label: "สร้างแบรนด์ใหม่", show: true },
     { id: "templates", label: "เทมเพลต", show: true },
     { id: "funnel", label: "ฟันเนล", show: true, gap: true },
@@ -101,6 +103,7 @@ export function App() {
           onNewBrand={() => open("new-brand")}
         />
       )}
+      {view === "deploys" && <DeploysScreen me={me} />}
       {view === "templates" && (
         <TemplatesScreen
           me={me}
