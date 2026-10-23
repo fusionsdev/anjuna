@@ -183,15 +183,15 @@ describe("GET /admin/conversions", () => {
     expect(text).not.toMatch(/"value_totals"\s*:\s*\{/);
   });
 
-  it("masks the click id and hides platform_error text from an employee", async () => {
+  it("masks the click id for the owner and gives an employee null for a payload echo", async () => {
     const echoed = 'Command failed: adkit manage google conversions upload --data {"conversions":[{"value":85,"gclid":"GCLID-SECRET-123"}]}';
     await seed("echo-dead", "brand-a", { status: "dead", gclid: "GCLID-SECRET-123", value: 85, last_error: echoed });
     const asOwner = await report("", owner);
     const ownerRow = ConversionsReportResponse.parse(JSON.parse(asOwner.text)).rows[0]!;
     expect(ownerRow.reason_code).toBe("platform_error");
-    expect(ownerRow.last_error).toContain("[click id]");
-    expect(ownerRow.last_error).not.toContain("GCLID-SECRET-123");
-    expect(ownerRow.last_error).toContain('"value":85');
+    expect(ownerRow.last_error).toBe(
+      'Command failed: adkit manage google conversions upload --data {"conversions":[{"value":85,"gclid":"[click id]"}]}',
+    );
     expect(asOwner.text).not.toContain("GCLID-SECRET-123");
 
     const asEmployee = await report("", employee);
@@ -203,18 +203,32 @@ describe("GET /admin/conversions", () => {
     expect(asEmployee.text).not.toContain('\\"value\\":85');
   });
 
-  it("masks a JSON click id pair that differs from the row's own column", async () => {
+  it("gives an employee null for a prefix-matched code that carries money", async () => {
+    await seed("upload-money", "brand-a", { status: "dead", gclid: "GCLID-SECRET-123", last_error: 'upload failed: {"value":85,"gclid":"GCLID-SECRET-123"}' });
+    const asOwner = await report("", owner);
+    const ownerRow = ConversionsReportResponse.parse(JSON.parse(asOwner.text)).rows[0]!;
+    expect(ownerRow.reason_code).toBe("upload_failed");
+    expect(ownerRow.last_error).toBe('upload failed: {"value":85,"gclid":"[click id]"}');
+    expect(asOwner.text).not.toContain("GCLID-SECRET-123");
+
+    const asEmployee = await report("", employee);
+    const employeeRow = ConversionsReportResponse.parse(JSON.parse(asEmployee.text)).rows[0]!;
+    expect(employeeRow).toMatchObject({ reason_code: "upload_failed", last_error: null });
+    expect(asEmployee.text).not.toContain("GCLID-SECRET-123");
+    expect(asEmployee.text).not.toContain('"value":85');
+    expect(asEmployee.text).not.toContain('\\"value\\":85');
+  });
+
+  it("masks a click id key whose value differs from the row's own column", async () => {
     const echoed = 'upload failed for GCLID-ROW-1: {"msclkid": "OTHER-ID-9", "GclId" :"ANOTHER-77", "wbraid":"CUT-OFF-5';
     await seed("pair-dead", "brand-a", { status: "dead", gclid: "GCLID-ROW-1", last_error: echoed });
-    for (const context of [owner, employee]) {
-      const { text } = await report("", context);
-      const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
-      expect(row.reason_code, context.actor_role).toBe("upload_failed");
-      expect(row.last_error, context.actor_role).toBe(
-        'upload failed for [click id]: {"msclkid": "[click id]", "GclId" :"[click id]", "wbraid":"[click id]',
-      );
-      for (const secret of ["OTHER-ID-9", "ANOTHER-77", "GCLID-ROW-1", "CUT-OFF-5"]) expect(text).not.toContain(secret);
-    }
+    const { text } = await report("", owner);
+    const row = ConversionsReportResponse.parse(JSON.parse(text)).rows[0]!;
+    expect(row.reason_code).toBe("upload_failed");
+    expect(row.last_error).toBe(
+      'upload failed for [click id]: {"msclkid": "[click id]", "GclId" :"[click id]", "wbraid":"[click id]',
+    );
+    for (const secret of ["OTHER-ID-9", "ANOTHER-77", "GCLID-ROW-1", "CUT-OFF-5"]) expect(text).not.toContain(secret);
   });
 
   it("masks a click id pair whose quotes are backslash-escaped", async () => {
@@ -225,16 +239,37 @@ describe("GET /admin/conversions", () => {
     expect(text).not.toContain("ESC-ID-4");
   });
 
-  it("keeps fixed-template error text for an employee and hides not_ready text", async () => {
-    await seed("no-route", "brand-b", { status: "dead", last_error: "no route for brand=brand-b hostname=b.example" });
+  it("masks a click id written with a unicode escape, a CLI flag or key=value", async () => {
+    await seed("unicode", "brand-a", { status: "dead", last_error: String.raw`upload failed: {"gclid":"\u004fTHER-ID-9"}` });
+    await seed("cli-flag", "brand-a", { status: "dead", last_error: "Command failed: adkit upload --gclid OTHER-ID-7 --json" });
+    await seed("key-eq", "brand-a", { status: "dead", last_error: "upload failed: gclid=OTHER-ID-8, retry later" });
+    const { text } = await report("", owner);
+    const body = ConversionsReportResponse.parse(JSON.parse(text));
+    const errors = Object.fromEntries(body.rows.map((r) => [r.lead_id.replace(/^lead-/, ""), r.last_error]));
+    expect(errors["unicode"]).toBe(String.raw`upload failed: {"gclid":"[click id]"}`);
+    expect(errors["cli-flag"]).toBe("Command failed: adkit upload --gclid [click id] --json");
+    expect(errors["key-eq"]).toBe("upload failed: gclid=[click id], retry later");
+    for (const secret of ["THER-ID-9", "OTHER-ID-7", "OTHER-ID-8"]) expect(text).not.toContain(secret);
+  });
+
+  it("keeps the exact template texts for an employee and nulls anything else", async () => {
+    const templates = [
+      "no click id", "no gclid/gbraid/wbraid", "no msclkid", "reclaim: exhausted attempts after stale lease",
+      "no route for brand=brand-b hostname=b.example", "missing Microsoft env (ACCOUNT/CONVERSION_NAME)", "upload failed",
+    ];
+    for (const [i, template] of templates.entries()) await seed(`template-${i}`, "brand-a", { status: "dead", last_error: template });
+    await seed("padded", "brand-a", { status: "dead", last_error: "  Upload Failed \n" });
+    await seed("route-money", "brand-a", { status: "dead", last_error: 'no route for brand=x hostname=y {"value":85}' });
     await seed("not-ready", "brand-a", { status: "pending", last_error: "not ready yet: conversion action still propagating" });
     const byId = async (context: AdminRequestContext) =>
       Object.fromEntries((await parsed("", context)).rows.map((r) => [r.lead_id.replace(/^lead-/, ""), r]));
     const asEmployee = await byId(employee);
-    expect(asEmployee["no-route"]).toMatchObject({ reason_code: "no_route", last_error: "no route for brand=brand-b hostname=b.example" });
+    for (const [i, template] of templates.entries()) expect(asEmployee[`template-${i}`]!.last_error, template).toBe(template);
+    expect(asEmployee["padded"]).toMatchObject({ reason_code: "upload_failed", last_error: "Upload Failed" });
+    expect(asEmployee["route-money"]).toMatchObject({ reason_code: "no_route", last_error: null });
     expect(asEmployee["not-ready"]).toMatchObject({ reason_code: "not_ready", last_error: null });
     const asOwner = await byId(owner);
-    expect(asOwner["no-route"]!.last_error).toBe("no route for brand=brand-b hostname=b.example");
+    expect(asOwner["route-money"]!.last_error).toBe('no route for brand=x hostname=y {"value":85}');
     expect(asOwner["not-ready"]!.last_error).toBe("not ready yet: conversion action still propagating");
   });
 

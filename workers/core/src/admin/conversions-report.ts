@@ -1,6 +1,6 @@
 import {
   CONVERSION_STALLED_HOURS, CONVERSIONS_ROW_LIMIT, ConversionsReportResponse, conversionReasonCode, spendPeriodRange,
-  type AdminRole, type ConversionReasonCode, type ConversionStatus, type ConversionsQuery,
+  type AdminRole, type ConversionStatus, type ConversionsQuery,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 
@@ -9,9 +9,16 @@ const cents = (value: number) => Math.round(value * 100) / 100;
 // Older rows may carry an offset ("+00:00") or no milliseconds. The contract wants canonical UTC.
 const iso = (value: string) => { const ms = Date.parse(value); return Number.isNaN(ms) ? value : new Date(ms).toISOString(); };
 
-// A `"gclid": "<x>"` pair, also with escaped quotes. The closing quote is optional: the drain cuts
-// `e.message` at 300 characters, so an echoed payload can end inside the value.
-const CLICK_ID_PAIR = /(\\*"(?:gclid|gbraid|wbraid|msclkid)\\*"\s*:\s*\\*")[^"\\]*/gi;
+// The value token after a click id key: JSON pair (escaped quotes too), `key=value` or `--key value`.
+// The token is any run of non-delimiters or `\uXXXX` escapes. It may end inside the value because the
+// drain cuts `e.message` at 300 characters.
+const CLICK_ID_TOKEN = /(gclid|gbraid|wbraid|msclkid)(\\*"?\s*[:=]\s*\\*"?|\s+)((?:[^"\\,}\s]|\\u[0-9a-f]{4})+)/gi;
+// The only `last_error` texts a non-owner sees: the fixed strings core and the drain write.
+const EMPLOYEE_ERRORS = new Set([
+  "no click id", "no gclid/gbraid/wbraid", "no msclkid", "reclaim: exhausted attempts after stale lease",
+  "missing microsoft env (account/conversion_name)", "upload failed",
+]);
+const NO_ROUTE_ERROR = /^no route for brand=\S{1,64} hostname=\S{1,253}$/i;
 
 interface Row {
   lead_id: string; brand: string; status: ConversionStatus; last_error: string | null;
@@ -22,14 +29,18 @@ interface Row {
 
 /**
  * The drain stores raw AdKit failure text, which can echo the upload payload (click id and value).
- * Every role gets click ids masked. A non-owner gets no free text at all for platform_error and not_ready.
+ * A non-owner sees only the fixed templates. The owner sees the text with click id values masked.
  */
-function sanitizeLastError(text: string | null, row: Row, owner: boolean, reasonCode: ConversionReasonCode | null): string | null {
+function sanitizeLastError(text: string | null, row: Row, owner: boolean): string | null {
   if (text === null) return null;
-  if (!owner && (reasonCode === "platform_error" || reasonCode === "not_ready")) return null;
-  let masked = text;
+  if (!owner) {
+    const trimmed = text.trim();
+    return EMPLOYEE_ERRORS.has(trimmed.toLowerCase()) || NO_ROUTE_ERROR.test(trimmed) ? trimmed : null;
+  }
+  // Tokens first: masking the row's own values first would leave "[click id]" for the token pattern to eat.
+  let masked = text.replace(CLICK_ID_TOKEN, "$1$2[click id]");
   for (const id of [row.gclid, row.gbraid, row.wbraid, row.msclkid]) if (id) masked = masked.split(id).join("[click id]");
-  return masked.replace(CLICK_ID_PAIR, "$1[click id]").slice(0, 300);
+  return masked.slice(0, 300);
 }
 
 /** Read-only conversion queue report. Money is null unless the caller is the owner. */
@@ -69,11 +80,10 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
     value_totals: owner ? { uploaded: sum("uploaded"), dead: sum("dead") } : null,
     stalled: Number(stalled?.n ?? 0),
     rows: rows.results.slice(0, CONVERSIONS_ROW_LIMIT).map((r) => {
-      const reasonCode = conversionReasonCode(r.status, r.last_error);
       return {
         lead_id: r.lead_id, brand: r.brand, status: r.status,
-        reason_code: reasonCode,
-        last_error: sanitizeLastError(r.last_error, r, owner, reasonCode),
+        reason_code: conversionReasonCode(r.status, r.last_error),
+        last_error: sanitizeLastError(r.last_error, r, owner),
         click_type: r.gclid ? "gclid" : r.gbraid ? "gbraid" : r.wbraid ? "wbraid" : r.msclkid ? "msclkid" : null,
         attempts: Number(r.attempts), value: owner ? cents(Number(r.value)) : null, currency: r.currency,
         occurred_at: iso(r.occurred_at), created_at: iso(r.created_at), updated_at: iso(r.updated_at ?? r.created_at),
