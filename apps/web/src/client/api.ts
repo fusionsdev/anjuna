@@ -1,5 +1,5 @@
 import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
-import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
+import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { GetLeadResponse, LeadsResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
@@ -212,4 +212,12 @@ export const api = {
   suppressions: (filter: SuppressionFilterState, cursor?: string | null) =>
     request<unknown>("GET", queryPath("/api/suppressions", [["q", filter.q], ["reason", filter.reason], ["source", filter.source], ["cursor", cursor]]))
       .then((body) => SuppressionsResponse.parse(body)),
+  // spec brands
+  deploys: (query: DeployHistoryQuery = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+    return request<unknown>("GET", `/api/deploys${params.size ? `?${params}` : ""}`).then((body) => DeployHistoryResponse.parse(body));
+  },
+  brandRevisions: (brandId: string) =>
+    request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/revisions`).then((body) => BrandRevisionsResponse.parse(body)),
 };
