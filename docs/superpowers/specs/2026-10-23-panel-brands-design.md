@@ -42,6 +42,17 @@ FUS-377 asks for issues-first. Dropping `sortWorstProfitFirst` would regress the
 
 Factory installs and factory brand audit rows come from the panel's own `FACTORY` binding. Config changes to a live brand are audited by core, not by the factory (`audit.ts` header comment), so the timeline also calls core `listAudit` with `target_type=brand`. A core failure returns the factory rows plus `unavailable: ["core_audit"]` instead of failing the response, the same shape of partial answer as `core_error` on the brands list.
 
+**Amendment, after Task 2 (2026-10-23).** The two audit sources need two different action allowlists, because they write different action names. This version of D4 first gave both sources one list built from the factory's actions, which would have let the core source contribute nothing in production and defeated the reason core is read at all.
+
+- Factory (`audit_log` through `env.FACTORY`): `brand.create`, `brand.duplicate`, `brand.draft_update`, `brand.profile.*`, `brand.asset.*`, `checklist.attest`.
+- Core (`listAudit`): `brand.update`, `brand.pause`, `brand.resume`. Those are the only brand actions core writes (`workers/core/src/admin/index.ts:272`), and `brand.update` is exactly the live-brand config change this decision exists to show. Pause and resume join it because the brand card already treats Pause/Resume as brand state an operator tracks.
+
+`install.start`, `install.failed`, `redeploy.*` and `upgrade.*` stay excluded from both: the install row already carries each of them, and including them would list every deploy twice.
+
+### D4b. Timestamps on the wire are UTC
+
+`Timestamp` in contracts is `z.iso.datetime()`, which rejects an offset such as `+07:00`. Every writer in the repo produces `new Date().toISOString()`, so stored rows are `Z` and the response parses. The deploy feed still orders by instant, not by text: `julianday(started_at)` in SQL so the `LIMIT` boundary keeps the newest rows, and `Date.parse` in the merge. Text order and instant order can disagree in both directions, and ordering by the raw column could drop a newer row at the `LIMIT` cut.
+
 ### D5. No cursor on the deploy feed
 
 Merging three sources makes a keyset cursor wrong at the seam. Each source is queried with its own `LIMIT`, merged, sorted by `started_at DESC` and truncated to `limit`; the response carries `has_more`. The screen says `แสดง <n> รายการล่าสุด` when `has_more` is true. Pagination is listed as out-of-scope follow-up work in the PR.
