@@ -107,7 +107,7 @@ ConversionsReportResponse = strictObject({
 
 ## Home overview (`/`)
 
-- KPI cards with deltas: each ledger cell shows the change against the previous window of equal length (`today` vs yesterday, `7d` vs the 7 days before). Delta text: `▲ 12%` / `▼ 5%` / `–` when the previous value is 0 or missing. Color: up is `pos` for leads, sold, revenue, profit; up is `neg` for spend and CPL.
+- KPI cards with deltas: each ledger cell shows the change against the previous window of equal length (`today` vs yesterday, `7d` vs the 7 days before). Delta text: `▲ 12%` / `▼ 5%` / `–` when the previous value is 0 or missing. Color: up is `pos` for visits, leads, sold, revenue. Spend, CPL, profit and pending get no delta in spec A.
   - Previous-window data: a second `api.funnel` call for the previous range, and a second `api.spend` call is not possible (period enum). Spend, CPL and profit cells show no delta in spec A.
 - Conversions card: uploaded / pending / dead counts for the period and the stalled count; owner also sees uploaded value. The card links to `/conversions` (dead count links to `/conversions?status=dead`).
 - Daily bars: inline SVG bar chart of leads and sold per UTC day from `/api/leads/aggregates` (counts only, employee allowed; the server route exists, the client gets a new `api.leadAggregates({from,to})`). `today` shows the last 7 days. Each bar has a `<title>` with day and counts. Width follows the container; height 120 px.
