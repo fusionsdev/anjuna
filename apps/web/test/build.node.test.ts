@@ -64,4 +64,14 @@ describe("SPA build", () => {
     expect(readdirSync(path.join(out, "assets")).some((f) => f.endsWith(".js"))).toBe(true);
     expect(existsSync(path.join(out, "assets"))).toBe(true);
   });
+
+  it("loads no external font and uses absolute asset paths for deep links", async () => {
+    await build({ configFile: path.join(root, "vite.config.ts"), logLevel: "silent" });
+    const out = path.join(root, "dist/client");
+    const html = readFileSync(path.join(out, "index.html"), "utf8");
+    expect(html).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
+    expect(html).toMatch(/src="\/assets\/[^"]+\.js"/);
+    const fonts = readdirSync(path.join(out, "assets")).filter((f) => f.endsWith(".woff2"));
+    expect(fonts.length).toBeGreaterThan(0);
+  });
 });
