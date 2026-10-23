@@ -12,6 +12,9 @@ export type Route =
   | { view: "audit" }
   | { view: "users" }
   | { view: "builder-keys" }
+  // spec leads
+  | { view: "leads"; leadId: string | null }
+  | { view: "suppressions" }
   | { view: "not-found"; path: string };
 export type View = Route["view"];
 
@@ -27,6 +30,9 @@ const STATIC: Record<string, Route> = {
   "/audit": { view: "audit" },
   "/users": { view: "users" },
   "/builder-keys": { view: "builder-keys" },
+  // spec leads
+  "/leads": { view: "leads", leadId: null },
+  "/suppressions": { view: "suppressions" },
 };
 
 /** A bad escape such as "%" reads as no id, so the list opens. */
@@ -47,9 +53,10 @@ export function parseRoute(pathname: string, hash = ""): Route {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   const fixed = STATIC[path];
   if (fixed) return fixed;
-  const one = /^\/(brands|templates)\/([^/]+)$/.exec(path);
+  const one = /^\/(brands|templates|leads)\/([^/]+)$/.exec(path);
   if (one) {
     const id = decode(one[2]!);
+    if (one[1] === "leads") return { view: "leads", leadId: id };
     return one[1] === "brands" ? { view: "brands", brandId: id } : { view: "templates", templateId: id };
   }
   return { view: "not-found", path };
@@ -61,6 +68,8 @@ export function routePath(route: Route): string {
       return route.brandId ? `/brands/${encodeURIComponent(route.brandId)}` : "/brands";
     case "templates":
       return route.templateId ? `/templates/${encodeURIComponent(route.templateId)}` : "/templates";
+    case "leads":
+      return route.leadId ? `/leads/${encodeURIComponent(route.leadId)}` : "/leads";
     case "not-found":
       return route.path;
     default:

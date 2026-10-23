@@ -1,6 +1,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
+import { api } from "../src/client/api";
 import { isPlainLeftClick, navigate, parseRoute, routePath, useRoute, viewPath } from "../src/client/router";
 
 afterEach(() => {
@@ -141,5 +142,25 @@ describe("useRoute", () => {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     expect(screen.getByText(JSON.stringify({ view: "templates", templateId: "tv-2" }))).toBeTruthy();
+  });
+});
+
+// spec leads
+describe("leads and suppressions routes", () => {
+  it("parses /leads, /leads/<id> and /suppressions and round-trips each through routePath", () => {
+    expect(parseRoute("/leads")).toEqual({ view: "leads", leadId: null });
+    expect(parseRoute("/leads/a%20b")).toEqual({ view: "leads", leadId: "a b" });
+    expect(parseRoute("/suppressions")).toEqual({ view: "suppressions" });
+    // A bad escape reads as no id, the same as /brands/% and /templates/%.
+    expect(parseRoute("/leads/%")).toEqual({ view: "leads", leadId: null });
+    expect(routePath({ view: "leads", leadId: "a/b" })).toBe("/leads/a%2Fb");
+    for (const path of ["/leads", "/leads/x%2Fy", "/suppressions"]) expect(routePath(parseRoute(path))).toBe(path);
+  });
+
+  it("builds an export URL that carries every set filter and the pii flag", () => {
+    expect(api.leadsExportUrl({ from: "2026-10-01", to: "2026-10-31", brand: "brand-a", status: "sold", q: "" }, true))
+      .toBe("/api/leads/export?from=2026-10-01&to=2026-10-31&brand=brand-a&status=sold&pii=1");
+    expect(api.leadsExportUrl({ from: "2026-10-01", to: "", brand: "", status: "", q: "a&b=c" }, false))
+      .toBe("/api/leads/export?from=2026-10-01&q=a%26b%3Dc");
   });
 });

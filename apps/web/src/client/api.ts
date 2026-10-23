@@ -1,5 +1,6 @@
 import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BuilderKeyCreateResponse, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
+import { GetLeadResponse, LeadsResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
 import type {
@@ -98,6 +99,33 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+// spec leads
+/** The leads filter as the screen holds it. An empty string means the filter is not set. */
+export interface LeadFilterState {
+  from: string;
+  to: string;
+  brand: string;
+  status: LeadOutcome | "";
+  q: string;
+}
+
+/** The suppressions filter as the screen holds it. An empty string means the filter is not set. */
+export interface SuppressionFilterState {
+  q: string;
+  reason: SuppressionReason | "";
+  source: SuppressionSource | "";
+}
+
+function queryPath(path: string, entries: [string, string | null | undefined][]): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of entries) if (value) params.set(key, value);
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+const leadFilterEntries = (filter: LeadFilterState): [string, string][] =>
+  [["from", filter.from], ["to", filter.to], ["brand", filter.brand], ["status", filter.status], ["q", filter.q]];
+
 export const api = {
   trafficBreakdown: (period: TrafficPeriod, by: TrafficDimension) =>
     request<unknown>("GET", `/api/traffic/breakdown?${new URLSearchParams({ period, by })}`).then((body) => TrafficBreakdownResponse.parse(body)),
@@ -173,4 +201,15 @@ export const api = {
   /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */
   trafficRiskExportUrl: (period: RiskPeriod, hostname?: string) =>
     `/api/traffic/risk/export?${new URLSearchParams({ period, ...(hostname ? { hostname } : {}) })}`,
+  // spec leads
+  leads: (filter: LeadFilterState, cursor?: string | null) =>
+    request<unknown>("GET", queryPath("/api/leads", [...leadFilterEntries(filter), ["cursor", cursor]])).then((body) => LeadsResponse.parse(body)),
+  lead: (id: string) => request<unknown>("GET", `/api/leads/${encodeURIComponent(id)}`).then((body) => GetLeadResponse.parse(body).lead),
+  /** A plain link: the browser downloads the CSV with the session cookie. `pii` is owner only. */
+  leadsExportUrl: (filter: LeadFilterState, pii: boolean) =>
+    queryPath("/api/leads/export", [...leadFilterEntries(filter), ["pii", pii ? "1" : null]]),
+  /** Owner only: an employee gets 403 forbidden_role. */
+  suppressions: (filter: SuppressionFilterState, cursor?: string | null) =>
+    request<unknown>("GET", queryPath("/api/suppressions", [["q", filter.q], ["reason", filter.reason], ["source", filter.source], ["cursor", cursor]]))
+      .then((body) => SuppressionsResponse.parse(body)),
 };
