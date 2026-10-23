@@ -42,6 +42,16 @@ describe("mock core leads endpoints (FUS-376)", () => {
     expect((await get("/admin/leads/export?pii=2", "owner")).status).toBe(422);
     expect((await get("/admin/suppressions?source=bogus", "owner")).status).toBe(422);
 
+    // two stages at once: the endpoint role gate (2) answers before validation (3), so a caller
+    // who may not ask learns nothing about whether the value is valid
+    const blocked = await get("/admin/suppressions?source=bogus", "employee");
+    expect(blocked.status).toBe(403);
+    expect(AdminError.parse(await blocked.json())).toMatchObject({ error: "forbidden_role", required_role: "owner" });
+    // validation (3) answers before the PII field group (4): a bad filter is 422 even with pii=1
+    const badFilter = await get("/admin/leads/export?pii=1&status=bogus", "employee");
+    expect(badFilter.status).toBe(422);
+    expect(AdminError.parse(await badFilter.json())).toMatchObject({ error: "invalid" });
+
     // 200 otherwise; a non-PII export is allowed for an employee ("0" is not a PII request)
     expect(LeadsResponse.parse(await (await get("/admin/leads", "employee")).json()).rows).toHaveLength(2);
     const plain = await get("/admin/leads/export?pii=0", "employee");
@@ -66,13 +76,36 @@ describe("mock core leads endpoints (FUS-376)", () => {
     expect(body.lead.postbacks.map((p: { payout: unknown }) => p.payout)).toEqual([null, null]);
     expect(body.lead.conversion.value).toBeNull();
     expect(body.lead.profile.state).toBe("TX");
-    for (const pii of ["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone"]) {
+    expect(body.lead.conversion.last_error).toBeNull();
+    for (const pii of ["first_name", "last_name", "birth_date", "email", "home_phone", "work_phone", "address", "city", "zip"]) {
       expect(text).not.toContain(`"${pii}"`);
     }
 
     const owner = await (await get(`/admin/leads/${LEAD_ID}`, "owner")).json() as typeof body;
     expect(owner.lead.applicant).not.toBeNull();
     expect(owner.lead.postbacks.every((p: { payout: unknown }) => typeof p.payout === "number")).toBe(true);
+
+    // Values, not key names: nothing the owner sees and the employee must not may appear anywhere.
+    // Applicant fields that the employee profile also carries (state, employer, ...) are not secret.
+    const secrets: unknown[] = [
+      ...Object.entries(owner.lead.applicant as Record<string, unknown>)
+        .filter(([key, value]) => !(key in owner.lead.profile) && value !== null)
+        .map(([, value]) => value),
+      ...owner.lead.postbacks.map((p: { payout: unknown }) => p.payout),
+      owner.lead.conversion.value,
+      owner.lead.conversion.last_error,
+    ];
+    expect(secrets.length).toBeGreaterThanOrEqual(10);
+    const leaves: unknown[] = [];
+    const walk = (node: unknown): void => {
+      if (node !== null && typeof node === "object") Object.values(node).forEach(walk);
+      else leaves.push(node);
+    };
+    walk(body);
+    for (const secret of secrets) {
+      expect(leaves, `leaked ${JSON.stringify(secret)}`).not.toContain(secret);
+      if (typeof secret === "string") expect(text).not.toContain(secret);
+    }
   });
 
   it("filters its lead list by brand and status", async () => {
