@@ -562,13 +562,16 @@ export type SuppressionReason = z.infer<typeof SuppressionReason>;
 export const SuppressionSource = z.enum(["listmonk", "ses", "manual"]);
 export type SuppressionSource = z.infer<typeof SuppressionSource>;
 
+/** `base64url(email)`. 254 characters of up to 4 UTF-8 bytes each is 1,016 bytes, 1,355 base64url characters. */
+export const SuppressionCursor = z.string().regex(/^[A-Za-z0-9_-]{1,1356}$/);
+
 export const SuppressionsQuery = z.strictObject({
   /** Matched as a lowercased substring of the email. */
   q: z.string().min(1).max(254).optional(),
   reason: SuppressionReason.optional(),
   source: SuppressionSource.optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
-  cursor: LeadCursor.optional(),
+  cursor: SuppressionCursor.optional(),
 });
 export type SuppressionsQuery = z.infer<typeof SuppressionsQuery>;
 

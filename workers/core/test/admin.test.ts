@@ -1312,3 +1312,52 @@ describe("GET /admin/suppressions (FUS-376)", () => {
     for (const email of SEEDED) expect(outcome!.text, email).not.toContain(email);
   });
 });
+
+describe("GET /admin/suppressions with non-ASCII addresses (FUS-376)", () => {
+  // 142 characters, 272 UTF-8 bytes: its base64url cursor is 363 characters, over the 344 a lead cursor allows.
+  const LONG = `${"é".repeat(130)}@example.com`;
+  const SEEDED = ["a@example.com", "b@example.com", LONG, "ê@example.com", "ü@example.com", "élodie@example.com"].sort(
+    (left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)),
+  );
+  let sh: Harness;
+
+  const search = async (query: string) => {
+    const response = await sh.admin(`/admin/suppressions?${query}`, owner);
+    expect(response.status, query).toBe(200);
+    return SuppressionsResponse.parse(await response.json());
+  };
+  const emails = (page: SuppressionsResponse) => page.rows.map((row) => row.email);
+
+  beforeAll(async () => {
+    sh = await createHarness();
+    for (const email of SEEDED) {
+      await sh.db.prepare(
+        "INSERT INTO suppressions (email, reason, source, created_at, updated_at) VALUES (?1, 'manual', 'manual', '2026-10-01T00:00:00.000Z', NULL)",
+      ).bind(email).run();
+    }
+  });
+  afterAll(async () => { await sh?.mf.dispose(); });
+
+  it("pages past a long non-ASCII address without a 422", async () => {
+    const limit = SEEDED.indexOf(LONG) + 1;
+    expect(limit).toBeGreaterThan(0);
+    expect(limit).toBeLessThan(SEEDED.length);
+
+    const first = await search(`limit=${limit}`);
+    expect(emails(first).at(-1)).toBe(LONG);
+    expect(first.next_cursor).not.toBeNull();
+    expect(first.next_cursor!.length).toBeGreaterThan(344);
+
+    const second = await search(`limit=${limit}&cursor=${first.next_cursor}`);
+    expect(second.rows.length).toBeGreaterThan(0);
+    expect(emails(second).filter((email) => emails(first).includes(email))).toEqual([]);
+    expect([...emails(first), ...emails(second)]).toEqual(SEEDED);
+  });
+
+  it("lowercases q in JavaScript, because SQLite LIKE folds only ASCII case", async () => {
+    expect(emails(await search("q=%C3%89"))).toEqual(
+      SEEDED.filter((email) => email.includes("é")),
+    );
+    expect(emails(await search("q=%C3%89LODIE"))).toEqual(["élodie@example.com"]);
+  });
+});
