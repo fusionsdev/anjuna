@@ -3,7 +3,7 @@ import {
   BrandId,
   Hostname,
 } from "./common.js";
-import { AdminRequestContext, AdminRole, AmountBuckets, DrainKey, FormVersion, PrepopBase } from "./admin-api.js";
+import { AdminRequestContext, AdminRole, AuditActorRole, AmountBuckets, DrainKey, FormVersion, PrepopBase } from "./admin-api.js";
 import { BrandProfile } from "./brand-draft.js";
 import { FormRoute, Keyword } from "./runtime-config.js";
 
@@ -45,7 +45,8 @@ export type LifecycleStatus = z.infer<typeof LifecycleStatus>;
 export const RuntimeSyncStatus = z.enum(["queued", "running", "ready", "failed"]);
 export type RuntimeSyncStatus = z.infer<typeof RuntimeSyncStatus>;
 
-const InstallStatus = z.enum(["queued", "running", "ready", "failed", "rolled_back"]);
+export const InstallStatus = z.enum(["queued", "running", "ready", "failed", "rolled_back"]);
+export type InstallStatus = z.infer<typeof InstallStatus>;
 
 export const RegisterFormArtifactRequest = z.strictObject({
   form_artifact_id: Id,
@@ -354,6 +355,17 @@ export const InstallWithReceipts = z.strictObject({
 });
 export type InstallWithReceipts = z.infer<typeof InstallWithReceipts>;
 
+// spec brands (FUS-377)
+export const LatestInstall = z.strictObject({
+  install_id: Id,
+  operation: InstallOperation,
+  status: InstallStatus,
+  started_at: Timestamp,
+  finished_at: Timestamp.nullable(),
+  started_by: ActorId,
+});
+export type LatestInstall = z.infer<typeof LatestInstall>;
+
 export const LifecycleBrandSummary = z.strictObject({
   brand_id: BrandId,
   /** Screen name from `brands.name`. Absent for a core-only brand. Rows made before the name field hold a domain-derived name, so it is not held to the create rule. */
@@ -369,5 +381,84 @@ export const LifecycleBrandSummary = z.strictObject({
   newer_form: z.strictObject({ form_artifact_id: Id, bundle_form_version: FormVersion }).optional(),
   /** The brand profile from the latest revision's config_json. Only the single-brand read carries it. */
   profile: BrandProfile.optional(),
+  /** The newest install row for the brand. */
+  latest_install: LatestInstall.nullable().optional(),
 });
 export type LifecycleBrandSummary = z.infer<typeof LifecycleBrandSummary>;
+
+// spec brands (FUS-377)
+export const DeploySource = z.enum(["install", "audit"]);
+export type DeploySource = z.infer<typeof DeploySource>;
+
+export const DeployStatus = z.enum(["queued", "running", "ready", "failed", "rolled_back", "done"]);
+export type DeployStatus = z.infer<typeof DeployStatus>;
+
+export const DeployEvent = z
+  .strictObject({
+    source: DeploySource,
+    /** The install id for an install row, `audit-<id>` for an audit row. */
+    event_id: Id,
+    brand_id: BrandId,
+    operation: InstallOperation.nullable(),
+    action: z.string().min(1).max(64).nullable(),
+    status: DeployStatus,
+    from_revision_id: Id.nullable(),
+    to_revision_id: Id.nullable(),
+    is_canary: z.boolean(),
+    started_by: ActorId,
+    started_role: AuditActorRole,
+    started_at: Timestamp,
+    finished_at: Timestamp.nullable(),
+    error: z.string().max(500).nullable(),
+  })
+  .superRefine((event, ctx) => {
+    if (event.source === "install") {
+      if (event.operation === null) ctx.addIssue({ code: "custom", path: ["operation"], message: "An install row needs an operation" });
+      if (event.action !== null) ctx.addIssue({ code: "custom", path: ["action"], message: "An install row has no action" });
+      return;
+    }
+    if (event.operation !== null) ctx.addIssue({ code: "custom", path: ["operation"], message: "An audit row has no operation" });
+    if (event.action === null) ctx.addIssue({ code: "custom", path: ["action"], message: "An audit row needs an action" });
+    if (event.status !== "done") ctx.addIssue({ code: "custom", path: ["status"], message: "An audit row is always done" });
+  });
+export type DeployEvent = z.infer<typeof DeployEvent>;
+
+export const DeployHistoryQuery = z.strictObject({
+  brand: BrandId.optional(),
+  source: DeploySource.optional(),
+  status: DeployStatus.optional(),
+  operation: InstallOperation.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+export type DeployHistoryQuery = z.infer<typeof DeployHistoryQuery>;
+
+export const DeployUnavailableSource = z.enum(["core_audit"]);
+export type DeployUnavailableSource = z.infer<typeof DeployUnavailableSource>;
+
+export const DeployHistoryResponse = z.strictObject({
+  events: z.array(DeployEvent),
+  has_more: z.boolean(),
+  unavailable: z.array(DeployUnavailableSource),
+});
+export type DeployHistoryResponse = z.infer<typeof DeployHistoryResponse>;
+
+export const BrandRevision = z.strictObject({
+  revision_id: Id,
+  revision: z.number().int().positive(),
+  template_version_id: Id,
+  form_artifact_id: Id,
+  bundle_form_version: FormVersion.nullable(),
+  worker_version_id: z.string().min(1).max(128).nullable(),
+  created_by: ActorId,
+  created_at: Timestamp,
+  is_current: z.boolean(),
+});
+export type BrandRevision = z.infer<typeof BrandRevision>;
+
+export const BrandRevisionsResponse = z.strictObject({
+  brand_id: BrandId,
+  current_revision_id: Id.nullable(),
+  rollback_target_revision_id: Id.nullable(),
+  revisions: z.array(BrandRevision),
+});
+export type BrandRevisionsResponse = z.infer<typeof BrandRevisionsResponse>;
