@@ -42,6 +42,7 @@ const template = (id: string, status: string) => ({ template_version_id: id, tem
 let funnel: (from: string) => Response | Promise<Response>;
 let conversions: (period: string) => Response | Promise<Response>;
 let alertsBody: unknown;
+let alertsReply: () => Response | Promise<Response>;
 let spend: ReturnType<typeof vi.fn>;
 const realSpend = api.spend;
 let requests: string[];
@@ -53,6 +54,7 @@ beforeEach(() => {
   funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
   conversions = (period) => json(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER);
   alertsBody = alertsReport;
+  alertsReply = () => json(alertsBody);
   spend =vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
   (api as unknown as { spend: unknown }).spend = spend;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
@@ -60,7 +62,7 @@ beforeEach(() => {
     const url = new URL(input, "http://panel.test");
     if (url.pathname === "/api/funnel") return funnel(url.searchParams.get("from") ?? "");
     if (url.pathname === "/api/conversions") return conversions(url.searchParams.get("period") ?? "");
-    if (url.pathname === "/api/alerts") return json(alertsBody);
+    if (url.pathname === "/api/alerts") return alertsReply();
     if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [{ brand_id: "a", status: "live" }, { brand_id: "b", status: "live" }, { brand_id: "c", status: "draft" }] });
     if (url.pathname === "/api/brands/a/checklist") return json({ brand_id: "a", checklist: [{ item: "test_sold", evidence: {} }, { item: "drain_route", evidence: {} }] });
@@ -306,6 +308,27 @@ describe("Home screen, owner", () => {
     expect(window.location.search).toBe("");
   });
 
+  it("keeps the selected period in the card and fix list links", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(cardValue("ส่งไม่ได้")).toBe("9"));
+
+    const dead = card().getByRole("link", { name: "ส่งไม่ได้ 9" });
+    expect(dead.getAttribute("href")).toBe("/conversions?period=30d&status=dead");
+    expect(card().getByRole("link", { name: "ดูทั้งหมด" }).getAttribute("href")).toBe("/conversions?period=30d");
+    await waitFor(() => expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" }).map((l) => l.getAttribute("href"))).toEqual(["/conversions?period=30d&status=dead", "/conversions?period=30d&status=pending"]));
+
+    expect(appTakesClick(dead)).toBe(true);
+    expect(window.location.pathname + window.location.search).toBe("/conversions?period=30d&status=dead");
+
+    // Today is not the Conversions default, so it stays in the query. 7d is the default and leaves the query out.
+    fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
+    await waitFor(() => expect(card().getByRole("link", { name: "ดูทั้งหมด" }).getAttribute("href")).toBe("/conversions?period=today"));
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(card().getByRole("link", { name: "ดูทั้งหมด" }).getAttribute("href")).toBe("/conversions"));
+  });
+
   it("keeps the browser default for a ctrl-click, meta-click or middle-click on the card and fix links", async () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
@@ -361,9 +384,10 @@ describe("Home screen, owner", () => {
     expect(dots.map((style) => (style.includes("--bad") ? "bad" : "warn"))).toEqual(["bad", "warn", "warn", "warn"]);
 
     const links = fixList().getAllByRole("link", { name: "ดูรายละเอียด" });
-    expect(links.map((l) => l.getAttribute("href"))).toEqual(["/conversions?status=dead", "/conversions?status=pending"]);
+    // Stalled rows count at any age, so their link opens the widest list.
+    expect(links.map((l) => l.getAttribute("href"))).toEqual(["/conversions?status=dead", "/conversions?period=30d&status=pending"]);
     expect(appTakesClick(links[1]!)).toBe(true);
-    expect(window.location.pathname + window.location.search).toBe("/conversions?status=pending");
+    expect(window.location.pathname + window.location.search).toBe("/conversions?period=30d&status=pending");
     // The alert items keep their button that opens the alerts screen.
     expect(fixList().getAllByRole("button", { name: "ดูรายละเอียด" })).toHaveLength(2);
   });
@@ -396,6 +420,41 @@ describe("Home screen, owner", () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("—"));
     expect(fixTexts()).toContain("2 คอนเวอร์ชันยังไม่ถูกส่งเกิน 6 ชั่วโมง");
+  });
+
+  it("shows the dead and stalled conversion items with their links when the alerts call fails", async () => {
+    alertsReply = () => json({ error: "core_unavailable" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixTexts()).toEqual(["คอนเวอร์ชันส่งไม่ได้ 4 รายการ", "คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ"]));
+    expect(fixList().getByText("— โหลดการแจ้งเตือนไม่สำเร็จ")).toBeTruthy();
+    expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" }).map((l) => l.getAttribute("href"))).toEqual(["/conversions?status=dead", "/conversions?period=30d&status=pending"]);
+    expect(fixList().queryByText("ไม่มีเรื่องที่ต้องแก้")).toBeNull();
+  });
+
+  it("shows the conversion items while the alerts call has not answered", async () => {
+    alertsReply = () => new Promise<Response>(() => {});
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixTexts()).toEqual(["คอนเวอร์ชันส่งไม่ได้ 4 รายการ", "คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ"]));
+    expect(fixList().getByText("…")).toBeTruthy();
+    expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" })).toHaveLength(2);
+    expect(fixList().queryByText("ไม่มีเรื่องที่ต้องแก้")).toBeNull();
+  });
+
+  it("shows the alert items and an error line when the conversions call fails, and never claims nothing to fix", async () => {
+    conversions = () => json({ error: "core_unavailable" }, 502);
+    alertsBody = { ...alertsReport, brands_without_postbacks: { state: "ok", detail: { window_hours: 24, brands: [] } }, reject_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [] } } };
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixList().getByText("— โหลดคอนเวอร์ชันไม่สำเร็จ")).toBeTruthy());
+    expect(fixTexts()).toEqual([]);
+    expect(fixList().queryByText("ไม่มีเรื่องที่ต้องแก้")).toBeNull();
+  });
+
+  it("says nothing to fix only when both calls answered and nothing is wrong", async () => {
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { ...CONVERSIONS_OWNER.totals, dead: 0 }, stalled: 0 });
+    alertsBody = { ...alertsReport, brands_without_postbacks: { state: "ok", detail: { window_hours: 24, brands: [] } }, reject_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [] } } };
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixList().getByText("ไม่มีเรื่องที่ต้องแก้")).toBeTruthy());
+    expect(fixTexts()).toEqual([]);
   });
 
   it("hides the card body behind — when the conversions call fails", async () => {

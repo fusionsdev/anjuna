@@ -3,6 +3,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import { api, type Me } from "../api";
 import { delta, previousRange } from "../home-metrics";
 import { isPlainLeftClick, navigate } from "../router";
+import { conversionsPath } from "./Conversions";
 import "./Home.css";
 
 export type HomePeriod = "today" | "7d" | "30d";
@@ -113,17 +114,27 @@ interface FixItem { id: string; level: "bad" | "warn"; brand: string; message: s
 
 const percent = (rate: number) => `${Math.round(rate * 100)}%`;
 
-/** `conversions` is null while loading or when the call failed: then only the alert items show. */
-function fixItems(report: AlertsReportResponse, conversions: ConversionsReportResponse | null): FixItem[] {
-  const level = (state: "ok" | "warn" | "alert"): "bad" | "warn" => (state === "alert" ? "bad" : "warn");
+const level = (state: "ok" | "warn" | "alert"): "bad" | "warn" => (state === "alert" ? "bad" : "warn");
+
+/** The conversion items. The links keep the period Home shows; stalled rows count at any age, so theirs uses the widest list. */
+function conversionItems(report: ConversionsReportResponse, period: HomePeriod): FixItem[] {
   const items: FixItem[] = [];
-  const dead = conversions?.totals.dead ?? 0;
-  const stalledConversions = conversions?.stalled ?? 0;
-  if (dead > 0) items.push({ id: "conversions:dead", level: "bad", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันส่งไม่ได้ ${dead} รายการ`, path: "/conversions?status=dead" });
-  if (stalledConversions > 0) items.push({ id: "conversions:stalled", level: "warn", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันค้างเกิน ${CONVERSION_STALLED_HOURS} ชม. ${stalledConversions} รายการ`, path: "/conversions?status=pending" });
+  if (report.totals.dead > 0) items.push({ id: "conversions:dead", level: "bad", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันส่งไม่ได้ ${report.totals.dead} รายการ`, path: conversionsPath({ period, status: "dead", brand: null }) });
+  if (report.stalled > 0) items.push({ id: "conversions:stalled", level: "warn", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันค้างเกิน ${CONVERSION_STALLED_HOURS} ชม. ${report.stalled} รายการ`, path: conversionsPath({ period: "30d", status: "pending", brand: null }) });
+  return items;
+}
+
+/** Each source adds its items once it answered: `undefined` is loading and `null` is failed, and neither blocks the other. */
+function fixItems(alerts: AlertsReportResponse | null | undefined, conversions: ConversionsReportResponse | null | undefined, period: HomePeriod): FixItem[] {
+  const items = [...(conversions ? conversionItems(conversions, period) : []), ...(alerts ? alertItems(alerts, (conversions?.stalled ?? 0) > 0) : [])];
+  return items.sort((a, b) => Number(b.level === "bad") - Number(a.level === "bad"));
+}
+
+/** The stalled alert counts the same pending rows as the conversions report, so `stalledElsewhere` drops it and one entry remains. */
+function alertItems(report: AlertsReportResponse, stalledElsewhere: boolean): FixItem[] {
+  const items: FixItem[] = [];
   const stalled = report.conversion_stalled;
-  // The stalled alert counts the same pending rows as the conversions report, so one entry is enough.
-  if (stalled.state !== "ok" && stalled.detail.stuck_count > 0 && stalledConversions === 0) {
+  if (stalled.state !== "ok" && stalled.detail.stuck_count > 0 && !stalledElsewhere) {
     items.push({ id: "stalled", level: level(stalled.state), brand: "ทุกแบรนด์", message: `${stalled.detail.stuck_count} คอนเวอร์ชันยังไม่ถูกส่งเกิน ${stalled.detail.max_hours} ชั่วโมง` });
   }
   const noPostback = report.brands_without_postbacks;
@@ -138,7 +149,7 @@ function fixItems(report: AlertsReportResponse, conversions: ConversionsReportRe
   if (rejects.state !== "ok") {
     for (const b of rejects.detail.brands) items.push({ id: `reject:${b.brand}`, level: level(rejects.state), brand: b.brand, message: `อัตรา reject ${percent(b.rate)} สูงกว่าค่าปกติ ${percent(rejects.detail.warn_at)}` });
   }
-  return items.sort((a, b) => Number(b.level === "bad") - Number(a.level === "bad"));
+  return items;
 }
 
 /** Leads whose brand has had no LeadsGate postback in the alert window: the leads still waiting for a result. */
@@ -219,7 +230,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const note = leakNote(stages, leak);
   const biggest = Math.max(1, ...stages.map((s) => (typeof s.value === "number" ? s.value : 0)));
 
-  const fixes = alerts ? fixItems(alerts, conversions ?? null) : [];
+  const fixes = fixItems(alerts, conversions, period);
+  // The card links keep the period Home shows, like the fix list. The default period gives the bare /conversions.
+  const allPath = conversionsPath({ period, status: "all", brand: null });
+  const deadPath = conversionsPath({ period, status: "dead", brand: null });
   const todos: Array<{ id: string; title: string; count: Value; unit: string; target: HomeTarget; show: boolean }> = [
     { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", target: "brands", show: true },
     { id: "templates", title: "อนุมัติเทมเพลต", count: templates, unit: "รายการ", target: "templates", show: owner },
@@ -292,12 +306,12 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
           <section className="panel home-conv" aria-label="คอนเวอร์ชัน">
             <div className="home-ptitle">
               <h2>คอนเวอร์ชัน</h2>
-              <a className="btn" href="/conversions" onClick={inApp("/conversions")}>ดูทั้งหมด</a>
+              <a className="btn" href={allPath} onClick={inApp(allPath)}>ดูทั้งหมด</a>
             </div>
             <div className="ledger" role="group" aria-label="สรุปคอนเวอร์ชัน">
               <div className="cell"><p className="k">ส่งแล้ว</p><p className="v">{num(conversion((c) => c.totals.uploaded))}</p></div>
               <div className="cell"><p className="k">ค้างส่ง</p><p className="v">{num(conversion((c) => c.totals.pending))}</p></div>
-              <a className="cell" href="/conversions?status=dead" onClick={inApp("/conversions?status=dead")}><p className="k">ส่งไม่ได้</p><p className="v">{num(conversion((c) => c.totals.dead))}</p></a>
+              <a className="cell" href={deadPath} onClick={inApp(deadPath)}><p className="k">ส่งไม่ได้</p><p className="v">{num(conversion((c) => c.totals.dead))}</p></a>
               <div className="cell"><p className="k">{`ค้างเกิน ${CONVERSION_STALLED_HOURS} ชม.`}</p><p className="v">{num(conversion((c) => c.stalled))}</p></div>
               {typeof uploadedValue === "number" && <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v">{usdCents(uploadedValue)}</p></div>}
             </div>
@@ -309,8 +323,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </div>
             {alerts === undefined && <p className="hint">…</p>}
             {alerts === null && <p className="hint">— โหลดการแจ้งเตือนไม่สำเร็จ</p>}
-            {/* The conversion items arrive with their own call, so an empty list is only final once it answered. */}
-            {alerts && fixes.length === 0 && <p className="hint">{conversions === undefined ? "…" : "ไม่มีเรื่องที่ต้องแก้"}</p>}
+            {conversions === null && <p className="hint">— โหลดคอนเวอร์ชันไม่สำเร็จ</p>}
+            {/* Each source shows its items on its own. "Nothing to fix" needs both to have answered, since a missing source may hide items. */}
+            {alerts && conversions === undefined && fixes.length === 0 && <p className="hint">…</p>}
+            {alerts && conversions && fixes.length === 0 && <p className="hint">ไม่มีเรื่องที่ต้องแก้</p>}
             {fixes.slice(0, 4).map((item) => (
               <div className="home-item" key={item.id}>
                 <span className="dot" style={{ background: item.level === "bad" ? "var(--bad)" : "var(--leak)" }} aria-hidden="true" />
