@@ -15,8 +15,11 @@ import type {
   BrandStatusChangeResponse,
   BrandSummary,
   ChecklistItemName,
+  ConversionsQuery,
+  ConversionsReportResponse,
   CreateBrandDraftRequest,
   InstallWithReceipts,
+  LeadAggregatesResponse,
   LifecycleBrandSummary,
   UpgradeAllCommand,
   CoreListError,
@@ -192,6 +195,16 @@ export const api = {
     if (query.brand) params.set("brand", query.brand);
     return request<FunnelReportResponse>("GET", `/api/funnel?${params}`);
   },
+  /** Read-only. Money and raw error text come back null for an employee. */
+  conversions: (query: { period: SpendPeriod; status?: ConversionsQuery["status"]; brand?: string }) => {
+    const params = new URLSearchParams({ period: query.period });
+    if (query.status) params.set("status", query.status);
+    if (query.brand) params.set("brand", query.brand);
+    return request<ConversionsReportResponse>("GET", `/api/conversions?${params}`);
+  },
+  /** Days are `YYYY-MM-DD`, UTC, inclusive. */
+  leadAggregates: (query: { from: string; to: string }) =>
+    request<LeadAggregatesResponse>("GET", `/api/leads/aggregates?${new URLSearchParams({ from: query.from, to: query.to })}`),
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
   /** Owner only: an employee gets 403 forbidden_role. */

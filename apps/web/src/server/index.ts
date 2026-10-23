@@ -14,6 +14,7 @@ import {
   BrandId,
   BrandPatchRequest,
   BrandStatusChangeRequest,
+  ConversionsQuery,
   LeadAggregatesQuery,
   authorize,
   type AdminError,
@@ -315,6 +316,15 @@ async function route(
     const g = authorize("spendReport", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
     return fromCore(await callCore(env, ctx, { endpoint: "spendReport", query: url.searchParams }));
+  }
+
+  // Conversion uploads (FUS-375): read-only, employee allowed. Core nulls value and raw error text for a non-owner.
+  if (path === "/api/conversions" && method === "GET") {
+    const g = authorize("conversionsReport", ctx.actor_role);
+    if (!g.ok) return forbidden(g.error, rid);
+    const q = ConversionsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return invalid(q.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "conversionsReport", query: url.searchParams }));
   }
 
   return notFound("route", rid);

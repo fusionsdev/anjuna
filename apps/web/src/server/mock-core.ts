@@ -10,6 +10,7 @@ import {
   BrandConfig,
   BrandPatchRequest,
   BrandStatusChangeRequest,
+  ConversionsQuery,
   LeadAggregatesQuery,
   AlertsQuery,
   AuditQuery,
@@ -151,6 +152,7 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   let patch: BrandPatchRequest | undefined;
   let reason: string | undefined;
   let auditQuery: AuditQuery | undefined;
+  let conversionsQuery: ConversionsQuery | undefined;
   // spec leads
   let leadsQuery: LeadsQuery | undefined;
   let leadExportQuery: LeadExportQuery | undefined;
@@ -178,6 +180,10 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "spendReport") {
     const q = SpendQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "conversionsReport") {
+    const q = ConversionsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+    conversionsQuery = q.data;
   } else if (endpoint === "trafficRisk" || endpoint === "trafficRiskExport") {
     const q = (endpoint === "trafficRisk" ? TrafficRiskQuery : TrafficRiskExportQuery).safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
@@ -337,8 +343,19 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, mailingStatus);
     case "spendReport":
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
-    case "conversionsReport":
-      return json(200, conversionsReport);
+    case "conversionsReport": {
+      const q = conversionsQuery!;
+      const owner = ctx.actor_role === "owner";
+      const rows = conversionsReport.rows
+        .filter((r) => q.status === "all" || r.status === q.status)
+        .filter((r) => !q.brand || r.brand === q.brand)
+        .map((r) => ({
+          ...r,
+          value: owner ? r.value : null,
+          last_error: !owner && (r.reason_code === "platform_error" || r.reason_code === "not_ready") ? null : r.last_error,
+        }));
+      return json(200, { ...conversionsReport, period: q.period, value_totals: owner ? conversionsReport.value_totals : null, rows });
+    }
     case "trafficRisk":
       return json(200, trafficRisk);
     case "trafficRiskExport": {
