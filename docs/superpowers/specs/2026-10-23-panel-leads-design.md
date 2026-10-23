@@ -64,9 +64,9 @@ money value. Every release of PII leaves an audit row.
    typed, the filters and the row count, never the emails returned. The actor's own query is the
    actor's own input, so storing it leaks nothing new about a third party.
 6. **The audit write fails closed.** Core awaits the audit insert *before* it returns a PII body.
-   If the insert throws, the error propagates, core answers a non-contract 500, and the panel's
-   `callCore` turns that into `502 bad_gateway`. An unaudited PII release is worse than a failed
-   read.
+   If the insert throws, the error propagates out of the core Worker, the service-binding fetch
+   rejects, and the panel's `callCore` turns that into `502 bad_gateway`. An unaudited PII release
+   is worse than a failed read.
 7. **Every CSV export is audited, PII or not.** The debate asked for "every CSV export".
    Non-PII exports write `lead.export`; PII exports write `pii.lead_export`.
 8. **No new migration.** A `(brand, created_at)` composite index would help the brand-filtered
