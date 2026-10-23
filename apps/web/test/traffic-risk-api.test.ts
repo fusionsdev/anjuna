@@ -80,6 +80,9 @@ describe("CSV cells", () => {
   it("guards a formula, a quote and a CRLF in one cell", () => {
     expect(csvCell("=1+1")).toBe("'=1+1");
     expect(csvCell("-Smith")).toBe("'-Smith");
+    expect(csvCell("@SUM(1)")).toBe("'@SUM(1)");
+    expect(csvCell("\tcmd")).toBe("'\tcmd");
+    expect(csvCell("\rcmd")).toBe("\"'\rcmd\"");
     expect(csvCell('a"b')).toBe('"a""b"');
     expect(csvCell("a\r\nb")).toBe('"a\r\nb"');
     expect(csvCell(null)).toBe("");
