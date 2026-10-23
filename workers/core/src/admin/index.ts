@@ -4,6 +4,7 @@ import {
   AlertsReportResponse,
   AuditQuery,
   BrandId,
+  ConversionsQuery,
   FunnelQuery,
   TrafficBreakdownQuery,
   FunnelReportResponse,
@@ -48,6 +49,7 @@ import {
 import type { Env } from "../env.js";
 import { json } from "../http.js";
 import { globalPostbackDigest } from "../postback-token.js";
+import { loadConversions } from "./conversions-report.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 import { loadSpendReport } from "../spend.js";
 import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
@@ -1173,6 +1175,11 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const query = parseWith(SpendQuery, parseQuery(new URL(request.url)), context);
     if (query instanceof Response) return query;
     return json(await loadSpendReport(env, query.period));
+  }
+  if (route.endpoint === "conversionsReport") {
+    const query = parseWith(ConversionsQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadConversions(env, query, context.actor_role));
   }
   if (route.endpoint === "trafficRisk") {
     const query = parseWith(TrafficRiskQuery, parseQuery(new URL(request.url)), context);
