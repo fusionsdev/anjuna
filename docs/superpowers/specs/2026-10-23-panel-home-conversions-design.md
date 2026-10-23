@@ -98,7 +98,7 @@ ConversionsReportResponse = strictObject({
 
 ## Conversions page (`/conversions`)
 
-- Route `{ view: "conversions" }`, sidebar item "คอนเวอร์ชัน (Conversions)" after Funnel, visible to every role. `pageTitle` entry.
+- Route `{ view: "conversions" }`, sidebar item "คอนเวอร์ชัน" (Thai only, like the other items) after Funnel, visible to every role. `pageTitle` entry.
 - Header: period switch `today|7d|30d` (default `7d`), status filter chips `ทั้งหมด|ค้างส่ง (pending)|กำลังส่ง (processing)|ส่งแล้ว (uploaded)|ส่งไม่ได้ (dead)`, brand select from `useBrandLabels()`.
 - Summary row: 4 count cells (pending, processing, uploaded, dead) and a stalled count with `StatusBadge tone="warn"` when above 0. Owner also sees uploaded value and dead value in USD.
 - `DataTable` columns: brand (`BrandLabel`), status (`StatusBadge`: uploaded `live`, pending `blue`, processing `mute`, dead `bad`), reason (label + fix text under it; full `last_error` in a `<details>`), click type, attempts, value (owner only, column absent for employee), created (local time), next attempt.
