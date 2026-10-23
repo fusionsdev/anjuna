@@ -582,6 +582,7 @@ describe("leads, export and suppressions (FUS-376)", () => {
     expect(new Set(LEAD_EXPORT_PII_COLUMNS).size).toBe(LEAD_EXPORT_PII_COLUMNS.length);
     expect(LEAD_EXPORT_PII_COLUMNS).toContain("email");
     expect(LEAD_EXPORT_COLUMNS).not.toContain("email");
+    expect(LEAD_EXPORT_COLUMNS).toEqual(expect.arrayContaining(["has_conversion", "postback_count"]));
     expect(LEAD_EXPORT_PII_COLUMNS).not.toContain("click_id");
   });
 

@@ -526,7 +526,7 @@ export type LeadExportQuery = z.infer<typeof LeadExportQuery>;
  * One schema for both column sets: the PII fields are present only when `pii` is true. The row
  * never carries `click_id` or any click id value.
  */
-export const LeadExportRow = LeadListRow.omit({ has_conversion: true, postback_count: true }).extend(
+export const LeadExportRow = LeadListRow.extend(
   LeadApplicant.omit({ state: true }).partial().shape,
 );
 export type LeadExportRow = z.infer<typeof LeadExportRow>;
@@ -534,7 +534,7 @@ export type LeadExportRow = z.infer<typeof LeadExportRow>;
 /** CSV column order without PII. */
 export const LEAD_EXPORT_COLUMNS = [
   "lead_id", "brand", "hostname", "status", "outcome", "requested_amount", "loan_purpose",
-  "state", "keyword", "variant", "form_variant", "created_at",
+  "state", "keyword", "variant", "form_variant", "has_conversion", "postback_count", "created_at",
 ] as const satisfies readonly (keyof LeadExportRow)[];
 
 /** CSV column order with PII: `LEAD_EXPORT_COLUMNS` first, then the nine PII fields and the profile fields. */
@@ -1026,7 +1026,9 @@ export type AuthorizeResult =
  * Role check for one call. For `patchBrand` pass the (parsed or raw) body: every present key
  * whose group needs a higher role is listed in `denied_fields`. An unknown key is treated as
  * owner-only, so the check fails closed. For `leadExport` pass `{ pii }`: a truthy `pii` from a
- * non-owner is denied. `scope: "own"` means core must filter to the actor's
+ * non-owner is denied. Pass a boolean, for example `{ pii: query.pii === "1" }`:
+ * `LeadExportQuery.pii` is the string `"0" | "1"`, and `"0"` is truthy, so the parsed query
+ * object would deny a non-PII export. `scope: "own"` means core must filter to the actor's
  * own rows (audit log).
  */
 export function authorize(endpoint: AdminEndpoint, role: AdminRole, patch?: Record<string, unknown>): AuthorizeResult {
