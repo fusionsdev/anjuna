@@ -49,11 +49,12 @@ describe("Leads screen", () => {
     expect(sold.getByText("ขายได้ (Sold)").closest(".pill")!.className).toContain("p-live");
     expect(sold.getByText("$1,000")).toBeTruthy();
     expect(sold.getByText("Fast Cash Loans")).toBeTruthy();
-    expect(sold.getByText("มี conversion (Conversion queued)")).toBeTruthy();
+    expect(sold.getByText("มี conversion (Has conversion)").closest(".pill")!.className).toContain("p-live");
 
     const pending = rowOf(PENDING_ID);
     expect(pending.getByText("รอผล (Pending)").closest(".pill")!.className).toContain("p-blue");
     expect(pending.getByText("$500")).toBeTruthy();
+    expect(pending.getByText("ยังไม่มี postback (No postback yet)").closest(".pill")!.className).toContain("p-warn");
 
     expect(leadRequests()).toHaveLength(1);
     expect(leadRequests()[0]).toMatch(/^\/api\/leads\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
@@ -67,8 +68,11 @@ describe("Leads screen", () => {
     const from = new Date(Date.parse(today) - 29 * 86_400_000).toISOString().slice(0, 10);
     expect(leadRequests()[0]).toBe(`/api/leads?from=${from}&to=${today}&brand=brand-a&status=pending`);
 
+    // A filter write replaces the history entry instead of pushing one.
+    const historyLength = window.history.length;
     fireEvent.change(screen.getByLabelText(/สถานะ/), { target: { value: "sold" } });
     await waitFor(() => expect(leadRequests()).toHaveLength(2));
+    expect(window.history.length).toBe(historyLength);
     expect(leadRequests()[1]).toBe(`/api/leads?from=${from}&to=${today}&brand=brand-a&status=sold`);
     const search = new URLSearchParams(window.location.search);
     expect(search.get("status")).toBe("sold");
@@ -93,7 +97,7 @@ describe("Leads screen", () => {
     expect(plain.getAttribute("href")).toMatch(/^\/api\/leads\/export\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("confirms before a PII download for an owner and the link carries pii=1", async () => {
+  it("confirms every PII download for an owner and keeps no PII href in the DOM", async () => {
     // Clicks that reach the document without preventDefault are the ones the browser would follow.
     const downloads: string[] = [];
     const record = (e: Event) => {
@@ -107,11 +111,13 @@ describe("Leads screen", () => {
       await screen.findByTitle(SOLD_ID);
       const plain = screen.getByText("ดาวน์โหลด CSV");
       expect(plain.getAttribute("href")).not.toContain("pii");
-      const link = screen.getByText(PII_LABEL);
-      expect(link.tagName).toBe("A");
-      expect(link.getAttribute("href")).toMatch(/&pii=1$/);
+      // A button, so a middle click or "Save link as" has no href to follow past the dialog.
+      const control = screen.getByText(PII_LABEL);
+      expect(control.tagName).toBe("BUTTON");
+      expect(control.hasAttribute("href")).toBe(false);
+      expect(document.body.innerHTML).not.toContain("pii=1");
 
-      fireEvent.click(link);
+      fireEvent.click(control);
       const dialog = await screen.findByRole("alertdialog");
       expect(dialog.textContent).toContain("audit log");
       expect(dialog.textContent).toContain("บันทึกการตรวจสอบ");
@@ -121,18 +127,87 @@ describe("Leads screen", () => {
       await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
       expect(downloads).toEqual([]);
 
-      fireEvent.click(link);
+      fireEvent.click(control);
       await answerConfirm(true);
       await waitFor(() => expect(downloads).toHaveLength(1));
-      expect(downloads[0]).toBe(link.getAttribute("href"));
+      expect(downloads[0]).toBe(`${plain.getAttribute("href")}&pii=1`);
+      expect(document.body.innerHTML).not.toContain("pii=1");
+
+      // The approval does not carry over: the next PII click asks again.
+      fireEvent.click(control);
+      expect(await screen.findByRole("alertdialog")).toBeTruthy();
+      expect(downloads).toHaveLength(1);
+      await answerConfirm(true);
+      await waitFor(() => expect(downloads).toHaveLength(2));
 
       // A plain CSV click needs no dialog.
       fireEvent.click(plain);
       expect(screen.queryByRole("alertdialog")).toBeNull();
-      expect(downloads).toHaveLength(2);
+      expect(downloads).toHaveLength(3);
     } finally {
       document.removeEventListener("click", record);
     }
+  });
+
+  it("applies the reconciliation rules in order with the detail screen's tones", async () => {
+    const base = (leadsFixture as LeadsResponse).rows[0]!;
+    const ids = ["aaaa0001-0000-4000-8000-000000000001", "aaaa0002-0000-4000-8000-000000000002", "aaaa0003-0000-4000-8000-000000000003", "aaaa0004-0000-4000-8000-000000000004"];
+    leadResponses = [{
+      rows: [
+        { ...base, lead_id: ids[0]!, outcome: "sold", has_conversion: true, postback_count: 0 },
+        { ...base, lead_id: ids[1]!, outcome: "sold", has_conversion: false, postback_count: 2 },
+        { ...base, lead_id: ids[2]!, outcome: "pending", has_conversion: false, postback_count: 0 },
+        { ...base, lead_id: ids[3]!, outcome: "rejected", has_conversion: false, postback_count: 1 },
+      ],
+      next_cursor: null,
+    }];
+    renderScreen();
+    await screen.findByTitle(ids[0]!);
+    const badge = (id: string) => rowOf(id).getAllByRole("cell")[7]!.querySelector(".pill")!;
+    expect([badge(ids[0]!).textContent, badge(ids[0]!).className]).toEqual(["●มี conversion (Has conversion)", expect.stringContaining("p-live")]);
+    expect([badge(ids[1]!).textContent, badge(ids[1]!).className]).toEqual(["✕ขายแล้วแต่ไม่มีรายการอัปโหลด (Sold, no upload)", expect.stringContaining("p-bad")]);
+    expect([badge(ids[2]!).textContent, badge(ids[2]!).className]).toEqual(["▲ยังไม่มี postback (No postback yet)", expect.stringContaining("p-warn")]);
+    expect([badge(ids[3]!).textContent, badge(ids[3]!).className]).toEqual(["◆มี postback (Postback received)", expect.stringContaining("p-blue")]);
+  });
+
+  it("refuses a search under 4 characters on submit: no list request, no live export link, an inline reason", async () => {
+    const { container } = renderScreen();
+    await screen.findByTitle(SOLD_ID);
+    expect(leadRequests()).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText(/ค้นหา \(Search\)$/), { target: { value: "ab" } });
+    fireEvent.click(screen.getByRole("button", { name: "ค้นหา (Search)" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/^คำค้น/);
+    expect(leadRequests()).toHaveLength(1);
+    expect(container.querySelector('a[href*="/export"]')).toBeNull();
+    expect((screen.getByRole("button", { name: "ดาวน์โหลด CSV" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: PII_LABEL }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTitle(SOLD_ID)).toBeNull();
+
+    // A valid search loads again and brings the link back.
+    fireEvent.change(screen.getByLabelText(/ค้นหา \(Search\)$/), { target: { value: "6f1c2b9e" } });
+    fireEvent.click(screen.getByRole("button", { name: "ค้นหา (Search)" }));
+    await waitFor(() => expect(leadRequests()).toHaveLength(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("ดาวน์โหลด CSV").getAttribute("href")).toContain("q=6f1c2b9e");
+  });
+
+  it.each([
+    ["/leads?q=ab", /^คำค้น/],
+    ["/leads?q=bad%20id!", /^คำค้น/],
+    ["/leads?from=2026-10-10&to=2026-10-01", /^วันเริ่มต้องไม่อยู่หลังวันสิ้นสุด/],
+    ["/leads?from=2026-01-01&to=2026-10-01", /^ช่วงวันที่ยาวเกิน 93 วัน/],
+    ["/leads?brand=Bad%20Brand!", /^รหัสแบรนด์ไม่ถูกต้อง/],
+  ])("refuses the deep link %s: no list request, no live export link, an inline reason", async (path, reason) => {
+    window.history.replaceState(null, "", path);
+    const { container } = renderScreen();
+    expect((await screen.findByRole("alert")).textContent).toMatch(reason);
+    await waitFor(() => expect(requests).toContain("/api/brands"));
+    expect(leadRequests()).toEqual([]);
+    expect(container.querySelector('a[href*="/export"]')).toBeNull();
+    expect(document.body.innerHTML).not.toContain("/api/leads/export");
+    expect((screen.getByRole("button", { name: "ดาวน์โหลด CSV" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: PII_LABEL }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("pages with next_cursor and keeps the cursor out of the URL", async () => {

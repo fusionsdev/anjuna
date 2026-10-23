@@ -1,5 +1,5 @@
-import { LEAD_OUTCOMES, type LeadListRow, type LeadOutcome, type LeadsResponse } from "@anjuna/contracts";
-import { type FormEvent, type MouseEvent, useEffect, useRef, useState } from "react";
+import { LEAD_AGGREGATES_MAX_DAYS, LEAD_OUTCOMES, type LeadListRow, type LeadOutcome, LeadsQuery, type LeadsResponse } from "@anjuna/contracts";
+import { type FormEvent, useEffect, useState } from "react";
 import { ApiError, api, type LeadFilterState, type Me } from "../api";
 import { BrandLabel, buildBrandLabels } from "../brand-labels";
 import { DataTable, type Column } from "../components/DataTable";
@@ -47,11 +47,28 @@ function writeFilter(filter: LeadFilterState): void {
   navigate(query ? `/leads?${query}` : "/leads", { replace: true });
 }
 
+/** Why core would refuse this filter, checked with the contract's own LeadsQuery. Empty when the filter is valid. */
+function filterProblems(filter: LeadFilterState): string[] {
+  const parsed = LeadsQuery.safeParse(Object.fromEntries(Object.entries(filter).filter(([, value]) => value !== "")));
+  if (parsed.success) return [];
+  return [...new Set(parsed.error.issues.map((issue) => {
+    const field = String(issue.path[0] ?? "");
+    if (field === "q") return "คำค้นต้องเป็นรหัสลีดหรือ click id ยาว 4 ถึง 64 ตัว ใช้ได้เฉพาะ A-Z a-z 0-9 และ - (Search needs 4 to 64 letters, digits or hyphens)";
+    if (field === "brand") return "รหัสแบรนด์ไม่ถูกต้อง (Invalid brand ID)";
+    if (field === "from" || field === "to") return "วันที่ไม่ถูกต้อง (Invalid date)";
+    if (field === "status") return "สถานะไม่ถูกต้อง (Invalid status)";
+    return filter.from > filter.to
+      ? `วันเริ่มต้องไม่อยู่หลังวันสิ้นสุด (${issue.message})`
+      : `ช่วงวันที่ยาวเกิน ${LEAD_AGGREGATES_MAX_DAYS} วัน (${issue.message})`;
+  }))];
+}
+
+/** The same rules and tones as the detail screen's reconciliation line; the first match wins. */
 function Reconciliation({ row }: { row: LeadListRow }) {
-  if (row.has_conversion) return <StatusBadge tone="live" label="มี conversion (Conversion queued)" />;
-  if (row.outcome === "sold") return <StatusBadge tone="warn" label="ขายแล้วแต่ไม่มี conversion (Sold, no conversion)" />;
-  if (row.postback_count > 0) return <StatusBadge tone="blue" label={`มี postback ${row.postback_count} (Postback)`} />;
-  return <StatusBadge tone="mute" label="รอผล (Waiting)" />;
+  if (row.has_conversion) return <StatusBadge tone="live" label="มี conversion (Has conversion)" />;
+  if (row.outcome === "sold") return <StatusBadge tone="bad" label="ขายแล้วแต่ไม่มีรายการอัปโหลด (Sold, no upload)" />;
+  if (row.postback_count === 0) return <StatusBadge tone="warn" label="ยังไม่มี postback (No postback yet)" />;
+  return <StatusBadge tone="blue" label="มี postback (Postback received)" />;
 }
 
 export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selectedId?: string | null; onSelect: (id: string) => void }) {
@@ -62,8 +79,9 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
   const [error, setError] = useState<string | null>(null);
   const [domains, setDomains] = useState(() => new Map<string, string>());
   const [confirm, confirmDialog] = useConfirm();
-  const approved = useRef(false);
   const owner = me.role === "owner";
+  const problems = filterProblems(filter);
+  const valid = problems.length === 0;
 
   useEffect(() => {
     let active = true;
@@ -77,6 +95,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
   useEffect(() => {
     let active = true;
     setPage(null); setError(null);
+    if (filterProblems(filter).length > 0) return;
     api.leads(filter, cursor).then(
       (next) => { if (active) setPage(next); },
       (e: unknown) => { if (active) setError(message(e)); },
@@ -93,17 +112,22 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
   };
   const search = (e: FormEvent) => { e.preventDefault(); if (qDraft !== filter.q) update({ q: qDraft }); };
 
-  // The PII link is a real <a href> so the browser downloads with the cookie. The first click is held for the dialog, then replayed.
-  const confirmPii = async (e: MouseEvent<HTMLAnchorElement>) => {
-    if (approved.current) { approved.current = false; return; }
-    e.preventDefault();
-    const link = e.currentTarget;
+  // A button, not a link: a middle click or "Save link as" would follow a PII href without the dialog.
+  // After Confirm a link made only for this click downloads with the session cookie, then goes away.
+  const downloadPii = async () => {
+    const url = api.leadsExportUrl(filter, true);
     const ok = await confirm({
       title: "ดาวน์โหลด CSV พร้อมข้อมูลส่วนตัว (Download CSV with PII)",
       body: <p>ไฟล์มีชื่อ อีเมล เบอร์โทร ที่อยู่ และวันเกิดของผู้สมัคร การดาวน์โหลดนี้ถูกบันทึกในบันทึกการตรวจสอบ (audit log) พร้อมชื่อของคุณ (The file holds applicant names, emails, phones, addresses and birth dates. This download is recorded in the audit log under your name.)</p>,
       confirmLabel: "ดาวน์โหลด (Download)",
     });
-    if (ok) { approved.current = true; link.click(); }
+    if (!ok) return;
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   const brandOptions = new Map(domains);
@@ -139,8 +163,10 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
     <div className="head" style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
       <div><h1>ลีด (Leads)</h1><p className="sub">ดูลีดทุกรายการ สถานะการขาย และตรวจว่า conversion ครบ (Every lead, its sale status and whether its conversion exists)</p></div>
       <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <a className="btn" href={api.leadsExportUrl(filter, false)} download>ดาวน์โหลด CSV</a>
-        {owner && <a className="btn" href={api.leadsExportUrl(filter, true)} download onClick={(e) => { void confirmPii(e); }}>ดาวน์โหลด CSV พร้อม PII</a>}
+        {valid
+          ? <a className="btn" href={api.leadsExportUrl(filter, false)} download>ดาวน์โหลด CSV</a>
+          : <button type="button" className="btn" disabled>ดาวน์โหลด CSV</button>}
+        {owner && <button type="button" className="btn" disabled={!valid} onClick={() => { void downloadPii(); }}>ดาวน์โหลด CSV พร้อม PII</button>}
       </div>
     </div>
     <section className="panel" aria-label="ตัวกรองลีด (Lead filters)">
@@ -168,10 +194,12 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
         </label>
         <button type="submit" className="btn" style={{ marginBottom: 8 }}>ค้นหา (Search)</button>
       </form>
+      {problems.map((problem) => <p key={problem} role="alert" className="hint">{problem}</p>)}
       <p className="hint">ช่วงวันที่เป็น UTC ค่าเริ่มต้นคือ 30 วันล่าสุด · ค้นด้วยรหัสลีดหรือ click id เท่านั้น ไม่ค้นด้วยอีเมลหรือเบอร์โทร (Dates are UTC; search matches lead ID or click ID only)</p>
     </section>
     <section className="panel" style={{ marginTop: 16 }} aria-label="รายการลีด (Lead list)">
-      {error ? <p role="alert">{error}</p> : !page ? <Spinner /> : <>
+      {!valid ? <p className="hint">แก้ตัวกรองด้านบนก่อนจึงจะโหลดรายการได้ (Fix the filter above to load the list)</p>
+        : error ? <p role="alert">{error}</p> : !page ? <Spinner /> : <>
         <DataTable label="รายการลีด (Lead list)" columns={columns} rows={page.rows} rowKey={(r) => r.lead_id} empty={empty} />
         {page.next_cursor && <div style={{ marginTop: 10 }}><button type="button" className="btn" onClick={() => setCursor(page.next_cursor)}>ถัดไป (Next)</button></div>}
       </>}
