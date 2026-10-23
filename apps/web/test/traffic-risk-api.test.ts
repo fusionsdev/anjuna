@@ -1,5 +1,6 @@
 import { AdminError, TrafficRiskResponse } from "@anjuna/contracts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { csvRows } from "../src/server/csv";
 import { csvCell, riskCsv } from "../src/server/traffic-risk";
 import { call, resetState, sessions, setupDatabases } from "./helpers";
 
@@ -74,5 +75,19 @@ describe("CSV cells", () => {
     expect(csvCell(null)).toBe("");
     expect(csvCell(50)).toBe("50");
     expect(riskCsv({ rows: [], truncated: false })).toBe("gclid,hostname,score,signals,created_at\r\n");
+  });
+
+  it("guards a formula, a quote and a CRLF in one cell", () => {
+    expect(csvCell("=1+1")).toBe("'=1+1");
+    expect(csvCell("-Smith")).toBe("'-Smith");
+    expect(csvCell('a"b')).toBe('"a""b"');
+    expect(csvCell("a\r\nb")).toBe('"a\r\nb"');
+    expect(csvCell(null)).toBe("");
+    expect(csvCell(0)).toBe("0");
+  });
+
+  it("renders a header row and CRLF line endings in column order", () => {
+    expect(csvRows(["b", "a"], [{ a: 1, b: "x" }])).toBe("b,a\r\nx,1\r\n");
+    expect(csvRows(["a"], [{}])).toBe("a\r\n\r\n");
   });
 });
