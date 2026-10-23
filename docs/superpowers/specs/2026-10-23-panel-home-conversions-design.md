@@ -86,8 +86,8 @@ ConversionsReportResponse = strictObject({
 - `value` and `value_totals` are `null` when `actor_role !== "owner"`.
 - Click ids never leave core. `click_type` names the first present of `gclid`, `gbraid`, `wbraid`, `msclkid`.
 - `last_error` is sanitized in core because the drain stores raw AdKit failure text (`drain.mjs:299`), which can echo the upload payload with the click id and value:
-  - Every role: each non-empty click id value of the row is replaced by `[click id]`, and any JSON pair `"gclid|gbraid|wbraid|msclkid": "<x>"` has its value replaced by `[click id]`.
-  - Non-owner: `last_error` is `null` when `reason_code` is `platform_error` or `not_ready` (free text from Ads or the drain that may echo `value`). The fixed-template codes keep their text.
+  - Owner: each non-empty click id value of the row is replaced by `[click id]`, and the value token after any `gclid|gbraid|wbraid|msclkid` key (JSON pair, `key=value` or `--key value`, escapes included) is replaced by `[click id]`.
+  - Non-owner: `last_error` is kept only when the trimmed text exactly matches a fixed template (`no click id`, `no gclid/gbraid/wbraid`, `no msclkid`, `reclaim: exhausted attempts after stale lease`, `no route for brand=<x> hostname=<y>`, `missing Microsoft env (ACCOUNT/CONVERSION_NAME)`, `upload failed`). Any other text is `null`; the reason label and fix text still show.
 
 `funnelReport`: `rows[].revenue` becomes `z.number().finite().min(0).nullable()`. Core sets it to `null` for a non-owner.
 
