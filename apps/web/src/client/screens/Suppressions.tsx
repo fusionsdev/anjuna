@@ -18,7 +18,8 @@ const reasons: Record<SuppressionReason, [string, Tone]> = {
 const sources: Record<SuppressionSource, string> = { listmonk: "Listmonk", ses: "SES", manual: "ด้วยมือ (Manual)" };
 type SuppressionRow = SuppressionsResponse["rows"][number];
 const NO_FILTER: SuppressionFilterState = { q: "", reason: "", source: "" };
-const message = (e: unknown) => e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ";
+// ApiError.thai joins the response issues, which can echo the searched email, so this screen never renders it.
+const message = (e: unknown) => e instanceof ApiError && e.status === 422 ? "ค่าค้นหาไม่ถูกต้อง (Invalid search)" : "ค้นหาไม่สำเร็จ (Search failed)";
 const fmt = (iso: string) => new Date(iso).toLocaleString("th-TH", { hour12: false });
 
 /** An employee never reaches the owner screen, so no hook of it runs and no request is made. */
@@ -50,7 +51,7 @@ function OwnerSuppressions() {
   const search = (e: FormEvent) => {
     e.preventDefault();
     const q = qDraft.trim();
-    if (q !== filter.q) update({ q });
+    if (q !== filter.q || error !== null) update({ q });
   };
 
   const columns: Column<SuppressionRow>[] = [

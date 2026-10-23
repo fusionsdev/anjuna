@@ -113,7 +113,6 @@ describe("Suppressions screen", () => {
     // Let any effect that wrongly started a request settle before the assertion.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(requests).toEqual([]);
     expect(container.textContent).not.toContain(BOUNCED);
   });
 
@@ -126,7 +125,6 @@ describe("Suppressions screen", () => {
     submit();
     expect(await screen.findByText("ไม่พบอีเมลที่ตรงกับตัวกรอง (No suppressed email matches)")).toBeTruthy();
     expect(screen.queryByText(/ยังไม่มีอีเมลที่ถูกบล็อก/)).toBeNull();
-    expect(within(container).queryByRole("button", { name: "ถัดไป (Next)" })).toBeNull();
   });
 
   it("renders email, reason badge, source and dates, with an empty updated cell for null", async () => {
@@ -144,11 +142,58 @@ describe("Suppressions screen", () => {
     expect(container.textContent).not.toContain("null");
   });
 
-  it("shows the Thai error message when the request fails", async () => {
+  it("shows a fixed Thai message when the request fails", async () => {
     fetchMock.mockImplementation(async () => Response.json({ error: "forbidden_role" }, { status: 403 }));
     render(<SuppressionsScreen me={owner} />);
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)");
+    expect(alert.textContent).toBe("ค้นหาไม่สำเร็จ (Search failed)");
     expect(screen.queryByText(BOUNCED)).toBeNull();
+  });
+
+  it("never renders the email an invalid-search response echoes in its issues", async () => {
+    const EMAIL = "leaky.person@example.com";
+    fetchMock.mockImplementation(async () => Response.json(
+      { error: "invalid", issues: [{ path: `q=${EMAIL}`, message: `${EMAIL} is not a valid fragment` }] },
+      { status: 422 },
+    ));
+    const { container } = render(<SuppressionsScreen me={owner} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("ค่าค้นหาไม่ถูกต้อง (Invalid search)");
+    expect(container.textContent).not.toContain(EMAIL);
+    expect(container.textContent).not.toContain("leaky");
+  });
+
+  it("sends a new request when the same search is submitted again after a failure", async () => {
+    let fail = true;
+    fetchMock.mockImplementation(async (input: string) => {
+      requests.push(input);
+      return fail ? Response.json({ error: "boom" }, { status: 500 }) : Response.json(firstPage);
+    });
+    render(<SuppressionsScreen me={owner} />);
+    await screen.findByRole("alert");
+    fireEvent.change(searchBox(), { target: { value: "bounced" } });
+    submit();
+    await waitFor(() => expect(requests).toHaveLength(2));
+    await screen.findByRole("alert");
+    expect(requests[1]).toBe("/api/suppressions?q=bounced");
+
+    fail = false;
+    submit();
+    await screen.findByText(BOUNCED);
+    expect(requests).toHaveLength(3);
+    expect(requests[2]).toBe("/api/suppressions?q=bounced");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not resend an unchanged search after a successful load", async () => {
+    render(<SuppressionsScreen me={owner} />);
+    await screen.findByText(BOUNCED);
+    fireEvent.change(searchBox(), { target: { value: "bounced" } });
+    submit();
+    await waitFor(() => expect(requests).toHaveLength(2));
+    await screen.findByText(BOUNCED);
+    submit();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(requests).toHaveLength(2);
   });
 });

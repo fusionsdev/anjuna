@@ -9,7 +9,7 @@ import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { NotFound } from "./NotFound";
 
 // spec leads
-type Postback = LeadDetail["postbacks"][number];
+type Postback = LeadDetail["postbacks"][number] & { index?: number };
 
 const OUTCOME: Record<LeadDetail["outcome"], { label: string; tone: Tone }> = {
   sold: { label: "ขายได้ (Sold)", tone: "live" },
@@ -71,7 +71,7 @@ function Applicant({ applicant }: { applicant: NonNullable<LeadDetail["applicant
   ]} />;
 }
 
-function Conversion({ conversion }: { conversion: LeadConversion }) {
+function Conversion({ conversion, owner }: { conversion: LeadConversion; owner: boolean }) {
   const upload = UPLOAD[conversion.status];
   const rows: Array<[string, ReactNode]> = [
     ["สถานะ (Status)", <StatusBadge tone={upload.tone} label={upload.label} />],
@@ -80,7 +80,7 @@ function Conversion({ conversion }: { conversion: LeadConversion }) {
     ["ลองครั้งถัดไป (Next attempt)", fmt(conversion.next_attempt_at)],
     ["สกุลเงิน (Currency)", conversion.currency],
   ];
-  if (conversion.value !== null) rows.push(["มูลค่า (Value)", money(conversion.value)]);
+  if (owner) rows.push(["มูลค่า (Value)", conversion.value === null ? "" : money(conversion.value)]);
   if (conversion.last_error !== null) {
     rows.push(["ข้อผิดพลาดล่าสุด (Last error)", (
       <details>
@@ -92,7 +92,7 @@ function Conversion({ conversion }: { conversion: LeadConversion }) {
   return <Fields label="Conversion" rows={rows} />;
 }
 
-export function LeadDetailScreen({ leadId, onBack }: { me: Me; leadId: string; onBack: () => void }) {
+export function LeadDetailScreen({ me, leadId, onBack }: { me: Me; leadId: string; onBack: () => void }) {
   const [lead, setLead] = useState<LeadDetail | null>(null);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,7 +128,7 @@ export function LeadDetailScreen({ leadId, onBack }: { me: Me; leadId: string; o
   if (!lead) return <Spinner />;
 
   const outcome = OUTCOME[lead.outcome];
-  const showPayout = lead.postbacks.some((p) => p.payout !== null);
+  const showPayout = me.role === "owner";
   const found = reconcile(lead.postbacks, lead.conversion);
   const postbackColumns: Column<Postback>[] = [
     { key: "event", header: "เหตุการณ์ (Event)", cell: (p) => p.event_type },
@@ -189,10 +189,10 @@ export function LeadDetailScreen({ leadId, onBack }: { me: Me; leadId: string; o
     <section className="panel" style={{ marginTop: 16 }} aria-labelledby="lead-inspector">
       <h2 id="lead-inspector">Postback Inspector</h2>
       {found && <p role="status" aria-label="ตรวจยอด (Reconciliation)"><StatusBadge tone={found.tone} label={found.text} /></p>}
-      <DataTable label="Postback" columns={postbackColumns} rows={lead.postbacks} rowKey={(p) => `${p.event_type}|${p.created_at}`}
+      <DataTable label="Postback" columns={postbackColumns} rows={lead.postbacks.map((p, index) => ({ ...p, index }))} rowKey={(p) => `${p.event_type}|${p.created_at}|${p.index}`}
         empty={<EmptyState title="ยังไม่มี postback (No postbacks yet)" />} />
       <h3 style={{ marginTop: 16 }}>Conversion</h3>
-      {lead.conversion ? <Conversion conversion={lead.conversion} /> : <p className="hint">ไม่มีรายการอัปโหลด (No conversion upload)</p>}
+      {lead.conversion ? <Conversion conversion={lead.conversion} owner={showPayout} /> : <p className="hint">ไม่มีรายการอัปโหลด (No conversion upload)</p>}
     </section>
   </>;
 }

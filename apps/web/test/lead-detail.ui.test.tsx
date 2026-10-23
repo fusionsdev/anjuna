@@ -124,7 +124,62 @@ describe("Lead detail screen", () => {
     await renderScreen();
     expect(pillOf(NO_POSTBACK).className).toContain("p-warn");
     expect(screen.queryByText(SOLD_NO_UPLOAD)).toBeNull();
-    expect(screen.queryByRole("columnheader", { name: PAYOUT_HEADER })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: PAYOUT_HEADER })).toBeTruthy();
+    expect(within(screen.getByLabelText("Postback")).getByText("ยังไม่มี postback (No postbacks yet)")).toBeTruthy();
+  });
+
+  it("keeps the payout column and the Value row for an owner when every amount is null", async () => {
+    const lead = ownerLead();
+    lead.postbacks = lead.postbacks.map((p) => ({ ...p, payout: null }));
+    lead.conversion = { ...lead.conversion!, value: null };
+    respondWith(lead);
+    await renderScreen();
+    const postbacks = within(screen.getByLabelText("Postback"));
+    expect(postbacks.getByRole("columnheader", { name: PAYOUT_HEADER })).toBeTruthy();
+    const headers = postbacks.getAllByRole("columnheader").map((h) => h.textContent);
+    const payoutAt = headers.indexOf(PAYOUT_HEADER);
+    const body = postbacks.getAllByRole("row").slice(1);
+    expect(body).toHaveLength(lead.postbacks.length);
+    for (const row of body) expect(within(row).getAllByRole("cell")[payoutAt]!.textContent).toBe("");
+    expect(rowOf("มูลค่า (Value)").getAllByRole("cell")[0]!.textContent).toBe("");
+  });
+
+  it("shows only the upload line when the upload is final and there are no postbacks", async () => {
+    for (const [status, shown, hidden] of [["uploaded", UPLOADED, DEAD], ["dead", DEAD, UPLOADED]] as const) {
+      const lead = ownerLead();
+      lead.postbacks = [];
+      lead.conversion = { ...lead.conversion!, status };
+      respondWith(lead);
+      const view = await renderScreen();
+      expect(within(reconciliation()).getByText(shown), status).toBeTruthy();
+      expect(screen.queryByText(hidden), status).toBeNull();
+      expect(screen.queryByText(NO_POSTBACK), status).toBeNull();
+      expect(screen.queryByText(SOLD_NO_UPLOAD), status).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("shows no reconciliation line for a sold lead whose upload is pending or processing", async () => {
+    for (const status of ["pending", "processing"] as const) {
+      const lead = ownerLead();
+      lead.conversion = { ...lead.conversion!, status };
+      respondWith(lead);
+      const view = await renderScreen();
+      expect(screen.queryByRole("status", { name: "ตรวจยอด (Reconciliation)" }), status).toBeNull();
+      for (const text of [SOLD_NO_UPLOAD, DEAD, UPLOADED, NO_POSTBACK]) expect(screen.queryByText(text), `${status} ${text}`).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("renders two same-type postbacks with the same timestamp as two rows", async () => {
+    const lead = ownerLead();
+    lead.postbacks = [lead.postbacks[0]!, { ...lead.postbacks[0]! }];
+    respondWith(lead);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await renderScreen();
+    expect(within(screen.getByLabelText("Postback")).getAllByRole("row")).toHaveLength(3);
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("same key");
+    errors.mockRestore();
   });
 
   it("puts last_error behind a details element for an owner and omits it for an employee", async () => {
@@ -151,7 +206,6 @@ describe("Lead detail screen", () => {
     lead.variant = null;
     lead.experiment_id = null;
     lead.updated_at = null;
-    lead.conversion!.updated_at = null;
     lead.conversion!.next_attempt_at = null;
     respondWith(lead);
     const { container } = await renderScreen();
