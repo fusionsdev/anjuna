@@ -20,7 +20,7 @@ import {
   type CoreListErrorCode,
   type InstallOperation,
   type InstallStatus,
-  type LatestInstall,
+  LatestInstall,
   type BrandConfig,
   type GetBrandResponse,
 } from "@anjuna/contracts";
@@ -524,14 +524,21 @@ async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{
   // spec brands (FUS-377): the newest install of every brand in one query. ROW_NUMBER with an install_id
   // tie-break, not MAX(started_at): two installs of one brand can share started_at, and the higher id wins.
   const installs = await env.FACTORY.prepare("SELECT install_id,brand_id,kind,status,to_revision_id,started_by,started_at,finished_at FROM (SELECT *,ROW_NUMBER() OVER (PARTITION BY brand_id ORDER BY started_at DESC,install_id DESC) AS rn FROM installs) WHERE rn=1").all<LatestInstallRow>();
-  const latestInstalls = new Map<string, LatestInstall>(installs.results.map((row) => [row.brand_id, {
-    install_id: row.install_id,
-    operation: installOperation(row.kind, row.brand_id, row.to_revision_id),
-    status: row.status,
-    started_at: row.started_at,
-    finished_at: row.finished_at,
-    started_by: row.started_by,
-  }]));
+  // latest_install only feeds a sort order and a filter chip, so a row that fails the contract (installs.started_at
+  // and finished_at have no CHECK, and Timestamp rejects an offset like +07:00) drops that brand's field to null
+  // instead of failing the whole brands list. The parse of the list fields stays strict.
+  const latestInstalls = new Map<string, LatestInstall>();
+  for (const row of installs.results) {
+    const parsed = LatestInstall.safeParse({
+      install_id: row.install_id,
+      operation: installOperation(row.kind, row.brand_id, row.to_revision_id),
+      status: row.status,
+      started_at: row.started_at,
+      finished_at: row.finished_at,
+      started_by: row.started_by,
+    });
+    if (parsed.success) latestInstalls.set(row.brand_id, parsed.data);
+  }
   const account = env.DEFAULT_ACCOUNT ?? results[0]?.account;
   let runtime: Awaited<ReturnType<typeof runtimeBrands>> = new Map();
   let coreError: CoreListError | null = null;

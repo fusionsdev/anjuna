@@ -71,6 +71,16 @@ describe("latest_install on the lifecycle brand rows", () => {
     expect(row.latest_install).toBeNull();
   });
 
+  it("falls back to null for one brand when its newest install row has a bad timestamp, and keeps the other brands", async () => {
+    await env.FACTORY.batch([
+      install("inst-a5", "brand-a", "install", "ready", "brand-a_rev_1", "2026-10-21 01:00:00", "2026-10-21T01:04:00.000Z"),
+      install("inst-b1", "brand-b", "install", "ready", "brand-b_rev_1", "2026-10-20T01:00:00.000Z", "2026-10-20T01:04:00.000Z"),
+    ]);
+    const brands = await listBrands();
+    expect(brands.find((b) => b.brand_id === "brand-a")!.latest_install).toBeNull();
+    expect(brands.find((b) => b.brand_id === "brand-b")!.latest_install).toMatchObject({ install_id: "inst-b1", operation: "install", status: "ready", started_by: "owner-1" });
+  });
+
   it("is set on the single-brand read too", async () => {
     await env.FACTORY.batch([
       install("inst-a3", "brand-a", "rollback", "ready", "brand-a_rev_1", "2026-10-22T01:00:00.000Z", "2026-10-22T01:03:00.000Z"),
