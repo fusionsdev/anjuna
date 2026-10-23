@@ -60,8 +60,17 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
   core_list_account_missing: "ยังไม่ได้ตั้งค่าบัญชีสำหรับรายการแบรนด์ Core (Core brand list account is not configured)",
 };
 
-/** wizardRequest: a counter the app raises to open the New brand wizard from its menu. */
-export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardRequest?: number }) {
+/**
+ * wizardRequest: a counter the app raises to open the New brand wizard from its menu.
+ * routeBrandId: the brand id in the URL path; onSelectBrand and onWizardClosed keep the URL in step with the screen.
+ */
+export function BrandLifecycle({ me, wizardRequest = 0, routeBrandId, onSelectBrand, onWizardClosed }: {
+  me: Me;
+  wizardRequest?: number;
+  routeBrandId?: string | null;
+  onSelectBrand?: (brandId: string) => void;
+  onWizardClosed?: () => void;
+}) {
   const [wizard, setWizard] = useState<{ brandId?: string; initialStep?: number } | null>(null);
   const [duplicateOf, setDuplicateOf] = useState<LifecycleBrandSummary | null>(null);
   const [brands, setBrands] = useState<LifecycleBrandSummary[]>([]);
@@ -90,6 +99,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
+  useEffect(() => { if (routeBrandId && routeBrandId !== selectedId) setSelectedId(routeBrandId); }, [routeBrandId]);
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
@@ -105,7 +115,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       } else {
         setRuntimeError("โหลด runtime config ไม่สำเร็จ กรุณารีเฟรช");
       }
-      if (!selectedId && result.brands[0]) setSelectedId(result.brands[0].brand_id);
+      if (!selectedId && !routeBrandId && result.brands[0]) setSelectedId(result.brands[0].brand_id);
     } catch (e) {
       if (isCurrentRefresh(token.selectedId, token.generation, selectedId, operationGeneration.current)) {
         setError(e instanceof ApiError ? e.thai : "โหลด lifecycle ไม่สำเร็จ");
@@ -301,7 +311,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
   const runtimeBrand = runtimeBrands.find((brand) => brand.brand_id === selectedId);
 
   // The install the wizard started is picked up by the brand's history recovery, which polls it.
-  if (wizard) return <BrandWizard me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); }} />;
+  if (wizard) return <BrandWizard me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); onWizardClosed?.(); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); onSelectBrand?.(brandId); }} />;
 
   const runtimeList = runtimeError ? null : runtimeBrands;
   const tableRows = brands.map((brand) => ({
@@ -340,7 +350,7 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
           <tbody>
             {sortedRows.map(({ brand, name, money, stats }) => {
               const isSelected = brand.brand_id === selectedId;
-              const select = () => setSelectedId(brand.brand_id);
+              const select = () => { setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); };
               return <Fragment key={brand.brand_id}>
                 <tr className={isSelected ? "click sel" : "click"} onClick={select}>
                   <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</button></td>
@@ -365,7 +375,9 @@ export function BrandLifecycle({ me, wizardRequest = 0 }: { me: Me; wizardReques
       <div className="brands-aside">
         {selected
           ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
-          : <section className="panel brand-side"><p className="muted">เลือกแบรนด์จากตารางเพื่อดูและแก้ไข</p></section>}
+          : brands.length > 0 && routeBrandId
+            ? <section className="panel brand-side"><p role="alert">ไม่พบแบรนด์ <code>{routeBrandId}</code> (Brand not found)</p></section>
+            : <section className="panel brand-side"><p className="muted">เลือกแบรนด์จากตารางเพื่อดูและแก้ไข</p></section>}
         {runtimeBrand && <section className="panel" aria-label="การตั้งค่าและสถิติรันไทม์ (Runtime config and statistics)">
           <h2>การตั้งค่า runtime (Runtime config)</h2>
           <p>สถานะ runtime: {runtimeBrand.status}</p>

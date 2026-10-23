@@ -8,16 +8,17 @@ import { HomeScreen } from "./screens/Home";
 import { MailingScreen } from "./screens/Mailing";
 import { SignIn } from "./screens/SignIn";
 import { BuilderKeysScreen } from "./screens/BuilderKeys";
+import { NotFound } from "./screens/NotFound";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
-
-type View = "home" | "brands" | "new-brand" | "templates" | "funnel" | "alerts" | "mailing" | "audit" | "users" | "builder-keys";
+import { isPlainLeftClick, navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
-  const [wizardRequest, setWizardRequest] = useState(0);
-  const [view, setView] = useState<View>(() => (window.location.hash.startsWith("#templates") ? "templates" : "home"));
+  const [wizardRequest, setWizardRequest] = useState(() => (parseRoute(window.location.pathname).view === "new-brand" ? 1 : 0));
+  const route = useRoute();
+  const view = route.view;
   const [alertCount, setAlertCount] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -47,23 +48,15 @@ export function App() {
     });
     return () => { cancelled = true; };
   }, [me, view]);
-  // A dashboard_url opened in a tab that already holds the panel changes only the hash.
-  useEffect(() => {
-    const onHash = () => { if (window.location.hash.startsWith("#templates")) setView("templates"); };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
 
   if (loading) return <div className="center muted">กำลังโหลด…</div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
 
-  const open = (id: View) => {
-    if (id === "new-brand") {
-      setView("brands");
-      setWizardRequest((count) => count + 1);
-    } else setView(id);
+  const open = (id: Exclude<View, "not-found">) => {
+    if (id === "new-brand") setWizardRequest((count) => count + 1);
+    navigate(viewPath(id));
   };
-  const nav: { id: View; label: string; show: boolean; gap?: boolean }[] = [
+  const nav: { id: Exclude<View, "not-found">; label: string; show: boolean; gap?: boolean }[] = [
     { id: "home", label: "หน้าแรก", show: true },
     { id: "brands", label: "แบรนด์", show: true },
     { id: "new-brand", label: "สร้างแบรนด์ใหม่", show: true },
@@ -84,16 +77,20 @@ export function App() {
           {nav
             .filter((n) => n.show)
             .map((n) => (
-              <button
+              <a
                 key={n.id}
-                type="button"
                 className={`nav${n.gap ? " navgap" : ""}`}
+                href={viewPath(n.id)}
                 aria-current={view === n.id ? "page" : undefined}
-                onClick={() => open(n.id)}
+                onClick={(e) => {
+                  if (!isPlainLeftClick(e)) return;
+                  e.preventDefault();
+                  open(n.id);
+                }}
               >
                 <span>{n.label}</span>
                 {n.id === "alerts" && alertCount !== null && <b aria-label={`${alertCount} รายการที่ต้องจัดการ`}>{alertCount}</b>}
-              </button>
+              </a>
             ))}
         </nav>
         <div className="me">
@@ -115,14 +112,31 @@ export function App() {
       </aside>
       <main className="content">
         {view === "home" && <HomeScreen me={me} onGo={open} />}
-        {view === "brands" && <BrandLifecycle me={me} wizardRequest={wizardRequest} />}
-        {view === "templates" && <TemplatesScreen me={me} />}
+        {(view === "brands" || view === "new-brand") && (
+          <BrandLifecycle
+            me={me}
+            wizardRequest={wizardRequest}
+            routeBrandId={route.view === "brands" ? route.brandId : null}
+            onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }))}
+            onWizardClosed={() => { if (window.location.pathname === "/brands/new") navigate("/brands", { replace: true }); }}
+          />
+        )}
+        {view === "templates" && (
+          <TemplatesScreen
+            me={me}
+            selectedId={route.view === "templates" ? route.templateId : null}
+            onSelect={(id) => navigate(routePath({ view: "templates", templateId: id }))}
+          />
+        )}
         {view === "builder-keys" && <BuilderKeysScreen me={me} />}
         {view === "funnel" && <FunnelScreen />}
         {view === "alerts" && <AlertsScreen />}
         {view === "mailing" && <MailingScreen />}
         {view === "audit" && <AuditScreen me={me} />}
-        {view === "users" && me.role === "owner" && <UsersScreen me={me} />}
+        {view === "users" && (me.role === "owner"
+          ? <UsersScreen me={me} />
+          : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
+        {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
       </main>
     </div>
   );

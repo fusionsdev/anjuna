@@ -6,7 +6,7 @@ import { api } from "../src/client/api";
 
 // Exercise the shell's navigation without triggering unrelated screen requests.
 vi.mock("../src/client/screens/BrandLifecycle", () => ({
-  BrandLifecycle: ({ wizardRequest }: { wizardRequest: number }) => <h1>Brands screen: {wizardRequest}</h1>,
+  BrandLifecycle: ({ wizardRequest, routeBrandId }: { wizardRequest: number; routeBrandId?: string | null }) => <h1>Brands screen: {wizardRequest} {routeBrandId ?? "-"}</h1>,
 }));
 vi.mock("../src/client/screens/Home", () => ({
   HomeScreen: ({ onGo }: { onGo?: (target: "funnel") => void }) => (
@@ -16,7 +16,7 @@ vi.mock("../src/client/screens/Home", () => ({
     </>
   ),
 }));
-vi.mock("../src/client/screens/Templates", () => ({ TemplatesScreen: () => <h1>Templates screen</h1> }));
+vi.mock("../src/client/screens/Templates", () => ({ TemplatesScreen: ({ selectedId }: { selectedId?: string | null }) => <h1>Templates screen {selectedId ?? "-"}</h1> }));
 vi.mock("../src/client/screens/Funnel", () => ({ FunnelScreen: () => <h1>Funnel screen</h1> }));
 vi.mock("../src/client/screens/Alerts", () => ({ AlertsScreen: () => <h1>Alerts screen</h1> }));
 vi.mock("../src/client/screens/Mailing", () => ({ MailingScreen: () => <h1>Mailing screen</h1> }));
@@ -58,18 +58,18 @@ describe("Console rail", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(nav).getAllByRole("button").map((button) => button.querySelector("span")?.textContent)).toEqual([
+    expect(within(nav).getAllByRole("link").map((link) => link.querySelector("span")?.textContent)).toEqual([
       "หน้าแรก", "แบรนด์", "สร้างแบรนด์ใหม่", "เทมเพลต", "ฟันเนล", "การแจ้งเตือน", "รายชื่ออีเมล", "ประวัติการแก้ไข", "ผู้ใช้", "คีย์ Builder",
     ]);
-    expect(within(nav).getByRole("button", { name: "หน้าแรก" }).getAttribute("aria-current")).toBe("page");
+    expect(within(nav).getByRole("link", { name: "หน้าแรก" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByText(owner.email)).toBeTruthy();
     expect(screen.getByText("Owner")).toBeTruthy();
     expect(await screen.findByLabelText("0 รายการที่ต้องจัดการ")).toHaveProperty("textContent", "0");
   });
 
   it.each([
-    ["แบรนด์", "Brands screen: 0"],
-    ["เทมเพลต", "Templates screen"],
+    ["แบรนด์", "Brands screen: 0 -"],
+    ["เทมเพลต", "Templates screen -"],
     ["ฟันเนล", "Funnel screen"],
     ["การแจ้งเตือน", "Alerts screen"],
     ["รายชื่ออีเมล", "Mailing screen"],
@@ -80,12 +80,12 @@ describe("Console rail", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
-    const button = within(nav).getByRole("button", { name: new RegExp(`^${label}(?: |$)`) });
-    fireEvent.click(button);
+    const link = within(nav).getByRole("link", { name: new RegExp(`^${label}(?: |$)`) });
+    fireEvent.click(link);
     expect(await screen.findByRole("heading", { name: heading })).toBeTruthy();
-    expect(button.getAttribute("aria-current")).toBe("page");
+    expect(link.getAttribute("aria-current")).toBe("page");
     expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
-    fireEvent.click(within(nav).getByRole("button", { name: "หน้าแรก" }));
+    fireEvent.click(within(nav).getByRole("link", { name: "หน้าแรก" }));
     expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
   });
 
@@ -93,16 +93,16 @@ describe("Console rail", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Home link to funnel" }));
     expect(await screen.findByRole("heading", { name: "Funnel screen" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "ฟันเนล" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: "ฟันเนล" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("opens the brand wizard from Home and repeats the existing request action", async () => {
     render(<App />);
-    const create = await screen.findByRole("button", { name: "สร้างแบรนด์ใหม่" });
+    const create = await screen.findByRole("link", { name: "สร้างแบรนด์ใหม่" });
     fireEvent.click(create);
-    expect(await screen.findByRole("heading", { name: "Brands screen: 1" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Brands screen: 1 -" })).toBeTruthy();
     fireEvent.click(create);
-    expect(await screen.findByRole("heading", { name: "Brands screen: 2" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Brands screen: 2 -" })).toBeTruthy();
   });
 
   it("counts warn and alert categories, not affected leads or healthy categories", async () => {
@@ -110,7 +110,7 @@ describe("Console rail", () => {
     render(<App />);
     const badge = await screen.findByLabelText("3 รายการที่ต้องจัดการ");
     expect(badge.textContent).toBe("3");
-    expect(badge.closest("button")?.textContent).toBe("การแจ้งเตือน3");
+    expect(badge.closest("a")?.textContent).toBe("การแจ้งเตือน3");
   });
 
   it("hides the badge when the report is unavailable and reloads on navigation", async () => {
@@ -119,7 +119,7 @@ describe("Console rail", () => {
     await screen.findByRole("heading", { name: "หน้าแรก" });
     await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(1));
     expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "ฟันเนล" }));
+    fireEvent.click(screen.getByRole("link", { name: "ฟันเนล" }));
     expect(await screen.findByLabelText("3 รายการที่ต้องจัดการ")).toBeTruthy();
   });
 
@@ -127,7 +127,7 @@ describe("Console rail", () => {
     let finish!: (report: AlertsReportResponse) => void;
     vi.mocked(api.alerts).mockReturnValueOnce(new Promise<AlertsReportResponse>((resolve) => { finish = resolve; }));
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "ฟันเนล" }));
+    fireEvent.click(await screen.findByRole("link", { name: "ฟันเนล" }));
     await screen.findByLabelText("0 รายการที่ต้องจัดการ");
     await act(async () => { finish(attention); });
     expect(screen.getByLabelText("0 รายการที่ต้องจัดการ")).toBeTruthy();
@@ -138,16 +138,70 @@ describe("Console rail", () => {
     vi.mocked(api.me).mockResolvedValue({ ...owner, role: "employee" });
     render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
-    expect(screen.queryByRole("button", { name: /^ผู้ใช้$/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^ผู้ใช้$/ })).toBeNull();
     expect(screen.getByText("พนักงาน")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "คีย์ Builder" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "คีย์ Builder" })).toBeTruthy();
   });
 
   it("preserves initial template deep links", async () => {
     window.history.replaceState(null, "", "/#templates/tv-test");
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Templates screen" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "เทมเพลต" }).getAttribute("aria-current")).toBe("page");
+    expect(await screen.findByRole("heading", { name: "Templates screen tv-test" })).toBeTruthy();
+    expect(window.location.pathname).toBe("/templates/tv-test");
+    expect(screen.getByRole("link", { name: "เทมเพลต" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it.each([
+    ["/brands", "Brands screen: 0 -", "แบรนด์"],
+    ["/brands/brand_abc", "Brands screen: 0 brand_abc", "แบรนด์"],
+    ["/brands/new", "Brands screen: 1 -", "สร้างแบรนด์ใหม่"],
+    ["/templates/tv-1", "Templates screen tv-1", "เทมเพลต"],
+    ["/funnel", "Funnel screen", "ฟันเนล"],
+    ["/audit", "Audit screen", "ประวัติการแก้ไข"],
+    ["/builder-keys", "Builder keys screen", "คีย์ Builder"],
+  ])("deep link %s renders its screen", async (path, heading, label) => {
+    window.history.replaceState(null, "", path);
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: heading })).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
+    expect(within(nav).getByRole("link", { name: new RegExp(`^${label}`) }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("changes the URL on navigation and follows the back button", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    fireEvent.click(screen.getByRole("link", { name: "ฟันเนล" }));
+    expect(window.location.pathname).toBe("/funnel");
+    expect(await screen.findByRole("heading", { name: "Funnel screen" })).toBeTruthy();
+    await act(async () => {
+      window.history.back();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
+  });
+
+  it("shows Page not found for an unknown path and marks no nav item", async () => {
+    window.history.replaceState(null, "", "/nope");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "ไม่พบหน้านี้ (Page not found)" })).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
+    expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(0);
+    fireEvent.click(screen.getByRole("link", { name: "กลับหน้าแรก (Back to Home)" }));
+    expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
+  });
+
+  it("tells an Employee who opens /users that the page is Owner only", async () => {
+    vi.mocked(api.me).mockResolvedValue({ ...owner, role: "employee" });
+    window.history.replaceState(null, "", "/users");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "สำหรับ Owner เท่านั้น (Owner only)" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Users screen" })).toBeNull();
+  });
+
+  it("opens the list for a malformed template hash", async () => {
+    window.history.replaceState(null, "", "/#templates/%");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Templates screen -" })).toBeTruthy();
   });
 
   it("signs out through the existing API and removes the rail", async () => {

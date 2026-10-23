@@ -15,6 +15,7 @@ export type Route =
   | { view: "not-found"; path: string };
 export type View = Route["view"];
 
+// "new" is a reserved brand path segment: `/brands/new` is the wizard, never a brand id.
 const STATIC: Record<string, Route> = {
   "/": { view: "home" },
   "/brands": { view: "brands", brandId: null },
@@ -37,9 +38,11 @@ function decode(segment: string): string | null {
   }
 }
 
+// template-mcp links to `/#templates/<id>`; keep those links working.
+const LEGACY_TEMPLATES_HASH = /^#templates(?:\/(.*))?$/;
+
 export function parseRoute(pathname: string, hash = ""): Route {
-  // template-mcp links to `/#templates/<id>`; keep those links working.
-  const legacy = /^#templates(?:\/(.*))?$/.exec(hash);
+  const legacy = LEGACY_TEMPLATES_HASH.exec(hash);
   if (legacy) return { view: "templates", templateId: legacy[1] ? decode(legacy[1]) : null };
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   const fixed = STATIC[path];
@@ -82,19 +85,22 @@ export function navigate(path: string, options: { replace?: boolean } = {}): voi
 }
 
 function current(): Route {
-  const route = parseRoute(window.location.pathname, window.location.hash);
-  // Rewrite a legacy hash link to its path so reload and back keep the screen.
-  if (window.location.hash.startsWith("#templates")) window.history.replaceState(null, "", routePath(route));
-  return route;
+  return parseRoute(window.location.pathname, window.location.hash);
 }
 
 export function useRoute(): Route {
   const [route, setRoute] = useState<Route>(current);
   useEffect(() => {
-    const update = () => setRoute(current());
+    const update = () => {
+      // Rewrite a legacy hash link to its path so reload and back keep the screen.
+      if (LEGACY_TEMPLATES_HASH.test(window.location.hash)) window.history.replaceState(null, "", routePath(current()));
+      setRoute(current());
+    };
     window.addEventListener("popstate", update);
     window.addEventListener("hashchange", update);
     window.addEventListener(ROUTE_EVENT, update);
+    // A navigate() from a child effect on mount ran before these listeners existed.
+    update();
     return () => {
       window.removeEventListener("popstate", update);
       window.removeEventListener("hashchange", update);

@@ -46,7 +46,7 @@ beforeEach(() => {
     return handler(init);
   }));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.location.hash = ""; });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, "", "/"); });
 
 describe("Templates screen", () => {
   const zipFile = (entries: Record<string, string>) => {
@@ -168,36 +168,40 @@ describe("Templates screen", () => {
     expect(requests.some((r) => r.method === "POST" && r.path === "/api/templates/tv-bolt-1/approve")).toBe(true);
   });
 
-  it("opens the version named in the URL hash", async () => {
-    window.location.hash = "#templates/tv-bolt-1";
-    render(<TemplatesScreen me={owner} />);
+  it("opens the version named by the selected id", async () => {
+    render(<TemplatesScreen me={owner} selectedId="tv-bolt-1" onSelect={() => undefined} />);
     expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
   });
 
-  it("opens the version when the hash changes after mount", async () => {
-    render(<TemplatesScreen me={owner} />);
+  it("opens the version when the selected id changes after mount", async () => {
+    const view = render(<TemplatesScreen me={owner} selectedId={null} onSelect={() => undefined} />);
     await screen.findByText("Bolt Harbor");
     expect(screen.queryByText("Harbor | Funding")).toBeNull();
-    await goTo("#templates/tv-bolt-1");
+    view.rerender(<TemplatesScreen me={owner} selectedId="tv-bolt-1" onSelect={() => undefined} />);
     expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
   });
 
-  it("switches to another version when the hash changes between versions", async () => {
+  it("switches to another version when the selected id changes between versions", async () => {
     routes.set("GET /api/templates/tv-bolt-2", () => json(detail2));
-    window.location.hash = "#templates/tv-bolt-1";
-    render(<TemplatesScreen me={owner} />);
+    const view = render(<TemplatesScreen me={owner} selectedId="tv-bolt-1" onSelect={() => undefined} />);
     await screen.findByText("Harbor | Funding");
-    await goTo("#templates/tv-bolt-2");
+    view.rerender(<TemplatesScreen me={owner} selectedId="tv-bolt-2" onSelect={() => undefined} />);
     expect(await screen.findByText("Marina | Funding")).toBeTruthy();
     expect(screen.queryByText("Harbor | Funding")).toBeNull();
   });
 
-  it("shows the list when the URL hash holds a malformed escape", async () => {
-    window.location.hash = "#templates/%";
-    render(<TemplatesScreen me={owner} />);
+  it("shows the list when no id is selected", async () => {
+    render(<TemplatesScreen me={owner} selectedId={null} onSelect={() => undefined} />);
     expect(await screen.findByText("Bolt Harbor")).toBeTruthy();
     expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates"]);
-    window.location.hash = "";
+  });
+
+  it("reports a card click through onSelect and keeps the URL in charge of the selection", async () => {
+    const onSelect = vi.fn();
+    render(<TemplatesScreen me={owner} selectedId={null} onSelect={onSelect} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    expect(onSelect).toHaveBeenCalledWith("tv-bolt-1");
+    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates"]);
   });
 
   it("imports from a URL and shows the static HTML instruction on rejection", async () => {
@@ -264,13 +268,14 @@ describe("App deep link", () => {
     routes.set("GET /api/brands", () => json({ brands: [], generated_at: STAMP }));
     routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /^แบรนด์$/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /^แบรนด์$/ }));
     expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
     await goTo("#other");
     expect(screen.queryByRole("heading", { name: "เทมเพลต (Templates)" })).toBeNull();
     await goTo("#templates/tv-bolt-1");
     expect(await screen.findByRole("heading", { name: "เทมเพลต (Templates)" })).toBeTruthy();
     expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
+    expect(window.location.pathname).toBe("/templates/tv-bolt-1");
     expect(screen.queryByRole("heading", { name: "Lifecycle แบรนด์" })).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { isPlainLeftClick, navigate, parseRoute, routePath, useRoute, viewPath } from "../src/client/router";
 
@@ -56,15 +57,32 @@ describe("isPlainLeftClick", () => {
     const base = { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false };
     expect(isPlainLeftClick(base)).toBe(true);
     expect(isPlainLeftClick({ ...base, button: 1 })).toBe(false);
+    expect(isPlainLeftClick({ ...base, button: 2 })).toBe(false);
     expect(isPlainLeftClick({ ...base, metaKey: true })).toBe(false);
     expect(isPlainLeftClick({ ...base, ctrlKey: true })).toBe(false);
     expect(isPlainLeftClick({ ...base, shiftKey: true })).toBe(false);
+    expect(isPlainLeftClick({ ...base, altKey: true })).toBe(false);
   });
 });
 
 function Probe() {
   const route = useRoute();
   return <p>{JSON.stringify(route)}</p>;
+}
+
+function NavigateOnMount({ to }: { to: string }) {
+  useEffect(() => navigate(to), [to]);
+  return null;
+}
+
+function ProbeWithChildNavigation() {
+  const route = useRoute();
+  return (
+    <>
+      <p>{JSON.stringify(route)}</p>
+      <NavigateOnMount to="/funnel" />
+    </>
+  );
 }
 
 describe("useRoute", () => {
@@ -87,6 +105,20 @@ describe("useRoute", () => {
 
     act(() => navigate("/audit", { replace: true }));
     expect(window.location.pathname).toBe("/audit");
+  });
+
+  it("keeps a navigate() made by a child effect on mount", () => {
+    render(<ProbeWithChildNavigation />);
+    expect(screen.getByText(JSON.stringify({ view: "funnel" }))).toBeTruthy();
+    expect(window.location.pathname).toBe("/funnel");
+  });
+
+  it("does not rewrite a hash that only starts with #templates", () => {
+    window.history.replaceState(null, "", "/#templatesX");
+    render(<Probe />);
+    expect(screen.getByText(JSON.stringify({ view: "home" }))).toBeTruthy();
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.hash).toBe("#templatesX");
   });
 
   it("picks up a hash change in a tab that already holds the panel", () => {

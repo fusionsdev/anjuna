@@ -114,6 +114,13 @@ describe("mounted lifecycle UI with API responses", () => {
     await waitFor(() => expect(screen.queryByText(/Core brand list is unavailable/)).toBeNull());
   });
 
+  it("says a route brand id that does not exist is not found", async () => {
+    render(<BrandLifecycle me={owner} routeBrandId="brand_missing" />);
+    expect(await screen.findByText(/ไม่พบแบรนด์/)).toBeTruthy();
+    expect(screen.getByText("brand_missing")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "renderable.test" })).toBeNull();
+  });
+
   it("reloads latest outcomes immediately after an accepted upgrade-all", async () => {
     routes.set("POST /api/upgrade-all", () => json({ instance_id: "new-upgrade" }, 201));
     render(<BrandLifecycle me={owner} />);
