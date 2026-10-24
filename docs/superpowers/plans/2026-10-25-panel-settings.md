@@ -79,7 +79,7 @@ it("buildSettingsRows never has more than `limit` getBrand calls in flight", asy
 it("buildSettingsRows treats a thrown getBrand as an error row", async () => {});
 ```
 
-Fill the last three bodies with a fake `getBrand` returning `{ status: 200, body: { brand } }` built from `BrandConfig.parse` of the `brands.get.response.json` fixture (or `{ status: 502, body: { error: "bad_gateway" } }`). Assert exact `error` values and `hostname` order.
+Fill the last three bodies with a fake `getBrand` returning `{ status: 200, body: { brand } }` built from `BrandConfig.parse` of the `brand.get.response.json` fixture (or `{ status: 502, body: { error: "bad_gateway" } }`). Assert exact `error` values and `hostname` order.
 
 - [ ] **Step 2: Run, expect FAIL** — `bun run --cwd apps/web test -- --project worker test/settings-api.test.ts` fails on the missing module.
 - [ ] **Step 3: Implement** the two files, the role entry, the index.ts call, and the `api.test.ts` matrix entry.
@@ -117,7 +117,7 @@ Fill the last three bodies with a fake `getBrand` returning `{ status: 200, body
   - `export function redrawsVisitors(brand: BrandConfig, patch: SettingsPatch): boolean` — true when `ab_config` is in the patch and the experiment id changes or the test turns on or off.
   - `export function touchesMoney(patch: SettingsPatch): boolean` — true when `aid`, `prepop_base` or `drain_key` is in the patch.
 
-- [ ] **Step 1: Write the failing tests** in `apps/web/test/settings-draft.test.ts`, building `brand` from `BrandConfig.parse` of `packages/contracts/fixtures/admin/brands.get.response.json` (`.brand`) with overrides. Named tests:
+- [ ] **Step 1: Write the failing tests** in `apps/web/test/settings-draft.test.ts`, building `brand` from `BrandConfig.parse` of `packages/contracts/fixtures/admin/brand.get.response.json` (`.brand`) with overrides. Named tests:
   - `draftFromBrand then buildPatch on an untouched draft returns {}` and `isDirty` is false.
   - `whitespace-only edits are not dirty` — `aid: " <aid> "`, buckets `"1000 ,2000"` for `[1000,2000]`.
   - `buildPatch holds only changed fields` — change `drain_key` and `flow_gate_mode`; expect exactly those two keys.
