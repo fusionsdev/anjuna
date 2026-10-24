@@ -16,6 +16,9 @@ import { BuilderKeysScreen } from "./screens/BuilderKeys";
 import { NotFound } from "./screens/NotFound";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
+import { SettingsScreen } from "./screens/Settings";
+import { roleAtLeast } from "@anjuna/contracts";
+import { PANEL_ROLE_TABLE } from "../server/panel-roles";
 import { navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
 import { AppShell, pageTitle } from "./components/AppShell";
 import { SidebarNav, type NavItem } from "./components/SidebarNav";
@@ -79,6 +82,7 @@ export function App() {
     { id: "suppressions", label: "อีเมลที่บล็อก (Suppressions)", show: me.role === "owner" }, // spec leads
     { id: "audit", label: "ประวัติการแก้ไข", show: true, gap: true },
     { id: "users", label: "ผู้ใช้", show: me.role === "owner" },
+    { id: "settings", label: "ตั้งค่า (Settings)", show: roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings) }, // spec settings
     { id: "builder-keys", label: "คีย์ Builder", show: true },
   ];
   const items: NavItem[] = nav.filter((n) => n.show);
@@ -135,6 +139,10 @@ export function App() {
       {view === "audit" && <AuditScreen me={me} />}
       {view === "users" && (me.role === "owner"
         ? <UsersScreen me={me} />
+        : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
+      {/* spec settings */}
+      {view === "settings" && (roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings)
+        ? <SettingsScreen />
         : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
       {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
     </AppShell>

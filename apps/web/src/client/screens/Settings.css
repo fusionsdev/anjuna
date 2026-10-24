@@ -1,0 +1,24 @@
+/* Settings screen only. The shared console classes (.panel .head .sub .tw .data-table .stack .hint .note .neg .pill .p-* .brand-label .btn .mono) come from styles.css. */
+/* The table scrolls inside .data-table; the page itself must not scroll sideways. */
+.settings-page { min-width: 0; }
+.settings-page .data-table td { white-space: nowrap; }
+.settings-page .data-table td:nth-child(4) { white-space: normal; min-width: 220px; }
+/* Long URLs and keys wrap instead of widening the table. */
+.settings-page .data-table td.mono { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
+
+.settings-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.settings-error p { margin: 0; }
+
+/* Row drawer. The drawer, scrim and section classes come from styles.css and Brands.css. */
+.settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.settings-field label { margin-bottom: 0; }
+.settings-switch { flex-direction: row; align-items: center; gap: 8px; }
+.settings-arm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.settings-arm input { width: 5rem; }
+.settings-arm-unknown { flex: 1 1 12rem; overflow-wrap: anywhere; }
+.settings-banner { margin: 0 0 12px; }
+.settings-lock { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+/* Before/after table inside the review dialog. */
+.settings-diff { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.settings-diff th, .settings-diff td { text-align: left; vertical-align: top; padding: 4px 8px 4px 0; overflow-wrap: anywhere; }

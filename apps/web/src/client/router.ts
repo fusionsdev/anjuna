@@ -17,6 +17,8 @@ export type Route =
   // spec leads
   | { view: "leads"; leadId: string | null }
   | { view: "suppressions" }
+  // spec settings
+  | { view: "settings" }
   | { view: "not-found"; path: string };
 export type View = Route["view"];
 
@@ -37,6 +39,8 @@ const STATIC: Record<string, Route> = {
   // spec leads
   "/leads": { view: "leads", leadId: null },
   "/suppressions": { view: "suppressions" },
+  // spec settings
+  "/settings": { view: "settings" },
 };
 
 /** A bad escape such as "%" reads as no id, so the list opens. */
@@ -91,12 +95,41 @@ export function viewPath(view: Exclude<View, "not-found">): string {
 
 const ROUTE_EVENT = "anjuna:route";
 
-export function navigate(path: string, options: { replace?: boolean } = {}): void {
+function go(path: string, options: { replace?: boolean }): void {
   // A click on the page already open must not add a second history entry.
   const samePage = !window.location.hash && path === window.location.pathname + window.location.search;
   if (options.replace || samePage) window.history.replaceState(null, "", path);
   else window.history.pushState(null, "", path);
   window.dispatchEvent(new Event(ROUTE_EVENT));
+}
+
+// spec settings: a screen with unsaved edits registers one guard; the location it guards is the page open when it was set.
+let leaveGuard: (() => Promise<boolean>) | null = null;
+let guardedLocation = "";
+
+const fullLocation = () => window.location.pathname + window.location.search + window.location.hash;
+
+/** A screen with unsaved edits registers one; null clears it. Resolves true when leaving is fine. */
+export function setLeaveGuard(guard: (() => Promise<boolean>) | null): void {
+  leaveGuard = guard;
+  guardedLocation = guard ? fullLocation() : "";
+}
+
+/** Asks the guard once; runs `leave` when it answers true, even if the guard cleared itself first (a discard does). */
+function askToLeave(leave: () => void): void {
+  const guard = leaveGuard;
+  if (!guard) return;
+  void guard().then((ok) => {
+    if (ok) leave();
+  });
+}
+
+export function navigate(path: string, options: { replace?: boolean } = {}): void {
+  if (leaveGuard && path !== window.location.pathname + window.location.search) {
+    askToLeave(() => go(path, options));
+    return;
+  }
+  go(path, options);
 }
 
 function current(): Route {
@@ -111,14 +144,21 @@ export function useRoute(): Route {
       if (LEGACY_TEMPLATES_HASH.test(window.location.hash)) window.history.replaceState(null, "", routePath(current()));
       setRoute(current());
     };
-    window.addEventListener("popstate", update);
-    window.addEventListener("hashchange", update);
+    const onPop = () => {
+      const destination = fullLocation();
+      if (!leaveGuard || destination === guardedLocation) return update();
+      // Put the guarded page back so the draft stays on screen while the owner decides.
+      window.history.pushState(null, "", guardedLocation);
+      askToLeave(() => go(destination, {}));
+    };
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onPop);
     window.addEventListener(ROUTE_EVENT, update);
     // A navigate() from a child effect on mount ran before these listeners existed.
     update();
     return () => {
-      window.removeEventListener("popstate", update);
-      window.removeEventListener("hashchange", update);
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onPop);
       window.removeEventListener(ROUTE_EVENT, update);
     };
   }, []);

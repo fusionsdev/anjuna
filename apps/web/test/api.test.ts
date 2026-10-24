@@ -297,6 +297,7 @@ describe("role table coverage", () => {
       approveTemplate: "owner",
       viewBuilderKeys: "employee",
       manageBuilderKeys: "owner",
+      viewSettings: "owner",
     });
   });
 });
@@ -474,6 +475,27 @@ describe("factory brands: create / install / upgrade", () => {
 
   it("unauthenticated cannot create a brand", async () => {
     expect((await post("", "/api/brands", { name: "X", domain: "x.example.com", keyword_default: "x" })).status).toBe(401);
+  });
+});
+
+// Last in the file: every test signs in three users, and the mock core shares audit ids with the panel's audit_log, so an earlier extra test shifts the id collisions the audit-list tests above already sit near.
+describe("settings audit", () => {
+  it("an owner patching aid writes exactly one core brand.update entry with old and new aid, and no panel brand row", async () => {
+    // target_type=brand skips the panel's own rows, so the read cannot collide with their ids.
+    const updates = async () => AuditListResponse.parse(await (await call("/api/audit?limit=200&target_type=brand&target_id=brand-a", { cookie: owner })).json())
+      .entries.filter((e) => e.action === "brand.update");
+    const before = await updates();
+    const oldAid = ((await (await call("/api/brands/brand-a", { cookie: owner })).json()) as { brand: { aid: string } }).brand.aid;
+    const panelBrandRows = async () => (await auditRows()).filter((r) => r.action.startsWith("brand.")).length;
+    const panelBefore = await panelBrandRows();
+
+    const res = await patch(owner, { aid: "AID_NEW_77" });
+    expect(res.status).toBe(200);
+
+    const after = await updates();
+    expect(after).toHaveLength(before.length + 1);
+    expect(after[0]).toMatchObject({ actor_role: "owner", target: { type: "brand", id: "brand-a" }, old: { aid: oldAid }, new: { aid: "AID_NEW_77" } });
+    expect(await panelBrandRows()).toBe(panelBefore);
   });
 });
 

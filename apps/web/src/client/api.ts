@@ -2,6 +2,7 @@ import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } f
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { GetLeadResponse, LeadsResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
+import { SettingsBrandsResponse } from "../shared/settings";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
 import type {
   AdminRole,
@@ -151,6 +152,7 @@ export const api = {
   signIn: (email: string, password: string) => request<unknown>("POST", "/api/auth/sign-in/email", { email, password }),
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
   brands: () => request<{ brands: BrandSummary[]; generated_at: string }>("GET", "/api/brands"),
+  settingsBrands: () => request<unknown>("GET", "/api/settings/brands").then((body) => SettingsBrandsResponse.parse(body)), // spec settings
   brand: (id: string) => request<{ brand: BrandConfig }>("GET", `/api/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   siteTextDefaults: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/site-text`).then((body) => SiteTextDefaultsResponse.parse(body)),
   patchBrand: (id: string, body: BrandPatchRequest) => request<BrandPatchResponse>("PATCH", `/api/brands/${encodeURIComponent(id)}`, body),
