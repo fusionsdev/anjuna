@@ -80,14 +80,23 @@ export function availableForms(arms: ArmDraft[], index: number): (typeof KNOWN_F
 
 const DIGITS_RE = /^\d+$/;
 const BUCKET_DIGITS_MESSAGE = "ใส่ตัวเลขจำนวนเต็มคั่นด้วยจุลภาค (Whole numbers separated by commas)";
-const firstMessage = (issues: { message: string }[]) => issues[0]?.message ?? "Invalid";
+// Contract messages are English only, so every field maps to a fixed Thai-first message and no Zod text reaches the screen.
+const FIELD_MESSAGES: Record<SettingsField, string> = {
+  aid: "รหัส AID ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 32 ตัว (Invalid aid)",
+  ab_config: "ตั้งค่า A/B test ไม่ถูกต้อง (Invalid A/B test settings)",
+  flow_gate_mode: "เลือกเกตที่รับได้ (Pick a supported flow gate)",
+  amount_buckets: "ช่วงยอดเงินต้องไม่ซ้ำ เรียงจากน้อยไปมาก และอยู่ในช่วงที่รับได้ (Amount buckets must be unique, ascending and in range)",
+  keyword_default: "คีย์เวิร์ดไม่ถูกต้อง (Invalid keyword)",
+  prepop_base: "Prepop base ต้องเป็น URL แบบ https หรือพาธที่ขึ้นต้นด้วย / และไม่มี ? หรือ # (Prepop base must be an https URL or a path starting with /, with no ? or #)",
+  drain_key: "Drain key ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Invalid drain key)",
+};
 const bucketTokens = (text: string) => text.split(",").map((s) => s.trim());
 
 export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues } | { ok: false; errors: DraftErrors } {
   const errors: DraftErrors = {};
-  const check = <T>(field: SettingsField, r: { success: true; data: T } | { success: false; error: { issues: { message: string }[] } }): T | undefined => {
+  const check = <T>(field: SettingsField, r: { success: true; data: T } | { success: false }): T | undefined => {
     if (r.success) return r.data;
-    errors[field] = firstMessage(r.error.issues);
+    errors[field] = FIELD_MESSAGES[field];
     return undefined;
   };
 
@@ -123,7 +132,7 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
     if (!errors.experiment_id && !errors.arms) {
       const r = AbConfig.safeParse({ experiment_id, variants: arms.map((a) => ({ id: a.id, weight: Number(a.weight) })) });
       if (r.success) ab_config = r.data;
-      else errors.arms = firstMessage(r.error.issues);
+      else errors.arms = FIELD_MESSAGES.ab_config;
     }
   }
 

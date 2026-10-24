@@ -41,7 +41,7 @@ describe("SettingsEditor", () => {
     type("Drain key", "bad key!");
     const input = screen.getByLabelText("Drain key");
     expect(input.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText("Invalid drain_key")).toBeTruthy();
+    expect(screen.getByText("Drain key ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Invalid drain key)")).toBeTruthy();
     expect(review().disabled).toBe(true);
     expect(screen.getByLabelText("AID (LeadsGate aid)").getAttribute("aria-invalid")).toBeNull();
   });
@@ -69,21 +69,30 @@ describe("SettingsEditor", () => {
     expect(screen.getByText('จะบันทึกเป็น "Personal Loans" (Saved as "Personal Loans")')).toBeTruthy();
     type("คีย์เวิร์ด (Keyword default)", "Personal Loans ");
     expect(screen.queryByText(/จะบันทึกเป็น/)).toBeNull();
-    type("คีย์เวิร์ด (Keyword default)", "!!!");
+    type("คีย์เวิร์ด (Keyword default)", "");
     expect(screen.queryByText(/จะบันทึกเป็น/)).toBeNull();
+    type("คีย์เวิร์ด (Keyword default)", "   ");
+    expect(screen.queryByText(/จะบันทึกเป็น/)).toBeNull();
+  });
+
+  it("a keyword that cleans to nothing says it is saved as the template default", () => {
+    render(<Harness b={brand({ keyword_default: "Loans" })} />);
+    type("คีย์เวิร์ด (Keyword default)", "!!!");
+    expect(screen.getByText("จะบันทึกเป็นค่าเริ่มต้นของ template (Saved as the template default)")).toBeTruthy();
+    expect(review().disabled).toBe(false);
   });
 
   it("turning A/B on shows two arms lite_v1 50 and full_v1 50 and requires an experiment id", () => {
     render(<Harness b={brand({ ab_config: null })} />);
-    expect(screen.queryByLabelText("Experiment id")).toBeNull();
+    expect(screen.queryByLabelText("รหัส Experiment (Experiment id)")).toBeNull();
     fireEvent.click(screen.getByLabelText("เปิด A/B test (A/B test on)"));
     expect(valueOf("ฟอร์มแขน 1 (Arm 1 form)")).toBe("lite_v1");
     expect(valueOf("ฟอร์มแขน 2 (Arm 2 form)")).toBe("full_v1");
     expect((screen.getByLabelText("น้ำหนักแขน 1 (Arm 1 weight)") as HTMLInputElement).value).toBe("50");
     expect((screen.getByLabelText("น้ำหนักแขน 2 (Arm 2 weight)") as HTMLInputElement).value).toBe("50");
-    expect(screen.getByLabelText("Experiment id").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText("รหัส Experiment (Experiment id)").getAttribute("aria-invalid")).toBe("true");
     expect(review().disabled).toBe(true);
-    type("Experiment id", "exp-2");
+    type("รหัส Experiment (Experiment id)", "exp-2");
     expect(review().disabled).toBe(false);
   });
 

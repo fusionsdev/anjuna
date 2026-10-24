@@ -54,7 +54,7 @@ const rowOf = async (domain: string) => {
 
 describe("Settings table", () => {
   it("renders one row per brand with domain, AID, A/B summary, flow gate label, buckets, keyword, prepop base and drain key", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     const a = await rowOf("alpha.example.test");
     const cells = a.getAllByRole("cell").map((c) => c.textContent);
     expect(cells[0]).toContain("alpha.example.test");
@@ -68,6 +68,9 @@ describe("Settings table", () => {
       "https://lg.example.test/alpha",
       "dk_alpha",
     ]);
+    const updated = a.getAllByRole("cell")[9]!.querySelector("time");
+    expect(updated?.getAttribute("datetime")).toBe("2026-10-24T01:02:03.000Z");
+    expect(updated?.textContent).not.toBe("");
     expect(a.getByText("111").className).toContain("mono");
     expect(a.getByText("dk_alpha").className).toContain("mono");
     expect(a.getByText(/14 ขั้น \(aurum-14-step\) 40%/)).toBeTruthy();
@@ -81,7 +84,7 @@ describe("Settings table", () => {
   });
 
   it("an error row shows the domain and \"โหลดไม่สำเร็จ (Could not load)\" and has no Edit button", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     const g = await rowOf("ghost.example.test");
     expect(g.getByText("โหลดไม่สำเร็จ (Could not load)").className).toContain("p-bad");
     expect(g.queryByRole("button")).toBeNull();
@@ -94,22 +97,22 @@ describe("Settings table", () => {
   });
 
   it("Edit opens the drawer with the row's values and Close closes it", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     const a = await rowOf("alpha.example.test");
     fireEvent.click(a.getByRole("button", { name: /แก้ไข \(Edit\)/ }));
     const drawer = screen.getByRole("complementary", { name: "แก้ไขตั้งค่า alpha.example.test (Edit settings)" });
     expect((within(drawer).getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("111");
-    expect((within(drawer).getByLabelText("Experiment id") as HTMLInputElement).value).toBe("exp-alpha");
+    expect((within(drawer).getByLabelText("รหัส Experiment (Experiment id)") as HTMLInputElement).value).toBe("exp-alpha");
     fireEvent.click(within(drawer).getByRole("button", { name: "ปิด (Close)" }));
     expect(screen.queryByRole("complementary", { name: /Edit settings/ })).toBeNull();
     fireEvent.click((await rowOf("beta.example.test")).getByRole("button", { name: /แก้ไข \(Edit\)/ }));
     expect((screen.getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("222");
-    expect(screen.queryByLabelText("Experiment id")).toBeNull();
+    expect(screen.queryByLabelText("รหัส Experiment (Experiment id)")).toBeNull();
   });
 
   it("a failed load shows the error card and Retry reloads", async () => {
     reply = () => json({ error: "bad_gateway" }, 502);
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("ลองอีกครั้ง (Retry)");
     // .note from styles.css wins the cascade over a class rule, so red comes from the inline style.

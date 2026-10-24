@@ -6,7 +6,6 @@ import { navigate } from "../src/client/router";
 import { SettingsScreen } from "../src/client/screens/Settings";
 import { answerConfirm } from "./confirm";
 
-const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const T1 = "2026-10-24T01:02:03.000Z";
 const T2 = "2026-10-25T04:05:06.000Z";
 
@@ -89,7 +88,7 @@ const reviewRows = async (accept: boolean) => {
 
 describe("Settings review and save", () => {
   it("the review dialog lists before and after for each changed field", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("AID (LeadsGate aid)", "999");
     type("เกต (Flow gate)", "param");
@@ -110,7 +109,7 @@ describe("Settings review and save", () => {
   });
 
   it("a settings-only change has no money line and a default-tone confirm button", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("ช่วงยอดเงิน (Amount buckets)", "500, 2000");
     fireEvent.click(review());
@@ -122,7 +121,7 @@ describe("Settings review and save", () => {
   });
 
   it("Cancel in the review sends no PATCH and keeps the draft", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -136,7 +135,7 @@ describe("Settings review and save", () => {
 
   it("Save sends only the changed fields plus expected_updated_at", async () => {
     onPatch = () => json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"]));
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", " dk_new ");
     fireEvent.click(review());
@@ -148,7 +147,7 @@ describe("Settings review and save", () => {
 
   it("success replaces the row, closes the drawer, shows \"บันทึกแล้ว (Saved)\" and clears the guard", async () => {
     onPatch = () => json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"]));
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -169,7 +168,7 @@ describe("Settings review and save", () => {
 
   it("an empty changed list shows \"ไม่มีค่าที่เปลี่ยน (Nothing changed)\"", async () => {
     onPatch = () => json(saved(alpha, []));
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -179,7 +178,7 @@ describe("Settings review and save", () => {
   });
 
   it("a new experiment id adds the returning-visitors line", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("น้ำหนักแขน 1 (Arm 1 weight)", "70");
     type("น้ำหนักแขน 2 (Arm 2 weight)", "30");
@@ -187,7 +186,7 @@ describe("Settings review and save", () => {
     expect((await dialogOf(false)).text).not.toContain(REDRAW);
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 
-    type("Experiment id", "exp-next");
+    type("รหัส Experiment (Experiment id)", "exp-next");
     fireEvent.click(review());
     const { text } = await dialogOf(false);
     expect(text).toContain(REDRAW);
@@ -201,7 +200,7 @@ describe("Settings review and save", () => {
     onPatch = (body) => (patches().length === 1
       ? json({ error: "conflict", current_updated_at: T2 }, 409)
       : json(saved(patched(latest, { drain_key: body.drain_key, aid: body.aid }, "2026-10-25T09:00:00.000Z"), ["aid", "drain_key"])));
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("AID (LeadsGate aid)", "444");
     type("Drain key", "dk_new");
@@ -237,7 +236,7 @@ describe("Settings review and save", () => {
     onPatch = (body) => (patches().length === 1
       ? json({ error: "conflict", current_updated_at: T2 }, 409)
       : json(saved(patched(latest, body, "2026-10-25T09:00:00.000Z"), ["drain_key"])));
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -261,7 +260,7 @@ describe("Settings review and save", () => {
     onPatch = (body) => (patches().length === 1
       ? json({ error: "conflict", current_updated_at: T2 }, 409)
       : json(saved(patched(latest, body, "2026-10-25T09:00:00.000Z"), ["drain_key"])));
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -279,7 +278,7 @@ describe("Settings review and save", () => {
   it("a failed 409 reload keeps the conflict text and appends the ApiError.thai message", async () => {
     onGetBrand = () => json({ error: "forbidden_role", required_role: "owner" }, 403);
     onPatch = () => json({ error: "conflict", current_updated_at: T2 }, 409);
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -292,7 +291,7 @@ describe("Settings review and save", () => {
 
   it("a 403 shows the ApiError.thai banner and keeps the drawer", async () => {
     onPatch = () => json({ error: "forbidden_role", required_role: "owner" }, 403);
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -310,7 +309,7 @@ describe("Settings save in flight", () => {
   let release: (r: Response) => void;
   const startSave = async () => {
     onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(review());
@@ -339,7 +338,7 @@ describe("Settings save in flight", () => {
     expect(within(table()).getByText("dk_new")).toBeTruthy();
   });
 
-    it("navigate() while a save is in flight stays on /settings and offers no Discard", async () => {
+  it("navigate() while a save is in flight stays on /settings and offers no Discard", async () => {
     await startSave();
     navigate("/brands");
     await Promise.resolve();
@@ -349,6 +348,8 @@ describe("Settings save in flight", () => {
 
     release(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
     expect(await screen.findByText("บันทึกแล้ว (Saved)")).toBeTruthy();
+    // findByText has flushed renders, so a Discard dialog opened by navigate() would be on screen by now.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(window.location.pathname).toBe("/settings");
   });
 
@@ -365,7 +366,7 @@ describe("Settings save in flight", () => {
   };
 
   it("unmounting ends the session: a late 200 does not clear the guard of a screen mounted afterwards", async () => {
-    const first = render(<SettingsScreen me={owner} />);
+    const first = render(<SettingsScreen />);
     onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
@@ -374,7 +375,7 @@ describe("Settings save in flight", () => {
     await waitFor(() => expect(patches()).toHaveLength(1));
     first.unmount();
 
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_other");
     const beforeUnload = () => {
@@ -387,6 +388,7 @@ describe("Settings save in flight", () => {
     await answer(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
     expect(beforeUnload()).toBe(true);
     expect(screen.queryByText("บันทึกแล้ว (Saved)")).toBeNull();
+    expect(within(table()).getByText("dk_alpha")).toBeTruthy();
     expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_other");
     navigate("/brands");
     expect(within(await screen.findByRole("alertdialog")).getByRole("heading").textContent).toBe(DISCARD_TITLE);
@@ -394,28 +396,8 @@ describe("Settings save in flight", () => {
     await answerConfirm(false);
   });
 
-  it("a late 200 after unmount shows no toast and leaves the next screen's row alone", async () => {
-    const first = render(<SettingsScreen me={owner} />);
-    onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
-    await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
-    fireEvent.click(review());
-    await answerConfirm(true);
-    await waitFor(() => expect(patches()).toHaveLength(1));
-    first.unmount();
-
-    render(<SettingsScreen me={owner} />);
-    await screen.findByRole("table", { name: "ตั้งค่าแบรนด์ (Brand settings)" });
-    await answer(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
-    expect(screen.queryByText("บันทึกแล้ว (Saved)")).toBeNull();
-    expect(within(table()).getByText("dk_alpha")).toBeTruthy();
-    expect(drawer()).toBeNull();
-    await openEditor("beta.example.test");
-    expect(await screen.findByRole("complementary", { name: "แก้ไขตั้งค่า beta.example.test (Edit settings)" })).toBeTruthy();
-  });
-
   it("a late 409 after unmount shows no banner and reloads nothing", async () => {
-    const first = render(<SettingsScreen me={owner} />);
+    const first = render(<SettingsScreen />);
     onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
@@ -424,7 +406,7 @@ describe("Settings save in flight", () => {
     await waitFor(() => expect(patches()).toHaveLength(1));
     first.unmount();
 
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await screen.findByRole("table", { name: "ตั้งค่าแบรนด์ (Brand settings)" });
     await answer(json({ error: "conflict", current_updated_at: T2 }, 409));
     expect(screen.queryByRole("alert")).toBeNull();
@@ -437,7 +419,7 @@ describe("Settings save in flight", () => {
 
 describe("Settings unsaved-change guard", () => {
   it("closing the drawer while clean asks nothing", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     fireEvent.click(screen.getByRole("button", { name: "ปิด (Close)" }));
     expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -445,7 +427,7 @@ describe("Settings unsaved-change guard", () => {
   });
 
   it("closing the drawer while dirty asks to discard; Cancel keeps the draft; Discard closes", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     fireEvent.click(screen.getByRole("button", { name: "ปิด (Close)" }));
@@ -468,7 +450,7 @@ describe("Settings unsaved-change guard", () => {
   });
 
   it("opening another row while dirty asks to discard", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     await openEditor("beta.example.test");
@@ -485,7 +467,7 @@ describe("Settings unsaved-change guard", () => {
   });
 
   it("sidebar-style navigate(\"/brands\") while dirty asks; Cancel stays on /settings; Discard leaves", async () => {
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     navigate("/brands");
@@ -503,7 +485,7 @@ describe("Settings unsaved-change guard", () => {
   });
 
   it("unmounting while dirty leaves no guard behind", async () => {
-    const view = render(<SettingsScreen me={owner} />);
+    const view = render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("Drain key", "dk_new");
     view.unmount();
@@ -520,7 +502,7 @@ describe("Settings unsaved-change guard", () => {
       window.dispatchEvent(event);
       return event.defaultPrevented;
     };
-    render(<SettingsScreen me={owner} />);
+    render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     expect(fire()).toBe(false);
     type("Drain key", "dk_new");

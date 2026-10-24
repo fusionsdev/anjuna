@@ -142,7 +142,7 @@ export function App() {
         : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
       {/* spec settings */}
       {view === "settings" && (roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings)
-        ? <SettingsScreen me={me} />
+        ? <SettingsScreen />
         : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
       {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
     </AppShell>

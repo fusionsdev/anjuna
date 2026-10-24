@@ -3,7 +3,7 @@ import { BrandConfig, type BrandSummary } from "@anjuna/contracts";
 import brandFixture from "@anjuna/contracts/fixtures/admin/brand.get.response.json";
 import { SettingsBrandsResponse } from "../src/shared/settings";
 import { buildSettingsRows } from "../src/server/settings";
-import { call, resetState, sessions, setupDatabases } from "./helpers";
+import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
 let employee: string;
@@ -39,6 +39,33 @@ describe("GET /api/settings/brands", () => {
     const res = await call("/api/settings/brands", { cookie: employee });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "forbidden_role", required_role: "owner" });
+  });
+
+  const withCore = (fetch: () => Promise<Response>) => makeEnv({ MOCK_CORE: "0", CORE: { fetch } as unknown as Fetcher });
+
+  it("a core that cannot be reached gives 502 bad_gateway", async () => {
+    const res = await call("/api/settings/brands", { cookie: owner, env: withCore(async () => { throw new Error("core down"); }) });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: "bad_gateway" });
+  });
+
+  it("a core listBrands error status and AdminError body are passed through", async () => {
+    const issues = [{ path: "limit", message: "too big" }];
+    const res = await call("/api/settings/brands", {
+      cookie: owner,
+      env: withCore(async () => Response.json({ error: "invalid", issues }, { status: 422 })),
+    });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "invalid", issues });
+  });
+
+  it("a core error body that breaks the admin contract becomes 502 bad_gateway", async () => {
+    const res = await call("/api/settings/brands", {
+      cookie: owner,
+      env: withCore(async () => Response.json({ oops: true }, { status: 500 })),
+    });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: "bad_gateway" });
   });
 });
 

@@ -69,7 +69,9 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
   const unused = availableForms(draft.arms, draft.arms.length)[0];
   const typedKeyword = draft.keyword_default.trim();
   const cleanedKeyword = cleanKeyword(draft.keyword_default);
-  const keywordHint = cleanedKeyword !== null && cleanedKeyword !== typedKeyword ? `จะบันทึกเป็น "${cleanedKeyword}" (Saved as "${cleanedKeyword}")` : undefined;
+  const keywordHint = cleanedKeyword === null
+    ? (typedKeyword !== "" ? "จะบันทึกเป็นค่าเริ่มต้นของ template (Saved as the template default)" : undefined)
+    : cleanedKeyword !== typedKeyword ? `จะบันทึกเป็น "${cleanedKeyword}" (Saved as "${cleanedKeyword}")` : undefined;
   const total = armTotal(draft.arms);
   // The sum message restates the total line, so it is not printed twice; the weights point at whichever line carries it.
   // Coupled to the "รวม N% ต้องเป็น 100%" message in parseDraft (settings-draft.ts): change both together.
@@ -124,7 +126,7 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
             </label>
             {draft.ab_on && (
               <>
-                <Field id="settings-experiment" label="Experiment id" error={errors.experiment_id}>
+                <Field id="settings-experiment" label="รหัส Experiment (Experiment id)" error={errors.experiment_id}>
                   {(a) => <input {...a} value={draft.experiment_id} onChange={(e) => set({ experiment_id: e.target.value })} />}
                 </Field>
                 {draft.arms.map((arm, i) => {

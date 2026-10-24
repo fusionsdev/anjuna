@@ -16,6 +16,9 @@ import {
   type SettingsDraft,
 } from "../src/client/settings-draft";
 
+const BUCKET_RANGE_MESSAGE = "ช่วงยอดเงินต้องไม่ซ้ำ เรียงจากน้อยไปมาก และอยู่ในช่วงที่รับได้ (Amount buckets must be unique, ascending and in range)";
+const PREPOP_MESSAGE = "Prepop base ต้องเป็น URL แบบ https หรือพาธที่ขึ้นต้นด้วย / และไม่มี ? หรือ # (Prepop base must be an https URL or a path starting with /, with no ? or #)";
+
 const make = (over: Record<string, unknown> = {}) => BrandConfig.parse({ ...brandFixture.brand, ...over });
 const arms = (...a: [string, number][]) => ({ experiment_id: "exp-1", variants: a.map(([id, weight]) => ({ id, weight })) });
 const edit = (b: BrandConfig, over: Partial<SettingsDraft>): SettingsDraft => ({ ...draftFromBrand(b), ...over });
@@ -120,7 +123,7 @@ describe("settings draft", () => {
     }
   });
 
-  it("a bucket token that is not plain digits gives the whole-number message; order failures keep the contract message", () => {
+  it("a bucket token that is not plain digits gives the whole-number message; order and range failures give the range message", () => {
     const b = make();
     for (const bad of ["abc", "1000,", "10.5", "", "500, 1e3"]) {
       const r = parseDraft(edit(b, { amount_buckets: bad }));
@@ -129,7 +132,12 @@ describe("settings draft", () => {
     }
     const order = parseDraft(edit(b, { amount_buckets: "1000, 500" }));
     expect(order.ok).toBe(false);
-    if (!order.ok) expect(order.errors.amount_buckets).toBe("Amount buckets must be unique and ascending");
+    if (!order.ok) expect(order.errors.amount_buckets).toBe(BUCKET_RANGE_MESSAGE);
+    for (const bad of ["1000, 1000", "50, 1000", "1000, 9000"]) {
+      const r = parseDraft(edit(b, { amount_buckets: bad }));
+      expect(r.ok, bad).toBe(false);
+      if (!r.ok) expect(r.errors.amount_buckets, bad).toBe(BUCKET_RANGE_MESSAGE);
+    }
   });
 
   it("keyword default goes through cleanKeyword before validation", () => {
@@ -154,9 +162,13 @@ describe("settings draft", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(Object.keys(r.errors).sort()).toEqual(["aid", "amount_buckets", "drain_key", "prepop_base"]);
-      expect(r.errors.aid).toBe("Invalid aid");
-      expect(r.errors.drain_key).toBe("Invalid drain_key");
+      expect(r.errors.aid).toBe("รหัส AID ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 32 ตัว (Invalid aid)");
+      expect(r.errors.drain_key).toBe("Drain key ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Invalid drain key)");
+      expect(r.errors.prepop_base).toBe(PREPOP_MESSAGE);
     }
+    const query = parseDraft(edit(b, { prepop_base: "https://leads.example/form?a=1" }));
+    expect(query.ok).toBe(false);
+    if (!query.ok) expect(query.errors.prepop_base).toBe(PREPOP_MESSAGE);
     for (const bad of ["", "abc", "1000,", "10.5"]) {
       expect(parseDraft(edit(b, { amount_buckets: bad })).ok).toBe(false);
     }

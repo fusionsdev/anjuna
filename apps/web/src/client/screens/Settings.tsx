@@ -1,7 +1,7 @@
 // spec settings: the Owner-only table of every brand's money-routing and A/B settings.
 import type { BrandConfig } from "@anjuna/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api, type Me } from "../api";
+import { ApiError, api } from "../api";
 import { BrandLabel } from "../brand-labels";
 import { useConfirm } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
@@ -32,7 +32,7 @@ const NONE = "—";
 
 const CONFLICT_TEXT = "มีคนแก้ไขแบรนด์นี้หลังจากคุณเปิด โหลดค่าล่าสุดแล้ว ตรวจการแก้ไขแล้วบันทึกอีกครั้ง (Someone changed this brand after you opened it. The latest values are loaded; review your edits and save again.)";
 
-export function SettingsScreen(_props: { me: Me }) {
+export function SettingsScreen() {
   const [rows, setRows] = useState<SettingsRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The brand id whose row drawer is open.
@@ -40,7 +40,7 @@ export function SettingsScreen(_props: { me: Me }) {
   const [draft, setDraft] = useState<SettingsDraft | null>(null);
   const [banner, setBanner] = useState<EditorBanner | null>(null);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [toast, setToast] = useState<{ kind: "ok"; text: string } | null>(null);
   const [confirm, confirmDialog] = useConfirm();
 
   // Only the newest request may write state: Retry or an unmount must not let an older answer land late.
@@ -152,6 +152,7 @@ export function SettingsScreen(_props: { me: Me }) {
     try {
       const res = await api.patchBrand(base.brand_id, { ...patch, expected_updated_at: base.updated_at });
       if (mine !== session.current) {
+        // Defence only: no UI path reaches the still-mounted case, because the drawer is locked during a save.
         // Core holds this brand now, so a screen still mounted shows it in the table; nothing else of the old session is touched.
         if (mounted.current) replaceRow(res.brand);
         return;
