@@ -78,9 +78,9 @@ export function availableForms(arms: ArmDraft[], index: number): (typeof KNOWN_F
   return KNOWN_FORMS.filter((f) => f.id === own || !others.has(f.id));
 }
 
-const WEIGHT_RE = /^\d+$/;
+const DIGITS_RE = /^\d+$/;
+const BUCKET_DIGITS_MESSAGE = "ใส่ตัวเลขจำนวนเต็มคั่นด้วยจุลภาค (Whole numbers separated by commas)";
 const firstMessage = (issues: { message: string }[]) => issues[0]?.message ?? "Invalid";
-const BUCKET_RE = /^\d+$/;
 const bucketTokens = (text: string) => text.split(",").map((s) => s.trim());
 
 export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues } | { ok: false; errors: DraftErrors } {
@@ -93,7 +93,10 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
 
   const aid = check("aid", LeadsGateAid.safeParse(d.aid.trim()));
   const flow_gate_mode = check("flow_gate_mode", FlowGateMode.safeParse(d.flow_gate_mode));
-  const amount_buckets = check("amount_buckets", AmountBuckets.safeParse(bucketTokens(d.amount_buckets).map((t) => (BUCKET_RE.test(t) ? Number(t) : Number.NaN))));
+  const tokens = bucketTokens(d.amount_buckets);
+  let amount_buckets: number[] | undefined;
+  if (tokens.every((t) => DIGITS_RE.test(t))) amount_buckets = check("amount_buckets", AmountBuckets.safeParse(tokens.map(Number)));
+  else errors.amount_buckets = BUCKET_DIGITS_MESSAGE;
   const cleaned = cleanKeyword(d.keyword_default);
   const keyword_default = cleaned === null ? null : check("keyword_default", Keyword.safeParse(cleaned));
   const prepop_base = check("prepop_base", PrepopBase.safeParse(d.prepop_base.trim()));
@@ -109,7 +112,7 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
 
     const arms = d.arms.map((a) => ({ id: a.id.trim(), weight: a.weight.trim() }));
     if (arms.length < 2) errors.arms = "ต้องมีอย่างน้อย 2 แขน (At least 2 arms)";
-    else if (arms.some((a) => !WEIGHT_RE.test(a.weight) || Number(a.weight) > 100)) errors.arms = "น้ำหนักต้องเป็นจำนวนเต็ม 0 ถึง 100 (Weights must be whole numbers from 0 to 100)";
+    else if (arms.some((a) => !DIGITS_RE.test(a.weight) || Number(a.weight) > 100)) errors.arms = "น้ำหนักต้องเป็นจำนวนเต็ม 0 ถึง 100 (Weights must be whole numbers from 0 to 100)";
     else if (new Set(arms.map((a) => a.id)).size !== arms.length) errors.arms = "ห้ามใช้ฟอร์มซ้ำ (Each arm needs its own form)";
     else {
       const sum = arms.reduce((s, a) => s + Number(a.weight), 0);
@@ -143,9 +146,9 @@ function normalise(d: SettingsDraft): string {
   const numeric = (s: string, re: RegExp) => (re.test(s) ? String(Number(s)) : s);
   return JSON.stringify({
     aid: d.aid.trim(),
-    ab: d.ab_on ? { id: d.experiment_id.trim(), arms: d.arms.map((a) => [a.id.trim(), numeric(a.weight.trim(), WEIGHT_RE)]) } : null,
+    ab: d.ab_on ? { id: d.experiment_id.trim(), arms: d.arms.map((a) => [a.id.trim(), numeric(a.weight.trim(), DIGITS_RE)]) } : null,
     flow: d.flow_gate_mode,
-    buckets: bucketTokens(d.amount_buckets).map((t) => (BUCKET_RE.test(t) ? String(Number(t)) : t)),
+    buckets: bucketTokens(d.amount_buckets).map((t) => (DIGITS_RE.test(t) ? String(Number(t)) : t)),
     keyword: cleanKeyword(d.keyword_default) ?? "",
     prepop: d.prepop_base.trim(),
     drain: d.drain_key.trim(),

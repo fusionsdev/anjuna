@@ -8,3 +8,12 @@
 
 .settings-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--badbg); color: var(--bad); }
 .settings-error p { margin: 0; }
+
+/* Row drawer. The drawer, scrim and section classes come from styles.css and Brands.css. */
+.settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.settings-field label { margin-bottom: 0; }
+.settings-switch { flex-direction: row; align-items: center; gap: 8px; }
+.settings-arm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.settings-arm input { width: 5rem; }
+.settings-arm-unknown { flex: 1 1 12rem; overflow-wrap: anywhere; }
+.settings-banner { margin: 0 0 12px; }

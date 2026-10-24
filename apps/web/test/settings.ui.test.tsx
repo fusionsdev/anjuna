@@ -93,6 +93,20 @@ describe("Settings table", () => {
     expect((await rowOf("beta.example.test")).getByRole("button", { name: /แก้ไข \(Edit\)/ })).toBeTruthy();
   });
 
+  it("Edit opens the drawer with the row's values and Close closes it", async () => {
+    render(<SettingsScreen me={owner} />);
+    const a = await rowOf("alpha.example.test");
+    fireEvent.click(a.getByRole("button", { name: /แก้ไข \(Edit\)/ }));
+    const drawer = screen.getByRole("complementary", { name: "แก้ไขตั้งค่า alpha.example.test (Edit settings)" });
+    expect((within(drawer).getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("111");
+    expect((within(drawer).getByLabelText("Experiment id") as HTMLInputElement).value).toBe("exp-alpha");
+    fireEvent.click(within(drawer).getByRole("button", { name: "ปิด (Close)" }));
+    expect(screen.queryByRole("complementary", { name: /Edit settings/ })).toBeNull();
+    fireEvent.click((await rowOf("beta.example.test")).getByRole("button", { name: /แก้ไข \(Edit\)/ }));
+    expect((screen.getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("222");
+    expect(screen.queryByLabelText("Experiment id")).toBeNull();
+  });
+
   it("a failed load shows the error card and Retry reloads", async () => {
     reply = () => json({ error: "bad_gateway" }, 502);
     render(<SettingsScreen me={owner} />);

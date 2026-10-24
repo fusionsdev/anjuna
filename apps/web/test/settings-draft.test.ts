@@ -119,6 +119,18 @@ describe("settings draft", () => {
     }
   });
 
+  it("a bucket token that is not plain digits gives the whole-number message; order failures keep the contract message", () => {
+    const b = make();
+    for (const bad of ["abc", "1000,", "10.5", "", "500, 1e3"]) {
+      const r = parseDraft(edit(b, { amount_buckets: bad }));
+      expect(r.ok, bad).toBe(false);
+      if (!r.ok) expect(r.errors.amount_buckets).toBe("ใส่ตัวเลขจำนวนเต็มคั่นด้วยจุลภาค (Whole numbers separated by commas)");
+    }
+    const order = parseDraft(edit(b, { amount_buckets: "1000, 500" }));
+    expect(order.ok).toBe(false);
+    if (!order.ok) expect(order.errors.amount_buckets).toBe("Amount buckets must be unique and ascending");
+  });
+
   it("keyword default goes through cleanKeyword before validation", () => {
     const b = make({ keyword_default: "Loans" });
     const parsed = (keyword_default: string) => {

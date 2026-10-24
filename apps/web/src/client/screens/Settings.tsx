@@ -7,7 +7,8 @@ import { DataTable, type Column } from "../components/DataTable";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
 import { statusBadgeTone, statusLabel } from "../labels";
-import { SETTINGS_LABELS, formatSetting } from "../settings-draft";
+import { SETTINGS_LABELS, draftFromBrand, formatSetting, type SettingsDraft } from "../settings-draft";
+import { SettingsEditor } from "./SettingsEditor";
 import type { SettingsRow } from "../../shared/settings";
 import "./Settings.css";
 
@@ -20,6 +21,7 @@ export function SettingsScreen(_props: { me: Me }) {
   const [error, setError] = useState<string | null>(null);
   // The brand id whose row drawer is open.
   const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<SettingsDraft | null>(null);
 
   // Only the newest request may write state: Retry or an unmount must not let an older answer land late.
   const latest = useRef(0);
@@ -41,7 +43,11 @@ export function SettingsScreen(_props: { me: Me }) {
   const replaceRow = (brand: BrandConfig) =>
     setRows((current) => current && current.map((row) => (row.brand_id === brand.brand_id ? { brand_id: brand.brand_id, hostname: brand.hostnames[0]!, brand, error: null } : row)));
   void replaceRow;
-  void editing;
+
+  const editBrand = editing ? rows?.find((r) => r.brand_id === editing)?.brand ?? null : null;
+  // The draft starts from the loaded brand each time a row opens; the editor then owns every edit to it.
+  const open = (brand: BrandConfig) => { setDraft(draftFromBrand(brand)); setEditing(brand.brand_id); };
+  const close = () => setEditing(null);
 
   const columns: Column<SettingsRow>[] = [
     { key: "brand", header: "แบรนด์ (Brand)", cell: (r) => <BrandLabel brandId={r.brand_id} domain={r.hostname} /> },
@@ -64,7 +70,7 @@ export function SettingsScreen(_props: { me: Me }) {
       key: "edit",
       header: "การทำงาน (Actions)",
       cell: (r) => r.brand
-        ? <button type="button" className="btn" aria-label={`แก้ไข (Edit) ${r.hostname}`} onClick={() => setEditing(r.brand_id)}>แก้ไข (Edit)</button>
+        ? <button type="button" className="btn" aria-label={`แก้ไข (Edit) ${r.hostname}`} onClick={() => open(r.brand!)}>แก้ไข (Edit)</button>
         : null,
     },
   ];
@@ -91,5 +97,8 @@ export function SettingsScreen(_props: { me: Me }) {
           empty={<p className="hint">ยังไม่มีแบรนด์ (No brands yet)</p>}
         />
       </section>}
+    {editBrand && draft && (
+      <SettingsEditor brand={editBrand} draft={draft} onDraft={setDraft} onReview={() => {}} onClose={close} banner={null} saving={false} />
+    )}
   </div>;
 }
