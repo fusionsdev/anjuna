@@ -67,7 +67,7 @@ describe("Console rail", () => {
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
     expect(within(nav).getAllByRole("link").map((link) => link.querySelector("span")?.textContent)).toEqual([
       "หน้าแรก", "แบรนด์", "ประวัติการติดตั้ง", "สร้างแบรนด์ใหม่", "เทมเพลต", "ฟันเนล", "ลีด (Leads)", "คอนเวอร์ชัน", "การแจ้งเตือน", "รายชื่ออีเมล",
-      "อีเมลที่บล็อก (Suppressions)", "ประวัติการแก้ไข", "ผู้ใช้", "คีย์ Builder",
+      "อีเมลที่บล็อก (Suppressions)", "ประวัติการแก้ไข", "ผู้ใช้", "ตั้งค่า (Settings)", "คีย์ Builder",
     ]);
     expect(within(nav).getByRole("link", { name: "หน้าแรก" }).getAttribute("aria-current")).toBe("page");
     fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
