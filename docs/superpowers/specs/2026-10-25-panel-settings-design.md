@@ -100,7 +100,7 @@ The A/B editor:
 | A/B | D4 | `AbConfig` | switch off = null |
 | Flow gate | select with the two labels | `FlowGateMode` | n/a |
 | Amount buckets | text, comma separated | `AmountBuckets` after parse to integers | invalid |
-| Keyword default | text | `Keyword` | null (template default) |
+| Keyword default | text | `cleanKeyword` first (title case, as the brand Worker serves it), then `Keyword` | null (template default) |
 | Prepop base | text | `PrepopBase` | invalid |
 | Drain key | text | `DrainKey` | invalid |
 
