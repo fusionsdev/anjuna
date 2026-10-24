@@ -193,9 +193,22 @@ describe("SettingsEditor", () => {
     render(<Harness b={brand()} banner={{ kind: "conflict", text: "มีคนแก้ไขแบรนด์นี้" }} />);
     const banner = screen.getByRole("alert");
     expect(banner.textContent).toBe("มีคนแก้ไขแบรนด์นี้");
-    // Red like .settings-error; .note.neg is the amber leak pair.
+    // .note from styles.css wins the cascade over a class rule, so red comes from the inline style.
     expect(banner.className).toContain("settings-banner");
-    expect(banner.className).not.toContain("neg");
+    expect(banner.getAttribute("style")).toContain("background: var(--badbg)");
+    expect(banner.getAttribute("style")).toContain("color: var(--bad)");
+  });
+
+  it("while saving the inputs are disabled and Close, the scrim and Escape do nothing", () => {
+    const onClose = vi.fn();
+    const { container } = render(<Harness b={brand()} onClose={onClose} saving seed={(d) => ({ ...d, drain_key: "dk_changed" })} />);
+    for (const el of screen.getAllByRole("textbox")) expect((el as HTMLInputElement).disabled || el.closest("fieldset")?.disabled).toBeTruthy();
+    expect(screen.getByRole("switch").closest("fieldset")!.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "ปิด (Close)" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "ปิด (Close)" }));
+    fireEvent.click(container.querySelector(".scrim")!);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("Review and save stays disabled while saving", () => {

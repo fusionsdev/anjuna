@@ -17,6 +17,7 @@ import {
   draftFromBrand,
   formatSetting,
   isDirty,
+  rebaseDraft,
   redrawsVisitors,
   touchesMoney,
   type SettingsDraft,
@@ -66,9 +67,11 @@ export function SettingsScreen(_props: { me: Me }) {
   const editBrand = editing ? rows?.find((r) => r.brand_id === editing)?.brand ?? null : null;
   const dirty = editBrand !== null && draft !== null && isDirty(editBrand, draft);
 
-  const close = () => { setEditing(null); setDraft(null); setBanner(null); };
+  // Each open or close starts a new editor session; a save answer applies only to the session that sent it.
+  const session = useRef(0);
+  const close = () => { session.current++; setEditing(null); setDraft(null); setBanner(null); };
   // The draft starts from the loaded brand each time a row opens; the editor then owns every edit to it.
-  const openNow = (brand: BrandConfig) => { setDraft(draftFromBrand(brand)); setBanner(null); setEditing(brand.brand_id); };
+  const openNow = (brand: BrandConfig) => { session.current++; setDraft(draftFromBrand(brand)); setBanner(null); setEditing(brand.brand_id); };
 
   /** Asks once. On discard the guard is cleared and the drawer closed here, because the router navigates on `true` even if the guard cleared itself. */
   const askDiscard = useCallback(async () => {
@@ -78,6 +81,7 @@ export function SettingsScreen(_props: { me: Me }) {
       tone: "danger",
     });
     if (ok) {
+      session.current++;
       setLeaveGuard(null);
       setEditing(null);
       setDraft(null);
@@ -86,8 +90,9 @@ export function SettingsScreen(_props: { me: Me }) {
     return ok;
   }, [confirm]);
 
-  const requestClose = () => { if (dirty) void askDiscard(); else close(); };
+  const requestClose = () => { if (saving) return; if (dirty) void askDiscard(); else close(); };
   const open = (brand: BrandConfig) => {
+    if (saving) return;
     if (!dirty) return openNow(brand);
     void askDiscard().then((ok) => { if (ok) openNow(brand); });
   };
@@ -107,6 +112,7 @@ export function SettingsScreen(_props: { me: Me }) {
   const review = async () => {
     if (!editBrand || !draft || saving) return;
     const base = editBrand;
+    const mine = session.current;
     const patch = buildPatch(base, draft);
     if (!patch) return;
     const domain = base.hostnames[0] ?? base.brand_id;
@@ -130,22 +136,30 @@ export function SettingsScreen(_props: { me: Me }) {
       confirmLabel: "บันทึก (Save)",
       tone: money ? "danger" : "default",
     });
-    if (!ok) return;
+    if (!ok || mine !== session.current) return;
     setSaving(true);
     setBanner(null);
     try {
       const res = await api.patchBrand(base.brand_id, { ...patch, expected_updated_at: base.updated_at });
+      if (mine !== session.current) return;
       replaceRow(res.brand);
       setLeaveGuard(null);
       close();
       setToast({ kind: "ok", text: res.changed.length ? "บันทึกแล้ว (Saved)" : "ไม่มีค่าที่เปลี่ยน (Nothing changed)" });
     } catch (e) {
+      if (mine !== session.current) return;
       if (e instanceof ApiError && e.status === 409 && e.body?.error === "conflict") {
         setBanner({ kind: "conflict", text: CONFLICT_TEXT });
         try {
-          replaceRow(await api.brand(base.brand_id));
+          const fresh = await api.brand(base.brand_id);
+          if (mine !== session.current) return;
+          replaceRow(fresh);
+          // Untouched fields take the reloaded values, so the next save cannot revert the other editor's change.
+          setDraft((d) => d && rebaseDraft(base, fresh, d));
         } catch (reloadError) {
-          setBanner({ kind: "error", text: reloadError instanceof ApiError ? reloadError.thai : "โหลดค่าล่าสุดไม่สำเร็จ (Could not load the latest values.)" });
+          if (mine !== session.current) return;
+          const why = reloadError instanceof ApiError ? reloadError.thai : "โหลดค่าล่าสุดไม่สำเร็จ (Could not load the latest values.)";
+          setBanner({ kind: "conflict", text: `${CONFLICT_TEXT} ${why}` });
         }
       } else {
         setBanner({ kind: "error", text: e instanceof ApiError ? e.thai : "บันทึกไม่สำเร็จ (Could not save.)" });
@@ -189,7 +203,7 @@ export function SettingsScreen(_props: { me: Me }) {
       </div>
     </div>
     {error
-      ? <div className="note neg settings-error" role="alert">
+      ? <div className="note neg settings-error" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">
         <p>{error}</p>
         <button type="button" className="btn" onClick={load}>ลองอีกครั้ง (Retry)</button>
       </div>
@@ -204,7 +218,7 @@ export function SettingsScreen(_props: { me: Me }) {
         />
       </section>}
     {editBrand && draft && (
-      <SettingsEditor brand={editBrand} draft={draft} onDraft={setDraft} onReview={review} onClose={requestClose} banner={banner} saving={saving} />
+      <SettingsEditor brand={editBrand} draft={draft} onDraft={(d) => { if (!saving) setDraft(d); }} onReview={review} onClose={requestClose} banner={banner} saving={saving} />
     )}
     {confirmDialog}
     {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={() => setToast(null)} />}

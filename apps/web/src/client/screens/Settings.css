@@ -6,7 +6,7 @@
 /* Long URLs and keys wrap instead of widening the table. */
 .settings-page .data-table td.mono { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
 
-.settings-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--badbg); color: var(--bad); }
+.settings-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .settings-error p { margin: 0; }
 
 /* Row drawer. The drawer, scrim and section classes come from styles.css and Brands.css. */
@@ -16,7 +16,8 @@
 .settings-arm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .settings-arm input { width: 5rem; }
 .settings-arm-unknown { flex: 1 1 12rem; overflow-wrap: anywhere; }
-.settings-banner { margin: 0 0 12px; background: var(--badbg); color: var(--bad); }
+.settings-banner { margin: 0 0 12px; }
+.settings-lock { border: 0; padding: 0; margin: 0; min-width: 0; }
 
 /* Before/after table inside the review dialog. */
 .settings-diff { width: 100%; border-collapse: collapse; margin-bottom: 8px; }

@@ -28,7 +28,7 @@ const saved = (b: BrandConfig, changed: string[]) => ({ brand: b, changed, audit
 
 type Sent = { method: string; url: string; body: unknown };
 let sent: Sent[];
-let onPatch: (body: Record<string, unknown>) => Response;
+let onPatch: (body: Record<string, unknown>) => Response | Promise<Response>;
 let onGetBrand: () => Response;
 
 beforeEach(() => {
@@ -75,6 +75,16 @@ const dialogOf = async (accept: boolean) => {
   const tone = confirm.className;
   await answerConfirm(accept);
   return { text, tone, dialog };
+};
+
+/** Reads the before/after rows of the open review dialog, then answers it. */
+const reviewRows = async (accept: boolean) => {
+  const dialog = await screen.findByRole("alertdialog");
+  const rows = within(dialog).getAllByRole("row")
+    .filter((r) => within(r).queryAllByRole("cell").length > 0)
+    .map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
+  await answerConfirm(accept);
+  return rows;
 };
 
 describe("Settings review and save", () => {
@@ -210,14 +220,74 @@ describe("Settings review and save", () => {
     expect(within(table()).queryByText("111")).toBeNull();
 
     fireEvent.click(review());
-    const { text } = await dialogOf(true);
-    expect(text).toContain("333");
-    expect(text).toContain("444");
+    expect(await reviewRows(true)).toEqual([
+      ["AID (LeadsGate aid)", "333", "444"],
+      ["Drain key", "dk_alpha", "dk_new"],
+    ]);
     await waitFor(() => expect(patches()).toHaveLength(2));
     expect(patches()[0]!.body).toEqual({ aid: "444", drain_key: "dk_new", expected_updated_at: T1 });
     expect(patches()[1]!.body).toEqual({ aid: "444", drain_key: "dk_new", expected_updated_at: T2 });
     expect(await screen.findByText("บันทึกแล้ว (Saved)")).toBeTruthy();
     expect(drawer()).toBeNull();
+  });
+
+  it("after a 409 a field the owner did not edit takes the reloaded value, so the next save does not revert it", async () => {
+    const latest = patched(alpha, { aid: "333" });
+    onGetBrand = () => json({ brand: latest });
+    onPatch = (body) => (patches().length === 1
+      ? json({ error: "conflict", current_updated_at: T2 }, 409)
+      : json(saved(patched(latest, body, "2026-10-25T09:00:00.000Z"), ["drain_key"])));
+    render(<SettingsScreen me={owner} />);
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_new");
+    fireEvent.click(review());
+    await answerConfirm(true);
+
+    await screen.findByText(CONFLICT);
+    await waitFor(() => expect((screen.getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("333"));
+    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+
+    fireEvent.click(review());
+    expect(await reviewRows(true)).toEqual([["Drain key", "dk_alpha", "dk_new"]]);
+    await waitFor(() => expect(patches()).toHaveLength(2));
+    expect(patches()[1]!.body).toEqual({ drain_key: "dk_new", expected_updated_at: T2 });
+    expect(Object.hasOwn(patches()[1]!.body as object, "aid")).toBe(false);
+  });
+
+  it("after a 409 an untouched A/B test takes the reloaded A/B test", async () => {
+    const latestAb = { experiment_id: "exp-alpha", variants: [{ id: "lite_v1", weight: 20 }, { id: "full_v1", weight: 80 }] };
+    const latest = patched(alpha, { ab_config: latestAb });
+    onGetBrand = () => json({ brand: latest });
+    onPatch = (body) => (patches().length === 1
+      ? json({ error: "conflict", current_updated_at: T2 }, 409)
+      : json(saved(patched(latest, body, "2026-10-25T09:00:00.000Z"), ["drain_key"])));
+    render(<SettingsScreen me={owner} />);
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_new");
+    fireEvent.click(review());
+    await answerConfirm(true);
+
+    await screen.findByText(CONFLICT);
+    await waitFor(() => expect((screen.getByLabelText("น้ำหนักแขน 1 (Arm 1 weight)") as HTMLInputElement).value).toBe("20"));
+    expect((screen.getByLabelText("น้ำหนักแขน 2 (Arm 2 weight)") as HTMLInputElement).value).toBe("80");
+    fireEvent.click(review());
+    expect(await reviewRows(true)).toEqual([["Drain key", "dk_alpha", "dk_new"]]);
+    await waitFor(() => expect(patches()).toHaveLength(2));
+    expect(patches()[1]!.body).toEqual({ drain_key: "dk_new", expected_updated_at: T2 });
+  });
+
+  it("a failed 409 reload keeps the conflict text and appends the ApiError.thai message", async () => {
+    onGetBrand = () => json({ error: "forbidden_role", required_role: "owner" }, 403);
+    onPatch = () => json({ error: "conflict", current_updated_at: T2 }, 409);
+    render(<SettingsScreen me={owner} />);
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_new");
+    fireEvent.click(review());
+    await answerConfirm(true);
+    const banner = await screen.findByRole("alert");
+    await waitFor(() => expect(banner.textContent).toBe(`${CONFLICT} สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)`));
+    expect(drawer()).toBeTruthy();
+    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
   });
 
   it("a 403 shows the ApiError.thai banner and keeps the drawer", async () => {
@@ -233,6 +303,69 @@ describe("Settings review and save", () => {
     expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
     expect(review().disabled).toBe(false);
     expect(sent.some((s) => s.method === "GET" && s.url === "/api/brands/brand-alpha")).toBe(false);
+  });
+});
+
+describe("Settings save in flight", () => {
+  let release: (r: Response) => void;
+  const startSave = async () => {
+    onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
+    render(<SettingsScreen me={owner} />);
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_new");
+    fireEvent.click(review());
+    await answerConfirm(true);
+    await waitFor(() => expect(patches()).toHaveLength(1));
+  };
+
+  it("the drawer is locked until the answer: typing, Close, the scrim, Escape and Edit on another row do nothing", async () => {
+    await startSave();
+    const input = screen.getByLabelText("Drain key") as HTMLInputElement;
+    expect(input.closest("fieldset")!.disabled).toBe(true);
+    type("Drain key", "dk_typed");
+    expect(input.value).toBe("dk_new");
+    fireEvent.click(screen.getByRole("button", { name: "ปิด (Close)" }));
+    fireEvent.click(document.querySelector(".scrim")!);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await openEditor("beta.example.test");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("complementary", { name: "แก้ไขตั้งค่า alpha.example.test (Edit settings)" })).toBeTruthy();
+    expect(input.value).toBe("dk_new");
+    expect(patches()).toHaveLength(1);
+
+    release(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
+    expect(await screen.findByText("บันทึกแล้ว (Saved)")).toBeTruthy();
+    expect(drawer()).toBeNull();
+    expect(within(table()).getByText("dk_new")).toBeTruthy();
+  });
+
+  it("a late 200 after the owner discarded the editor changes nothing", async () => {
+    await startSave();
+    navigate("/brands");
+    await answerConfirm(true);
+    await waitFor(() => expect(drawer()).toBeNull());
+    release(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("บันทึกแล้ว (Saved)")).toBeNull();
+    expect(within(table()).getByText("dk_alpha")).toBeTruthy();
+    expect(drawer()).toBeNull();
+    // The lock is gone: another row opens normally.
+    await openEditor("beta.example.test");
+    expect(await screen.findByRole("complementary", { name: "แก้ไขตั้งค่า beta.example.test (Edit settings)" })).toBeTruthy();
+  });
+
+  it("a late 409 after the owner discarded the editor shows no banner and reloads nothing", async () => {
+    await startSave();
+    navigate("/brands");
+    await answerConfirm(true);
+    await waitFor(() => expect(drawer()).toBeNull());
+    release(json({ error: "conflict", current_updated_at: T2 }, 409));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(sent.some((s) => s.method === "GET" && s.url === "/api/brands/brand-alpha")).toBe(false);
+    await openEditor("beta.example.test");
+    expect(await screen.findByRole("complementary", { name: "แก้ไขตั้งค่า beta.example.test (Edit settings)" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

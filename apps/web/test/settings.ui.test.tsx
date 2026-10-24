@@ -112,6 +112,9 @@ describe("Settings table", () => {
     render(<SettingsScreen me={owner} />);
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("ลองอีกครั้ง (Retry)");
+    // .note from styles.css wins the cascade over a class rule, so red comes from the inline style.
+    expect(alert.getAttribute("style")).toContain("background: var(--badbg)");
+    expect(alert.getAttribute("style")).toContain("color: var(--bad)");
     expect(screen.queryByRole("table")).toBeNull();
     reply = () => json({ rows: [ok(beta)], generated_at: "2026-10-25T00:00:00.000Z" });
     fireEvent.click(within(alert).getByRole("button", { name: "ลองอีกครั้ง (Retry)" }));

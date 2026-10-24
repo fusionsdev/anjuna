@@ -10,6 +10,7 @@ import {
   formLabel,
   isDirty,
   parseDraft,
+  rebaseDraft,
   redrawsVisitors,
   touchesMoney,
   type SettingsDraft,
@@ -222,5 +223,50 @@ describe("settings draft", () => {
     expect(touchesMoney({ amount_buckets: [1000] })).toBe(false);
     expect(touchesMoney({ keyword_default: null })).toBe(false);
     expect(touchesMoney({})).toBe(false);
+  });
+});
+
+describe("rebaseDraft", () => {
+  it("an untouched aid takes the new base value and an edited drain key keeps the draft", () => {
+    const oldBase = make({ aid: "111", drain_key: "dk_alpha" });
+    const newBase = make({ aid: "333", drain_key: "dk_other", updated_at: "2026-10-25T04:05:06.000Z" });
+    const draft = edit(oldBase, { drain_key: "dk_new" });
+    const rebased = rebaseDraft(oldBase, newBase, draft);
+    expect(rebased.aid).toBe("333");
+    expect(rebased.drain_key).toBe("dk_new");
+    expect(buildPatch(newBase, rebased)).toEqual({ drain_key: "dk_new" });
+  });
+
+  it("a field edited only by whitespace counts as untouched", () => {
+    const oldBase = make({ aid: "111", amount_buckets: [1000, 2000] });
+    const newBase = make({ aid: "333", amount_buckets: [1500] });
+    const rebased = rebaseDraft(oldBase, newBase, edit(oldBase, { aid: " 111 ", amount_buckets: "1000 ,2000" }));
+    expect(rebased).toEqual(draftFromBrand(newBase));
+  });
+
+  it("an untouched A/B test takes the new A/B test as one field", () => {
+    const oldBase = make({ ab_config: arms(["lite_v1", 60], ["full_v1", 40]) });
+    const newBase = make({ ab_config: { experiment_id: "exp-2", variants: [{ id: "lite_v1", weight: 20 }, { id: "full_v1", weight: 80 }] } });
+    const rebased = rebaseDraft(oldBase, newBase, edit(oldBase, { aid: "999" }));
+    expect(rebased).toEqual({ ...draftFromBrand(newBase), aid: "999" });
+    const off = rebaseDraft(oldBase, make({ ab_config: null }), edit(oldBase, {}));
+    expect(off.ab_on).toBe(false);
+    expect(off.arms).toEqual([]);
+  });
+
+  it("an edited A/B test keeps the whole draft A/B test, even when one part was untouched", () => {
+    const oldBase = make({ ab_config: arms(["lite_v1", 60], ["full_v1", 40]) });
+    const newBase = make({ ab_config: { experiment_id: "exp-2", variants: [{ id: "lite_v1", weight: 20 }, { id: "full_v1", weight: 80 }] } });
+    const draft = edit(oldBase, { arms: [{ id: "lite_v1", weight: "70" }, { id: "full_v1", weight: "30" }] });
+    const rebased = rebaseDraft(oldBase, newBase, draft);
+    expect(rebased.experiment_id).toBe("exp-1");
+    expect(rebased.arms).toEqual(draft.arms);
+    expect(rebased.ab_on).toBe(true);
+  });
+
+  it("a draft equal to the old base becomes the new base", () => {
+    const oldBase = make({ aid: "111", keyword_default: "A" });
+    const newBase = make({ aid: "333", keyword_default: null, flow_gate_mode: "param", prepop_base: "https://lg.example.test/new" });
+    expect(rebaseDraft(oldBase, newBase, draftFromBrand(oldBase))).toEqual(draftFromBrand(newBase));
   });
 });

@@ -116,6 +116,7 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
     else if (new Set(arms.map((a) => a.id)).size !== arms.length) errors.arms = "ห้ามใช้ฟอร์มซ้ำ (Each arm needs its own form)";
     else {
       const sum = arms.reduce((s, a) => s + Number(a.weight), 0);
+      // SettingsEditor.tsx finds this message by its "รวม N% " prefix so the total is not printed twice; change both together.
       if (sum !== 100) errors.arms = `รวม ${sum}% ต้องเป็น 100% (Weights must sum to 100)`;
     }
 
@@ -142,9 +143,9 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
 }
 
 // Whitespace and number formatting never count as an edit: "1000 ,2000" equals "1000, 2000" and " 123 " equals "123".
-function normalise(d: SettingsDraft): string {
+function normaliseFields(d: SettingsDraft) {
   const numeric = (s: string, re: RegExp) => (re.test(s) ? String(Number(s)) : s);
-  return JSON.stringify({
+  return {
     aid: d.aid.trim(),
     ab: d.ab_on ? { id: d.experiment_id.trim(), arms: d.arms.map((a) => [a.id.trim(), numeric(a.weight.trim(), DIGITS_RE)]) } : null,
     flow: d.flow_gate_mode,
@@ -152,11 +153,35 @@ function normalise(d: SettingsDraft): string {
     keyword: cleanKeyword(d.keyword_default) ?? "",
     prepop: d.prepop_base.trim(),
     drain: d.drain_key.trim(),
-  });
+  };
 }
+
+const normalise = (d: SettingsDraft): string => JSON.stringify(normaliseFields(d));
 
 export function isDirty(brand: BrandConfig, d: SettingsDraft): boolean {
   return normalise(d) !== normalise(draftFromBrand(brand));
+}
+
+/**
+ * After a 409 the base moves from `oldBase` to `newBase`. A field the owner did not touch (equal to the old base, compared as isDirty does)
+ * takes the new base's value, so the next save never reverts the other editor's change. The A/B test is one field.
+ */
+export function rebaseDraft(oldBase: BrandConfig, newBase: BrandConfig, draft: SettingsDraft): SettingsDraft {
+  const draftNorm = normaliseFields(draft);
+  const oldNorm = normaliseFields(draftFromBrand(oldBase));
+  const newDraft = draftFromBrand(newBase);
+  const untouched = (key: keyof typeof draftNorm) => JSON.stringify(draftNorm[key]) === JSON.stringify(oldNorm[key]);
+  return {
+    aid: untouched("aid") ? newDraft.aid : draft.aid,
+    ...(untouched("ab")
+      ? { ab_on: newDraft.ab_on, experiment_id: newDraft.experiment_id, arms: newDraft.arms }
+      : { ab_on: draft.ab_on, experiment_id: draft.experiment_id, arms: draft.arms }),
+    flow_gate_mode: untouched("flow") ? newDraft.flow_gate_mode : draft.flow_gate_mode,
+    amount_buckets: untouched("buckets") ? newDraft.amount_buckets : draft.amount_buckets,
+    keyword_default: untouched("keyword") ? newDraft.keyword_default : draft.keyword_default,
+    prepop_base: untouched("prepop") ? newDraft.prepop_base : draft.prepop_base,
+    drain_key: untouched("drain") ? newDraft.drain_key : draft.drain_key,
+  };
 }
 
 const canon = (field: SettingsField, value: unknown): string =>
