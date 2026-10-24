@@ -8,6 +8,7 @@ import {
   Keyword,
   LeadsGateAid,
   PrepopBase,
+  cleanKeyword,
   type BrandConfig,
   type BrandPatchRequest,
 } from "@anjuna/contracts";
@@ -73,11 +74,13 @@ export function abOnDefaults(): Pick<SettingsDraft, "experiment_id" | "arms"> {
 
 export function availableForms(arms: ArmDraft[], index: number): (typeof KNOWN_FORMS)[number][] {
   const others = new Set(arms.filter((_, i) => i !== index).map((a) => a.id));
-  return KNOWN_FORMS.filter((f) => !others.has(f.id));
+  const own = arms[index]?.id;
+  return KNOWN_FORMS.filter((f) => f.id === own || !others.has(f.id));
 }
 
 const WEIGHT_RE = /^\d+$/;
 const firstMessage = (issues: { message: string }[]) => issues[0]?.message ?? "Invalid";
+const BUCKET_RE = /^\d+$/;
 const bucketTokens = (text: string) => text.split(",").map((s) => s.trim());
 
 export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues } | { ok: false; errors: DraftErrors } {
@@ -90,9 +93,9 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
 
   const aid = check("aid", LeadsGateAid.safeParse(d.aid.trim()));
   const flow_gate_mode = check("flow_gate_mode", FlowGateMode.safeParse(d.flow_gate_mode));
-  const amount_buckets = check("amount_buckets", AmountBuckets.safeParse(bucketTokens(d.amount_buckets).map(Number)));
-  const keywordText = d.keyword_default.trim();
-  const keyword_default = keywordText === "" ? null : check("keyword_default", Keyword.safeParse(keywordText));
+  const amount_buckets = check("amount_buckets", AmountBuckets.safeParse(bucketTokens(d.amount_buckets).map((t) => (BUCKET_RE.test(t) ? Number(t) : Number.NaN))));
+  const cleaned = cleanKeyword(d.keyword_default);
+  const keyword_default = cleaned === null ? null : check("keyword_default", Keyword.safeParse(cleaned));
   const prepop_base = check("prepop_base", PrepopBase.safeParse(d.prepop_base.trim()));
   const drain_key = check("drain_key", DrainKey.safeParse(d.drain_key.trim()));
 
@@ -102,7 +105,7 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
     const experiment_id = d.experiment_id.trim();
     const id = ExperimentId.safeParse(experiment_id);
     if (experiment_id === "") errors.experiment_id = "ต้องใส่ Experiment id (Required)";
-    else if (!id.success) errors.experiment_id = firstMessage(id.error.issues);
+    else if (!id.success) errors.experiment_id = "รหัส experiment ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Letters, digits, _ and -, up to 64)";
 
     const arms = d.arms.map((a) => ({ id: a.id.trim(), weight: a.weight.trim() }));
     if (arms.length < 2) errors.arms = "ต้องมีอย่างน้อย 2 แขน (At least 2 arms)";
@@ -142,8 +145,8 @@ function normalise(d: SettingsDraft): string {
     aid: d.aid.trim(),
     ab: d.ab_on ? { id: d.experiment_id.trim(), arms: d.arms.map((a) => [a.id.trim(), numeric(a.weight.trim(), WEIGHT_RE)]) } : null,
     flow: d.flow_gate_mode,
-    buckets: bucketTokens(d.amount_buckets).map((t) => (t !== "" && Number.isFinite(Number(t)) ? String(Number(t)) : t)),
-    keyword: d.keyword_default.trim(),
+    buckets: bucketTokens(d.amount_buckets).map((t) => (BUCKET_RE.test(t) ? String(Number(t)) : t)),
+    keyword: cleanKeyword(d.keyword_default) ?? "",
     prepop: d.prepop_base.trim(),
     drain: d.drain_key.trim(),
   });

@@ -83,7 +83,7 @@ describe("settings draft", () => {
     const d = edit(b, { arms: [{ id: "lite_v1", weight: "50" }, { id: "lite_v1", weight: "50" }] });
     const r = parseDraft(d);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors.arms).toBeTruthy();
+    if (!r.ok) expect(r.errors.arms).toBe("ห้ามใช้ฟอร์มซ้ำ (Each arm needs its own form)");
     expect(buildPatch(b, edit(b, { arms: [{ id: "lite_v1", weight: "100" }] }))).toBeNull();
   });
 
@@ -91,7 +91,7 @@ describe("settings draft", () => {
     const b = make({ ab_config: arms(["lite_v1", 50], ["full_v1", 50]) });
     const r = parseDraft(edit(b, { arms: [{ id: "lite_v1", weight: "33.5" }, { id: "full_v1", weight: "66.5" }] }));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors.arms).toBeTruthy();
+    if (!r.ok) expect(r.errors.arms).toBe("น้ำหนักต้องเป็นจำนวนเต็ม 0 ถึง 100 (Weights must be whole numbers from 0 to 100)");
     const neg = parseDraft(edit(b, { arms: [{ id: "lite_v1", weight: "-10" }, { id: "full_v1", weight: "110" }] }));
     expect(neg.ok).toBe(false);
   });
@@ -100,7 +100,39 @@ describe("settings draft", () => {
     const b = make({ ab_config: null });
     const r = parseDraft(edit(b, { ab_on: true, ...abOnDefaults() }));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors.experiment_id).toBeTruthy();
+    if (!r.ok) expect(r.errors.experiment_id).toBe("ต้องใส่ Experiment id (Required)");
+  });
+
+  it("an experiment id with a bad character gets the Thai-first pattern message", () => {
+    const b = make({ ab_config: null });
+    const r = parseDraft(edit(b, { ab_on: true, ...abOnDefaults(), experiment_id: "exp 1!" }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.experiment_id).toBe("รหัส experiment ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Letters, digits, _ and -, up to 64)");
+  });
+
+  it("bucket tokens that are not plain digits fail", () => {
+    const b = make();
+    for (const bad of ["0x1F4, 1000", "1e3, 2000", "-5, 1000", "500, 1e3"]) {
+      const r = parseDraft(edit(b, { amount_buckets: bad }));
+      expect(r.ok, bad).toBe(false);
+      if (!r.ok) expect(Object.keys(r.errors)).toEqual(["amount_buckets"]);
+    }
+  });
+
+  it("keyword default goes through cleanKeyword before validation", () => {
+    const b = make({ keyword_default: "Loans" });
+    const parsed = (keyword_default: string) => {
+      const r = parseDraft(edit(b, { keyword_default }));
+      return r.ok ? r.values.keyword_default : "invalid";
+    };
+    expect(parsed("loans")).toBe("Loans");
+    expect(parsed("  personal   loans ")).toBe("Personal Loans");
+    expect(parsed("!!! ###")).toBeNull();
+    expect(isDirty(b, edit(b, { keyword_default: "loans" }))).toBe(false);
+    expect(buildPatch(b, edit(b, { keyword_default: "loans" }))).toEqual({});
+    expect(isDirty(b, edit(b, { keyword_default: "personal loans" }))).toBe(true);
+    expect(buildPatch(b, edit(b, { keyword_default: "personal loans" }))).toEqual({ keyword_default: "Personal Loans" });
+    expect(buildPatch(b, edit(b, { keyword_default: "!!!" }))).toEqual({ keyword_default: null });
   });
 
   it("invalid aid, prepop base, drain key and buckets each give their own error key", () => {
@@ -135,6 +167,8 @@ describe("settings draft", () => {
     const a = [{ id: "lite_v1", weight: "50" }, { id: "full_v1", weight: "50" }];
     expect(availableForms(a, 0).map((f) => f.id)).toEqual(["lite_v1"]);
     expect(availableForms(a, 1).map((f) => f.id)).toEqual(["full_v1"]);
+    const dup = [{ id: "lite_v1", weight: "50" }, { id: "lite_v1", weight: "50" }];
+    expect(availableForms(dup, 0).map((f) => f.id)).toContain("lite_v1");
     expect(availableForms([{ id: "promo_v2", weight: "50" }, { id: "x", weight: "50" }], 0).map((f) => f.id)).toEqual(["lite_v1", "full_v1"]);
     expect(availableForms([{ id: "promo_v2", weight: "50" }, { id: "lite_v1", weight: "50" }], 0).map((f) => f.id)).toEqual(["full_v1"]);
   });
