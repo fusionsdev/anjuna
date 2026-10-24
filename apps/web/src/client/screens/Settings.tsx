@@ -69,25 +69,34 @@ export function SettingsScreen(_props: { me: Me }) {
 
   // Each open or close starts a new editor session; a save answer applies only to the session that sent it.
   const session = useRef(0);
+  const savingNow = useRef(false);
+  const mounted = useRef(false);
+  // Unmounting ends the session, so an answer that arrives after it touches neither this screen's state nor the router guard.
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; session.current++; };
+  }, []);
   const close = () => { session.current++; setEditing(null); setDraft(null); setBanner(null); };
   // The draft starts from the loaded brand each time a row opens; the editor then owns every edit to it.
   const openNow = (brand: BrandConfig) => { session.current++; setDraft(draftFromBrand(brand)); setBanner(null); setEditing(brand.brand_id); };
 
   /** Asks once. On discard the guard is cleared and the drawer closed here, because the router navigates on `true` even if the guard cleared itself. */
   const askDiscard = useCallback(async () => {
+    // The drawer is locked while a save is in flight, so the page stays: a discard now would hide a save that core still applies.
+    if (savingNow.current) return false;
     const ok = await confirm({
       title: "ทิ้งการแก้ไขที่ยังไม่บันทึก? (Discard unsaved changes?)",
       confirmLabel: "ทิ้งการแก้ไข (Discard)",
       tone: "danger",
     });
-    if (ok) {
+    if (ok && !savingNow.current) {
       session.current++;
       setLeaveGuard(null);
       setEditing(null);
       setDraft(null);
       setBanner(null);
     }
-    return ok;
+    return ok && !savingNow.current;
   }, [confirm]);
 
   const requestClose = () => { if (saving) return; if (dirty) void askDiscard(); else close(); };
@@ -137,11 +146,16 @@ export function SettingsScreen(_props: { me: Me }) {
       tone: money ? "danger" : "default",
     });
     if (!ok || mine !== session.current) return;
+    savingNow.current = true;
     setSaving(true);
     setBanner(null);
     try {
       const res = await api.patchBrand(base.brand_id, { ...patch, expected_updated_at: base.updated_at });
-      if (mine !== session.current) return;
+      if (mine !== session.current) {
+        // Core holds this brand now, so a screen still mounted shows it in the table; nothing else of the old session is touched.
+        if (mounted.current) replaceRow(res.brand);
+        return;
+      }
       replaceRow(res.brand);
       setLeaveGuard(null);
       close();
@@ -165,7 +179,8 @@ export function SettingsScreen(_props: { me: Me }) {
         setBanner({ kind: "error", text: e instanceof ApiError ? e.thai : "บันทึกไม่สำเร็จ (Could not save.)" });
       }
     } finally {
-      setSaving(false);
+      savingNow.current = false;
+      if (mounted.current) setSaving(false);
     }
   };
 

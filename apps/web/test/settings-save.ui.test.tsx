@@ -339,28 +339,94 @@ describe("Settings save in flight", () => {
     expect(within(table()).getByText("dk_new")).toBeTruthy();
   });
 
-  it("a late 200 after the owner discarded the editor changes nothing", async () => {
+    it("navigate() while a save is in flight stays on /settings and offers no Discard", async () => {
     await startSave();
     navigate("/brands");
-    await answerConfirm(true);
-    await waitFor(() => expect(drawer()).toBeNull());
+    await Promise.resolve();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(window.location.pathname).toBe("/settings");
+    expect(drawer()).toBeTruthy();
+
     release(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
-    await new Promise((r) => setTimeout(r, 20));
+    expect(await screen.findByText("บันทึกแล้ว (Saved)")).toBeTruthy();
+    expect(window.location.pathname).toBe("/settings");
+  });
+
+  /** Releases the deferred PATCH answer and waits until the screen's code has read it and run its follow-up steps. */
+  const answer = async (response: Response) => {
+    let read!: () => void;
+    const handled = new Promise<void>((resolve) => { read = resolve; });
+    const readBody = response.json.bind(response);
+    response.json = async () => { const data = await readBody(); read(); return data; };
+    release(response);
+    await handled;
+    // Everything after the body read is microtasks, so one macrotask turn is enough.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  it("unmounting ends the session: a late 200 does not clear the guard of a screen mounted afterwards", async () => {
+    const first = render(<SettingsScreen me={owner} />);
+    onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_new");
+    fireEvent.click(review());
+    await answerConfirm(true);
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    first.unmount();
+
+    render(<SettingsScreen me={owner} />);
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_other");
+    const beforeUnload = () => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(beforeUnload()).toBe(true);
+
+    await answer(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
+    expect(beforeUnload()).toBe(true);
+    expect(screen.queryByText("บันทึกแล้ว (Saved)")).toBeNull();
+    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_other");
+    navigate("/brands");
+    expect(within(await screen.findByRole("alertdialog")).getByRole("heading").textContent).toBe(DISCARD_TITLE);
+    expect(window.location.pathname).toBe("/settings");
+    await answerConfirm(false);
+  });
+
+  it("a late 200 after unmount shows no toast and leaves the next screen's row alone", async () => {
+    const first = render(<SettingsScreen me={owner} />);
+    onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_new");
+    fireEvent.click(review());
+    await answerConfirm(true);
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    first.unmount();
+
+    render(<SettingsScreen me={owner} />);
+    await screen.findByRole("table", { name: "ตั้งค่าแบรนด์ (Brand settings)" });
+    await answer(json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"])));
     expect(screen.queryByText("บันทึกแล้ว (Saved)")).toBeNull();
     expect(within(table()).getByText("dk_alpha")).toBeTruthy();
     expect(drawer()).toBeNull();
-    // The lock is gone: another row opens normally.
     await openEditor("beta.example.test");
     expect(await screen.findByRole("complementary", { name: "แก้ไขตั้งค่า beta.example.test (Edit settings)" })).toBeTruthy();
   });
 
-  it("a late 409 after the owner discarded the editor shows no banner and reloads nothing", async () => {
-    await startSave();
-    navigate("/brands");
+  it("a late 409 after unmount shows no banner and reloads nothing", async () => {
+    const first = render(<SettingsScreen me={owner} />);
+    onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
+    await openEditor("alpha.example.test");
+    type("Drain key", "dk_new");
+    fireEvent.click(review());
     await answerConfirm(true);
-    await waitFor(() => expect(drawer()).toBeNull());
-    release(json({ error: "conflict", current_updated_at: T2 }, 409));
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    first.unmount();
+
+    render(<SettingsScreen me={owner} />);
+    await screen.findByRole("table", { name: "ตั้งค่าแบรนด์ (Brand settings)" });
+    await answer(json({ error: "conflict", current_updated_at: T2 }, 409));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(sent.some((s) => s.method === "GET" && s.url === "/api/brands/brand-alpha")).toBe(false);
     await openEditor("beta.example.test");
