@@ -104,7 +104,7 @@ The A/B editor:
 | Prepop base | text | `PrepopBase` | invalid |
 | Drain key | text | `DrainKey` | invalid |
 
-Each invalid field shows its message under the input and sets `aria-invalid`. Text values are trimmed before validation and comparison.
+Each invalid field shows its message under the input and sets `aria-invalid`. When the cleaned keyword differs from what was typed, a hint under the input says `จะบันทึกเป็น "<cleaned>" (Saved as "<cleaned>")`. A bucket token that is not plain digits gives `ใส่ตัวเลขจำนวนเต็มคั่นด้วยจุลภาค (Whole numbers separated by commas)`. Text values are trimmed before validation and comparison.
 
 "ตรวจและบันทึก (Review and save)" is disabled while any field is invalid or nothing differs from the loaded brand.
 
