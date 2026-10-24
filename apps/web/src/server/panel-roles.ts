@@ -44,6 +44,8 @@ export const PANEL_ROLE_TABLE = {
   /** Builder keys for the template MCP: list and create are employee and owner; revoke is owner only. */
   viewBuilderKeys: "employee",
   manageBuilderKeys: "owner",
+  /** The Settings page: every brand's money routing and A/B config in one table, Owner only. */
+  viewSettings: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 

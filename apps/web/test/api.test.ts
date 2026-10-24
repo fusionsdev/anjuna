@@ -297,6 +297,7 @@ describe("role table coverage", () => {
       approveTemplate: "owner",
       viewBuilderKeys: "employee",
       manageBuilderKeys: "owner",
+      viewSettings: "owner",
     });
   });
 });
