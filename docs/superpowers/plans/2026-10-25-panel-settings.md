@@ -147,9 +147,9 @@ Fill the last three bodies with a fake `getBrand` returning `{ status: 200, body
 
 **Interfaces:**
 - Produces:
-  - `export function setLeaveGuard(guard: (() => Promise<boolean>) | null): void` in `router.ts`. Setting a guard records the current `pathname + search` as the guarded path.
+  - `export function setLeaveGuard(guard: (() => Promise<boolean>) | null): void` in `router.ts`. Setting a guard records the current `pathname + search + hash` as the guarded location (fix round 1: a hash-only Back such as `/settings#templates` changes the screen).
   - `navigate(path, options)` keeps its signature and stays `void`. With a guard set and `path` ≠ current `pathname + search`, it awaits the guard and runs the existing navigation only on `true`. Without a guard, behaviour is unchanged and synchronous.
-  - In `useRoute`, a `popstate` while a guard is set: read the target `pathname + search + hash`, `history.pushState(null, "", guardedPath)`, keep the route, await the guard, and on `true` run the unguarded navigation to the target (no second question).
+  - In `useRoute`, a `popstate` or `hashchange` to a location other than the guarded one, while a guard is set: read the target `pathname + search + hash`, `history.pushState(null, "", guardedPath)`, keep the route, await the guard, and on `true` run the unguarded navigation to the target (no second question).
   - `parseRoute("/settings")` → `{ view: "settings" }`; `viewPath("settings")` → `"/settings"`.
 
 - [ ] **Step 1: Write the failing tests** in `apps/web/test/router-guard.ui.test.tsx` (render a tiny component that shows `useRoute().view`):
