@@ -78,13 +78,77 @@ describe("leave guard", () => {
 
   it("Back with a guard set restores /settings, asks once, and on true lands on the previous page", async () => {
     openSettings();
-    const guard = vi.fn().mockResolvedValue(true);
+    let answer: (ok: boolean) => void = () => {};
+    const guard = vi.fn(() => new Promise<boolean>((resolve) => { answer = resolve; }));
     setLeaveGuard(guard);
     await back();
-    await flush();
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe("/settings");
+    expect(view()).toBe("settings");
+    await act(async () => answer(true));
     expect(guard).toHaveBeenCalledTimes(1);
     expect(window.location.pathname).toBe("/brands");
     expect(view()).toBe("brands");
+  });
+
+  it("Forward with a guard set asks once and on true lands on the next page", async () => {
+    openSettings();
+    await back();
+    expect(window.location.pathname).toBe("/brands");
+    const guard = vi.fn().mockResolvedValue(true);
+    setLeaveGuard(guard);
+    await act(async () => {
+      window.history.forward();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    await flush();
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe("/settings");
+    expect(view()).toBe("settings");
+  });
+
+  it("a guard that clears itself and answers true still navigates", async () => {
+    openSettings();
+    setLeaveGuard(async () => { setLeaveGuard(null); return true; });
+    act(() => navigate("/brands"));
+    await flush();
+    expect(window.location.pathname).toBe("/brands");
+    expect(view()).toBe("brands");
+  });
+
+  it("Back with a guard that clears itself and answers true still lands on the previous page", async () => {
+    openSettings();
+    setLeaveGuard(async () => { setLeaveGuard(null); return true; });
+    await back();
+    await flush();
+    expect(window.location.pathname).toBe("/brands");
+    expect(view()).toBe("brands");
+  });
+
+  it("a hash-only change to another screen asks the guard and false keeps /settings", async () => {
+    openSettings();
+    const guard = vi.fn().mockResolvedValue(false);
+    setLeaveGuard(guard);
+    await act(async () => {
+      window.history.pushState(null, "", "/settings#templates");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await flush();
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe("/settings");
+    expect(window.location.hash).toBe("");
+    expect(view()).toBe("settings");
+  });
+
+  it("a hash-only change answered true opens the templates screen", async () => {
+    openSettings();
+    setLeaveGuard(vi.fn().mockResolvedValue(true));
+    await act(async () => {
+      window.history.pushState(null, "", "/settings#templates");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await flush();
+    expect(view()).toBe("templates");
   });
 
   it("Back with a guard answering false stays on /settings", async () => {

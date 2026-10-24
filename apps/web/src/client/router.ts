@@ -103,22 +103,24 @@ function go(path: string, options: { replace?: boolean }): void {
   window.dispatchEvent(new Event(ROUTE_EVENT));
 }
 
-// spec settings: a screen with unsaved edits registers one guard; the path it guards is the page open when it was set.
+// spec settings: a screen with unsaved edits registers one guard; the location it guards is the page open when it was set.
 let leaveGuard: (() => Promise<boolean>) | null = null;
-let guardedPath = "";
+let guardedLocation = "";
+
+const fullLocation = () => window.location.pathname + window.location.search + window.location.hash;
 
 /** A screen with unsaved edits registers one; null clears it. Resolves true when leaving is fine. */
 export function setLeaveGuard(guard: (() => Promise<boolean>) | null): void {
   leaveGuard = guard;
-  guardedPath = guard ? window.location.pathname + window.location.search : "";
+  guardedLocation = guard ? fullLocation() : "";
 }
 
-/** Asks the guard once; runs `leave` only if it answers true and is still the registered guard. */
+/** Asks the guard once; runs `leave` when it answers true, even if the guard cleared itself first (a discard does). */
 function askToLeave(leave: () => void): void {
   const guard = leaveGuard;
   if (!guard) return;
   void guard().then((ok) => {
-    if (ok && leaveGuard === guard) leave();
+    if (ok) leave();
   });
 }
 
@@ -143,21 +145,20 @@ export function useRoute(): Route {
       setRoute(current());
     };
     const onPop = () => {
-      const target = window.location.pathname + window.location.search;
-      if (!leaveGuard || target === guardedPath) return update();
+      const destination = fullLocation();
+      if (!leaveGuard || destination === guardedLocation) return update();
       // Put the guarded page back so the draft stays on screen while the owner decides.
-      const destination = target + window.location.hash;
-      window.history.pushState(null, "", guardedPath);
+      window.history.pushState(null, "", guardedLocation);
       askToLeave(() => go(destination, {}));
     };
     window.addEventListener("popstate", onPop);
-    window.addEventListener("hashchange", update);
+    window.addEventListener("hashchange", onPop);
     window.addEventListener(ROUTE_EVENT, update);
     // A navigate() from a child effect on mount ran before these listeners existed.
     update();
     return () => {
       window.removeEventListener("popstate", onPop);
-      window.removeEventListener("hashchange", update);
+      window.removeEventListener("hashchange", onPop);
       window.removeEventListener(ROUTE_EVENT, update);
     };
   }, []);
