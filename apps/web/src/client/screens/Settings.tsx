@@ -3,12 +3,25 @@ import type { BrandConfig } from "@anjuna/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel } from "../brand-labels";
+import { useConfirm } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
+import { Toast } from "../components/Toast";
 import { statusBadgeTone, statusLabel } from "../labels";
-import { SETTINGS_LABELS, draftFromBrand, formatSetting, type SettingsDraft } from "../settings-draft";
-import { SettingsEditor } from "./SettingsEditor";
+import { setLeaveGuard } from "../router";
+import {
+  SETTINGS_LABELS,
+  buildPatch,
+  diffRows,
+  draftFromBrand,
+  formatSetting,
+  isDirty,
+  redrawsVisitors,
+  touchesMoney,
+  type SettingsDraft,
+} from "../settings-draft";
+import { SettingsEditor, type EditorBanner } from "./SettingsEditor";
 import type { SettingsRow } from "../../shared/settings";
 import "./Settings.css";
 
@@ -16,12 +29,18 @@ const fmtTime = (iso: string) => new Date(iso).toLocaleString("th-TH", { hour12:
 
 const NONE = "—";
 
+const CONFLICT_TEXT = "มีคนแก้ไขแบรนด์นี้หลังจากคุณเปิด โหลดค่าล่าสุดแล้ว ตรวจการแก้ไขแล้วบันทึกอีกครั้ง (Someone changed this brand after you opened it. The latest values are loaded; review your edits and save again.)";
+
 export function SettingsScreen(_props: { me: Me }) {
   const [rows, setRows] = useState<SettingsRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The brand id whose row drawer is open.
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<SettingsDraft | null>(null);
+  const [banner, setBanner] = useState<EditorBanner | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
   // Only the newest request may write state: Retry or an unmount must not let an older answer land late.
   const latest = useRef(0);
@@ -42,12 +61,99 @@ export function SettingsScreen(_props: { me: Me }) {
   /** Swaps one row for a freshly saved or reloaded brand; every other row stays as it is. */
   const replaceRow = (brand: BrandConfig) =>
     setRows((current) => current && current.map((row) => (row.brand_id === brand.brand_id ? { brand_id: brand.brand_id, hostname: brand.hostnames[0]!, brand, error: null } : row)));
-  void replaceRow;
 
+  // The base is the row's brand, so a 409 reload that replaces the row also moves the base without touching the draft.
   const editBrand = editing ? rows?.find((r) => r.brand_id === editing)?.brand ?? null : null;
+  const dirty = editBrand !== null && draft !== null && isDirty(editBrand, draft);
+
+  const close = () => { setEditing(null); setDraft(null); setBanner(null); };
   // The draft starts from the loaded brand each time a row opens; the editor then owns every edit to it.
-  const open = (brand: BrandConfig) => { setDraft(draftFromBrand(brand)); setEditing(brand.brand_id); };
-  const close = () => setEditing(null);
+  const openNow = (brand: BrandConfig) => { setDraft(draftFromBrand(brand)); setBanner(null); setEditing(brand.brand_id); };
+
+  /** Asks once. On discard the guard is cleared and the drawer closed here, because the router navigates on `true` even if the guard cleared itself. */
+  const askDiscard = useCallback(async () => {
+    const ok = await confirm({
+      title: "ทิ้งการแก้ไขที่ยังไม่บันทึก? (Discard unsaved changes?)",
+      confirmLabel: "ทิ้งการแก้ไข (Discard)",
+      tone: "danger",
+    });
+    if (ok) {
+      setLeaveGuard(null);
+      setEditing(null);
+      setDraft(null);
+      setBanner(null);
+    }
+    return ok;
+  }, [confirm]);
+
+  const requestClose = () => { if (dirty) void askDiscard(); else close(); };
+  const open = (brand: BrandConfig) => {
+    if (!dirty) return openNow(brand);
+    void askDiscard().then((ok) => { if (ok) openNow(brand); });
+  };
+
+  // Registered only while dirty; the cleanup also covers save, discard and unmount.
+  useEffect(() => {
+    if (!dirty) return;
+    setLeaveGuard(askDiscard);
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      setLeaveGuard(null);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [dirty, askDiscard]);
+
+  const review = async () => {
+    if (!editBrand || !draft || saving) return;
+    const base = editBrand;
+    const patch = buildPatch(base, draft);
+    if (!patch) return;
+    const domain = base.hostnames[0] ?? base.brand_id;
+    const money = touchesMoney(patch);
+    const ok = await confirm({
+      title: `บันทึกการเปลี่ยนแปลงของ ${domain}? (Save changes?)`,
+      body: (
+        <>
+          <table className="settings-diff">
+            <thead>
+              <tr><th>ค่า (Setting)</th><th>ก่อน (Before)</th><th>หลัง (After)</th></tr>
+            </thead>
+            <tbody>
+              {diffRows(base, patch).map((r) => <tr key={r.field}><td>{r.label}</td><td>{r.before}</td><td>{r.after}</td></tr>)}
+            </tbody>
+          </table>
+          {redrawsVisitors(base, patch) && <p>ผู้เข้าชมเดิมจะถูกสุ่มแขนใหม่ (Returning visitors are drawn again)</p>}
+          {money && <p>ค่านี้เปลี่ยนเส้นทางเงินของแบรนด์ทันที (This changes the brand's money routing at once)</p>}
+        </>
+      ),
+      confirmLabel: "บันทึก (Save)",
+      tone: money ? "danger" : "default",
+    });
+    if (!ok) return;
+    setSaving(true);
+    setBanner(null);
+    try {
+      const res = await api.patchBrand(base.brand_id, { ...patch, expected_updated_at: base.updated_at });
+      replaceRow(res.brand);
+      setLeaveGuard(null);
+      close();
+      setToast({ kind: "ok", text: res.changed.length ? "บันทึกแล้ว (Saved)" : "ไม่มีค่าที่เปลี่ยน (Nothing changed)" });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.body?.error === "conflict") {
+        setBanner({ kind: "conflict", text: CONFLICT_TEXT });
+        try {
+          replaceRow(await api.brand(base.brand_id));
+        } catch (reloadError) {
+          setBanner({ kind: "error", text: reloadError instanceof ApiError ? reloadError.thai : "โหลดค่าล่าสุดไม่สำเร็จ (Could not load the latest values.)" });
+        }
+      } else {
+        setBanner({ kind: "error", text: e instanceof ApiError ? e.thai : "บันทึกไม่สำเร็จ (Could not save.)" });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const columns: Column<SettingsRow>[] = [
     { key: "brand", header: "แบรนด์ (Brand)", cell: (r) => <BrandLabel brandId={r.brand_id} domain={r.hostname} /> },
@@ -98,7 +204,9 @@ export function SettingsScreen(_props: { me: Me }) {
         />
       </section>}
     {editBrand && draft && (
-      <SettingsEditor brand={editBrand} draft={draft} onDraft={setDraft} onReview={() => {}} onClose={close} banner={null} saving={false} />
+      <SettingsEditor brand={editBrand} draft={draft} onDraft={setDraft} onReview={review} onClose={requestClose} banner={banner} saving={saving} />
     )}
+    {confirmDialog}
+    {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={() => setToast(null)} />}
   </div>;
 }

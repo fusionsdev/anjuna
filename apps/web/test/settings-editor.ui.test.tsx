@@ -115,10 +115,37 @@ describe("SettingsEditor", () => {
     type("น้ำหนักแขน 2 (Arm 2 weight)", "30");
     const total = screen.getByText("รวม 90%");
     expect(total.className).toContain("error");
+    // The sum message is the total line itself, not a second line.
+    expect(screen.queryByText(/ต้องเป็น 100%/)).toBeNull();
+    for (const n of [1, 2]) {
+      const weight = screen.getByLabelText(`น้ำหนักแขน ${n} (Arm ${n} weight)`);
+      expect(weight.getAttribute("aria-invalid")).toBe("true");
+      expect(document.getElementById(weight.getAttribute("aria-describedby")!)).toBe(total);
+    }
     expect(review().disabled).toBe(true);
     type("น้ำหนักแขน 2 (Arm 2 weight)", "40");
     expect(screen.getByText("รวม 100%").className).not.toContain("error");
+    for (const n of [1, 2]) {
+      const weight = screen.getByLabelText(`น้ำหนักแขน ${n} (Arm ${n} weight)`);
+      expect(weight.getAttribute("aria-invalid")).toBeNull();
+      expect(weight.getAttribute("aria-describedby")).toBeNull();
+    }
     expect(review().disabled).toBe(false);
+  });
+
+  it("other arm errors still show their own message and mark the weights", () => {
+    render(<Harness b={brand({ ab_config: arms(["lite_v1", 50], ["full_v1", 50]) })} />);
+    type("น้ำหนักแขน 1 (Arm 1 weight)", "33.5");
+    const message = screen.getByText("น้ำหนักต้องเป็นจำนวนเต็ม 0 ถึง 100 (Weights must be whole numbers from 0 to 100)");
+    const weight = screen.getByLabelText("น้ำหนักแขน 2 (Arm 2 weight)");
+    expect(weight.getAttribute("aria-invalid")).toBe("true");
+    expect(document.getElementById(weight.getAttribute("aria-describedby")!)).toBe(message);
+    expect(review().disabled).toBe(true);
+  });
+
+  it("the keyword placeholder carries the English gloss", () => {
+    render(<Harness b={brand()} />);
+    expect(screen.getByLabelText("คีย์เวิร์ด (Keyword default)").getAttribute("placeholder")).toBe("ว่าง = ใช้ข้อความเริ่มต้นของ template (Empty = template default)");
   });
 
   it("Remove is hidden at two arms", () => {
@@ -164,7 +191,11 @@ describe("SettingsEditor", () => {
 
   it("the banner renders with role alert", () => {
     render(<Harness b={brand()} banner={{ kind: "conflict", text: "มีคนแก้ไขแบรนด์นี้" }} />);
-    expect(screen.getByRole("alert").textContent).toBe("มีคนแก้ไขแบรนด์นี้");
+    const banner = screen.getByRole("alert");
+    expect(banner.textContent).toBe("มีคนแก้ไขแบรนด์นี้");
+    // Red like .settings-error; .note.neg is the amber leak pair.
+    expect(banner.className).toContain("settings-banner");
+    expect(banner.className).not.toContain("neg");
   });
 
   it("Review and save stays disabled while saving", () => {

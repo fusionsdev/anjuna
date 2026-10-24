@@ -68,6 +68,10 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
   const cleanedKeyword = cleanKeyword(draft.keyword_default);
   const keywordHint = cleanedKeyword !== null && cleanedKeyword !== typedKeyword ? `จะบันทึกเป็น "${cleanedKeyword}" (Saved as "${cleanedKeyword}")` : undefined;
   const total = armTotal(draft.arms);
+  // The sum message restates the total line, so it is not printed twice; the weights point at whichever line carries it.
+  const sumIsTheError = errors.arms?.startsWith(`รวม ${total}% `) ?? false;
+  const armsNoteId = sumIsTheError ? "settings-arms-total" : "settings-arms-error";
+  const armInvalid = errors.arms ? { "aria-invalid": true as const, "aria-describedby": armsNoteId } : {};
 
   return (
     <div className="drawer-wrap">
@@ -77,7 +81,7 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
           <h2>{domain}</h2>
           <button type="button" className="link" onClick={onClose}>ปิด (Close)</button>
         </header>
-        {banner && <div className={`note neg settings-banner settings-banner-${banner.kind}`} role="alert">{banner.text}</div>}
+        {banner && <div className={`note settings-banner settings-banner-${banner.kind}`} role="alert">{banner.text}</div>}
 
         <section className="section">
           <Field id="settings-aid" label={SETTINGS_LABELS.aid} error={errors.aid}>
@@ -103,7 +107,7 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
             {(a) => <input {...a} value={draft.amount_buckets} onChange={(e) => set({ amount_buckets: e.target.value })} />}
           </Field>
           <Field id="settings-keyword" label={SETTINGS_LABELS.keyword_default} error={errors.keyword_default} hint={keywordHint}>
-            {(a) => <input {...a} value={draft.keyword_default} placeholder="ว่าง = ใช้ข้อความเริ่มต้นของ template" onChange={(e) => set({ keyword_default: e.target.value })} />}
+            {(a) => <input {...a} value={draft.keyword_default} placeholder="ว่าง = ใช้ข้อความเริ่มต้นของ template (Empty = template default)" onChange={(e) => set({ keyword_default: e.target.value })} />}
           </Field>
         </section>
 
@@ -133,6 +137,7 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
                       aria-label={`น้ำหนักแขน ${n} (Arm ${n} weight)`}
                       inputMode="numeric"
                       value={arm.weight}
+                      {...armInvalid}
                       onChange={(e) => setArm(i, { weight: e.target.value })}
                     />
                     {draft.arms.length > 2 && (
@@ -144,8 +149,8 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
               {unused && (
                 <button type="button" className="btn" onClick={() => set({ arms: [...draft.arms, { id: unused.id, weight: "0" }] })}>เพิ่มแขน (Add arm)</button>
               )}
-              <div className={total === 100 ? "muted small" : "error"}>รวม {total}%</div>
-              {errors.arms && <div className="error small">{errors.arms}</div>}
+              <div className={total === 100 ? "muted small" : "error"} id={sumIsTheError ? armsNoteId : undefined}>รวม {total}%</div>
+              {errors.arms && !sumIsTheError && <div className="error small" id={armsNoteId}>{errors.arms}</div>}
             </>
           )}
         </section>
