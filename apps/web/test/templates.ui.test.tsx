@@ -224,6 +224,7 @@ describe("Templates screen", () => {
     expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).value).toBe("");
     fireEvent.change(primary, { target: { value: "--brand, --hero" } });
     fireEvent.click(screen.getByRole("button", { name: "อนุมัติ (Approve)" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "อนุมัติ (Approve)" }));
     expect(await screen.findByText("อนุมัติแล้ว (Approved)")).toBeTruthy();
     const post = requests.find((r) => r.method === "POST" && r.path === "/api/templates/tv-bolt-1/approve");
     expect(post?.body).toEqual({ theme_vars: { primary: ["--brand", "--hero"], primary_dark: ["--brand-dark"], secondary: [] } });
