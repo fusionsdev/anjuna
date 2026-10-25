@@ -231,8 +231,11 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
   const [loadingMore, setLoadingMore] = useState(false);
   // The key ties the grown limit to the filters that grew it: a filter change reads as the start limit again.
   const filtersKey = timelineSearch(filters);
-  const [more, setMore] = useState({ key: filtersKey, limit: LIMIT_START });
-  const limit = more.key === filtersKey ? more.limit : LIMIT_START;
+  const limitKey = `${brandId}\n${filtersKey}`;
+  const [more, setMore] = useState({ key: limitKey, limit: LIMIT_START });
+  const limit = more.key === limitKey ? more.limit : LIMIT_START;
+  // Re-key during render on every brand or filter change, so returning to an earlier one never revives its grown limit.
+  if (more.key !== limitKey) setMore({ key: limitKey, limit: LIMIT_START });
   // A limit-only change keeps the rows on screen; anything else falls back to the spinner.
   const baseKey = `${brandId}\n${filtersKey}\n${noRequest}\n${reloadKey}`;
   const lastBaseKey = useRef<string | null>(null);
@@ -269,7 +272,7 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
   const loadMore = () => {
     if (loadingMore || load.state !== "ready" || !load.data.has_more || limit >= LIMIT_MAX) return;
     setLoadingMore(true);
-    setMore({ key: filtersKey, limit: Math.min(LIMIT_MAX, limit + LIMIT_START) });
+    setMore({ key: limitKey, limit: Math.min(LIMIT_MAX, limit + LIMIT_START) });
   };
 
   const removeEvent = async (item: EventItem) => {

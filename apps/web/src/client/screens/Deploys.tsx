@@ -97,6 +97,8 @@ export function DeploysScreen({ me }: { me: Me }) {
   const filterKey = `${brand}\n${source}\n${status}`;
   const [more, setMore] = useState({ key: filterKey, limit: LIMIT_START });
   const limit = more.key === filterKey ? more.limit : LIMIT_START;
+  // Re-key during render on every filter change, so returning to an earlier filter never revives its grown limit.
+  if (more.key !== filterKey) setMore({ key: filterKey, limit: LIMIT_START });
   // Guards a double click before the first receipts answer lands; the state cache covers every later expand.
   const loading = useRef(new Set<string>());
   const brandSelectRef = useRef<HTMLSelectElement>(null);

@@ -67,7 +67,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const url = new URL(input, window.location.origin);
     requests.push(url);
-    if (url.pathname === "/api/brands/b1/timeline") return respond(url);
+    if (url.pathname === "/api/brands/b1/timeline" || url.pathname === "/api/brands/b2/timeline") return respond(url);
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [{ brand_id: "b1", hostnames: ["shop.example"] }] });
     if (url.pathname === "/api/brands") return json({ brands: [], generated_at: "2026-07-22T00:00:00.000Z" });
     throw new Error(`Unexpected test HTTP request: ${input}`);
@@ -325,6 +325,38 @@ describe("brand timeline screen", () => {
     await waitFor(() => expect(timelineCalls()).toHaveLength(3));
     expect(lastCall().searchParams.get("limit")).toBe("100");
     expect(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeTruthy();
+  });
+
+  it("returning to an earlier timeline range still resets the limit to 100", async () => {
+    respond = () => json(response({ has_more: true }));
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(3));
+    expect(lastCall().searchParams.get("limit")).toBe("100");
+
+    // Back to the default range that grew to 200: the window starts over.
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(4));
+    expect(lastCall().searchParams.get("limit")).toBe("100");
+  });
+
+  it("switching brand resets the timeline limit to 100", async () => {
+    respond = () => json(response({ has_more: true }));
+    const { rerender } = render(<BrandTimelineScreen me={owner} brandId="b1" />);
+    await screen.findByText("โฆษณาหลักถูกปฏิเสธ");
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+
+    // App.tsx mounts the screen without a key, so a brand switch is a rerender.
+    rerender(<BrandTimelineScreen me={owner} brandId="b2" />);
+    await waitFor(() => expect(requests.some((url) => url.pathname === "/api/brands/b2/timeline")).toBe(true));
+    const b2Calls = requests.filter((url) => url.pathname === "/api/brands/b2/timeline");
+    expect(b2Calls.map((url) => url.searchParams.get("limit"))).toEqual(["100"]);
   });
 
   it("shows an empty state for a range without items", async () => {

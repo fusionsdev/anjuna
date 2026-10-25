@@ -442,6 +442,22 @@ describe("deploy history screen", () => {
     expect(rows()).toHaveLength(1);
   });
 
+  it("returning to an earlier deploys filter still resets the limit to 50", async () => {
+    feed = () => json({ events: FEED, has_more: true, unavailable: [] });
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?limit=100"));
+    await waitFor(() => expect((screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }) as HTMLButtonElement).disabled).toBe(false));
+
+    fireEvent.change(screen.getByLabelText(/แบรนด์ \(Brand\)/), { target: { value: "brand-b" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?limit=50&brand=brand-b"));
+    // Back to the unfiltered key that grew to 100: the window starts over.
+    fireEvent.change(screen.getByLabelText(/แบรนด์ \(Brand\)/), { target: { value: "" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?limit=50"));
+    expect(deploysPaths().filter((p) => p === "/api/deploys?limit=100")).toHaveLength(1);
+  });
+
   it("a stale Load more response is dropped after a filter change", async () => {
     const held: Array<(r: Response) => void> = [];
     feed = (params) => {
