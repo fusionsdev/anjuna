@@ -175,7 +175,7 @@ const DRAFT_EDIT_GATE = `EXISTS (
     SELECT 1 FROM brands b JOIN brand_revisions r ON r.brand_id = b.brand_id
     WHERE b.brand_id = ?1 AND b.status IN ('draft','failed') AND r.revision_id = ?2 AND r.template_version_id = ?3 AND r.config_json = ?4)
   AND NOT EXISTS (SELECT 1 FROM installs WHERE brand_id = ?1 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running'))`;
-const PROFILE_GROUPS = ["contact", "disclosures", "copy", "ads"] as const;
+const PROFILE_GROUPS = ["contact", "disclosures", "copy", "ads", "theme"] as const;
 
 /** The profile stored on a revision's config_json. Undefined when absent or not a valid profile. */
 export function storedProfile(configJson: string): BrandProfile | undefined {
