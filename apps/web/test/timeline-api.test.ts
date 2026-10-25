@@ -48,11 +48,11 @@ beforeEach(async () => {
   ]);
   await env.FACTORY.batch([
     audit(201, ownerId, "owner", "brand.profile.update", "brand", "brand-f", "2026-10-21T03:00:00.000Z"),
-    audit(202, employeeId, "employee", "brand.create", "brand", "brand-f", "2026-10-20T12:00:00.000Z"),
+    audit(202, employeeId, "employee", "brand.create", "brand", "brand-f", "2026-10-20T19:00:00+07:00"),
     audit(203, ownerId, "owner", "brand.create", "template", "tpl-1", "2026-10-21T06:00:00.000Z"),
     adsEvent("ev-1", "brand-f", "ad_disapproved", "2026-10-21T05:30:00.000Z", "Ad 12 rejected", ownerId, "owner"),
     adsEvent("ev-2", "brand-f", "policy_warning", "2026-10-18T09:00:00.000Z", "", employeeId, "employee"),
-    adsEvent("ev-3", "brand-f", "other", "2026-10-21T00:00:00.000Z", "Manual check", ownerId, "owner"),
+    adsEvent("ev-3", "brand-f", "other", "2026-10-21T07:00:00+07:00", "Manual check", ownerId, "owner"),
     adsEvent("ev-other-brand", "brand-b", "ad_disapproved", "2026-10-21T05:45:00.000Z", "", ownerId, "owner"),
   ]);
 });
@@ -133,7 +133,7 @@ describe("GET /api/brands/:id/timeline", () => {
     expect(seen).toHaveLength(0);
   });
 
-  it("types=config asks core, keeps only brand.update rows and queries no Ads events", async () => {
+  it("types=config asks core and keeps only brand.update rows", async () => {
     const seen: URL[] = [];
     const body = await timeline("brand-f", "?types=config", owner, coreEnv(coreRows(), seen));
     expect(ids(body)).toEqual(["core-audit-301", "core-audit-304"]);
@@ -156,6 +156,25 @@ describe("GET /api/brands/:id/timeline", () => {
     expect(ids(late)).toEqual(EVERYTHING.slice(0, 7));
     const middle = await timeline("brand-f", "?from=2026-10-21T01:00:00.000Z&to=2026-10-21T04:00:00.000Z", owner);
     expect(ids(middle)).toEqual(["core-audit-301", "audit-201", "core-audit-302", "inst-f1"]);
+  });
+
+  it("keeps +07:00 factory audit and Ads event rows at a range bound by instant", async () => {
+    // audit-202 (19:00+07:00) and ads-ev-3 (07:00+07:00) equal their bound as instants and sort after it as text.
+    const auditBound = "2026-10-20T12:00:00.000Z";
+    const audit = await timeline("brand-f", `?types=factory_edit&from=${auditBound}&to=${auditBound}`, owner);
+    expect(ids(audit)).toEqual(["audit-202"]);
+    const adsBound = "2026-10-21T00:00:00.000Z";
+    const ads = await timeline("brand-f", `?types=other&from=${adsBound}&to=${adsBound}`, owner);
+    expect(ids(ads)).toEqual(["ads-ev-3"]);
+  });
+
+  it("sets has_more when the merge cuts rows but no single source exceeds limit", async () => {
+    const body = await timeline("brand-f", "?types=deploy,factory_edit&limit=3", owner);
+    expect(ids(body)).toEqual(["audit-201", "inst-f1", "inst-f-off"]);
+    expect(body.has_more).toBe(true);
+    const exact = await timeline("brand-f", "?types=deploy,factory_edit&limit=4", owner);
+    expect(exact.items).toHaveLength(4);
+    expect(exact.has_more).toBe(false);
   });
 
   it("limit=2 cuts to 2 and sets has_more", async () => {

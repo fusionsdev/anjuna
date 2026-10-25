@@ -19,6 +19,7 @@ import { coreAuditEvents, factoryAuditEvents, installEvents, pushRange, type Dep
 import type { Env } from "./env.js";
 import { decodePathSegment } from "./lifecycle.js";
 import { authorizePanel } from "./panel-roles.js";
+import { asTimestamp } from "./timestamps.js";
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), {
   status, headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -131,7 +132,8 @@ async function adsEvents(db: D1Database, brandId: string, types: AdsEventType[],
        FROM ads_account_events WHERE ${where.join(" AND ")} ORDER BY julianday(occurred_at) DESC, event_id DESC LIMIT ?`,
   ).bind(...binds, limit + 1).all();
   return results.flatMap((row) => {
-    const parsed = AdsAccountEvent.safeParse(row);
+    const occurredAt = typeof row.occurred_at === "string" ? asTimestamp(row.occurred_at) : null;
+    const parsed = AdsAccountEvent.safeParse({ ...row, occurred_at: occurredAt });
     return parsed.success ? [parsed.data] : [];
   });
 }
@@ -211,7 +213,7 @@ async function brandTimeline(url: URL, env: Env, ctx: AdminRequestContext, rawBr
     ...events.map((event): TimelineItem => ({ kind: "ads_event", item_id: `ads-${event.event_id}`, at: event.occurred_at, event })),
   ].sort(itemsNewestFirst);
 
-  const hasMore = coreMore || [installs, factoryAudit, coreAudit, events].some((rows) => rows.length > limit);
+  const hasMore = coreMore || items.length > limit;
   return json(200, TimelineResponse.parse({
     brand_id: brandId,
     items: items.slice(0, limit),
