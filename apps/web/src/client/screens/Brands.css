@@ -71,6 +71,8 @@
   .brand-table td { border: 0; padding: 6px 0; text-align: left; height: auto; display: flex; gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
   .brand-table td::before { content: attr(data-label); flex: 0 0 auto; max-width: 45%; color: var(--muted); font-size: 12px; }
   .brand-table td > * { min-width: 0; flex: 1 1 auto; }
+  .brand-table td[data-label^="สถานะ"] { flex-wrap: wrap; align-items: center; }
+  .brand-table td[data-label^="สถานะ"] > * { flex: 0 0 auto; white-space: nowrap; }
   .brand-table td[data-label=""] { display: block; }
   .brand-table td[data-label=""]::before { content: none; }
 }
