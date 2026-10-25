@@ -73,6 +73,7 @@
   .brand-table td > * { min-width: 0; flex: 1 1 auto; }
   .brand-table td[data-label^="สถานะ"] { flex-wrap: wrap; align-items: center; }
   .brand-table td[data-label^="สถานะ"] > * { flex: 0 0 auto; white-space: nowrap; }
+  .brand-table td[data-label^="สถานะ"] .row-menu-list, .brand-table td[data-label^="สถานะ"] .row-menu-item { white-space: normal; }
   .brand-table td[data-label=""] { display: block; }
   .brand-table td[data-label=""]::before { content: none; }
 }
