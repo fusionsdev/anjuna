@@ -63,7 +63,7 @@ The index page and the 4 legal pages (`/privacy`, `/terms`, `/disclosures`, `/do
 Input: every `.css` file in the dist zip plus `<style>` elements in `index.html`.
 
 1. Candidates: custom properties declared with a 3 or 6 digit hex value. Names that contain `gray`, `grey`, `slate`, `zinc`, `neutral`, `stone`, `white` or `black` are dropped.
-2. Primary: the candidate with the most `var(--name)` uses inside `background` or `background-color` declarations. Ties go to the first declared. No use means no primary.
+2. Primary: the candidate with the most `var(--name)` uses inside `background` or `background-color` declarations, among candidates whose WCAG contrast ratio against `#ffffff` is at least 3 (they must carry white button text). Ties go to the first declared. No use means no primary.
 3. Primary dark: a declared candidate named `<primary>-dark`, else `<primary>-hover`. None means an empty list.
 4. Secondary: among the rest, the candidate with the most `var(--name)` uses inside `color` declarations. None means an empty list.
 5. The result is a `TemplateThemeVars` with one name or none per role. The admin can add names on Approve.
