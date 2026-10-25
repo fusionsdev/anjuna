@@ -4,6 +4,7 @@
  */
 import {
   TEMPLATE_VERSION_REVIEW_STATUS,
+  TemplateApproveRequest,
   TemplateApproveResponse,
   TemplateDetailResponse,
   TemplateImportRequest,
@@ -12,6 +13,7 @@ import {
   TemplateSubmitResult,
   SiteTextDefaultsResponse,
   TemplateTextDefaults,
+  TemplateThemeVars,
   authorize,
   templateSlug,
   type AdminRequestContext,
@@ -72,6 +74,11 @@ function parseJson(text: string | null): unknown {
 
 function textDefaults(text: string | null) {
   const parsed = TemplateTextDefaults.safeParse(parseJson(text));
+  return parsed.success ? parsed.data : null;
+}
+
+function themeVars(text: string | null) {
+  const parsed = TemplateThemeVars.safeParse(parseJson(text));
   return parsed.success ? parsed.data : null;
 }
 
@@ -172,6 +179,15 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     const id = decodePathSegment(m[1]!);
     if (id === null) return notFound("template");
     if (!env.FACTORY_WORKER) return json(502, { error: "factory_dispatch_failed", message: "Factory Worker binding is missing" });
+    // An empty body or {} approves with the detected map; only theme_vars is read, identity comes from the session.
+    const raw = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const approveRequest = TemplateApproveRequest.safeParse({ theme_vars: raw?.theme_vars });
+    if (!approveRequest.success) return json(422, { error: "invalid_theme_vars" });
+    if (approveRequest.data.theme_vars) {
+      // A sealed version is immutable (trigger in migration 0001), so the corrected map is stored only before the seal.
+      await env.FACTORY.prepare("UPDATE template_versions SET theme_vars_json = ?2 WHERE template_version_id = ?1 AND status <> 'sealed'")
+        .bind(id, JSON.stringify(approveRequest.data.theme_vars)).run();
+    }
     let response: Response;
     try {
       response = await env.FACTORY_WORKER.fetch(new Request("https://factory/seal-template", {
@@ -196,9 +212,9 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     const id = decodePathSegment(m[1]!);
     if (id === null) return notFound("template");
     const row = await env.FACTORY.prepare(
-      `SELECT ${SUMMARY_COLUMNS}, v.sha256, v.sealed_by, v.text_defaults_json
+      `SELECT ${SUMMARY_COLUMNS}, v.sha256, v.sealed_by, v.text_defaults_json, v.theme_vars_json
        FROM template_versions v JOIN templates t ON t.template_id = v.template_id WHERE v.template_version_id = ?1`,
-    ).bind(id).first<VersionRow & { sha256: string; sealed_by: string | null; text_defaults_json: string | null }>();
+    ).bind(id).first<VersionRow & { sha256: string; sealed_by: string | null; text_defaults_json: string | null; theme_vars_json: string | null }>();
     if (!row) return notFound("template");
     const { results: checks } = await env.FACTORY.prepare(
       `SELECT check_name, result, details_json, artifact_r2_key, created_at FROM certifications
@@ -209,7 +225,7 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
         ? `/api/templates/${encodeURIComponent(id)}/screenshots/${viewport}`
         : null;
     return json(200, TemplateDetailResponse.parse({
-      template: { ...summary(row), sha256: row.sha256, sealed_by: row.sealed_by, text_defaults: textDefaults(row.text_defaults_json) },
+      template: { ...summary(row), sha256: row.sha256, sealed_by: row.sealed_by, text_defaults: textDefaults(row.text_defaults_json), theme_vars: themeVars(row.theme_vars_json) },
       checks: checks.map((c) => ({ check_name: c.check_name, result: c.result, details: parseJson(c.details_json), created_at: c.created_at })),
       screenshots: { desktop: shot("desktop"), mobile: shot("mobile") },
     }));

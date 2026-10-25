@@ -18,6 +18,7 @@ beforeEach(async () => {
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id, name, framework, created_by, created_at) VALUES ('tpl-bolt', 'Bolt Harbor', 'react_spa', 'bk_1', ?1)").bind(NOW),
     env.FACTORY.prepare(`INSERT OR IGNORE INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at, text_defaults_json, submitted_by_key_id, submitted_by_label)
       VALUES ('tv-bolt-1', 'tpl-bolt', 1, ?1, 'templates/tpl-bolt/a.zip', 'certified', 'bk_1', ?2, ?3, 'bk_1', 'Somchai (bolt.new)')`).bind("a".repeat(64), NOW, JSON.stringify(DEFAULTS)),
+    env.FACTORY.prepare("UPDATE template_versions SET theme_vars_json = NULL WHERE template_version_id = 'tv-bolt-1'"),
     env.FACTORY.prepare(`INSERT INTO certifications (template_version_id, check_name, result, details_json, artifact_r2_key, created_at)
       SELECT * FROM (VALUES
         ('tv-bolt-1', 'lint', 'pass', '{}', NULL, ?1),
@@ -164,6 +165,34 @@ describe("templates API", () => {
     expect(dispatched[0]).toEqual({ url: "https://factory/seal-template", template_version_id: "tv-bolt-1", sealed_by: await me(owner), sealed_role: "owner" });
     const again = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {}, env: testEnv });
     expect(await again.json()).toMatchObject({ ok: true, already_sealed: true });
+  });
+
+  it("approve saves corrected theme vars", async () => {
+    const dispatched: unknown[] = [];
+    const FACTORY_WORKER = { fetch: async (req: Request) => {
+      const body = await req.json() as Record<string, string>;
+      dispatched.push(body);
+      return Response.json({ ok: true, template_version_id: body.template_version_id, sealed_by: body.sealed_by, sealed_at: NOW, already_sealed: false });
+    } } as unknown as Fetcher;
+    const themeVars = { primary: ["--brand", "--accent"], primary_dark: ["--brand-dark"], secondary: [] };
+    const approved = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: { theme_vars: themeVars }, env: makeEnv({ FACTORY_WORKER }) });
+    expect(approved.status).toBe(200);
+    expect(dispatched).toHaveLength(1);
+    const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string }>();
+    expect(JSON.parse(row!.theme_vars_json)).toEqual(themeVars);
+    const detail = TemplateDetailResponse.parse(await (await call("/api/templates/tv-bolt-1", { cookie: owner })).json());
+    expect(detail.template.theme_vars).toEqual(themeVars);
+  });
+
+  it("approve rejects an invalid variable name", async () => {
+    const dispatched: unknown[] = [];
+    const FACTORY_WORKER = { fetch: async (req: Request) => { dispatched.push(await req.json()); return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const bad = { primary: ["--ok", "color: red"], primary_dark: [], secondary: [] };
+    const refused = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: { theme_vars: bad }, env: makeEnv({ FACTORY_WORKER }) });
+    expect([refused.status, await refused.json()]).toEqual([422, { error: "invalid_theme_vars" }]);
+    expect(dispatched).toHaveLength(0);
+    const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string | null }>();
+    expect(row!.theme_vars_json).toBeNull();
   });
 
   it("passes a factory refusal through and reports a missing binding", async () => {

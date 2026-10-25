@@ -1,6 +1,7 @@
 /** Template submissions and review (template MCP submit_template, control panel Templates screen). */
 import { z } from "zod";
 import { TemplateTextDefaults } from "./site-text.js";
+import { TemplateThemeVars } from "./theme.js";
 
 export const TEMPLATE_REVIEW_STATUSES = ["checking", "rejected", "awaiting_approval", "approved"] as const;
 export const TemplateReviewStatus = z.enum(TEMPLATE_REVIEW_STATUSES);
@@ -90,6 +91,7 @@ export const TemplateDetailResponse = z.strictObject({
     sha256: z.string(),
     sealed_by: z.string().nullable(),
     text_defaults: TemplateTextDefaults.nullable(),
+    theme_vars: TemplateThemeVars.nullable(),
   }),
   checks: z.array(TemplateCheckResult),
   screenshots: z.strictObject({ desktop: z.string().nullable(), mobile: z.string().nullable() }),
@@ -102,7 +104,11 @@ export const TemplateImportRequest = z.strictObject({
 });
 export type TemplateImportRequest = z.infer<typeof TemplateImportRequest>;
 
-export const TemplateApproveResponse = z.strictObject({
+/** Approve may carry the owner's corrected color variable map; absent keeps the detected one. */
+export const TemplateApproveRequest = z.strictObject({ theme_vars: TemplateThemeVars.optional() });
+export type TemplateApproveRequest = z.infer<typeof TemplateApproveRequest>;
+
+export const TemplateApproveResponse =z.strictObject({
   ok: z.literal(true),
   template_version_id: z.string(),
   sealed_by: z.string(),
