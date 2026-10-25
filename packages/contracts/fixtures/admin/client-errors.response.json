@@ -1,0 +1,24 @@
+{
+  "period": "24h",
+  "from": "2026-11-01T13:00:00.000Z",
+  "to": "2026-11-02T12:34:00.000Z",
+  "counts": [
+    { "error_type": "js_error", "count": 2 },
+    { "error_type": "network_error", "count": 1 }
+  ],
+  "rows": [
+    {
+      "id": 42, "occurred_at": "2026-11-02T12:20:11.000Z", "error_type": "js_error", "error_message": "Cannot read properties of undefined",
+      "screen_id": "step-2", "hostname": "brand-a.example", "brand_id": "brand-a", "session_ref": "3f9a1c0be274"
+    },
+    {
+      "id": 41, "occurred_at": "2026-11-02T11:02:45.000Z", "error_type": "network_error", "error_message": "Failed to fetch",
+      "screen_id": null, "hostname": "brand-b.example", "brand_id": "brand-b", "session_ref": "a81d05e7c9b2"
+    },
+    {
+      "id": 40, "occurred_at": "2026-11-02T09:15:00.000Z", "error_type": "js_error", "error_message": null,
+      "screen_id": "step-1", "hostname": null, "brand_id": null, "session_ref": null
+    }
+  ],
+  "next_cursor": null
+}
