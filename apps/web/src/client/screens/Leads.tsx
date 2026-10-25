@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { ApiError, api, type LeadFilterState, type Me } from "../api";
 import { BrandLabel, buildBrandLabels } from "../brand-labels";
 import { DataTable, type Column } from "../components/DataTable";
+import { FilterBar } from "../components/FilterBar";
 import { useConfirm } from "../components/ConfirmDialog";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
@@ -155,6 +156,8 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
   ];
 
   const filtered = Boolean(filter.brand || filter.status || filter.q);
+  const defaults = defaultWindow();
+  const rangeActive = filter.from !== defaults.from || filter.to !== defaults.to ? 1 : 0;
   const empty = filtered
     ? <EmptyState title="ไม่พบลีดที่ตรงกับตัวกรอง (No leads match this filter)" hint="ลองเปลี่ยนแบรนด์ สถานะ หรือคำค้น (Try another brand, status or search)" />
     : <EmptyState title="ยังไม่มีลีดในช่วงนี้ (No leads in this window)" hint="ลองขยายช่วงวันที่ (Try a wider date range)" />;
@@ -170,6 +173,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
       </div>
     </div>
     <section className="panel" aria-label="ตัวกรองลีด (Lead filters)">
+      <FilterBar label="ตัวกรองลีด (Lead filters)" activeCount={[filter.brand, filter.status, filter.q].filter(Boolean).length + rangeActive}>
       <form onSubmit={search} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
         <label>แบรนด์ (Brand)
           <select value={filter.brand} onChange={(e) => update({ brand: e.target.value })}>
@@ -194,6 +198,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
         </label>
         <button type="submit" className="btn" style={{ marginBottom: 8 }}>ค้นหา (Search)</button>
       </form>
+      </FilterBar>
       {problems.map((problem) => <p key={problem} role="alert" className="hint">{problem}</p>)}
       <p className="hint">ช่วงวันที่เป็น UTC ค่าเริ่มต้นคือ 30 วันล่าสุด · ค้นด้วยรหัสลีดหรือ click id เท่านั้น ไม่ค้นด้วยอีเมลหรือเบอร์โทร (Dates are UTC; search matches lead ID or click ID only)</p>
     </section>

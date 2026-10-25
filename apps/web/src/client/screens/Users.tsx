@@ -135,7 +135,7 @@ export function UsersScreen({ me }: { me: Me }) {
       ),
     },
     {
-      key: "actions", header: "การจัดการ (Actions)", cell: (u) => (
+      key: "actions", header: "การจัดการ (Actions)", label: "", cell: (u) => (
         u.id === me.id ? null : (
           <div className="row">
             {u.banned

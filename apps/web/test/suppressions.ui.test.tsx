@@ -387,4 +387,24 @@ describe("Suppressions screen", () => {
     await waitFor(() => expect(requests).toHaveLength(base + 2));
     expect(requests[base + 1]).toBe("/api/suppressions?added_by=usr_owner_01");
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(<SuppressionsScreen me={owner} />);
+      await screen.findByText(BOUNCED);
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      expect(screen.queryByLabelText(/ค้นหาอีเมล/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองอีเมลที่บล็อก (Suppression filters)" })).toBeTruthy();
+      expect(screen.getByLabelText(/ค้นหาอีเมล/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

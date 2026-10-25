@@ -443,6 +443,28 @@ describe("Conversions page: load more", () => {
     expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง (Narrow the filters)`)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
   }, 20000);
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(<ConversionsScreen me={owner} />);
+      await table();
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "ทั้งหมด" })).toBeNull();
+      // The period segment stays outside the modal.
+      expect(screen.getByRole("button", { name: "7 วัน" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองคอนเวอร์ชัน (Conversion filters)" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "ทั้งหมด" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });
 
 describe("readConversionFilters and conversionsPath", () => {

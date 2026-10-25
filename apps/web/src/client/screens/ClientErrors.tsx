@@ -5,6 +5,7 @@ import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { type Column, DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
+import { FilterBar } from "../components/FilterBar";
 import { Spinner } from "../components/Spinner";
 import { navigate, useSearch, viewPath } from "../router";
 import { DEFAULT_TRAFFIC_LOG_PERIOD, TRAFFIC_LOG_PERIOD_LABEL, readTrafficLogPeriod } from "../traffic-periods";
@@ -130,6 +131,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
         </div>
       </div>
       <div className="ce-filters">
+        <FilterBar label="ตัวกรองข้อผิดพลาด (Client error filters)" activeCount={(type ? 1 : 0) + (brand ? 1 : 0)}>
         <div className="ce-chips" role="group" aria-label="ประเภท">
           <button type="button" aria-pressed={type === null} onClick={() => change({ type: null })}>
             ทั้งหมด{total !== null && <>{" "}<span className="ce-count">{count(total)}</span></>}
@@ -145,6 +147,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
           {brand && !domains.has(brand) && <option value={brand}>{brand}</option>}
           {options.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
         </select>
+        </FilterBar>
       </div>
       {!load && <Spinner />}
       {load && "error" in load && (

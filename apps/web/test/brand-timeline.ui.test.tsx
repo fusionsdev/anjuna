@@ -450,4 +450,47 @@ describe("brand timeline screen", () => {
     }
     expect(css).toMatch(/\.tl-body \.pill \{[^}]*white-space: normal/);
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(<BrandTimelineScreen me={owner} brandId="b1" />);
+      await screen.findByText("โฆษณาหลักถูกปฏิเสธ");
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      // The range presets stay outside the modal.
+      expect(screen.getByRole("button", { name: "7 วัน" })).toBeTruthy();
+      expect(screen.queryByLabelText(/ตั้งแต่/)).toBeNull();
+      // The 10 type checkboxes live inside the modal too.
+      expect(screen.queryByRole("checkbox", { name: "แก้ไขใน factory (Factory edit)" })).toBeNull();
+      expect(screen.queryByRole("checkbox", { name: "อื่น ๆ (Other)" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองไทม์ไลน์ (Timeline filters)" })).toBeTruthy();
+      expect(screen.getByLabelText(/ตั้งแต่/)).toBeTruthy();
+      expect(screen.getByRole("checkbox", { name: "แก้ไขใน factory (Factory edit)" })).toBeTruthy();
+      expect(screen.getByRole("checkbox", { name: "อื่น ๆ (Other)" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("checkbox", { name: "แก้ไขใน factory (Factory edit)" })).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it("on a narrow screen the Filters button shows the count of unchecked types", async () => {
+    window.history.replaceState(null, "", "/brands/b1/timeline?types=config,deploy");
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(<BrandTimelineScreen me={owner} brandId="b1" />);
+      // 10 types in total, 2 checked: 8 unchecked.
+      expect(await screen.findByRole("button", { name: "ตัวกรอง (Filters) (8)" })).toBeTruthy();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

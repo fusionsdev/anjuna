@@ -5,6 +5,7 @@ import { ApiError, api, type Me, type PanelUser, type SuppressionFilterState } f
 import { useConfirm } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
+import { FilterBar } from "../components/FilterBar";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
@@ -151,6 +152,7 @@ function OwnerSuppressions() {
     </div>
     {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={() => setToast(null)} />}
     <section className="panel" aria-label="ตัวกรองอีเมลที่บล็อก (Suppression filters)">
+      <FilterBar label="ตัวกรองอีเมลที่บล็อก (Suppression filters)" activeCount={[filter.q, filter.reason, filter.source, filter.added_by].filter(Boolean).length}>
       <form onSubmit={search} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
         <label>ค้นหาอีเมล (Search email)
           <input type="search" value={qDraft} maxLength={254} autoComplete="off" placeholder="ส่วนหนึ่งของอีเมล (Part of an email)" onChange={(e) => setQDraft(e.target.value)} />
@@ -176,6 +178,7 @@ function OwnerSuppressions() {
         </label>
         <button type="submit" className="btn" style={{ marginBottom: 8 }}>ค้นหา (Search)</button>
       </form>
+      </FilterBar>
     </section>
     <section className="panel" style={{ marginTop: 16 }} aria-label="เพิ่มอีเมลที่บล็อก (Add suppression)">
       <form onSubmit={add} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>

@@ -276,4 +276,28 @@ describe("Audit screen", () => {
     const raw = within(table).getByText("gone-1");
     expect(raw.getAttribute("title")).not.toBe("ผู้ใช้ที่ถูกลบ (Deleted user)");
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      mockLabels();
+      mockUsers();
+      vi.spyOn(api, "audit").mockResolvedValue({ entries: [], next_cursor: null });
+      render(<AuditScreen me={me} />);
+      const table = await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+      expect(within(table).getByText("ยังไม่มีรายการ")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      expect(screen.queryByLabelText(/ผู้ใช้ \(Actor\)/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองประวัติการแก้ไข (Audit filters)" })).toBeTruthy();
+      expect(screen.getByLabelText(/ผู้ใช้ \(Actor\)/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

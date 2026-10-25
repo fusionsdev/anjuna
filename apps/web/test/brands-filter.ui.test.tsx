@@ -257,4 +257,26 @@ describe("brands list filters and sort", () => {
     expect(names()).toEqual(["floatsme.test"]);
     expect(screen.getByRole("heading", { level: 2, name: /wizard.test/ })).toBeTruthy();
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(<BrandLifecycle me={owner} />);
+      await loaded(owner);
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      // The status chips stay outside the modal.
+      expect(chipButton(/ทั้งหมด/)).toBeTruthy();
+      expect(screen.queryByLabelText(/เรียงลำดับ/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองแบรนด์ (Brand filters)" })).toBeTruthy();
+      expect(screen.getByLabelText(/เรียงลำดับ/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

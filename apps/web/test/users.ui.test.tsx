@@ -58,6 +58,18 @@ describe("Users screen admin actions and search", () => {
     expect(screen.getByText("ถูกระงับ (Banned)")).toBeTruthy();
   });
 
+  it("users table cells carry data-label", async () => {
+    render(<UsersScreen me={me} />);
+    await screen.findByText("staff@example.test");
+    const cells = within(rowOf("staff@example.test")).getAllByRole("cell");
+    expect(cells).toHaveLength(5);
+    expect(cells[0]!.getAttribute("data-label")).toBe("ชื่อ");
+    expect(cells[1]!.getAttribute("data-label")).toBe("อีเมล");
+    expect(cells[2]!.getAttribute("data-label")).toBe("สิทธิ์");
+    expect(cells[3]!.getAttribute("data-label")).toBe("สถานะ (Status)");
+    expect(cells[4]!.getAttribute("data-label")).toBe("");
+  });
+
   it("your own row has no action buttons", async () => {
     render(<UsersScreen me={me} />);
     await screen.findByText("staff@example.test");
