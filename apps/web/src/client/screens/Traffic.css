@@ -3,7 +3,8 @@
 .traffic-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .traffic-stack > * { min-width: 0; }
 .traffic-stack .seg { margin-bottom: 8px; flex-wrap: wrap; }
-.traffic-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: var(--badbg); color: var(--bad); }
+/* .note.traffic-error: styles.css loads after this file, so a bare class would lose to .note. */
+.note.traffic-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: var(--badbg); color: var(--bad); }
 .traffic-error p { margin: 0; }
 .traffic-recent-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .traffic-recent-head h2 { margin: 0; }

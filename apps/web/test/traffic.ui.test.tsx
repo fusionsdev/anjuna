@@ -78,6 +78,17 @@ describe("Traffic screen", () => {
     expect(pressed("30 วัน (30d)")).toBe("true");
   });
 
+  it("an unknown period in the URL requests period=24h and presses the 24h chip", async () => {
+    window.history.replaceState(null, "", "/traffic?period=bogus");
+    render(<TrafficScreen />);
+    await recent();
+    expect(reportCalls()).toHaveLength(1);
+    expect(reportCalls()[0]!.searchParams.get("period")).toBe("24h");
+    expect(pressed("24 ชม. (24h)")).toBe("true");
+    expect(pressed("7 วัน (7d)")).toBe("false");
+    expect(pressed("30 วัน (30d)")).toBe("false");
+  });
+
   it("readTrafficPeriod reads an unknown period as 24h", () => {
     expect(readTrafficPeriod("")).toBe("24h");
     expect(readTrafficPeriod("?period=7d")).toBe("7d");
@@ -125,9 +136,36 @@ describe("Traffic screen", () => {
     expect(within(table).getByRole("columnheader", { name: "เวลา (UTC)" })).toBeTruthy();
     expect(within(table).getByText("2026-11-02 12:31:07")).toBeTruthy();
     expect(within(table).getAllByRole("row")).toHaveLength(1 + report.recent.length);
-    expect(document.body.textContent).not.toMatch(/session_id/);
     // Null cells read as a dash, not "null".
     expect(table.textContent).not.toContain("null");
+  });
+
+  it("the recent table has exactly the nine columns and only 12-hex session refs", async () => {
+    render(<TrafficScreen />);
+    const table = await recent();
+    const headers = within(table).getAllByRole("columnheader").map((th) => th.textContent);
+    expect(headers).toEqual([
+      "เวลา (UTC)", "เหตุการณ์", "แบรนด์", "ขั้น", "รหัสข้อผิดพลาด", "อุปกรณ์", "เบราว์เซอร์", "แหล่งที่มา (Source)", "เซสชัน (Session ref)",
+    ]);
+    const refColumn = headers.indexOf("เซสชัน (Session ref)");
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(report.recent.length);
+    for (const row of rows) {
+      const cells = within(row).getAllByRole("cell");
+      expect(cells).toHaveLength(headers.length);
+      expect(cells[refColumn]!.textContent).toMatch(/^[0-9a-f]{12}$/);
+    }
+  });
+
+  it("the recent table shows the brand through BrandLabel: domain with the brand_id code", async () => {
+    render(<TrafficScreen />);
+    const table = await recent();
+    await waitFor(() => expect(within(table).getAllByText("a.example")).toHaveLength(2));
+    const codes = [...table.querySelectorAll("td code.brand-id")];
+    expect(codes.map((code) => code.textContent)).toEqual(["brand-a", "brand-a"]);
+    // A brand without a known domain reads as its id, with no code beside it.
+    expect(within(table).getByText("brand-b").closest(".brand-label")?.querySelector("code")).toBeNull();
+    expect(table.textContent).not.toContain("brand-a.example");
   });
 
   it("the CSV link points at /api/traffic/report.csv with the period", async () => {

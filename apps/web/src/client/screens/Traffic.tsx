@@ -83,7 +83,7 @@ export function TrafficScreen() {
     { key: "error", header: "รหัสข้อผิดพลาด", cell: (row) => dash(row.error_code) },
     { key: "device", header: "อุปกรณ์", cell: (row) => dash(row.device) },
     { key: "browser", header: "เบราว์เซอร์", cell: (row) => dash(row.browser) },
-    { key: "source", header: "แหล่งที่มา", cell: (row) => dash(row.source) },
+    { key: "source", header: "แหล่งที่มา (Source)", cell: (row) => dash(row.source) },
     { key: "ref", header: "เซสชัน (Session ref)", mono: true, cell: (row) => row.session_ref },
   ];
   const report = load && "report" in load ? load.report : null;
