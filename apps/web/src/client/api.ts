@@ -201,10 +201,11 @@ export const api = {
     return request<FunnelReportResponse>("GET", `/api/funnel?${params}`);
   },
   /** Read-only. Money and raw error text come back null for an employee. */
-  conversions: (query: { period: SpendPeriod; status?: ConversionsQuery["status"]; brand?: string }) => {
+  conversions: (query: { period: SpendPeriod; status?: ConversionsQuery["status"]; brand?: string; limit?: number }) => {
     const params = new URLSearchParams({ period: query.period });
     if (query.status) params.set("status", query.status);
     if (query.brand) params.set("brand", query.brand);
+    if (query.limit) params.set("limit", String(query.limit));
     return request<ConversionsReportResponse>("GET", `/api/conversions?${params}`);
   },
   /** Days are `YYYY-MM-DD`, UTC, inclusive. */

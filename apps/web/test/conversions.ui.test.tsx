@@ -168,7 +168,8 @@ describe("Conversions page", () => {
 
     respond = () => json({ ...report, truncated: true });
     render(<ConversionsScreen me={owner} />);
-    expect(await screen.findByText("แสดง 200 แถวล่าสุด")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeTruthy();
+    expect(screen.queryByText("แสดง 200 แถวล่าสุด")).toBeNull();
     expect(screen.queryByText("ยังไม่มีคอนเวอร์ชันในช่วงนี้")).toBeNull();
   });
 
@@ -295,6 +296,64 @@ describe("Conversions page: details", () => {
     expect(lastCall().searchParams.has("brand")).toBe(false);
     expect((screen.getByRole("combobox", { name: "แบรนด์" }) as unknown as HTMLSelectElement).value).toBe("");
   });
+});
+
+describe("Conversions page: load more", () => {
+  it("Load more re-fetches conversions with limit 400", async () => {
+    respond = () => json({ ...report, truncated: true });
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+    fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("400"));
+    expect(conversionCalls()).toHaveLength(2);
+    // The table stays on screen while the next page loads.
+    expect(screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" })).toBeTruthy();
+  });
+
+  it("a period change resets the conversions limit to 200", async () => {
+    respond = () => json({ ...report, truncated: true });
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("400"));
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(lastCall().searchParams.get("period")).toBe("30d"));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+  });
+
+  it("drops a late Load more response after a filter change", async () => {
+    const waiting: Array<(response: Response) => void> = [];
+    respond = (url) => url.searchParams.get("limit") === "400"
+      ? new Promise<Response>((resolve) => { waiting.push(resolve); })
+      : json({ ...report, truncated: true });
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(waiting).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "ส่งไม่ได้ (dead)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("status")).toBe("dead"));
+    respond = () => json({ ...report, rows: report.rows.filter((row) => row.status === "dead"), truncated: false });
+    fireEvent.click(screen.getByRole("button", { name: "ค้างส่ง (pending)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("status")).toBe("pending"));
+    await table();
+
+    waiting[0]!(json(report));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.getAllByRole("row")).toHaveLength(1 + 4);
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+  });
+
+  it("at limit 1000 with truncated the max note shows", async () => {
+    respond = () => json({ ...report, truncated: true });
+    render(<ConversionsScreen me={owner} />);
+    for (const limit of ["400", "600", "800", "1000"]) {
+      fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+      await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe(limit));
+    }
+    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง (Narrow the filters)`)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
+  }, 20000);
 });
 
 describe("readConversionFilters and conversionsPath", () => {
