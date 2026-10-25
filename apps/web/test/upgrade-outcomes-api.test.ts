@@ -290,13 +290,15 @@ describe("core-list errors", () => {
       if (failure === "json") return new Response("not json");
       return Response.json({ brands: [{}] });
     } } as unknown as Fetcher;
-    const response = await call("/api/lifecycle/brands", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
+    // MOCK_CORE=1 would fill a missing binding with the local-preview stand-in (spec D8.4).
+    const coreEnv = () => makeEnv({ CORE_LIFECYCLE: core, ...(core ? {} : { MOCK_CORE: "0" }) });
+    const response = await call("/api/lifecycle/brands", { cookie: employee, env: coreEnv() });
     expect(response.status).toBe(200);
     const body = await response.json() as { brands: unknown[]; core_error: CoreListError };
     expect(body.brands).toEqual([]);
     expect(body.core_error.code).toBe(code);
     expect(body.core_error.message).not.toContain("private upstream detail");
-    const detail = await call("/api/lifecycle/brands/core-only", { cookie: employee, env: makeEnv({ CORE_LIFECYCLE: core }) });
+    const detail = await call("/api/lifecycle/brands/core-only", { cookie: employee, env: coreEnv() });
     expect(detail.status).toBe(502);
   });
 
@@ -307,7 +309,7 @@ describe("core-list errors", () => {
     const body = await ok.json() as { brands: unknown[]; core_error: CoreListError | null };
     expect(body.brands).toHaveLength(6);
     expect(body.core_error).toBeNull();
-    const failed = await call("/api/lifecycle/brands", { cookie: employee });
+    const failed = await call("/api/lifecycle/brands", { cookie: employee, env: makeEnv({ MOCK_CORE: "0" }) });
     expect(await failed.json()).toMatchObject({ brands: body.brands, core_error: { code: "core_binding_missing", message: "Core lifecycle binding is missing" } });
   });
 });

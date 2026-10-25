@@ -109,7 +109,7 @@ describe("templates API", () => {
     expect((await postZip(invalid)).status).toBe(422);
     const missing = form(); missing.delete("file");
     expect((await postZip(missing)).status).toBe(422);
-    expect((await postZip(form())).status).toBe(502);
+    expect((await postZip(form(), makeEnv({ MOCK_CORE: "0" }))).status).toBe(502);
     const tooLarge = form(); tooLarge.set("file", new Blob([new Uint8Array(30 * 1024 * 1024 + 1)]), "big.zip");
     expect((await postZip(tooLarge)).status).toBe(422);
     const err = { error: "needs_build", message: "Upload the built dist folder" };
@@ -170,7 +170,7 @@ describe("templates API", () => {
     const FACTORY_WORKER = { fetch: async () => Response.json({ ok: false, error: "not_certified", message: "The version is rejected." }, { status: 409 }) } as unknown as Fetcher;
     const refused = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER }) });
     expect([refused.status, await refused.json()]).toEqual([409, { ok: false, error: "not_certified", message: "The version is rejected." }]);
-    expect((await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {} })).status).toBe(502);
+    expect((await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {}, env: makeEnv({ MOCK_CORE: "0" }) })).status).toBe(502);
   });
 
   it("imports from a URL through the template MCP with the user's email as submitter", async () => {
@@ -189,7 +189,7 @@ describe("templates API", () => {
     } }]);
     expect((await call("/api/templates/import", { cookie: employee, method: "POST", body: { url: "not a url", template_name: "x" }, env: testEnv })).status).toBe(422);
     expect(sent).toHaveLength(1);
-    expect((await call("/api/templates/import", { cookie: employee, method: "POST", body: { url: "https://harbor.example.com/", template_name: "Bolt" } })).status).toBe(502);
+    expect((await call("/api/templates/import", { cookie: employee, method: "POST", body: { url: "https://harbor.example.com/", template_name: "Bolt" }, env: makeEnv({ MOCK_CORE: "0" }) })).status).toBe(502);
   });
 
   it("takes the sealing role and user from the session, never from the request body", async () => {

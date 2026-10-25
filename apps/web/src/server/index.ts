@@ -27,6 +27,7 @@ import type { Env } from "./env.js";
 import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
+import { withMockBindings } from "./mock-bindings.js"; // spec polish
 import { handleDeployRoute } from "./deploys.js";
 import { handleTimelineRoute } from "./timeline.js";
 import { handleAuditRoute } from "./audit-route.js";
@@ -322,6 +323,7 @@ async function route(
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    env = withMockBindings(env); // spec polish
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
       try {
         return await handleApi(request, env, url);
