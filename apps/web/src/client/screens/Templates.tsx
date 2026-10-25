@@ -3,6 +3,7 @@ import { ruleDisposition } from "@anjuna/template-cert/policy";
 import type { TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "../api";
+import { useConfirm } from "../components/ConfirmDialog";
 import { TemplateZipImport } from "./TemplateZipImport";
 
 const statusLabel: Record<TemplateReviewStatus, string> = {
@@ -26,6 +27,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
   const [form, setForm] = useState({ url: "", template_name: "" });
   const [imported, setImported] = useState<TemplateSubmitResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
   const [filter, setFilter] = useState<TemplateReviewStatus | "all">("all");
   const visibleTemplates = (templates ?? []).filter((t) => filter === "all" || t.status === filter);
 
@@ -37,6 +39,13 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
   }, [selected]);
 
   async function approve(id: string) {
+    const target = templates?.find((t) => t.template_version_id === id) ?? (detail?.template.template_version_id === id ? detail.template : null);
+    const ok = await confirm({
+      title: "อนุมัติเทมเพลต (Approve template)?",
+      body: target ? `${target.name} v${target.version}` : id,
+      confirmLabel: "อนุมัติ (Approve)",
+    });
+    if (!ok) return;
     setMsg(null);
     setBusy(true);
     try {
@@ -69,6 +78,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
 
   return (
     <>
+      {confirmDialog}
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginBottom: 18 }}>
         <div>
           <h1 aria-label="เทมเพลต (Templates)">เทมเพลต</h1>

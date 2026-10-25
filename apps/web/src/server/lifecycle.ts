@@ -573,10 +573,6 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
     const { results } = await env.FACTORY.prepare("SELECT v.template_version_id,t.name,v.version,v.status FROM template_versions v JOIN templates t ON t.template_id=v.template_id WHERE v.status='sealed' ORDER BY t.name,v.version DESC,v.template_version_id").all();
     return json(200, SealedTemplatesResponse.parse({ templates: results }));
   }
-  if (/^\/api\/brands\/[^/]+$/.test(path) && method === "DELETE") {
-    const g = authorizePanel("deleteBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-    return json(501, { error: "not_implemented" });
-  }
   if (path === "/api/form-artifacts" && method === "POST") return artifactRoute(request, env, ctx, path);
   if (path.startsWith("/api/form-artifacts/") && method === "POST") return artifactRoute(request, env, ctx, path);
   if (path === "/api/brands/drafts" && method === "POST") {

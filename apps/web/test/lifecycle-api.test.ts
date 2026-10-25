@@ -71,13 +71,13 @@ describe("truthful lifecycle BFF", () => {
     }
   });
 
-  it("refuses Employee Rollback, Upgrade-all and Delete before any mutation or dispatch", async () => {
+  it("refuses Employee Rollback and Upgrade-all before any mutation or dispatch", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "owner-only.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
     let dispatches = 0;
     const testEnv = makeEnv({ FACTORY_WORKER: { fetch: async () => { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher });
     const before = await env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log").first();
-    for (const [method, path] of [["POST", `/api/brands/${brand.brand_id}/rollback`], ["POST", "/api/upgrade-all"], ["DELETE", `/api/brands/${brand.brand_id}`]]) {
+    for (const [method, path] of [["POST", `/api/brands/${brand.brand_id}/rollback`], ["POST", "/api/upgrade-all"]]) {
       const response = await call(path!, { cookie: employee, method: method!, body: {}, env: testEnv });
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: "forbidden_role", required_role: "owner" });
@@ -86,7 +86,6 @@ describe("truthful lifecycle BFF", () => {
     expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log").first()).toEqual(before);
     expect(await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ status: "draft" });
     expect((await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).all()).results).toHaveLength(0);
-    expect((await call(`/api/brands/${brand.brand_id}`, { cookie: owner, method: "DELETE" })).status).toBe(501);
   });
 
   it("refuses an Employee retry of a failed rollback", async () => {
@@ -861,5 +860,16 @@ describe("checklist with the tenant postback token", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ item: "leadsgate_postbacks", confirmed_role: "employee" });
     expect(rows[0]!.confirmed_by).not.toBe("system:global-postback");
+  });
+
+  it("DELETE /api/brands/:id no longer answers 501 and makes no core call", async () => {
+    let coreCalls = 0;
+    const core = { fetch: async () => { coreCalls += 1; return new Response("{}"); } } as unknown as Fetcher;
+    for (const cookie of [owner, employee]) {
+      const response = await call("/api/brands/brand-1", { cookie, method: "DELETE", env: makeEnv({ CORE_LIFECYCLE: core }) });
+      expect(response.status).toBe(404);
+      expect(await response.json()).not.toEqual({ error: "not_implemented" });
+    }
+    expect(coreCalls).toBe(0);
   });
 });

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/client/App";
 import { TemplatesScreen } from "../src/client/screens/Templates";
@@ -164,8 +164,44 @@ describe("Templates screen", () => {
     render(<TemplatesScreen me={owner} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
     fireEvent.click(await screen.findByRole("button", { name: "อนุมัติ (Approve)" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "อนุมัติ (Approve)" }));
     expect(await screen.findByText("อนุมัติแล้ว (Approved)")).toBeTruthy();
     expect(requests.some((r) => r.method === "POST" && r.path === "/api/templates/tv-bolt-1/approve")).toBe(true);
+  });
+
+  const approveRequests = () => requests.filter((r) => r.method === "POST" && r.path === "/api/templates/tv-bolt-1/approve");
+
+  it("Approve asks for confirmation before calling the API", async () => {
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "อนุมัติ Bolt Harbor v1" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("อนุมัติเทมเพลต (Approve template)?")).toBeTruthy();
+    expect(dialog.textContent).toContain("Bolt Harbor");
+    expect(dialog.textContent).toContain("v1");
+    expect(approveRequests()).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "อนุมัติ (Approve)" }));
+    await waitFor(() => expect(approveRequests()).toHaveLength(1));
+    expect(await screen.findByText("อนุมัติแล้ว (Approved)")).toBeTruthy();
+  });
+
+  it("cancelling the Approve confirm sends no request", async () => {
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "อนุมัติ Bolt Harbor v1" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /ยกเลิก|Cancel/ }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(approveRequests()).toHaveLength(0);
+    expect(screen.queryByText("อนุมัติแล้ว (Approved)")).toBeNull();
+  });
+
+  it("the detail Approve button also confirms", async () => {
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    fireEvent.click(await screen.findByRole("button", { name: "อนุมัติ (Approve)" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(approveRequests()).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "อนุมัติ (Approve)" }));
+    await waitFor(() => expect(approveRequests()).toHaveLength(1));
   });
 
   it("opens the version named by the selected id", async () => {
