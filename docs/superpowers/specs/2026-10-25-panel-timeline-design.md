@@ -115,14 +115,14 @@ Body (`CreateAdsEventRequest`, strict): `{ type: AdsEventType, occurred_at: Time
 1. `authorizePanel("createAdsEvent")`; 403.
 2. Parse; 422 `{ error: "invalid", issues }` on failure. Extra rules, each a 422 issue: `note` is trimmed and at most 500 characters; `note` is required (non-empty after trim) when `type` is `other`; `occurred_at` is not before `2020-01-01T00:00:00.000Z` and not more than 5 minutes after the server's now.
 3. `brandExists`.
-4. One `env.FACTORY.batch`: the insert, and an audit row `ads_event.create`, `entity_type "brand"`, `entity_id` = brand id, `after_json` = the stored event. Actor from `ctx`.
+4. One `env.FACTORY.batch`: the insert, and an audit row `ads_event.create`, `entity_type "ads_event"`, `entity_id` = the event id, `after_json` = the stored event (it carries `brand_id`). Actor from `ctx`. The entity type is not `brand` because core `listAudit` reads the same factory `audit_log` in production: `brand` rows would fill core's `target_type=brand` page and push config and pause/resume rows off the timeline.
 5. Answer 201 `{ event: AdsAccountEvent }`.
 
 #### `DELETE /api/brands/:id/ads-events/:eventId`
 
 1. `authorizePanel("deleteAdsEvent")`; 403 for an employee.
 2. Load the event by `event_id` and `brand_id`; 404 `{ error: "not_found", resource: "ads_event" }` when missing.
-3. One `env.FACTORY.batch`: the delete, and an audit row `ads_event.delete` with `before_json` = the event and no `after_json`.
+3. One `env.FACTORY.batch`: an audit row `ads_event.delete` (same entity as create) with `before_json` = the event and no `after_json`, inserted only while the row still exists (`INSERT ... SELECT ... WHERE EXISTS`), then the delete. Two concurrent deletes write one audit row.
 4. Answer 200 `{ deleted: AdsAccountEvent }`.
 
 `audit.ts`: `FACTORY_AUDIT_PREFIXES` gains `"ads_event"`, and a new exported `factoryAuditStatement(db, input): D1PreparedStatement` builds the same insert `writeFactoryAudit` runs (which then uses it), so the routes can batch it. The `ads_event.*` actions are not in `DEPLOY_AUDIT_ACTIONS`, so they never show as change rows; the manual event itself is the row. They show on the Audit screen.
