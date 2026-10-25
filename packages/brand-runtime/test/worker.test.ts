@@ -347,7 +347,7 @@ describe("pause and visitor parity", () => {
     expect(bodies[0]).toContain("Temporarily unavailable");
     expect(bodies[0]).not.toMatch(/anjuna|aurum|Brand A/i);
     expect(assets.fetch).not.toHaveBeenCalled();
-    expect(core.calls.brandSettings).toEqual([{ brand_id: "brand-a", include_site_text: true }]);
+    expect(core.calls.brandSettings).toEqual([{ brand_id: "brand-a", include_site_text: true, include_theme: true }]);
     expect(Object.entries(core.calls).filter(([method]) => method !== "brandSettings").flatMap(([, calls]) => calls as unknown[])).toHaveLength(0);
     expect((await get("/admin")).status).toBe(404);
   });

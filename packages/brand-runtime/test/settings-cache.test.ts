@@ -121,7 +121,7 @@ describe("live brand settings", () => {
     });
     const { config } = setup({ core: new HttpsCoreClient({ credential: "test" }, send) });
     const settings = await createSettingsCache()(config);
-    expect(bodies).toEqual([{ brand_id: "brand-a", include_site_text: true }, { brand_id: "brand-a" }]);
+    expect(bodies).toEqual([{ brand_id: "brand-a", include_site_text: true, include_theme: true }, { brand_id: "brand-a", include_site_text: true }, { brand_id: "brand-a" }]);
     expect(settings.keyword_default).toBe("Older Core");
     expect([settings.brand_name, settings.site_title, settings.site_description]).toEqual([null, null, null]);
   });

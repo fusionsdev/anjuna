@@ -116,7 +116,7 @@ describe("site text", () => {
     const { get, core } = site();
     core.failure = new Error("core down");
     expect(await (await get("/")).text()).toContain("<title>Brand A | Funding Options</title>");
-    expect(core.calls.brandSettings).toEqual([{ brand_id: "brand-a", include_site_text: true }]);
+    expect(core.calls.brandSettings).toEqual([{ brand_id: "brand-a", include_site_text: true, include_theme: true }]);
   });
 
   it("shows an edit within the 60 second settings TTL", async () => {
@@ -207,7 +207,7 @@ describe("site text", () => {
     expect(body).toContain("<span data-brand>Quick Funds Å</span>");
     expect((await get("/api/leads", { method: "POST", body: JSON.stringify(leadFixture) })).status).toBe(201);
     const settingsRequest = send.mock.calls.map(([request]) => request).find((request) => request.url.endsWith("/rpc/brandSettings"))!;
-    expect(await settingsRequest.json()).toEqual({ brand_id: "brand-a", include_site_text: true });
+    expect(await settingsRequest.json()).toEqual({ brand_id: "brand-a", include_site_text: true, include_theme: true });
     const submitRequest = send.mock.calls.map(([request]) => request).find((request) => request.url.endsWith("/rpc/submitLead"))!;
     expect(decodeURIComponent(submitRequest.headers.get("x-consent-brand")!)).toBe("Quick Funds Å");
   });

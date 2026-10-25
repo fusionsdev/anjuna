@@ -1,6 +1,6 @@
 import {
   ANALYTICS_LIMITS, BRAND_ASSET_PATHS, CLICK_PARAM_KEYS, CLICK_TRIGGER_KEYS, HANDOFF_TTL_SECONDS, FormLeadPayload, OpaqueToken, Keyword,
-  LeadsRpc, cleanKeyword, encodeRuntimeConfig, isBrandClean,
+  LeadsRpc, cleanKeyword, encodeRuntimeConfig, isBrandClean, themeCss, themeStyleTag,
   type AnalyticsVisitor, type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
 } from "@anjuna/contracts";
 import { assignVariant, type Assignment } from "./assignment.js";
@@ -95,7 +95,7 @@ function escapeAttribute(value: string): string {
 }
 
 async function serveHtml(url: URL, config: BrandWorkerConfig, assetPath: string, keyword: string | null,
-  extra: { cfg?: RuntimeConfig; cta?: ClickParams; site?: { text: EffectiveSiteText; page: "index" | "other" } } = {}): Promise<Response> {
+  extra: { cfg?: RuntimeConfig; cta?: ClickParams; site?: { text: EffectiveSiteText; page: "index" | "other" }; theme?: string } = {}): Promise<Response> {
   // Do not forward visitor headers or query strings to static assets (UA/IP/referrer parity).
   const asset = await config.assets.fetch(new Request(new URL(assetPath, url.origin)));
   if (!asset.ok) { await asset.body?.cancel(); return notFound(); }
@@ -112,6 +112,9 @@ async function serveHtml(url: URL, config: BrandWorkerConfig, assetPath: string,
       .map(([key, value]) => `<input type="hidden" name="${key}" value="${escapeAttribute(value)}">`).join("");
     rewriter = rewriter.on("form[data-cta]", { element(element) { element.append(hidden, { html: true }); } });
   }
+  // Last child of <head>, so the brand colors win over the template's own :root rules. A page without <head> gets none.
+  const theme = extra.theme;
+  if (theme) rewriter = rewriter.on("head", { element(element) { element.append(theme, { html: true }); } });
   const transformed = rewriter.transform(asset);
   const headers = new Headers(transformed.headers);
   for (const header of ["content-length", "etag", "last-modified", "set-cookie", "vary"]) headers.delete(header);
@@ -204,7 +207,10 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
     return response;
   }
   const site = effectiveSiteText(settings);
-  if (legal) return serveHtml(url, config, `${legal}/index.html`, null, { site: { text: site, page: "other" } });
+  // Depends only on settings: every visitor gets the same block (AGENTS.md hard rule 3). Undefined = no block.
+  const css = themeCss(settings.theme, settings.theme_vars);
+  const theme = css === null ? undefined : themeStyleTag(css);
+  if (legal) return serveHtml(url, config, `${legal}/index.html`, null, { site: { text: site, page: "other" }, theme });
   if (path === "/api/health") return json({ ok: true });
   if (proxy) {
     try {
@@ -261,7 +267,7 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   const keyword = keywordFor(url, settings);
   if (path === "/") {
     const [response, clickCookie] = await Promise.all([
-      serveHtml(url, config, "/index.html", keyword, { cta: adParams(url), site: { text: site, page: "index" } }),
+      serveHtml(url, config, "/index.html", keyword, { cta: adParams(url), site: { text: site, page: "index" }, theme }),
       captureClick(request, url, config, settings, assignment),
     ]);
     if (clickCookie) response.headers.append("set-cookie", clickCookie);

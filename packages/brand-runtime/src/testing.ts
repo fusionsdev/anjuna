@@ -30,7 +30,10 @@ export class MockCoreClient implements CoreClient {
   async brandSettings(body: LeadsRpcRequest<"brandSettings">): Promise<CoreResult<"brandSettings">> {
     this.record("brandSettings", body);
     if (!this.settings) throw new CoreError(404);
-    return { status: 200, data: this.settings };
+    // Like core: the theme key appears only when the request set include_theme.
+    if (body.include_theme) return { status: 200, data: this.settings };
+    const { theme: _theme, ...data } = this.settings;
+    return { status: 200, data };
   }
   async brandAsset(body: LeadsRpcRequest<"brandAsset">): Promise<CoreResult<"brandAsset">> {
     this.record("brandAsset", body);
