@@ -80,7 +80,7 @@ Fields that never leave core: `session_id`, `click_session_id`, `brand`, `browse
 
 ### D5. Client errors: brand through the session, owner-only message
 
-`ClientErrorsQuery` (strict): `period` (TrafficLogPeriod, default `"24h"`), `brand_id` (BrandId, optional), `error_type` (string 1 to 64 chars, optional), `cursor` (`/^[1-9][0-9]{0,15}$/`, optional).
+`ClientErrorsQuery` (strict): `period` (TrafficLogPeriod, default `"24h"`), `brand_id` (BrandId, optional), `error_type` (string 1 to 64 chars, optional), `cursor` (`/^[1-9][0-9]{0,14}$/`, optional; 15 digits keep it below `Number.MAX_SAFE_INTEGER`).
 
 Brand: an error's hostname is `MIN(lower(hostname))` over `traffic_events` rows with the same `session_id`; its `brand_id` follows D3. An error with no matching traffic row has `hostname: null` and `brand_id: null`. A `brand_id` filter keeps only errors whose resolved `brand_id` equals it.
 

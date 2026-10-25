@@ -53,7 +53,7 @@
 - `TrafficRecentEvent` strict: `at` (iso datetime), `event_type` (string 1..40), `hostname` (string), `brand_id` (string), `form_step` (int 1..40 nullable), `error_code`, `device`, `browser`, `source` (string nullable each), `session_ref` (SessionRef).
 - `TRAFFIC_RECENT_COLUMNS = ["at", "event_type", "hostname", "brand_id", "form_step", "error_code", "device", "browser", "source", "session_ref"] as const` (the CSV order, spec D6).
 - `TrafficReportResponse` strict: `period`, `from`, `to`, `bucket`, `totals: TrafficMetrics`, `breakdowns: { brand, hostname, device, browser, source }` (each `array(TrafficMetrics.extend({ key: string }))`, max 100), `trend: array(TrafficMetrics.extend({ at: iso datetime }))`, `recent: array(TrafficRecentEvent).max(200)`.
-- `ClientErrorCursor = z.string().regex(/^[1-9][0-9]{0,15}$/)`.
+- `ClientErrorCursor = z.string().regex(/^[1-9][0-9]{0,14}$/)`.
 - `ClientErrorsQuery` strict: `period` (default 24h), `brand_id: BrandId.optional()`, `error_type: z.string().min(1).max(64).optional()`, `cursor: ClientErrorCursor.optional()`.
 - `ClientErrorRow` strict: `id` (positive int), `occurred_at` (string max 40), `error_type` (string 1..64), `error_message` (string max 200 nullable), `screen_id` (string max 64 nullable), `hostname` (string nullable), `brand_id` (string nullable), `session_ref` (SessionRef nullable).
 - `ClientErrorsResponse` strict: `period`, `from`, `to`, `counts: array({ error_type, count }).max(50)`, `rows: array(ClientErrorRow).max(50)`, `next_cursor: ClientErrorCursor.nullable()`.
