@@ -32,7 +32,7 @@ import { BrandTheme } from "./theme.js";
 import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, TrafficRiskResponse } from "./traffic-risk.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
 import { SpendPeriod, SpendQuery, SpendReportResponse } from "./spend.js";
-import { CONVERSION_STATUSES, ConversionReasonCode, ConversionStatus } from "./conversions.js";
+import { CONVERSIONS_MAX_LIMIT, CONVERSION_STATUSES, ConversionReasonCode, ConversionStatus } from "./conversions.js";
 import { ClientErrorsQuery, ClientErrorsResponse, TrafficReportQuery, TrafficReportResponse } from "./traffic-log.js"; // spec traffic
 
 // --- roles and request context ------------------------------------------------------------------
@@ -727,6 +727,8 @@ export const ConversionsQuery = z.strictObject({
   period: SpendPeriod,
   status: z.enum(["all", ...CONVERSION_STATUSES]).default("all"),
   brand: BrandId.optional(),
+  /** Rows to return. Omitted means CONVERSIONS_ROW_LIMIT. */
+  limit: z.coerce.number().int().min(1).max(CONVERSIONS_MAX_LIMIT).optional(),
   /** Test clock, as in AlertsQuery. Omitted means now. */
   now: Timestamp.optional(),
 });
@@ -763,7 +765,7 @@ export const ConversionsReportResponse = z.strictObject({
   /** Rows still pending more than CONVERSION_STALLED_HOURS after creation, any age. */
   stalled: Count,
   rows: z.array(ConversionRow),
-  /** True when more than CONVERSIONS_ROW_LIMIT rows matched. */
+  /** True when more rows matched than the requested `limit` (default CONVERSIONS_ROW_LIMIT, 200). */
   truncated: z.boolean(),
 });
 export type ConversionsReportResponse = z.infer<typeof ConversionsReportResponse>;

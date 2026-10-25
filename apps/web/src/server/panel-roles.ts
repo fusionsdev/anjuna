@@ -13,7 +13,6 @@ export const PANEL_ROLE_TABLE = {
   rollbackBrand: "owner",
   /** Pause is Owner-only in the panel; core still allows employee, so this gate is the enforcement. Resume stays employee. */
   pauseBrand: "owner",
-  deleteBrand: "owner",
   /** Plan: "Create a brand from Domain + Keyword" is employee and owner. */
   createBrand: "employee",
   /** Plan: "Install a brand" is employee and owner. */

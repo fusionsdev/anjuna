@@ -12,6 +12,8 @@ export type ConversionReasonCode = z.infer<typeof ConversionReasonCode>;
 
 /** Rows returned by one conversions report call. */
 export const CONVERSIONS_ROW_LIMIT = 200;
+/** Largest `limit` a conversions report call accepts. */
+export const CONVERSIONS_MAX_LIMIT = 1000;
 /** Same threshold as the conversion_stalled alert (insights alerts.ts). */
 export const CONVERSION_STALLED_HOURS = 6;
 

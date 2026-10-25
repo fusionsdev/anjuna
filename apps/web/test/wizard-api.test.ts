@@ -68,7 +68,7 @@ function factoryWorker(answer: () => Response) {
   return { fetcher, requests };
 }
 const zoneCheck = (body: unknown, fetcher?: Fetcher, cookie = employee) =>
-  call("/api/wizard/zone-check", { cookie, method: "POST", body, env: makeEnv(fetcher ? { FACTORY_WORKER: fetcher } : {}) });
+  call("/api/wizard/zone-check", { cookie, method: "POST", body, env: makeEnv(fetcher ? { FACTORY_WORKER: fetcher } : { MOCK_CORE: "0" }) });
 
 describe("GET /api/wizard/defaults", () => {
   it("returns the tenant amount buckets and form route to an employee", async () => {

@@ -161,7 +161,8 @@ export const api = {
   patchBrand: (id: string, body: BrandPatchRequest) => request<BrandPatchResponse>("PATCH", `/api/brands/${encodeURIComponent(id)}`, body),
   setStatus: (id: string, action: "pause" | "resume") =>
     request<BrandStatusChangeResponse>("POST", `/api/brands/${encodeURIComponent(id)}/${action}`, {}),
-  audit: () => request<{ entries: AuditEntry[]; next_cursor: string | null }>("GET", "/api/audit?limit=100"),
+  audit: (query: { cursor?: string; actor_id?: string; target_type?: string; target_id?: string } = {}) =>
+    request<{ entries: AuditEntry[]; next_cursor: string | null }>("GET", queryPath("/api/audit", [["limit", "50"], ["cursor", query.cursor], ["actor_id", query.actor_id], ["target_type", query.target_type], ["target_id", query.target_id]])),
   users: () => request<{ users: PanelUser[] }>("GET", "/api/users").then((r) => r.users),
   createUser: (u: { email: string; name: string; password: string; role: AdminRole }) => request<unknown>("POST", "/api/users", u),
   setRole: (id: string, role: AdminRole) => request<unknown>("PATCH", `/api/users/${encodeURIComponent(id)}`, { role }),
@@ -201,10 +202,11 @@ export const api = {
     return request<FunnelReportResponse>("GET", `/api/funnel?${params}`);
   },
   /** Read-only. Money and raw error text come back null for an employee. */
-  conversions: (query: { period: SpendPeriod; status?: ConversionsQuery["status"]; brand?: string }) => {
+  conversions: (query: { period: SpendPeriod; status?: ConversionsQuery["status"]; brand?: string; limit?: number }) => {
     const params = new URLSearchParams({ period: query.period });
     if (query.status) params.set("status", query.status);
     if (query.brand) params.set("brand", query.brand);
+    if (query.limit) params.set("limit", String(query.limit));
     return request<ConversionsReportResponse>("GET", `/api/conversions?${params}`);
   },
   /** Days are `YYYY-MM-DD`, UTC, inclusive. */

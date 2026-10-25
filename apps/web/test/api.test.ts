@@ -11,7 +11,7 @@ import lead from "@anjuna/contracts/fixtures/admin/lead.get.response.json";
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PANEL_ROLE_TABLE } from "../src/server/panel-roles";
-import { LEAD_ID, auditRows, call, resetState, sessions, setupDatabases } from "./helpers";
+import { LEAD_ID, auditRows, call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
 let employee: string;
@@ -34,6 +34,8 @@ beforeEach(async () => {
 
 const patch = (cookie: string, body: unknown) => call("/api/brands/brand-a", { cookie, method: "PATCH", body });
 const post = (cookie: string, path: string, body: unknown = {}) => call(path, { cookie, method: "POST", body });
+// MOCK_CORE=1 would fill a missing FACTORY_WORKER with the local-preview stand-in (spec D8.4), so the missing-binding cases turn it off.
+const postNoMock = (cookie: string, path: string) => call(path, { cookie, method: "POST", body: {}, env: makeEnv({ MOCK_CORE: "0" }) });
 
 async function expectForbidden(res: Response, fields?: string[]) {
   expect(res.status).toBe(403);
@@ -282,7 +284,6 @@ describe("role table coverage", () => {
       setUserRole: "owner",
       rollbackBrand: "owner",
       pauseBrand: "owner",
-      deleteBrand: "owner",
       createBrand: "employee",
       installBrand: "employee",
       setDraftTracking: "employee",
@@ -394,14 +395,14 @@ describe("factory brands: create / install / upgrade", () => {
     const brand = await createBrand(employee);
     expect(brand.brand_id).toMatch(/^brand_/);
 
-    const ins = await post(employee, `/api/brands/${brand.brand_id}/install`);
+    const ins = await postNoMock(employee, `/api/brands/${brand.brand_id}/install`);
     expect(ins.status).toBe(502);
   });
 
   it("employee lists installs for the brand", async () => {
     const brand = await createBrand(employee);
-    await post(employee, `/api/brands/${brand.brand_id}/install`);
-    await post(employee, `/api/brands/${brand.brand_id}/install`);
+    await postNoMock(employee, `/api/brands/${brand.brand_id}/install`);
+    await postNoMock(employee, `/api/brands/${brand.brand_id}/install`);
 
     const res = await call(`/api/brands/${brand.brand_id}/installs`, { cookie: employee });
     expect(res.status).toBe(200);
@@ -437,8 +438,8 @@ describe("factory brands: create / install / upgrade", () => {
   it("Employee install and Owner rollback record the correct audit roles", async () => {
     const brand = await createBrand(employee);
     const before = (await auditRows()).length;
-    expect((await post(employee, `/api/brands/${brand.brand_id}/install`)).status).toBe(502);
-    expect((await post(owner, `/api/brands/${brand.brand_id}/rollback`)).status).toBe(502);
+    expect((await postNoMock(employee, `/api/brands/${brand.brand_id}/install`)).status).toBe(502);
+    expect((await postNoMock(owner, `/api/brands/${brand.brand_id}/rollback`)).status).toBe(502);
     const rows = (await auditRows()).slice(before);
     const starts = rows.filter((r) => r.action === "install.start");
     expect(starts).toHaveLength(2);

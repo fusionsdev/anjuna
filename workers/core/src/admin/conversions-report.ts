@@ -103,6 +103,7 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
   const from = `${days.from}T00:00:00.000Z`;
   const to = nextDay(days.to);
   const owner = role === "owner";
+  const limit = query.limit ?? CONVERSIONS_ROW_LIMIT;
 
   const totals = await env.LEADS.prepare(
     `SELECT status, COUNT(*) AS n, COALESCE(SUM(value), 0) AS v FROM conversion_uploads
@@ -123,7 +124,7 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
      ORDER BY CASE c.status WHEN 'dead' THEN 0 WHEN 'pending' THEN 1 WHEN 'processing' THEN 2 ELSE 3 END,
               COALESCE(c.updated_at, c.created_at) DESC, c.lead_id
      LIMIT ?5`,
-  ).bind(from, to, query.status, query.brand ?? null, CONVERSIONS_ROW_LIMIT + 1).all<Row>();
+  ).bind(from, to, query.status, query.brand ?? null, limit + 1).all<Row>();
 
   const count = (s: ConversionStatus) => Number(totals.results.find((r) => r.status === s)?.n ?? 0);
   const sum = (s: ConversionStatus) => cents(Number(totals.results.find((r) => r.status === s)?.v ?? 0));
@@ -132,7 +133,7 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
     totals: { pending: count("pending"), processing: count("processing"), uploaded: count("uploaded"), dead: count("dead") },
     value_totals: owner ? { uploaded: sum("uploaded"), dead: sum("dead") } : null,
     stalled: Number(stalled?.n ?? 0),
-    rows: rows.results.slice(0, CONVERSIONS_ROW_LIMIT).map((r) => {
+    rows: rows.results.slice(0, limit).map((r) => {
       return {
         lead_id: r.lead_id, brand: r.brand, status: r.status,
         reason_code: conversionReasonCode(r.status, r.last_error),
@@ -143,6 +144,6 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
         next_attempt_at: r.next_attempt_at === null ? null : iso(r.next_attempt_at),
       };
     }),
-    truncated: rows.results.length > CONVERSIONS_ROW_LIMIT,
+    truncated: rows.results.length > limit,
   });
 }

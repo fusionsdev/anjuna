@@ -9,7 +9,7 @@ import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
 import { statusBadgeTone, statusLabel } from "../labels";
-import { setLeaveGuard } from "../router";
+import { navigate, setLeaveGuard } from "../router";
 import {
   SETTINGS_LABELS,
   buildPatch,
@@ -79,6 +79,21 @@ export function SettingsScreen() {
   const close = () => { session.current++; setEditing(null); setDraft(null); setBanner(null); };
   // The draft starts from the loaded brand each time a row opens; the editor then owns every edit to it.
   const openNow = (brand: BrandConfig) => { session.current++; setDraft(draftFromBrand(brand)); setBanner(null); setEditing(brand.brand_id); };
+
+  // spec polish D8.2: ?brand=<id> (the ConfigPanel link) opens that brand's editor once, when the rows first load. An unknown id opens nothing.
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (!rows || deepLinkDone.current) return;
+    deepLinkDone.current = true;
+    const id = new URLSearchParams(window.location.search).get("brand");
+    const brand = id ? rows.find((r) => r.brand_id === id)?.brand : null;
+    if (brand) {
+      openNow(brand);
+      // The link is spent: a reload or a later load must not reopen the editor.
+      navigate("/settings", { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
 
   /** Asks once. On discard the guard is cleared and the drawer closed here, because the router navigates on `true` even if the guard cleared itself. */
   const askDiscard = useCallback(async () => {

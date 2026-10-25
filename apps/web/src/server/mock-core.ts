@@ -10,6 +10,7 @@ import {
   BrandConfig,
   BrandPatchRequest,
   BrandStatusChangeRequest,
+  CONVERSIONS_ROW_LIMIT,
   ConversionsQuery,
   LeadAggregatesQuery,
   AlertsQuery,
@@ -55,6 +56,9 @@ import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.
 import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
 import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json"; // spec traffic
 import clientErrors from "@anjuna/contracts/fixtures/admin/client-errors.response.json"; // spec traffic
+import { decodeAuditCursor, encodeAuditCursor } from "./audit.js"; // spec polish
+
+const MOCK_AUDIT_ID_BASE = 1_000_000;
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -89,7 +93,8 @@ function initialState(): State {
     created_at: "2026-09-30T08:00:00.000Z",
     updated_at: "2026-10-01T09:30:00.000Z",
   });
-  const audit = AuditEntry.array().parse(structuredClone(auditOwner.entries));
+  // Mock ids start at 1,000,000 so they never collide with local FACTORY audit ids under MOCK_CORE=1.
+  const audit = AuditEntry.array().parse(structuredClone(auditOwner.entries)).map((e) => ({ ...e, id: e.id + MOCK_AUDIT_ID_BASE }));
   return {
     brands: new Map([
       [a.brand_id, a],
@@ -334,14 +339,17 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, { ...suppressionsList, next_cursor: null });
     case "listAudit": {
       const own = gate.ok && gate.scope === "own";
-      const limit = auditQuery?.limit ?? 50;
-      const entries = [...state.audit]
+      const limit = auditQuery?.limit ?? 50; // spec polish: cursor and a real next_cursor
+      const before = auditQuery?.cursor === undefined ? null : decodeAuditCursor(auditQuery.cursor);
+      if (auditQuery?.cursor !== undefined && before === null) return err({ error: "invalid", request_id: rid, issues: [{ path: "cursor", message: "Invalid cursor" }] });
+      const matched = [...state.audit]
         .sort((x, y) => y.id - x.id)
+        .filter((e) => before === null || e.id < before)
         .filter((e) => (own ? e.actor_id === ctx.actor_id : !auditQuery?.actor_id || e.actor_id === auditQuery.actor_id))
         .filter((e) => !auditQuery?.target_type || e.target.type === auditQuery.target_type)
-        .filter((e) => !auditQuery?.target_id || e.target.id === auditQuery.target_id)
-        .slice(0, limit);
-      return json(200, { entries, next_cursor: null });
+        .filter((e) => !auditQuery?.target_id || e.target.id === auditQuery.target_id);
+      const entries = matched.slice(0, limit);
+      return json(200, { entries, next_cursor: matched.length > limit ? encodeAuditCursor(entries[entries.length - 1]!.id) : null });
     }
     case "funnelReport":
       return json(200, ctx.actor_role === "owner" ? funnelReport : { ...funnelReport, rows: funnelReport.rows.map((r) => ({ ...r, revenue: null })) });
@@ -366,7 +374,8 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
           last_error: owner ? r.last_error : employeeLastError(r.last_error),
         }))
         .sort((a, b) => rank[a.status]! - rank[b.status]! || byText(b.updated_at ?? b.created_at, a.updated_at ?? a.created_at) || byText(a.lead_id, b.lead_id));
-      return json(200, { ...conversionsReport, period: q.period, value_totals: owner ? conversionsReport.value_totals : null, rows });
+      const limit = q.limit ?? CONVERSIONS_ROW_LIMIT;
+      return json(200, { ...conversionsReport, period: q.period, value_totals: owner ? conversionsReport.value_totals : null, rows: rows.slice(0, limit), truncated: rows.length > limit });
     }
     case "trafficRisk":
       return json(200, trafficRisk);

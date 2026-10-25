@@ -1,5 +1,6 @@
 import type { DeployEvent } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -67,7 +68,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const url = new URL(input, window.location.origin);
     requests.push(url);
-    if (url.pathname === "/api/brands/b1/timeline") return respond(url);
+    if (url.pathname === "/api/brands/b1/timeline" || url.pathname === "/api/brands/b2/timeline") return respond(url);
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [{ brand_id: "b1", hostnames: ["shop.example"] }] });
     if (url.pathname === "/api/brands") return json({ brands: [], generated_at: "2026-07-22T00:00:00.000Z" });
     throw new Error(`Unexpected test HTTP request: ${input}`);
@@ -288,17 +289,114 @@ describe("brand timeline screen", () => {
     expect(rowIds()).toEqual(["tl-ads-only"]);
   });
 
-  it("shows the core_audit note, the has_more note and the own-scope hint for an employee", async () => {
+  it("shows the core_audit note, Load more and the own-scope hint for an employee", async () => {
     await open(employee);
     expect(screen.queryByText(/ไทม์ไลน์ไม่ครบ/)).toBeNull();
-    expect(screen.queryByText(/แสดง 4 รายการล่าสุด/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
     expect(screen.queryByText(/คุณเห็นเฉพาะการแก้ไขที่คุณทำเอง/)).toBeNull();
     cleanup();
     respond = () => json(response({ unavailable: ["core_audit"], has_more: true, actor_scope: "own" }));
     await open(employee);
     expect(screen.getByText("ไทม์ไลน์ไม่ครบ: อ่านประวัติจาก Core ไม่ได้ (core_audit) การแก้ไขค่าของแบรนด์ที่ Core บันทึกอยู่อาจหายไป (Part of the timeline is missing: the core audit source is unavailable.)")).toBeTruthy();
-    expect(screen.getByText("แสดง 4 รายการล่าสุด ให้แคบช่วงวันที่เพื่อดูรายการเก่ากว่า (Showing the newest 4; narrow the date range to see older items)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeTruthy();
     expect(screen.getByText("คุณเห็นเฉพาะการแก้ไขที่คุณทำเอง การติดตั้งและเหตุการณ์ Ads แสดงครบ (You see only your own edits; deploys and Ads events are complete)")).toBeTruthy();
+  });
+
+  it("Load more re-fetches the timeline with limit 200", async () => {
+    respond = () => json(response({ has_more: true }));
+    await open();
+    expect(timelineCalls()[0]!.searchParams.get("limit")).toBe("100");
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+    // The bigger window replaces the rows; with has_more still true at the max the note shows instead of the button.
+    expect(screen.getByText("โฆษณาหลักถูกปฏิเสธ")).toBeTruthy();
+    expect(screen.getByText("แสดง 4 รายการ ซึ่งเป็นจำนวนสูงสุด กรุณาเลือกช่วงวันที่ให้แคบลง (Narrow the date range)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
+  });
+
+  it("a failed Load more keeps the rows, shows the error and a retry works", async () => {
+    let fail = true;
+    respond = (url) => url.searchParams.get("limit") === "200" && fail
+      ? json({ error: "bad_gateway" }, 502)
+      : json(response({ has_more: true }));
+    await open();
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("เกิดข้อผิดพลาด (502)");
+    // The rows stay and the limit falls back with no extra request, so the button stays for the retry.
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    expect(timelineCalls().map((url) => url.searchParams.get("limit"))).toEqual(["100", "200"]);
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("200"));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    expect(timelineCalls().map((url) => url.searchParams.get("limit"))).toEqual(["100", "200", "200"]);
+  });
+
+  it("renders under StrictMode with a delayed first response", async () => {
+    let release!: (response: Response) => void;
+    let calls = 0;
+    respond = () => {
+      calls += 1;
+      if (calls === 1) return new Promise<Response>((resolve) => { release = resolve; });
+      return json(response());
+    };
+    render(<StrictMode><BrandTimelineScreen me={owner} brandId="b1" /></StrictMode>);
+    // The StrictMode second run re-requests while the first answer is still held.
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    await screen.findByText("โฆษณาหลักถูกปฏิเสธ");
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    // The held first answer lands late and must not wipe the rows.
+    await act(async () => { release(json(response({ items: [] }))); });
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+  });
+
+  it("a date range change resets the timeline limit to 100", async () => {
+    respond = () => json(response({ has_more: true }));
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(3));
+    expect(lastCall().searchParams.get("limit")).toBe("100");
+    expect(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeTruthy();
+  });
+
+  it("returning to an earlier timeline range still resets the limit to 100", async () => {
+    respond = () => json(response({ has_more: true }));
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(3));
+    expect(lastCall().searchParams.get("limit")).toBe("100");
+
+    // Back to the default range that grew to 200: the window starts over.
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(4));
+    expect(lastCall().searchParams.get("limit")).toBe("100");
+  });
+
+  it("switching brand resets the timeline limit to 100", async () => {
+    respond = () => json(response({ has_more: true }));
+    const { rerender } = render(<BrandTimelineScreen me={owner} brandId="b1" />);
+    await screen.findByText("โฆษณาหลักถูกปฏิเสธ");
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+
+    // App.tsx mounts the screen without a key, so a brand switch is a rerender.
+    rerender(<BrandTimelineScreen me={owner} brandId="b2" />);
+    await waitFor(() => expect(requests.some((url) => url.pathname === "/api/brands/b2/timeline")).toBe(true));
+    const b2Calls = requests.filter((url) => url.pathname === "/api/brands/b2/timeline");
+    expect(b2Calls.map((url) => url.searchParams.get("limit"))).toEqual(["100"]);
   });
 
   it("shows an empty state for a range without items", async () => {

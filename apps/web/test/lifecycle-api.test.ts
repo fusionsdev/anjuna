@@ -23,6 +23,8 @@ beforeEach(async () => {
 });
 
 const post = (cookie: string, path: string, body: unknown) => call(path, { cookie, method: "POST", body });
+// MOCK_CORE=1 would fill a missing FACTORY_WORKER with the local-preview stand-in (spec D8.4), so the missing-binding cases turn it off.
+const postNoMock = (cookie: string, path: string, body: unknown) => call(path, { cookie, method: "POST", body, env: makeEnv({ MOCK_CORE: "0" }) });
 
 describe("truthful lifecycle BFF", () => {
   it("offers only sealed versions from D1 and refuses unsealed draft input", async () => {
@@ -71,13 +73,13 @@ describe("truthful lifecycle BFF", () => {
     }
   });
 
-  it("refuses Employee Rollback, Upgrade-all and Delete before any mutation or dispatch", async () => {
+  it("refuses Employee Rollback and Upgrade-all before any mutation or dispatch", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "owner-only.test", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
     let dispatches = 0;
     const testEnv = makeEnv({ FACTORY_WORKER: { fetch: async () => { dispatches++; return Response.json({ ok: true }); } } as unknown as Fetcher });
     const before = await env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log").first();
-    for (const [method, path] of [["POST", `/api/brands/${brand.brand_id}/rollback`], ["POST", "/api/upgrade-all"], ["DELETE", `/api/brands/${brand.brand_id}`]]) {
+    for (const [method, path] of [["POST", `/api/brands/${brand.brand_id}/rollback`], ["POST", "/api/upgrade-all"]]) {
       const response = await call(path!, { cookie: employee, method: method!, body: {}, env: testEnv });
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: "forbidden_role", required_role: "owner" });
@@ -86,7 +88,6 @@ describe("truthful lifecycle BFF", () => {
     expect(await env.FACTORY.prepare("SELECT count(*) AS n FROM audit_log").first()).toEqual(before);
     expect(await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id=?").bind(brand.brand_id).first()).toEqual({ status: "draft" });
     expect((await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).all()).results).toHaveLength(0);
-    expect((await call(`/api/brands/${brand.brand_id}`, { cookie: owner, method: "DELETE" })).status).toBe(501);
   });
 
   it("refuses an Employee retry of a failed rollback", async () => {
@@ -290,12 +291,12 @@ describe("truthful lifecycle BFF", () => {
   it("persists dispatch failures, sends exact immutable payloads, and retries the same install", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "retry.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
-    const missing = await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const missing = await postNoMock(employee, `/api/brands/${brand.brand_id}/install`, {});
     expect(missing.status).toBe(502);
     const failed = await env.FACTORY.prepare("SELECT install_id,status,to_revision_id FROM installs WHERE brand_id = ?1").bind(brand.brand_id).first<{ install_id: string; status: string; to_revision_id: string | null }>();
     expect(failed?.status).toBe("failed");
     expect(failed?.to_revision_id).toBe(`${brand.brand_id}_rev_1`);
-    expect((await call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST" })).status).toBe(502);
+    expect((await call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST", env: makeEnv({ MOCK_CORE: "0" }) })).status).toBe(502);
     const retryAudit = await env.FACTORY.prepare("SELECT action FROM audit_log WHERE action='install.retry' AND entity_id=?1").bind(failed!.install_id).all();
     expect(retryAudit.results).toHaveLength(1);
   });
@@ -303,10 +304,10 @@ describe("truthful lifecycle BFF", () => {
   it("creates a new retry attempt after a terminal factory receipt", async () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: "terminal-retry.example", keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
-    const missing = await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    const missing = await postNoMock(employee, `/api/brands/${brand.brand_id}/install`, {});
     const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?1").bind(brand.brand_id).first<{ install_id: string }>();
     await env.FACTORY.prepare("INSERT INTO install_receipts (install_id,step,status,output_json,created_at) VALUES (?1,'validate','failed','{}',?2)").bind(failed!.install_id, new Date().toISOString()).run();
-    const retry = await call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST" });
+    const retry = await call(`/api/installs/${failed!.install_id}/retry`, { cookie: employee, method: "POST", env: makeEnv({ MOCK_CORE: "0" }) });
     expect(missing.status).toBe(502);
     expect(retry.status).toBe(502);
     const attempts = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?1 ORDER BY started_at").bind(brand.brand_id).all<{ install_id: string }>();
@@ -318,7 +319,7 @@ describe("truthful lifecycle BFF", () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: `compensation-${compensationStatus.replaceAll("_", "-")}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(draft.status).toBe(201);
     const { brand } = await draft.json() as { brand: { brand_id: string } };
-    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    await postNoMock(employee, `/api/brands/${brand.brand_id}/install`, {});
     const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
     const installId = failed!.install_id;
     await env.FACTORY.prepare("UPDATE brands SET status='installing' WHERE brand_id=?").bind(brand.brand_id).run();
@@ -345,7 +346,7 @@ describe("truthful lifecycle BFF", () => {
   it.each([false, true])("dispatches only one of two concurrent retries (receipts=%s)", async (receipted) => {
     const draft = await post(employee, "/api/brands/drafts", { domain: `concurrent-retry-${receipted}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
     const { brand } = await draft.json() as { brand: { brand_id: string } };
-    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    await postNoMock(employee, `/api/brands/${brand.brand_id}/install`, {});
     const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
     if (receipted) {
       for (const [step, status, output] of [["validate", "ok", '{"zone_id":"local-zone"}'], ["save_rollback", "ok", '{"previous_revision_id":null}'], ["render", "failed", '{"error":"missing template"}'], ["rollback", "ok", '{"compensation":"not_required"}']] as const) {
@@ -397,7 +398,7 @@ describe("truthful lifecycle BFF", () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: `compensated-${slug}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(draft.status).toBe(201);
     const { brand } = await draft.json() as { brand: { brand_id: string } };
-    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    await postNoMock(employee, `/api/brands/${brand.brand_id}/install`, {});
     const source = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
     const sourceId = source!.install_id;
     const now = new Date().toISOString();
@@ -433,7 +434,7 @@ describe("truthful lifecycle BFF", () => {
     const draft = await post(employee, "/api/brands/drafts", { domain: `retained-retry-${terminalReceipt}.example`, keyword_default: "Quick Loan", template_version_id: "tv-1" });
     expect(draft.status).toBe(201);
     const { brand } = await draft.json() as { brand: { brand_id: string } };
-    await post(employee, `/api/brands/${brand.brand_id}/install`, {});
+    await postNoMock(employee, `/api/brands/${brand.brand_id}/install`, {});
     const failed = await env.FACTORY.prepare("SELECT install_id FROM installs WHERE brand_id=?").bind(brand.brand_id).first<{ install_id: string }>();
     const installId = failed!.install_id;
     await env.FACTORY.batch([
@@ -687,7 +688,7 @@ describe("truthful lifecycle BFF", () => {
 
   it("uses one owner upgrade-all command and rejects employee before factory access", async () => {
     expect((await post(employee, "/api/upgrade-all", {})).status).toBe(403);
-    const res = await post(owner, "/api/upgrade-all", { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "brand-x" });
+    const res = await postNoMock(owner, "/api/upgrade-all", { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "brand-x" });
     expect(res.status).toBe(502);
     expect((await env.FACTORY.prepare("SELECT action FROM audit_log WHERE action='upgrade.failed'").all()).results.length).toBeGreaterThan(0);
   });
@@ -861,5 +862,23 @@ describe("checklist with the tenant postback token", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ item: "leadsgate_postbacks", confirmed_role: "employee" });
     expect(rows[0]!.confirmed_by).not.toBe("system:global-postback");
+  });
+
+  it("DELETE and PUT /api/brands/:id answer the same 404 not_found and make no core call", async () => {
+    let coreCalls = 0;
+    const spy = { fetch: async () => { coreCalls += 1; return new Response("{}"); } } as unknown as Fetcher;
+    const testEnv = makeEnv({ MOCK_CORE: "0", CORE: spy, CORE_LIFECYCLE: spy });
+    for (const cookie of [owner, employee]) {
+      const del = await call("/api/brands/brand-1", { cookie, method: "DELETE", env: testEnv });
+      const put = await call("/api/brands/brand-1", { cookie, method: "PUT", body: {}, env: testEnv });
+      expect(del.status).toBe(404);
+      expect(put.status).toBe(del.status);
+      // request_id is new on every request, so it is the one field the two bodies may differ in.
+      const { request_id: _a, ...delBody } = await del.json() as Record<string, unknown>;
+      const { request_id: _b, ...putBody } = await put.json() as Record<string, unknown>;
+      expect(delBody).toMatchObject({ error: "not_found" });
+      expect(putBody).toEqual(delBody);
+    }
+    expect(coreCalls).toBe(0);
   });
 });

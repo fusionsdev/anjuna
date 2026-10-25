@@ -77,14 +77,39 @@ interface Row {
   created_at: string;
 }
 
-/** Panel-only rows, newest first. `actorId` restricts to one actor (employee scope). */
-export async function listPanelAudit(db: D1Database, opts: { actorId?: string; limit: number }): Promise<AuditEntryT[]> {
+/** Core's cursor format (`workers/core/src/admin/index.ts`): the row id in unpadded base64. */
+export function encodeAuditCursor(id: number): string {
+  return btoa(String(id)).replace(/=+$/, "");
+}
+
+export function decodeAuditCursor(cursor: string): number | null {
+  try {
+    const value = Number(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+interface AuditListOpts {
+  actorId?: string;
+  targetType?: string;
+  targetId?: string;
+  limit: number;
+  beforeId?: number;
+}
+
+/** Panel-only rows, newest first. `actorId` restricts to one actor (employee scope); `beforeId` keeps rows with a lower id (paging). */
+export async function listPanelAudit(db: D1Database, opts: AuditListOpts): Promise<AuditEntryT[]> {
   const where = ["(action LIKE 'auth.%' OR action LIKE 'user.%')"];
   const binds: unknown[] = [];
   if (opts.actorId) {
     binds.push(opts.actorId);
     where.push(`actor_id = ?${binds.length}`);
   }
+  if (opts.targetType) { binds.push(opts.targetType); where.push(`entity_type = ?${binds.length}`); }
+  if (opts.targetId) { binds.push(opts.targetId); where.push(`entity_id = ?${binds.length}`); }
+  if (opts.beforeId !== undefined) { binds.push(opts.beforeId); where.push(`id < ?${binds.length}`); }
   binds.push(opts.limit);
   const { results } = await db
     .prepare(`SELECT * FROM audit_log WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?${binds.length}`)
@@ -106,10 +131,13 @@ export async function listPanelAudit(db: D1Database, opts: { actorId?: string; l
 
 /** Lifecycle rows are stored beside panel audit rows, but are separately scoped so an employee
  * sees only their own lifecycle actions while an owner sees the full factory history. */
-export async function listLifecycleAudit(db: D1Database, opts: { actorId?: string; limit: number }): Promise<AuditEntryT[]> {
+export async function listLifecycleAudit(db: D1Database, opts: AuditListOpts): Promise<AuditEntryT[]> {
   const where = ["action NOT LIKE 'auth.%'", "action NOT LIKE 'user.%'"];
   const binds: unknown[] = [];
   if (opts.actorId) { binds.push(opts.actorId); where.push(`actor_id = ?${binds.length}`); }
+  if (opts.targetType) { binds.push(opts.targetType); where.push(`entity_type = ?${binds.length}`); }
+  if (opts.targetId) { binds.push(opts.targetId); where.push(`entity_id = ?${binds.length}`); }
+  if (opts.beforeId !== undefined) { binds.push(opts.beforeId); where.push(`id < ?${binds.length}`); }
   binds.push(opts.limit);
   const { results } = await db.prepare(`SELECT * FROM audit_log WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?${binds.length}`).bind(...binds).all<Row>();
   return results.map((r) => AuditEntry.parse({ id: r.id, actor_id: r.actor_id, actor_role: r.actor_role, action: r.action, target: { type: r.entity_type, id: r.entity_id }, old: r.before_json ? JSON.parse(r.before_json) : null, new: r.after_json ? JSON.parse(r.after_json) : null, at: r.created_at }));

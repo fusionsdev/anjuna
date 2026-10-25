@@ -8,8 +8,11 @@ import type { BrandEditState } from "../../shared/brand-edit";
 import { replaceTemplateBrand } from "../../shared/site-text-preview";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import { ApiError, api, type Me } from "../api";
+import { useBrandDomains } from "../brand-labels";
 import { useConfirm } from "../components/ConfirmDialog";
 import { flowGateLabel } from "../labels";
+import { isPlainLeftClick, navigate } from "../router";
+import { formatSetting } from "../settings-draft";
 import { BrandAssetsSection, TemplateVersionSection } from "./BrandEditSections";
 
 /** The UI hides what the role cannot do; the server enforces it regardless. */
@@ -25,6 +28,7 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [defaults, setDefaults] = useState<TemplateTextDefaults | null>(null);
   const [confirm, confirmDialog] = useConfirm();
+  const domains = useBrandDomains();
   useEffect(() => { void api.siteTextDefaults(brandId).then((r) => setDefaults(r.defaults), () => setDefaults(null)); }, [brandId]);
 
   // The template version and Microsoft Ads account of the current revision: Owner fields.
@@ -55,7 +59,7 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
   const save = (body: BrandPatchRequest, okText = "บันทึกแล้ว") =>
     act(() => api.patchBrand(brandId, { ...body, expected_updated_at: brand?.updated_at }), okText);
 
-  if (!brand) return <Drawer onClose={onClose} title={brandId}>{toast ? <div className="error">{toast.text}</div> : <div className="muted">กำลังโหลด…</div>}</Drawer>;
+  if (!brand) return <Drawer onClose={onClose} title={domains.get(brandId) ?? "กำลังโหลด… (Loading)"}>{toast ? <div className="error">{toast.text}</div> : <div className="muted">กำลังโหลด…</div>}</Drawer>;
 
   return (
     <Drawer onClose={onClose} title={brand.hostnames[0]!}>
@@ -130,7 +134,7 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
         />
       </>}
 
-      {can(me, "ab_weights") && <AbSection key={`ab${brand.updated_at}`} brand={brand} onSave={(ab) => save({ ab_config: ab })} />}
+      {can(me, "ab_weights") && <AbSummary brand={brand} />}
       {can(me, "amount_buckets") && <BucketsSection key={`b${brand.updated_at}`} brand={brand} onSave={(b) => save({ amount_buckets: b })} />}
       {can(me, "flow_gate_mode") && (
         <Section title="เกตของโฟลว์ (Flow gate)">
@@ -215,43 +219,15 @@ function KeywordSection({ brand, onSave }: { brand: BrandConfig; onSave: (k: str
   );
 }
 
-function AbSection({ brand, onSave }: { brand: BrandConfig; onSave: (ab: BrandConfig["ab_config"]) => void }) {
-  const ab = brand.ab_config;
-  const [weights, setWeights] = useState<number[]>(ab?.variants.map((v) => v.weight) ?? []);
-  if (!ab) return <Section title="น้ำหนัก A/B (A/B weights)"><p className="muted">ไม่มี A/B test ที่รันอยู่</p></Section>;
-  const sum = weights.reduce((s, w) => s + w, 0);
-  const two = ab.variants.length === 2;
+/** A/B weights are edited in Settings only (spec polish D8.2); this is a read-only line with a link. */
+function AbSummary({ brand }: { brand: BrandConfig }) {
+  const href = `/settings?brand=${encodeURIComponent(brand.brand_id)}`;
   return (
-    <Section title="น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)">
-      {two ? (
-        <>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={weights[0]}
-            aria-label="น้ำหนัก A/B (A/B weight)"
-            onChange={(e) => setWeights([Number(e.target.value), 100 - Number(e.target.value)])}
-          />
-          <div className="row split">
-            {ab.variants.map((v, i) => (
-              <span key={v.id}>{v.id}: <b>{weights[i]}%</b></span>
-            ))}
-          </div>
-        </>
-      ) : (
-        ab.variants.map((v, i) => (
-          <label key={v.id} className="row">
-            {v.id}
-            <input type="number" min={0} max={100} step={1} value={weights[i]} onChange={(e) => setWeights(weights.map((w, j) => (j === i ? Math.trunc(Number(e.target.value)) : w)))} />
-          </label>
-        ))
-      )}
-      <div className={sum === 100 ? "muted small" : "error"}>รวม {sum}%</div>
-      <button className="btn pri" disabled={sum !== 100} onClick={() => onSave({ ...ab, variants: ab.variants.map((v, i) => ({ id: v.id, weight: weights[i]! })) })}>
-        บันทึก A/B (Save A/B)
-      </button>
+    <Section title="น้ำหนัก A/B (A/B weights)">
+      <div className="row split">
+        <span>{formatSetting("ab_config", brand.ab_config)}</span>
+        <a className="btn" href={href} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(href); }}>แก้ไขใน Settings (Edit in Settings)</a>
+      </div>
     </Section>
   );
 }
