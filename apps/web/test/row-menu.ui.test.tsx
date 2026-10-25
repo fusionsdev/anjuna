@@ -141,12 +141,10 @@ describe("RowMenu", () => {
   it("keeps the right edge inside the 8 px margin when the list grows after placement", () => {
     stubLayout({ top: 100, bottom: 130 }, 800, 150);
     vi.stubGlobal("innerWidth", 375);
-    // First measure 120 px wide (fits), later measures 200 px (the shrink-to-fit width grew).
-    let measures = 0;
+    // 120 px wide until the list is placed (fixed with a left set), 200 px after (the shrink-to-fit width grew).
     vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
       if (this.getAttribute("role") !== "menu") return 0;
-      measures += 1;
-      return measures <= 1 ? 120 : 200;
+      return this.style.position === "fixed" && this.style.left !== "" ? 200 : 120;
     });
     vi.spyOn(HTMLButtonElement.prototype, "getBoundingClientRect").mockReturnValue(
       { top: 100, bottom: 130, left: 320, right: 370, width: 50, height: 30, x: 320, y: 100, toJSON: () => ({}) } as DOMRect);
@@ -155,6 +153,30 @@ describe("RowMenu", () => {
     const left = parseFloat(menu().style.left);
     expect(left + 200).toBeLessThanOrEqual(375 - 8);
     expect(menu().style.maxWidth).toContain("100vw");
+  });
+
+  it("scrolls only the list so a keyboard-focused item stays in view", () => {
+    stubLayout({ top: 150, bottom: 180 }, 300, 400);
+    const scrollTo = vi.fn();
+    vi.stubGlobal("scrollTo", scrollTo);
+    setup([]);
+    openMenu();
+    const list = menu();
+    const items = within(list).getAllByRole("menuitem");
+    // 3 items of 40 px in a 80 px clamped list.
+    items.forEach((el, i) => {
+      Object.defineProperty(el, "offsetTop", { configurable: true, value: i * 40 });
+      Object.defineProperty(el, "offsetHeight", { configurable: true, value: 40 });
+    });
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 80 });
+    fireEvent.keyDown(list, { key: "End" });
+    expect(document.activeElement).toBe(items[2]);
+    expect(list.scrollTop).toBe(40);
+    fireEvent.keyDown(list, { key: "Home" });
+    expect(document.activeElement).toBe(items[0]);
+    expect(list.scrollTop).toBe(0);
+    expect(screen.queryByRole("menu")).not.toBeNull();
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
   it("stays open on a document scroll event that leaves the scroll position unchanged", () => {

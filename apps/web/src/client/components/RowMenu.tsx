@@ -19,7 +19,13 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
   // preventScroll: a focus-induced document scroll would trip the scroll-close handler below.
   const focusItem = (index: number) => {
     const count = items.length;
-    itemRefs.current[((index % count) + count) % count]?.focus({ preventScroll: true });
+    const item = itemRefs.current[((index % count) + count) % count];
+    item?.focus({ preventScroll: true });
+    // Scroll only the list (never the document) so the focused item is visible in a height-clamped list.
+    const list = listRef.current;
+    if (!item || !list) return;
+    if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
+    else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
   };
 
   // An outside mousedown closes the menu; the toggle button handles its own clicks.
