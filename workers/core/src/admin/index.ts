@@ -8,6 +8,7 @@ import {
   FunnelQuery,
   TrafficBreakdownQuery,
   TrafficReportQuery, // spec traffic
+  ClientErrorsQuery, // spec traffic
   FunnelReportResponse,
   MailingStatusResponse,
   SpendQuery,
@@ -57,6 +58,7 @@ import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
 
 import { loadTrafficBreakdown } from "./traffic.js";
 import { loadTrafficReport } from "./traffic-log.js"; // spec traffic
+import { loadClientErrors } from "./client-errors.js"; // spec traffic
 
 const JSON_BODY_LIMIT = 32 * 1024;
 
@@ -1199,6 +1201,12 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const query = parseWith(TrafficReportQuery, parseQuery(new URL(request.url)), context);
     if (query instanceof Response) return query;
     return json(await loadTrafficReport(env, query));
+  }
+  // spec traffic
+  if (route.endpoint === "clientErrors") {
+    const query = parseWith(ClientErrorsQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadClientErrors(env, query, context.actor_role));
   }
 
   return adminError(context, { error: "not_found", resource: "route" });
