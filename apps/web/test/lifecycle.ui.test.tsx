@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary, type BrandConfig, type InstallWithReceipts } from "@anjuna/contracts";
-import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
+import { BrandLifecycle, LifecycleDetail } from "../src/client/screens/BrandLifecycle";
 import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
@@ -694,5 +694,15 @@ describe("7-day stats row in the brands list", () => {
     render(<BrandLifecycle me={employee} />);
     await expectStats(/renderable.test/, ["คลิก (Clicks) —", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
     expect(screen.getByTitle("ไม่มีข้อมูล (No data)").textContent).toContain("—");
+  });
+});
+
+describe("lifecycle detail header", () => {
+  it("a brand without a hostname shows its name once in the detail header", () => {
+    // The contract needs one hostname, so a hostname-less row is a cast: a factory-only draft can still arrive that way.
+    const bare = { ...brand, hostnames: [], name: "Solo Draft" } as unknown as LifecycleBrandSummary;
+    render(<LifecycleDetail me={owner} brand={bare} checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}} />);
+    expect(screen.getByRole("heading", { name: "Solo Draft" })).toBeTruthy();
+    expect(screen.getAllByText(/Solo Draft/)).toHaveLength(1);
   });
 });

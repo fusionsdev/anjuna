@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DeployHistoryResponse, SealedTemplatesResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
+import { SealedTemplatesResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 import { withMockBindings } from "../src/server/mock-bindings";
 
@@ -33,10 +33,11 @@ describe("mock bindings for local preview", () => {
     expect(body.brands.map((b) => b.brand_id)).toContain("brand-a");
   });
 
-  it("MOCK_CORE=1: GET /api/deploys has no unavailable source", async () => {
-    const response = await call("/api/deploys", { cookie: owner, env: mockEnv });
+  it("MOCK_CORE=1: zone check through the mock FACTORY_WORKER succeeds", async () => {
+    // Without withMockBindings there is no FACTORY_WORKER and the route answers 502 zone_check_unavailable.
+    const response = await call("/api/wizard/zone-check", { cookie: owner, method: "POST", env: mockEnv, body: { domain: "mock-zone.example" } });
     expect(response.status).toBe(200);
-    expect(DeployHistoryResponse.parse(await response.json()).unavailable).toEqual([]);
+    expect(await response.json()).toMatchObject({ zone_active: true, zone_name: "mock-zone.example" });
   });
 
   it("MOCK_CORE=1: an install dispatch is accepted", async () => {
@@ -60,6 +61,21 @@ describe("mock bindings for local preview", () => {
 
   it("MOCK_CORE=1: an imported template appears in the list and its detail answers 200", async () => {
     const imported = await call("/api/templates/import", { cookie: employee, method: "POST", env: mockEnv, body: { url: "https://harbor.example.com/", template_name: "Bolt Harbor" } });
+    expect(imported.status).toBe(200);
+    const result = TemplateSubmitResult.parse(await imported.json());
+    const listed = await call("/api/templates", { cookie: employee, env: mockEnv });
+    expect(listed.status).toBe(200);
+    expect(TemplateListResponse.parse(await listed.json()).templates.map((t) => t.template_version_id)).toContain(result.template_version_id);
+    const detail = await call(`/api/templates/${encodeURIComponent(result.template_version_id!)}`, { cookie: employee, env: mockEnv });
+    expect(detail.status).toBe(200);
+  });
+
+  it("MOCK_CORE=1: an imported ZIP template appears in the list and its detail answers 200", async () => {
+    const form = new FormData();
+    form.set("template_name", "Harbor Zip");
+    form.set("template_id", "harbor-zip");
+    form.set("file", new Blob(["zip bytes"]), "site.zip");
+    const imported = await call("/api/templates/import-zip", { cookie: employee, method: "POST", env: mockEnv, body: form });
     expect(imported.status).toBe(200);
     const result = TemplateSubmitResult.parse(await imported.json());
     const listed = await call("/api/templates", { cookie: employee, env: mockEnv });

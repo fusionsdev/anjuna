@@ -5,7 +5,7 @@
  *   GET /api/audit?limit=&cursor=&actor_id=&target_type=&target_id=  -> AuditListResponse
  */
 import { AuditListResponse, AuditQuery, authorize, type AdminRequestContext, type AuditEntry } from "@anjuna/contracts";
-import { listLifecycleAudit, listPanelAudit } from "./audit.js";
+import { decodeAuditCursor, encodeAuditCursor, listLifecycleAudit, listPanelAudit } from "./audit.js";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
 
@@ -15,20 +15,6 @@ const json = (status: number, body: unknown): Response =>
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 const fromCore = (r: CoreResult): Response => json(r.status, r.body);
-
-/** Core's cursor format (`workers/core/src/admin/index.ts`): the row id in unpadded base64. */
-export function encodeAuditCursor(id: number): string {
-  return btoa(String(id)).replace(/=+$/, "");
-}
-
-export function decodeAuditCursor(cursor: string): number | null {
-  try {
-    const value = Number(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
-    return Number.isSafeInteger(value) && value > 0 ? value : null;
-  } catch {
-    return null;
-  }
-}
 
 // Core and the panel share the audit_log table in production: show each row once.
 const isPanelRow = (e: AuditEntry) => e.action.startsWith("auth.") || e.action.startsWith("user.");
@@ -68,9 +54,11 @@ export async function handleAuditRoute(
   const actorId = ownOnly ? ctx.actor_id : q.data.actor_id;
   const skipLocal = q.data.target_type && q.data.target_type !== "user";
   // One extra local row tells whether the panel has more beyond this page.
+  const localOpts = { actorId, targetType: q.data.target_type, targetId: q.data.target_id, limit: limit + 1, beforeId };
+  // Users' rows are panel rows; lifecycle rows never target a user.
   const local = skipLocal ? [] : [
-    ...await listPanelAudit(env.FACTORY, { actorId, limit: limit + 1, beforeId }),
-    ...await listLifecycleAudit(env.FACTORY, { actorId, limit: limit + 1, beforeId }),
+    ...await listPanelAudit(env.FACTORY, localOpts),
+    ...(q.data.target_type === "user" ? [] : await listLifecycleAudit(env.FACTORY, localOpts)),
   ];
   const merged = [...coreList.entries.filter((e) => !isPanelRow(e)), ...local];
   const all = [...new Map(merged.map((entry) => [entry.id, entry])).values()].sort((a, b) => b.id - a.id);

@@ -864,13 +864,20 @@ describe("checklist with the tenant postback token", () => {
     expect(rows[0]!.confirmed_by).not.toBe("system:global-postback");
   });
 
-  it("DELETE /api/brands/:id no longer answers 501 and makes no core call", async () => {
+  it("DELETE and PUT /api/brands/:id answer the same 404 not_found and make no core call", async () => {
     let coreCalls = 0;
-    const core = { fetch: async () => { coreCalls += 1; return new Response("{}"); } } as unknown as Fetcher;
+    const spy = { fetch: async () => { coreCalls += 1; return new Response("{}"); } } as unknown as Fetcher;
+    const testEnv = makeEnv({ MOCK_CORE: "0", CORE: spy, CORE_LIFECYCLE: spy });
     for (const cookie of [owner, employee]) {
-      const response = await call("/api/brands/brand-1", { cookie, method: "DELETE", env: makeEnv({ CORE_LIFECYCLE: core }) });
-      expect(response.status).toBe(404);
-      expect(await response.json()).not.toEqual({ error: "not_implemented" });
+      const del = await call("/api/brands/brand-1", { cookie, method: "DELETE", env: testEnv });
+      const put = await call("/api/brands/brand-1", { cookie, method: "PUT", body: {}, env: testEnv });
+      expect(del.status).toBe(404);
+      expect(put.status).toBe(del.status);
+      // request_id is new on every request, so it is the one field the two bodies may differ in.
+      const { request_id: _a, ...delBody } = await del.json() as Record<string, unknown>;
+      const { request_id: _b, ...putBody } = await put.json() as Record<string, unknown>;
+      expect(delBody).toMatchObject({ error: "not_found" });
+      expect(putBody).toEqual(delBody);
     }
     expect(coreCalls).toBe(0);
   });

@@ -9,7 +9,7 @@ import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
 import { statusBadgeTone, statusLabel } from "../labels";
-import { setLeaveGuard } from "../router";
+import { navigate, setLeaveGuard } from "../router";
 import {
   SETTINGS_LABELS,
   buildPatch,
@@ -87,7 +87,11 @@ export function SettingsScreen() {
     deepLinkDone.current = true;
     const id = new URLSearchParams(window.location.search).get("brand");
     const brand = id ? rows.find((r) => r.brand_id === id)?.brand : null;
-    if (brand) openNow(brand);
+    if (brand) {
+      openNow(brand);
+      // The link is spent: a reload or a later load must not reopen the editor.
+      navigate("/settings", { replace: true });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 

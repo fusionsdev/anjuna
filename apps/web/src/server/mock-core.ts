@@ -56,7 +56,9 @@ import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.
 import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
 import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json"; // spec traffic
 import clientErrors from "@anjuna/contracts/fixtures/admin/client-errors.response.json"; // spec traffic
-import { decodeAuditCursor, encodeAuditCursor } from "./audit-route.js"; // spec polish
+import { decodeAuditCursor, encodeAuditCursor } from "./audit.js"; // spec polish
+
+const MOCK_AUDIT_ID_BASE = 1_000_000;
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -91,7 +93,8 @@ function initialState(): State {
     created_at: "2026-09-30T08:00:00.000Z",
     updated_at: "2026-10-01T09:30:00.000Z",
   });
-  const audit = AuditEntry.array().parse(structuredClone(auditOwner.entries));
+  // Mock ids start at 1,000,000 so they never collide with local FACTORY audit ids under MOCK_CORE=1.
+  const audit = AuditEntry.array().parse(structuredClone(auditOwner.entries)).map((e) => ({ ...e, id: e.id + MOCK_AUDIT_ID_BASE }));
   return {
     brands: new Map([
       [a.brand_id, a],

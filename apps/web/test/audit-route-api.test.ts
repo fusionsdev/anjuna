@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AuditListResponse } from "@anjuna/contracts";
-import { decodeAuditCursor, encodeAuditCursor } from "../src/server/audit-route";
+import { decodeAuditCursor, encodeAuditCursor } from "../src/server/audit";
 import { mockCoreFetch } from "../src/server/mock-core";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
@@ -58,12 +58,15 @@ beforeEach(async () => {
   owner = await sessions.owner();
   employee = await sessions.employee();
   employeeId = await userId(employee);
+  // Raw INSERT, not writePanelAudit: the paging tests need fixed ids to interleave with the core rows.
   await env.FACTORY.batch([
     localRow(1000005, SEED, "user.create"),
     localRow(1000003, SEED, "user.set_role"),
-    localRow(1000001, SEED, "brand.create", "brand", "brand-a"),
+    localRow(1000001, SEED, "user.disable"),
     localRow(1000010, employeeId, "user.set_role"),
     localRow(1000008, "someone-else", "user.set_role"),
+    localRow(1000012, "someone-else", "user.create", "user", "u2"),
+    localRow(1000013, "someone-else", "brand.create", "user", "u1"),
   ]);
 });
 
@@ -119,6 +122,21 @@ describe("GET /api/audit paging", () => {
     expect(ids(second)).toEqual([1000002]);
   });
 
+  it("target_type=user&target_id=u1 returns only that user's panel rows", async () => {
+    const body = await audit("target_type=user&target_id=u1&limit=50", owner);
+    const seeded = body.entries.filter((e) => e.id >= 1000000);
+    expect(seeded.map((e) => e.id)).toEqual([1000010, 1000008, 1000005, 1000003, 1000001]);
+    expect(body.entries.every((e) => e.target.type === "user" && e.target.id === "u1")).toBe(true);
+    expect(body.entries.every((e) => e.action.startsWith("user."))).toBe(true);
+  });
+
+  it("target_type=user returns no lifecycle rows", async () => {
+    const body = await audit("target_type=user&limit=50", owner);
+    expect(ids(body)).not.toContain(1000013);
+    expect(body.entries.some((e) => e.action === "brand.create")).toBe(false);
+    expect(ids(body)).toContain(1000012);
+  });
+
   it("the last page has next_cursor null", async () => {
     const all = await audit(`actor_id=${SEED}&limit=6`, owner);
     expect(ids(all)).toEqual([1000006, 1000005, 1000004, 1000003, 1000002, 1000001]);
@@ -138,12 +156,12 @@ describe("GET /api/audit paging", () => {
 
 describe("mock core listAudit", () => {
   it("honours limit and cursor and returns a real next_cursor", async () => {
-    // Fixture rows: 103 and 101 by usr_emp_01, 102 by usr_owner_01.
+    // Fixture rows 103, 102 and 101 sit at 1,000,000 + id: 103 and 101 by usr_emp_01, 102 by usr_owner_01.
     const page1 = AuditListResponse.parse(await (await call("/api/audit?actor_id=usr_emp_01&limit=1", { cookie: owner })).json());
-    expect(ids(page1)).toEqual([103]);
+    expect(ids(page1)).toEqual([1000103]);
     expect(page1.next_cursor).not.toBeNull();
     const page2 = AuditListResponse.parse(await (await call(`/api/audit?actor_id=usr_emp_01&limit=1&cursor=${page1.next_cursor}`, { cookie: owner })).json());
-    expect(ids(page2)).toEqual([101]);
+    expect(ids(page2)).toEqual([1000101]);
     expect(page2.next_cursor).toBeNull();
   });
 });

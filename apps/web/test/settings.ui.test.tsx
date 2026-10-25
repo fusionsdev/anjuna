@@ -173,6 +173,26 @@ describe("Settings ?brand= deep link (spec polish D8.2)", () => {
     expect(await screen.findByRole("complementary", { name: "แก้ไขตั้งค่า alpha.example.test (Edit settings)" })).toBeTruthy();
   });
 
+  it("the ?brand query is removed after the editor opens", async () => {
+    window.history.replaceState(null, "", "/settings?brand=brand-alpha");
+    render(<SettingsScreen />);
+    await screen.findByRole("complementary", { name: /Edit settings/ });
+    expect(window.location.pathname).toBe("/settings");
+    expect(window.location.search).toBe("");
+  });
+
+  it("closing the deep-linked editor and reloading does not reopen it", async () => {
+    window.history.replaceState(null, "", "/settings?brand=brand-alpha");
+    const first = render(<SettingsScreen />);
+    const drawer = await screen.findByRole("complementary", { name: /Edit settings/ });
+    fireEvent.click(within(drawer).getByRole("button", { name: "ปิด (Close)" }));
+    expect(screen.queryByRole("complementary", { name: /Edit settings/ })).toBeNull();
+    first.unmount();
+    render(<SettingsScreen />);
+    await rowOf("alpha.example.test");
+    expect(screen.queryByRole("complementary", { name: /Edit settings/ })).toBeNull();
+  });
+
   it("Settings ignores an unknown ?brand id", async () => {
     window.history.replaceState(null, "", "/settings?brand=nope");
     render(<SettingsScreen />);
