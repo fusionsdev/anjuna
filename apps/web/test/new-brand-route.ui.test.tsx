@@ -90,7 +90,7 @@ describe("a resumed draft wizard", () => {
 
   it("closes when Back returns to /brands, and the draft stays selected", async () => {
     render(<App />);
-    await screen.findByRole("heading", { name: "Live Cash" });
+    await screen.findByRole("heading", { name: "live.test" });
     fireEvent.click(screen.getByRole("button", { name: /Maple Cash/ }));
     expect(window.location.pathname).toBe("/brands/brand_new");
     fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
@@ -98,8 +98,8 @@ describe("a resumed draft wizard", () => {
     await back();
     expect(window.location.pathname).toBe("/brands");
     await waitFor(() => expect(wizard()).toBeNull());
-    expect(await screen.findByRole("heading", { name: "Maple Cash" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Live Cash" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "maple.test" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "live.test" })).toBeNull();
   });
 
   it("is replaced by the new-brand wizard when Forward enters /brands/new, and Back closes it", async () => {
@@ -120,6 +120,6 @@ describe("a resumed draft wizard", () => {
     await back();
     expect(window.location.pathname).toBe("/brands");
     await waitFor(() => expect(wizard()).toBeNull());
-    expect(await screen.findByRole("heading", { name: "Maple Cash" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "maple.test" })).toBeTruthy();
   });
 });

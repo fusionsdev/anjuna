@@ -96,13 +96,13 @@ describe("brands list filters and sort", () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     expect(sortSelect().value).toBe("issues");
-    expect(names()).toEqual(["FloatMe", "Wizard Demo", "Alpha Loans", "Credit Genie"]);
+    expect(names()).toEqual(["floatsme.test", "wizard.test", "alpha.test", "creditsgene.test"]);
     cleanup();
 
     render(<BrandLifecycle me={employee} />);
     await loaded(employee);
     expect(sortSelect().value).toBe("issues");
-    expect(names()).toEqual(["FloatMe", "Wizard Demo", "Alpha Loans", "Credit Genie"]);
+    expect(names()).toEqual(["floatsme.test", "wizard.test", "alpha.test", "creditsgene.test"]);
   });
 
   it("offers Worst profit to the owner only", async () => {
@@ -144,21 +144,21 @@ describe("brands list filters and sort", () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     fireEvent.change(sortSelect(), { target: { value: "profit" } });
-    expect(names()).toEqual(["FloatMe", "Credit Genie", "Alpha Loans", "Wizard Demo"]);
+    expect(names()).toEqual(["floatsme.test", "creditsgene.test", "alpha.test", "wizard.test"]);
   });
 
   it("sorts by latest activity and puts a brand with no install last", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     fireEvent.change(sortSelect(), { target: { value: "activity" } });
-    expect(names()).toEqual(["Credit Genie", "FloatMe", "Alpha Loans", "Wizard Demo"]);
+    expect(names()).toEqual(["creditsgene.test", "floatsme.test", "alpha.test", "wizard.test"]);
   });
 
   it("sorts by domain A-Z", async () => {
     render(<BrandLifecycle me={employee} />);
     await loaded(employee);
     fireEvent.change(sortSelect(), { target: { value: "az" } });
-    expect(names()).toEqual(["Alpha Loans", "Credit Genie", "FloatMe", "Wizard Demo"]);
+    expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]);
   });
 
   it("filters to one chip and shows each chip's count", async () => {
@@ -171,7 +171,7 @@ describe("brands list filters and sort", () => {
     expect(chipButton(/ยังไม่มีโดเมนใช้งาน/).textContent).toContain("1");
 
     fireEvent.click(chipButton(/ติดตั้งล้มเหลว/));
-    expect(names()).toEqual(["FloatMe"]);
+    expect(names()).toEqual(["floatsme.test"]);
     expect(chipButton(/ติดตั้งล้มเหลว/).getAttribute("aria-pressed")).toBe("true");
     expect(chipButton(/ทั้งหมด/).getAttribute("aria-pressed")).toBe("false");
   });
@@ -186,10 +186,10 @@ describe("brands list filters and sort", () => {
     expect(chipButton(/ยังไม่มีโดเมนใช้งาน/).textContent).toContain("1");
     expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("1");
     fireEvent.click(chipButton(/ยังไม่มีโดเมนใช้งาน/));
-    expect(names()).toEqual(["Wizard Demo"]);
+    expect(names()).toEqual(["wizard.test"]);
     fireEvent.click(chipButton(/ทั้งหมด/));
     // No issue, so it follows the paused brand and the healthy one with an install, and a brand with no install goes last.
-    expect(names()).toEqual(["FloatMe", "Wizard Demo", "Alpha Loans", "Credit Genie", "Core Only"]);
+    expect(names()).toEqual(["floatsme.test", "wizard.test", "alpha.test", "creditsgene.test", "core-only.test"]);
   });
 
   it("does not reorder or uncount live brands by sync_error while the list carries core_error", async () => {
@@ -199,7 +199,7 @@ describe("brands list filters and sort", () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Core brand list fetch failed"))).toBe(true);
-    expect(names()).toEqual(["FloatMe", "Wizard Demo", "Alpha Loans", "Credit Genie"]);
+    expect(names()).toEqual(["floatsme.test", "wizard.test", "alpha.test", "creditsgene.test"]);
     expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("1");
   });
 
@@ -208,14 +208,14 @@ describe("brands list filters and sort", () => {
     routes.set("GET /api/lifecycle/brands", () => json({ brands: synced }));
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
-    expect(names()).toEqual(["FloatMe", "Credit Genie", "Wizard Demo", "Alpha Loans"]);
+    expect(names()).toEqual(["floatsme.test", "creditsgene.test", "wizard.test", "alpha.test"]);
     expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("0");
   });
 
   it("offers no Download control in the brand side panel", async () => {
     render(<BrandLifecycle me={owner} routeBrandId="brand-cg" />);
     await loaded(owner);
-    const panel = (await screen.findByRole("heading", { level: 2, name: /Credit Genie/ })).closest("section")!;
+    const panel = (await screen.findByRole("heading", { level: 2, name: /creditsgene.test/ })).closest("section")!;
     // Non-vacuous: the panel is the loaded detail, with its own actions.
     expect(within(panel).getByRole("link", { name: /เปิดเว็บไซต์/ })).toBeTruthy();
     const controls = [...within(panel).queryAllByRole("button"), ...within(panel).queryAllByRole("link")];
@@ -227,7 +227,7 @@ describe("brands list filters and sort", () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     fireEvent.change(screen.getByLabelText(/ค้นหาโดเมน/), { target: { value: "FLOAT" } });
-    expect(names()).toEqual(["FloatMe"]);
+    expect(names()).toEqual(["floatsme.test"]);
     // A chip count never promises rows the search has hidden.
     expect(chipButton(/ทั้งหมด/).textContent).toContain("1");
     expect(chipButton(/ติดตั้งล้มเหลว/).textContent).toContain("1");
@@ -252,9 +252,9 @@ describe("brands list filters and sort", () => {
     // Review Focus 5: the side panel follows the route, not the visible rows.
     render(<BrandLifecycle me={owner} routeBrandId="brand-wd" />);
     await loaded(owner);
-    expect(await screen.findByRole("heading", { level: 2, name: /Wizard Demo/ })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 2, name: /wizard.test/ })).toBeTruthy();
     fireEvent.change(screen.getByLabelText(/ค้นหาโดเมน/), { target: { value: "float" } });
-    expect(names()).toEqual(["FloatMe"]);
-    expect(screen.getByRole("heading", { level: 2, name: /Wizard Demo/ })).toBeTruthy();
+    expect(names()).toEqual(["floatsme.test"]);
+    expect(screen.getByRole("heading", { level: 2, name: /wizard.test/ })).toBeTruthy();
   });
 });
