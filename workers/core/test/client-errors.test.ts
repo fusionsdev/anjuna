@@ -11,6 +11,7 @@ import { createHarness, ROOT, type Harness } from "./helpers.js";
 
 let h: Harness;
 const employee: AdminRequestContext = { actor_id: "usr_emp_01", actor_role: "employee", request_id: "req_01HZX9K2M4N6P8Q1" };
+const owner: AdminRequestContext = { actor_id: "usr_own_01", actor_role: "owner", request_id: "req_01HZX9K2M4N6P8Q2" };
 const now = new Date("2026-11-02T12:00:00.000Z");
 const load = (query: Partial<ClientErrorsQuery> = {}, role: AdminRole = "owner") =>
   loadClientErrors({ LEADS: h.db as unknown as D1Database }, { period: "7d" as TrafficLogPeriod, ...query }, role, now);
@@ -76,12 +77,17 @@ describe("client errors D1 reads", () => {
     const all = await load();
     const types = all.rows.map((row) => row.error_type);
     expect(types).not.toContain("old_error");
-    expect(types).not.toContain("garbled_time");
     expect(all.rows).toHaveLength(6);
     const month = await loadClientErrors({ LEADS: h.db as unknown as D1Database }, { period: "30d" }, "owner", now);
     expect(month.rows.map((row) => row.error_type)).toContain("old_error");
-    expect(month.rows.map((row) => row.error_type)).not.toContain("garbled_time");
     expect(await load({ brand_id: "brand-c" })).toMatchObject({ rows: [], counts: [] });
+  });
+
+  it("excludes a non-ISO occurred_at such as not-a-date from every period", async () => {
+    for (const period of ["24h", "7d", "30d"] as const) {
+      const { rows } = await load({ period });
+      expect(rows.map((row) => row.error_type), period).not.toContain("garbled_time");
+    }
   });
 
   it("counts per type ignore the type filter and follow the brand filter", async () => {
@@ -116,11 +122,32 @@ describe("client errors D1 reads", () => {
   });
 
   it("the admin route answers an employee and rejects a bad cursor", async () => {
-    const response = await h.admin("/admin/client-errors?period=7d", employee);
+    // The route reads the real clock, so seed relative to it.
+    await h.reset();
+    const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
+    await seedErrors([
+      { session: "", type: "timeout", at: hoursAgo(1), message: "Failed to fetch" },
+      { session: "", type: "timeout", at: hoursAgo(2), message: "slow" },
+      { session: "", type: "submission_error", at: hoursAgo(3), message: "bad" },
+      { session: "", type: "timeout", at: hoursAgo(72), message: "too old" },
+    ]);
+    const [first, second, third] = (await h.db.prepare("SELECT id FROM client_errors ORDER BY id").all<{ id: number }>())
+      .results.map((r) => r.id) as [number, number, number];
+
+    const response = await h.admin("/admin/client-errors?period=24h", employee);
     expect(response.status).toBe(200);
     const body = ClientErrorsResponse.parse(await response.json());
-    expect(body.period).toBe("7d");
-    expect(body.rows.every((row) => row.error_message === null)).toBe(true);
+    expect(body.period).toBe("24h");
+    expect(body.rows).toHaveLength(3);
+    expect(body.rows.map((row) => row.id)).toEqual([third, second, first]);
+    expect(body.rows.map((row) => row.error_message)).toEqual([null, null, null]);
+
+    const ownerResponse = await h.admin("/admin/client-errors?period=24h", owner);
+    expect(ownerResponse.status).toBe(200);
+    const ownerBody = ClientErrorsResponse.parse(await ownerResponse.json());
+    expect(ownerBody.rows.map((row) => row.id)).toEqual([third, second, first]);
+    expect(ownerBody.rows.map((row) => row.error_message)).toEqual(["bad", "slow", "Failed to fetch"]);
+
     expect((await h.admin("/admin/client-errors?period=7d&cursor=0", employee)).status).toBe(422);
     expect((await h.admin("/admin/client-errors?period=today", employee)).status).toBe(422);
     expect((await h.admin("/admin/client-errors?period=7d&sql=1", employee)).status).toBe(422);
@@ -140,7 +167,8 @@ describe("client errors paging", () => {
     await h.reset();
     await h.seedBrand("brand-a");
     await seedErrors(Array.from({ length: 51 }, (_, i) => ({
-      session: "", type: "timeout", at: new Date(Date.parse("2026-11-02T00:00:00.000Z") + i * 1000).toISOString(),
+      // occurred_at falls as id rises, so only ORDER BY id DESC yields descending ids.
+      session: "", type: "timeout", at: new Date(Date.parse("2026-11-02T00:10:00.000Z") - i * 1000).toISOString(),
     })));
     const first = await load({}, "owner");
     expect(first.rows).toHaveLength(50);
@@ -170,7 +198,21 @@ describe("client errors paging", () => {
       session: "", type: `type-${String(i).padStart(2, "0")}`, at: "2026-11-02T01:00:00.000Z",
     })));
     const page = await load();
-    expect(page.counts).toHaveLength(50);
-    expect(page.counts[0]).toEqual({ error_type: "type-00", count: 1 });
+    expect(page.counts).toEqual(
+      Array.from({ length: 50 }, (_, i) => ({ error_type: `type-${String(i).padStart(2, "0")}`, count: 1 })),
+    );
+  });
+
+  it("orders counts by count then type name", async () => {
+    await h.reset();
+    const at = "2026-11-02T01:00:00.000Z";
+    await seedErrors(["zeta", "mid", "alpha", "busy", "busy"].map((type) => ({ session: "", type, at })));
+    const page = await load();
+    expect(page.counts).toEqual([
+      { error_type: "busy", count: 2 },
+      { error_type: "alpha", count: 1 },
+      { error_type: "mid", count: 1 },
+      { error_type: "zeta", count: 1 },
+    ]);
   });
 });
