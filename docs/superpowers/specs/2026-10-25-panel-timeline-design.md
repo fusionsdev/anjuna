@@ -104,7 +104,7 @@ Steps:
    `deploys.ts` exports the three functions and gives each an optional `range: { from?: string; to?: string }` argument. With no range their SQL and results are unchanged, so `/api/deploys` keeps its behavior.
 4. For install rows, join the from and to revisions: `{ revision, template_version_id, bundle_form_version }` or null.
 5. Map to `TimelineItem` (D5), sort newest instant first (ties by `item_id` descending), cut to `limit`.
-6. Answer 200 `{ brand_id, items, has_more, unavailable, actor_scope }`. `has_more` is true when any source returned more than `limit` rows or core returned a `next_cursor`. `unavailable` is `["core_audit"]` when core audit could not be read, else `[]`.
+6. Answer 200 `{ brand_id, items, has_more, unavailable, actor_scope }`. `has_more` is true when the merged list is longer than `limit` before the cut, or core returned a `next_cursor`. Core `listAudit` has no date filter, so core rows come from the newest 200 for the brand; a range older than those shows no core rows (phase 1 limit, listed in the PR). `unavailable` is `["core_audit"]` when core audit could not be read, else `[]`.
 
 A source whose types are all filtered out is not queried.
 
