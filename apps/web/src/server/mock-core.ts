@@ -368,10 +368,7 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
         }))
         .sort((a, b) => rank[a.status]! - rank[b.status]! || byText(b.updated_at ?? b.created_at, a.updated_at ?? a.created_at) || byText(a.lead_id, b.lead_id));
       const limit = q.limit ?? CONVERSIONS_ROW_LIMIT;
-      return json(200, {
-        ...conversionsReport, period: q.period, value_totals: owner ? conversionsReport.value_totals : null,
-        rows: rows.slice(0, limit), truncated: rows.length > limit,
-      });
+      return json(200, { ...conversionsReport, period: q.period, value_totals: owner ? conversionsReport.value_totals : null, rows: rows.slice(0, limit), truncated: rows.length > limit });
     }
     case "trafficRisk":
       return json(200, trafficRisk);

@@ -765,7 +765,7 @@ export const ConversionsReportResponse = z.strictObject({
   /** Rows still pending more than CONVERSION_STALLED_HOURS after creation, any age. */
   stalled: Count,
   rows: z.array(ConversionRow),
-  /** True when more than CONVERSIONS_ROW_LIMIT rows matched. */
+  /** True when more rows matched than the requested `limit` (default CONVERSIONS_ROW_LIMIT, 200). */
   truncated: z.boolean(),
 });
 export type ConversionsReportResponse = z.infer<typeof ConversionsReportResponse>;

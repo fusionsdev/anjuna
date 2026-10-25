@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { ConversionsReportResponse, type AdminRequestContext } from "@anjuna/contracts";
+import { AdminError, ConversionsReportResponse, type AdminRequestContext } from "@anjuna/contracts";
 import { createHarness, type Harness } from "./helpers.js";
 
 const owner: AdminRequestContext = { actor_id: "usr_owner_01", actor_role: "owner", request_id: "req_conv_owner" };
@@ -179,6 +179,8 @@ describe("GET /admin/conversions", () => {
   });
 
   it("conversionsReport without limit returns at most 200 rows as before", async () => {
+    // The 201-row test above proves the cap: 201 matched, 200 returned, truncated true.
+    // Here: one row, no limit, nothing cut.
     await seed("l-1", "brand-a", { status: "uploaded" });
     const body = await parsed();
     expect(body.rows).toHaveLength(1);
@@ -189,6 +191,7 @@ describe("GET /admin/conversions", () => {
     for (const limit of ["0", "1001"]) {
       const response = await h.admin(`/admin/conversions?period=7d&now=${now}&limit=${limit}`, owner);
       expect(response.status, limit).toBe(422);
+      expect(AdminError.parse(await response.json()).error, limit).toBe("invalid");
     }
   });
 
