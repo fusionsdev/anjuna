@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { zipSync } from "fflate";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { darkenHex } from "@anjuna/contracts";
 import { createBrandWorker } from "@anjuna/brand-runtime";
 import { renderPageText, templateBrandName } from "@anjuna/brand-runtime/page-text";
 import { MockCoreClient, WILLOW_LAKE_INDEX, WILLOW_LAKE_TERMS, WIZARD_DEMO_PAGE_TEXT } from "@anjuna/brand-runtime/testing";
@@ -264,6 +265,21 @@ describe("GET /api/wizard/preview/:id", () => {
     expect(html).toMatch(/<header data-brand>Maple Cash<\/header>/);
     expect(html).toContain("<h1><span data-kw>Quick Loan</span> When You Need It</h1>");
     expect(html).not.toContain("Harbor");
+  });
+
+  it("preview carries the draft theme block", async () => {
+    await env.FACTORY.prepare(`INSERT OR IGNORE INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, text_defaults_json, theme_vars_json)
+      VALUES ('tv-wiz-themed', 'tpl-wiz', 5, ?1, 'templates/tv-wiz-a.zip', 'sealed', 'owner', ?2, 'owner', ?2, ?3, ?4)`)
+      .bind("5".repeat(64), NOW, JSON.stringify(TEXT), JSON.stringify({ primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: [] })).run();
+    const html = await (await preview(await draftId({ template_version_id: "tv-wiz-themed", profile: { theme: { primary: "#112233", secondary: "#445566" } } }))).text();
+    const block = `<style id="brand-theme">:root{--color-royal:#112233;--color-royal-dark:${darkenHex("#112233")}}</style>`;
+    expect(html).toContain(block);
+    expect(html.indexOf(block)).toBeLessThan(html.indexOf("</head>"));
+  });
+
+  it("preview without theme is unchanged", async () => {
+    const html = await (await preview(await draftId({ profile: PROFILE }))).text();
+    expect(html).not.toContain("brand-theme");
   });
 
   it("answers 422 for saved copy the install would refuse", async () => {

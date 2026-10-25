@@ -7,7 +7,7 @@
  *   GET  /api/wizard/preview/:id     the draft's template rendered with its site text (iframe source)
  *   POST /api/brands/:id/duplicate   a new draft from a brand's template, keyword, profile and site text
  */
-import { TEMPLATE_ZIP_LIMITS, TemplateTextDefaults, type AdminRequestContext } from "@anjuna/contracts";
+import { TEMPLATE_ZIP_LIMITS, TemplateTextDefaults, themeCss, themeStyleTag, type AdminRequestContext } from "@anjuna/contracts";
 import { unzipSync } from "fflate";
 import { DuplicateBrandRequest, WizardDefaultsResponse, WizardDraft, ZoneCheckRequest, ZoneCheckResponse } from "../shared/wizard.js";
 import { PageCopyError, renderPageText, templateBrandName, type PageTextData } from "@anjuna/brand-runtime/page-text";
@@ -129,7 +129,7 @@ function archivePath(ref: string, fromDir = ""): string | null {
  * fonts of the archive are folded into the document, so the page makes no request and renders under the sandbox CSP.
  * Throws PageCopyError when the saved copy breaks the copy rules, as the install does.
  */
-async function previewHtml(files: Record<string, Uint8Array>, input: { site: EffectiveSiteText; page: PageTextData }): Promise<string | null> {
+async function previewHtml(files: Record<string, Uint8Array>, input: { site: EffectiveSiteText; page: PageTextData; theme: string | null }): Promise<string | null> {
   if (!files["index.html"]) return null;
   const pages = new Map(Object.entries(files).filter(([path]) => /\.html?$/i.test(path)).map(([path, bytes]) => [path, new TextDecoder().decode(bytes)]));
   const index = (await renderPageText(pages, input.page)).get("index.html")!;
@@ -167,6 +167,10 @@ async function previewHtml(files: Record<string, Uint8Array>, input: { site: Eff
       el.removeAttribute("srcset");
     } })
     .on("source[srcset]", { element(el) { el.removeAttribute("srcset"); } });
+  if (input.theme !== null) {
+    const tag = themeStyleTag(input.theme);
+    rewriter.on("head", { element(el) { el.append(tag, { html: true }); } });
+  }
   return rewriter.transform(new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } })).text();
 }
 
@@ -174,9 +178,9 @@ async function preview(env: Env, brandId: string): Promise<Response> {
   const row = await readDraft(env, brandId);
   if (!row) return missingBrand();
   if (!editable(row)) return notEditable();
-  const template = await env.FACTORY.prepare(`SELECT tv.r2_key, tv.text_defaults_json, t.name AS template_name
+  const template = await env.FACTORY.prepare(`SELECT tv.r2_key, tv.text_defaults_json, tv.theme_vars_json, t.name AS template_name
     FROM template_versions tv LEFT JOIN templates t ON t.template_id = tv.template_id WHERE tv.template_version_id = ?1 AND tv.status = 'sealed'`)
-    .bind(row.template_version_id).first<{ r2_key: string; text_defaults_json: string | null; template_name: string | null }>();
+    .bind(row.template_version_id).first<{ r2_key: string; text_defaults_json: string | null; theme_vars_json: string | null; template_name: string | null }>();
   if (!template) return json(422, { error: "template_not_sealed" });
   const object = env.ARTIFACTS ? await env.ARTIFACTS.get(template.r2_key) : null;
   if (!object) return json(503, { error: "preview_unavailable", message: "Template archive is not available" });
@@ -207,9 +211,11 @@ async function preview(env: Env, brandId: string): Promise<Response> {
     template_brand: templateBrandName(template.text_defaults_json, template.template_name), keyword_default: row.keyword_default,
   };
   const site: EffectiveSiteText = { brand, title: copy.site_title ?? null, description: copy.site_description ?? null, templateBrand: defaults?.brand_name ?? null };
+  let themeVars: unknown = null;
+  try { themeVars = JSON.parse(template.theme_vars_json ?? "null"); } catch { /* invalid JSON: no color variables */ }
   let html: string | null;
   try {
-    html = await previewHtml(files, { site, page });
+    html = await previewHtml(files, { site, page, theme: themeCss(profile?.theme, themeVars) });
   } catch (error) {
     if (error instanceof PageCopyError) return json(422, { error: "invalid_copy", message: error.message });
     throw error;
