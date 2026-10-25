@@ -1,11 +1,13 @@
 // spec timeline
 import type { DeployUnavailableSource } from "@anjuna/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandLabels } from "../brand-labels";
+import { useConfirm } from "../components/ConfirmDialog";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
+import { Toast } from "../components/Toast";
 import { operationLabel, statusBadgeTone, statusLabel } from "../labels";
 import { isPlainLeftClick, navigate, routePath, useSearch } from "../router";
 import {
@@ -16,13 +18,15 @@ import {
   fmtSince,
   groupByDay,
   isNearChange,
+  localInputNow,
+  localInputToIso,
   parseTimelineSearch,
   sinceLastChange,
   timelineSearch,
   type RangePreset,
   type TimelineFilters,
 } from "../timeline";
-import { ADS_EVENT_TYPES, CHANGE_CATEGORIES, type RevisionRef, type TimelineItem, type TimelineResponse, type TimelineType } from "../../shared/timeline";
+import { ADS_EVENT_TYPES, CHANGE_CATEGORIES, type AdsEventType, type RevisionRef, type TimelineItem, type TimelineResponse, type TimelineType } from "../../shared/timeline";
 import { NotFound } from "./NotFound";
 import "./BrandTimeline.css";
 
@@ -93,7 +97,7 @@ function ChangeRow({ item }: { item: ChangeItem }) {
   </li>;
 }
 
-function EventRow({ item, since }: { item: EventItem; since: { change: ChangeItem; ms: number } | undefined }) {
+function EventRow({ item, since, onDelete, deleting }: { item: EventItem; since: { change: ChangeItem; ms: number } | undefined; onDelete: (() => void) | undefined; deleting: boolean }) {
   const { event } = item;
   const tone = ADS_EVENT_TONE[event.type];
   const near = since !== undefined && isNearChange(since.ms);
@@ -107,14 +111,103 @@ function EventRow({ item, since }: { item: EventItem; since: { change: ChangeIte
       {event.note && <p className="tl-note">{event.note}</p>}
       <p className="tl-meta"><Actor id={event.created_by} role={event.created_role} /></p>
       {since && <p className="tl-since">
-        <a href={`#tl-${since.change.item_id}`}>หลังการเปลี่ยนแปลง {fmtSince(since.ms)} ({fmtSince(since.ms)} after: {CHANGE_CATEGORY_LABEL[since.change.category]} · {changeWhat(since.change)})</a>
+        <a href={`#tl-${since.change.item_id}`}>หลังการเปลี่ยนแปลงล่าสุด {fmtSince(since.ms)} (after the last change): {CHANGE_CATEGORY_LABEL[since.change.category]} · {changeWhat(since.change)}</a>
       </p>}
-      {/* spec D6 item 4: the Owner-only Delete button goes in this row. */}
+      {onDelete && <div className="tl-actions"><button type="button" className="btn danger" disabled={deleting} onClick={onDelete}>ลบ (Delete)</button></div>}
     </div>
   </li>;
 }
 
-export function BrandTimelineScreen({ brandId }: { me: Me; brandId: string }) {
+const NOTE_MAX = 500;
+const OTHER_NEEDS_NOTE = "ต้องใส่หมายเหตุสำหรับประเภทอื่น ๆ (A note is required for Other)";
+const BAD_TIME = "เวลาไม่ถูกต้อง (Enter a valid date and time)";
+
+type FormField = "type" | "occurred_at" | "note";
+type FieldIssues = Partial<Record<FormField, string[]>>;
+const isFormField = (path: string): path is FormField => path === "type" || path === "occurred_at" || path === "note";
+
+function AddEventForm({ brandId, onSaved, onError }: { brandId: string; onSaved: () => void; onError: (text: string) => void }) {
+  const ids = useId();
+  const [type, setType] = useState<AdsEventType>(ADS_EVENT_TYPES[0]);
+  const [when, setWhen] = useState(() => localInputNow(new Date()));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [issues, setIssues] = useState<FieldIssues>({});
+
+  const needsNote = type === "other" && note.trim() === "";
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || needsNote) return;
+    const occurredAt = localInputToIso(when);
+    if (occurredAt === null) { setIssues({ occurred_at: [BAD_TIME] }); return; }
+    setIssues({});
+    setBusy(true);
+    try {
+      await api.createAdsEvent(brandId, { type, occurred_at: occurredAt, note: note.trim() });
+      setType(ADS_EVENT_TYPES[0]);
+      setWhen(localInputNow(new Date()));
+      setNote("");
+      onSaved();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 422 && err.body?.issues?.length) {
+        const next: FieldIssues = {};
+        const rest: string[] = [];
+        for (const issue of err.body.issues) {
+          if (isFormField(issue.path)) (next[issue.path] ??= []).push(issue.message);
+          else rest.push(`${issue.path} ${issue.message}`);
+        }
+        setIssues(next);
+        if (rest.length) onError(err.thai);
+      } else {
+        onError(err instanceof ApiError ? err.thai : "บันทึกเหตุการณ์ไม่สำเร็จ (Could not save the event.)");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fieldIssues = (field: FormField) => issues[field] && <div id={`${ids}-${field}-err`}>
+    {issues[field].map((message) => <p key={message} className="tl-field-error">{message}</p>)}
+  </div>;
+  const invalid = (field: FormField) => (issues[field] ? true : undefined);
+
+  return <section className="panel tl-form-panel" aria-label="บันทึกเหตุการณ์ (Add event)">
+    <p className="tl-form-head">บันทึกเหตุการณ์ (Add event)</p>
+    <form className="tl-form" onSubmit={submit}>
+      <div className="tl-form-row">
+        <label>
+          <span id={`${ids}-type`}>ประเภท (Type)</span>
+          <select value={type} aria-labelledby={`${ids}-type`} aria-invalid={invalid("type")} aria-describedby={issues.type ? `${ids}-type-err` : undefined} onChange={(e) => setType(e.target.value as AdsEventType)}>
+            {ADS_EVENT_TYPES.map((id) => <option key={id} value={id}>{ADS_EVENT_LABEL[id]}</option>)}
+          </select>
+          {fieldIssues("type")}
+        </label>
+        <label>
+          <span id={`${ids}-occurred_at`}>เวลาที่เกิดเหตุ (Time)</span>
+          <input type="datetime-local" value={when} required aria-labelledby={`${ids}-occurred_at`} aria-invalid={invalid("occurred_at")} aria-describedby={issues.occurred_at ? `${ids}-occurred_at-err` : undefined} onChange={(e) => setWhen(e.target.value)} />
+          {fieldIssues("occurred_at")}
+        </label>
+      </div>
+      <label>
+        <span id={`${ids}-note`}>หมายเหตุ (Note)</span>
+        <textarea value={note} maxLength={NOTE_MAX} aria-labelledby={`${ids}-note`} aria-invalid={invalid("note") ?? (needsNote ? true : undefined)} aria-describedby={issues.note ? `${ids}-note-err` : undefined} onChange={(e) => setNote(e.target.value)} />
+        {needsNote && <p className="tl-field-error">{OTHER_NEEDS_NOTE}</p>}
+        {fieldIssues("note")}
+      </label>
+      <p className="hint tl-counter">{note.length}/{NOTE_MAX}</p>
+      <div className="tl-form-actions">
+        <button type="submit" className="btn pri" disabled={busy || needsNote}>บันทึก (Save)</button>
+      </div>
+    </form>
+  </section>;
+}
+
+export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }) {
+  const isOwner = me.role === "owner";
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const search = useSearch();
   const filters = useMemo(() => parseTimelineSearch(search), [search]);
   const labelOf = useBrandLabels();
@@ -147,6 +240,28 @@ export function BrandTimelineScreen({ brandId }: { me: Me; brandId: string }) {
   const items = load.state === "ready" ? load.data.items : [];
   const groups = useMemo(() => groupByDay(items), [items]);
   const since = useMemo(() => sinceLastChange(items), [items]);
+
+  const removeEvent = async (item: EventItem) => {
+    const label = ADS_EVENT_LABEL[item.event.type];
+    const when = `${fmtDayHeading(item.at)} ${fmtClock(item.at)}`;
+    const ok = await confirm({
+      title: "ลบเหตุการณ์นี้? (Delete this event?)",
+      body: `${label} เวลา ${when} (${label} at ${when})`,
+      confirmLabel: "ลบ (Delete)",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setDeletingId(item.item_id);
+    try {
+      await api.deleteAdsEvent(brandId, item.event.event_id);
+      setToast({ kind: "ok", text: "ลบแล้ว (Deleted)" });
+      reload();
+    } catch (e) {
+      setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "ลบไม่สำเร็จ (Could not delete the event.)" });
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   if (load.state === "missing") return <NotFound title="ไม่พบแบรนด์ (Brand not found)" hint={brandId} />;
 
@@ -184,7 +299,7 @@ export function BrandTimelineScreen({ brandId }: { me: Me; brandId: string }) {
       <ol className="tl-rows">
         {group.items.map((item) => item.kind === "change"
           ? <ChangeRow key={item.item_id} item={item} />
-          : <EventRow key={item.item_id} item={item} since={since.get(item.item_id)} />)}
+          : <EventRow key={item.item_id} item={item} since={since.get(item.item_id)} onDelete={isOwner ? () => void removeEvent(item) : undefined} deleting={deletingId === item.item_id} />)}
       </ol>
     </section>);
   }
@@ -219,12 +334,18 @@ export function BrandTimelineScreen({ brandId }: { me: Me; brandId: string }) {
         {ADS_EVENT_TYPES.map((id) => typeBox(id, ADS_EVENT_LABEL[id]))}
       </fieldset>
     </section>
-    {/* spec D6 item 3: the add-event form renders here, above the list. */}
+    <AddEventForm
+      brandId={brandId}
+      onSaved={() => { setToast({ kind: "ok", text: "บันทึกเหตุการณ์แล้ว (Event saved)" }); reload(); }}
+      onError={(text) => setToast({ kind: "err", text })}
+    />
     <section className="panel tl-list" aria-label="รายการ (Timeline)">{body}</section>
     {load.state === "ready" && !noRequest && <div className="tl-notes">
       {load.data.unavailable.length > 0 && <p className="note">{load.data.unavailable.map((id) => UNAVAILABLE_NOTE[id]).join(" ")}</p>}
       {load.data.has_more && <p className="hint">แสดง {items.length} รายการล่าสุด ให้แคบช่วงวันที่เพื่อดูรายการเก่ากว่า (Showing the newest {items.length}; narrow the date range to see older items)</p>}
       {load.data.actor_scope === "own" && <p className="hint">{OWN_SCOPE_HINT}</p>}
     </div>}
+    {confirmDialog}
+    {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={() => setToast(null)} />}
   </div>;
 }

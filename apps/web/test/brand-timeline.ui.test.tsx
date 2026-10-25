@@ -139,12 +139,12 @@ describe("brand timeline screen", () => {
 
   it("an event row shows the since-last-change line linking to the change row, and is highlighted within 24 h", async () => {
     await open();
-    const near = within(row("ads-e1")).getByRole("link", { name: /หลังการเปลี่ยนแปลง 2 ชม\. \(2h\)/ });
+    const near = within(row("ads-e1")).getByRole("link", { name: /หลังการเปลี่ยนแปลงล่าสุด 2 ชม\. \(2h\)/ });
     expect(near.getAttribute("href")).toBe("#tl-inst-2");
-    expect(near.textContent).toContain("2 ชม. (2h) after: ติดตั้ง/ย้อนกลับ (Deploy/Rollback) · ติดตั้งใหม่ (Redeploy)");
+    expect(near.textContent).toBe("หลังการเปลี่ยนแปลงล่าสุด 2 ชม. (2h) (after the last change): ติดตั้ง/ย้อนกลับ (Deploy/Rollback) · ติดตั้งใหม่ (Redeploy)");
     expect(row("ads-e1").classList.contains("tl-near-change")).toBe(true);
     // 30 h after the config change: the line shows, the highlight does not.
-    const far = within(row("ads-e2")).getByRole("link", { name: /หลังการเปลี่ยนแปลง 30 ชม\. \(30h\)/ });
+    const far = within(row("ads-e2")).getByRole("link", { name: /หลังการเปลี่ยนแปลงล่าสุด 30 ชม\. \(30h\)/ });
     expect(far.getAttribute("href")).toBe("#tl-cfg-1");
     expect(row("ads-e2").classList.contains("tl-near-change")).toBe(false);
     // The anchor target exists.
@@ -271,7 +271,18 @@ describe("brand timeline screen", () => {
     await waitFor(() => expect(timelineCalls()).toHaveLength(1));
     fireEvent.click(screen.getByRole("checkbox", { name: "แก้ไขใน factory (Factory edit)" }));
     await screen.findByText("ของใหม่");
-    await act(async () => { held[0]!(json(response())); await Promise.resolve(); });
+    // Answer the first request late and wait until the screen has read its body, so the assertions below
+    // run after the stale answer has reached the `.then` that the `active` guard protects.
+    const stale = json(response());
+    let consumed = false;
+    const readBody = stale.json.bind(stale);
+    stale.json = async () => { const body = await readBody(); consumed = true; return body; };
+    await act(async () => {
+      held[0]!(stale);
+      for (let i = 0; i < 50 && !consumed; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(consumed).toBe(true);
     expect(screen.getByText("ของใหม่")).toBeTruthy();
     expect(screen.queryByText("โฆษณาหลักถูกปฏิเสธ")).toBeNull();
     expect(rowIds()).toEqual(["tl-ads-only"]);
@@ -325,6 +336,11 @@ describe("brand timeline screen", () => {
     expect(css).toMatch(/\.tl-presets \{[^}]*flex-wrap: wrap/);
     expect(css).toMatch(/\.tl-types \{[^}]*flex-wrap: wrap/);
     expect(css).toMatch(/\.tl-body \{[^}]*min-width: 0/);
-    expect(css).toMatch(/\.tl-note[^{]*\{[^}]*overflow-wrap: anywhere/);
+    // Each cell that holds operator or server text: note, action code, version ids, type labels, actor id, since link, role/status badges.
+    for (const cls of ["tl-note", "tl-what", "tl-versions", "tl-category", "tl-actor", "tl-since a", "tl-body .pill"]) {
+      const escaped = cls.replace(/[.\s]/g, (c) => (c === "." ? "\\." : "\\s+"));
+      expect(css, cls).toMatch(new RegExp(`\\.${escaped}[^{]*\\{[^}]*overflow-wrap: anywhere`));
+    }
+    expect(css).toMatch(/\.tl-body \.pill \{[^}]*white-space: normal/);
   });
 });
