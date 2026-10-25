@@ -175,7 +175,7 @@ describe("Client errors screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
     const failure = await screen.findByRole("alert");
     expect(failure.textContent).toContain("โหลดเพิ่มไม่สำเร็จ");
-    expect(failure.className).toContain("ce-error");
+    expect(failure.className).toContain("traffic-error");
     const paged = errorCalls()[1]!.searchParams;
     expect([paged.get("period"), paged.get("brand_id"), paged.get("error_type"), paged.get("cursor")]).toEqual(["7d", "brand-a", "timeout", "9"]);
     expect(await bodyRows()).toHaveLength(1);
@@ -298,12 +298,25 @@ describe("Client errors screen", () => {
 
   it("drops the counts when the period or the brand changes, not before", async () => {
     const held: Array<(response: Response) => void> = [];
-    respond = (url) => (url.searchParams.get("period") === "7d" ? new Promise<Response>((resolve) => { held.push(resolve); }) : json(fixture));
+    respond = (url) =>
+      url.searchParams.get("period") === "7d" || url.searchParams.get("brand_id") === "brand-a"
+        ? new Promise<Response>((resolve) => { held.push(resolve); })
+        : json(fixture);
     render(<ClientErrorsScreen me={owner} />);
     await table();
+    const chips = () => within(screen.getByRole("group", { name: "ประเภท" })).getAllByRole("button").map((button) => button.textContent);
+
     fireEvent.click(screen.getByRole("button", { name: "7 วัน (7d)" }));
     await waitFor(() => expect(held).toHaveLength(1));
-    expect(within(screen.getByRole("group", { name: "ประเภท" })).getAllByRole("button").map((button) => button.textContent)).toEqual(["ทั้งหมด"]);
+    expect(chips()).toEqual(["ทั้งหมด"]);
+    held[0]!(json({ ...fixture, period: "7d" }));
+    await waitFor(() => expect(chips()).toEqual(["ทั้งหมด 3", "timeout 2", "submission_error 1"]));
+
+    const select = screen.getByRole("combobox", { name: "แบรนด์" });
+    await waitFor(() => expect(within(select).getByRole("option", { name: "a.example (brand-a)" })).toBeTruthy());
+    fireEvent.change(select, { target: { value: "brand-a" } });
+    await waitFor(() => expect(held).toHaveLength(2));
+    expect(chips()).toEqual(["ทั้งหมด"]);
   });
 
   it("shows no number on the all chip when the types list is at its cap", async () => {
@@ -346,8 +359,8 @@ describe("Client errors screen", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("เกิดข้อผิดพลาด (500)");
     expect(screen.queryByRole("table")).toBeNull();
-    // The red tone lives on .note.ce-error, because styles.css loads after Traffic.css and .note would win.
-    expect(alert.className).toContain("ce-error");
+    // The red tone lives on .note.traffic-error, because styles.css loads after Traffic.css and .note would win.
+    expect(alert.className).toContain("traffic-error");
     const before = errorCalls().length;
 
     respond = (url) => json({ ...fixture, period: url.searchParams.get("period") });

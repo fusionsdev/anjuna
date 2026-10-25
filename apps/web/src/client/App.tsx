@@ -126,8 +126,9 @@ export function App() {
       )}
       {view === "builder-keys" && <BuilderKeysScreen me={me} />}
       {view === "funnel" && <FunnelScreen />}
-      {view === "traffic" && <TrafficScreen />} {/* spec traffic */}
-      {view === "errors" && <ClientErrorsScreen me={me} />} {/* spec traffic */}
+      {/* spec traffic */}
+      {view === "traffic" && <TrafficScreen />}
+      {view === "errors" && <ClientErrorsScreen me={me} />}
       {view === "conversions" && <ConversionsScreen me={me} />}
       {view === "alerts" && <AlertsScreen />}
       {view === "mailing" && <MailingScreen />}

@@ -126,7 +126,7 @@ describe("Traffic screen", () => {
     expect(reportCalls()).toHaveLength(1);
   });
 
-  it("the recent table shows session refs in monospace, UTC times and no raw session id", async () => {
+  it("the recent table shows session refs in monospace and UTC times", async () => {
     render(<TrafficScreen />);
     const table = await recent();
     const ref = within(table).getByText("3f9a1c0be274");

@@ -32,7 +32,7 @@ import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, Tr
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
 import { SpendPeriod, SpendQuery, SpendReportResponse } from "./spend.js";
 import { CONVERSION_STATUSES, ConversionReasonCode, ConversionStatus } from "./conversions.js";
-import { ClientErrorsQuery, ClientErrorsResponse, TrafficReportQuery, TrafficReportResponse } from "./traffic-log.js";
+import { ClientErrorsQuery, ClientErrorsResponse, TrafficReportQuery, TrafficReportResponse } from "./traffic-log.js"; // spec traffic
 
 // --- roles and request context ------------------------------------------------------------------
 

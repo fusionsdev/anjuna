@@ -12,6 +12,18 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { trafficCsv } from "../src/server/traffic-log";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
+const authorizeCalls = vi.hoisted(() => [] as string[]);
+vi.mock("@anjuna/contracts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@anjuna/contracts")>();
+  return {
+    ...actual,
+    authorize: ((...args: Parameters<typeof actual.authorize>) => {
+      authorizeCalls.push(String(args[0]));
+      return actual.authorize(...args);
+    }) as typeof actual.authorize,
+  };
+});
+
 let owner: string;
 let employee: string;
 
@@ -161,6 +173,25 @@ describe("GET /api/client-errors (FUS-379)", () => {
     expect(url.searchParams.get("error_type")).toBe("timeout");
     expect(url.searchParams.get("cursor")).toBe("42");
     expect(seen[0]!.headers.get("x-actor-role")).toBe("employee");
+  });
+});
+
+describe("traffic log routes call authorize", () => {
+  it("checks trafficReport for both report paths and clientErrors for the error log", async () => {
+    // The mock core also calls authorize() with the same endpoint name, so use a stub core to count only the panel's own call.
+    const fetch = vi.fn(async (request: Request) =>
+      Response.json(new URL(request.url).pathname === "/admin/client-errors" ? clientErrorsFixture : trafficFixture),
+    );
+    const env = makeEnv({ MOCK_CORE: "0", CORE: { fetch } as unknown as Fetcher });
+    for (const [path, endpoint] of [
+      ["/api/traffic/report", "trafficReport"],
+      ["/api/traffic/report.csv", "trafficReport"],
+      ["/api/client-errors", "clientErrors"],
+    ] as const) {
+      authorizeCalls.length = 0;
+      expect((await call(path, { cookie: employee, env })).status, path).toBe(200);
+      expect(authorizeCalls.filter((name) => name === "trafficReport" || name === "clientErrors"), path).toEqual([endpoint]);
+    }
   });
 });
 

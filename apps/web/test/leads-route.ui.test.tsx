@@ -12,6 +12,8 @@ const APPLICANT_EMAIL = "test.applicant@example.com";
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
 const employee: Me = { id: "u2", email: "staff@example.test", role: "employee" };
 const LEADS_NAV = "ลีด (Leads)";
+const TRAFFIC_NAV = "ทราฟฟิก (Traffic)";
+const ERRORS_NAV = "ข้อผิดพลาดฝั่งเว็บ (Client errors)";
 const SUPPRESSIONS_NAV = "อีเมลที่บล็อก (Suppressions)";
 const OWNER_ONLY = "สำหรับ Owner เท่านั้น (Owner only)";
 
@@ -102,7 +104,9 @@ describe("Leads and Suppressions routes", () => {
     const { unmount } = render(<App />);
     await screen.findByRole("navigation", { name: "เมนูหลัก" });
     const ownerNav = navLabels();
-    expect(ownerNav.indexOf(LEADS_NAV)).toBe(ownerNav.findIndex((l) => l!.startsWith("ฟันเนล")) + 1);
+    expect(ownerNav.indexOf(LEADS_NAV)).toBe(ownerNav.indexOf(ERRORS_NAV) + 1);
+    expect(ownerNav.indexOf(ERRORS_NAV)).toBe(ownerNav.indexOf(TRAFFIC_NAV) + 1);
+    expect(ownerNav.indexOf(TRAFFIC_NAV)).toBe(ownerNav.findIndex((l) => l!.startsWith("ฟันเนล")) + 1);
     expect(ownerNav.indexOf(SUPPRESSIONS_NAV)).toBe(ownerNav.findIndex((l) => l!.startsWith("รายชื่ออีเมล")) + 1);
     expect(screen.getByRole("link", { name: SUPPRESSIONS_NAV }).getAttribute("href")).toBe("/suppressions");
     expect(screen.getByRole("link", { name: LEADS_NAV }).getAttribute("href")).toBe("/leads");

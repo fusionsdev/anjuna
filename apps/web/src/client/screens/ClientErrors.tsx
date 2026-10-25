@@ -7,19 +7,18 @@ import { type Column, DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { navigate, useSearch, viewPath } from "../router";
+import { DEFAULT_TRAFFIC_LOG_PERIOD, TRAFFIC_LOG_PERIOD_LABEL, readTrafficLogPeriod } from "../traffic-periods";
 import "./Traffic.css";
 
 type Row = ClientErrorsResponse["rows"][number];
 export interface ClientErrorFilters { period: TrafficLogPeriod; brand: string | null; type: string | null }
 
-const DEFAULT_PERIOD: TrafficLogPeriod = "24h";
 const TYPE_MAX = 64;
-const PERIOD_LABEL: Record<TrafficLogPeriod, string> = { "24h": "24 ชม. (24h)", "7d": "7 วัน (7d)", "30d": "30 วัน (30d)" };
 
 /** An unknown period reads as the default; a brand that is not a brand id and an empty or over-long type read as none, so core never answers 422. */
 export function readClientErrorFilters(search: string): ClientErrorFilters {
   const params = new URLSearchParams(search);
-  const period = TRAFFIC_LOG_PERIODS.find((value) => value === params.get("period")) ?? DEFAULT_PERIOD;
+  const period = readTrafficLogPeriod(params.get("period"));
   const brand = params.get("brand");
   const type = params.get("type");
   return {
@@ -32,7 +31,7 @@ export function readClientErrorFilters(search: string): ClientErrorFilters {
 /** Only the values that differ from the defaults, so the default view is a clean /errors. */
 export function clientErrorsPath(filters: ClientErrorFilters): string {
   const params = new URLSearchParams();
-  if (filters.period !== DEFAULT_PERIOD) params.set("period", filters.period);
+  if (filters.period !== DEFAULT_TRAFFIC_LOG_PERIOD) params.set("period", filters.period);
   if (filters.brand) params.set("brand", filters.brand);
   if (filters.type) params.set("type", filters.type);
   const query = params.toString();
@@ -126,7 +125,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
         </div>
         <div className="seg" role="group" aria-label="ช่วงเวลา">
           {TRAFFIC_LOG_PERIODS.map((key) => (
-            <button key={key} type="button" aria-pressed={period === key} onClick={() => change({ period: key })}>{PERIOD_LABEL[key]}</button>
+            <button key={key} type="button" aria-pressed={period === key} onClick={() => change({ period: key })}>{TRAFFIC_LOG_PERIOD_LABEL[key]}</button>
           ))}
         </div>
       </div>
@@ -149,7 +148,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
       </div>
       {!load && <Spinner />}
       {load && "error" in load && (
-        <div className="note neg ce-error" role="alert">
+        <div className="note neg traffic-error" role="alert">
           <p>{load.error}</p>
           <button type="button" className="btn" onClick={() => setAttempt((n) => n + 1)}>ลองอีกครั้ง</button>
         </div>
@@ -163,7 +162,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
             rowKey={(row) => String(row.id)}
             empty={<EmptyState title="ไม่มีข้อผิดพลาดในช่วงนี้" />}
           />
-          {paging === "failed" && <p className="note neg ce-error" role="alert">โหลดเพิ่มไม่สำเร็จ</p>}
+          {paging === "failed" && <p className="note neg traffic-error" role="alert">โหลดเพิ่มไม่สำเร็จ</p>}
           {loaded.next && (
             <div className="ce-more">
               <button type="button" className="btn" disabled={paging === "busy"} onClick={loadMore}>โหลดเพิ่ม (Load more)</button>

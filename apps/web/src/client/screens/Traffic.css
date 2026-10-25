@@ -1,9 +1,9 @@
-/* Traffic screen and TrendChart. The shared console classes (.head .sub .panel .ledger .cell .k .v .seg .note .neg .btn .tw .data-table .brand-label) come from styles.css. */
+/* Traffic screen, Client errors screen and TrendChart. The shared console classes (.head .sub .panel .ledger .cell .k .v .seg .note .neg .btn .tw .data-table .brand-label) come from styles.css. */
 .traffic-page { min-width: 0; }
 .traffic-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .traffic-stack > * { min-width: 0; }
 .traffic-stack .seg { margin-bottom: 8px; flex-wrap: wrap; }
-/* .note.traffic-error: styles.css loads after this file, so a bare class would lose to .note. */
+/* .note.traffic-error is the error card of both Traffic and Client errors. styles.css loads after this file, so a bare class would lose to .note. */
 .note.traffic-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: var(--badbg); color: var(--bad); }
 .traffic-error p { margin: 0; }
 .traffic-recent-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
@@ -35,7 +35,4 @@
 .ce-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
 .ce-message { max-width: 360px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--text-xs); }
 .ce-more { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-/* .note.ce-error: styles.css loads after this file, so a bare class would lose to .note. */
-.note.ce-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: var(--badbg); color: var(--bad); }
-.ce-error p { margin: 0; }
 .ce-page .data-table { max-width: 100%; overflow-x: auto; }

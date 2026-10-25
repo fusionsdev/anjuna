@@ -61,6 +61,8 @@ describe("Traffic and Client errors routes", () => {
     const employeeNav = navLabels();
     const employeeFunnel = employeeNav.findIndex((l) => l!.startsWith("ฟันเนล"));
     expect(employeeNav.slice(employeeFunnel + 1, employeeFunnel + 3)).toEqual([TRAFFIC_NAV, ERRORS_NAV]);
+    expect(ownerNav).toContain("ผู้ใช้");
+    expect(employeeNav).not.toContain("ผู้ใช้");
   });
 
   it("opening /traffic renders the Traffic screen with its page title", async () => {

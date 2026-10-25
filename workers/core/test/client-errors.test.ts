@@ -153,6 +153,18 @@ describe("client errors D1 reads", () => {
     expect((await h.admin("/admin/client-errors?period=7d&sql=1", employee)).status).toBe(422);
   });
 
+  it("reads an empty hostname as unknown, as the traffic report does", async () => {
+    await h.reset();
+    await traffic("s-empty-host", "").run();
+    await seedErrors([{ session: "s-empty-host", type: "timeout", at: "2026-11-02T09:00:00.000Z", message: "empty host" }]);
+    const { rows } = await load();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ hostname: "unknown" });
+    // No traffic row at all still reads as null.
+    await seedErrors([{ session: "s-no-traffic", type: "timeout", at: "2026-11-02T09:01:00.000Z", message: "no row" }]);
+    expect((await load()).rows.find((row) => row.error_message === "no row")).toMatchObject({ hostname: null, brand_id: null });
+  });
+
   it("new core read modules hold only SELECT statements", () => {
     // The scan covers the whole file text, comments included, so no comment may name a write keyword.
     for (const file of ["src/admin/traffic-log.ts", "src/admin/client-errors.ts"]) {

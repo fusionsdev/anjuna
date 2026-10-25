@@ -53,8 +53,8 @@ import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.jso
 import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
 import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.json";
 import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
-import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json";
-import clientErrors from "@anjuna/contracts/fixtures/admin/client-errors.response.json";
+import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json"; // spec traffic
+import clientErrors from "@anjuna/contracts/fixtures/admin/client-errors.response.json"; // spec traffic
 
 interface State {
   brands: Map<string, BrandConfig>;

@@ -2,6 +2,8 @@
 import type { TrafficReportResponse } from "@anjuna/contracts";
 import { EmptyState } from "./EmptyState";
 
+// The trend-* classes live in screens/Traffic.css, which the Traffic screen imports.
+
 /** Chart geometry in viewBox units: 24 per bucket, values scaled to 100 over a baseline at y 110, 120 high. */
 const SLOT = 24;
 const SCALE = 100;
@@ -40,7 +42,7 @@ export function TrendChart({ trend, bucket }: { trend: TrafficReportResponse["tr
       <p className="trend-axis muted small">เวลา UTC</p>
       <ul className="trend-legend">
         <li><span className="trend-swatch landing" aria-hidden="true" />เข้าชมหน้าแรก (Landing views)</li>
-        <li><span className="trend-swatch leads" aria-hidden="true" />ลีด (Leads)</li>
+        <li><span className="trend-swatch leads" aria-hidden="true" />ส่งลีด (Leads)</li>
       </ul>
     </>
   );

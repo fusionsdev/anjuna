@@ -6,13 +6,13 @@ import {
 import type { Env } from "../env.js";
 import { brandOfHost, sessionRef } from "./traffic-log.js";
 
-// An error's host is the lowest host seen for its session. A row with an empty session id has no host and no brand.
+// An error's host is the lowest host seen for its session, with the report's 'unknown' for an empty hostname. A row with an empty session id has no host and no brand.
 // occurred_at is client text, so the window compares as text and a malformed value normally falls outside it.
 const ERRORS = `
 WITH errors AS (
   SELECT e.id, e.session_id, e.error_type, e.error_message, e.screen_id, e.occurred_at,
     CASE WHEN COALESCE(e.session_id, '') = '' THEN NULL
-      ELSE (SELECT MIN(lower(t.hostname)) FROM traffic_events t WHERE t.session_id = e.session_id) END AS host
+      ELSE (SELECT MIN(COALESCE(NULLIF(lower(t.hostname), ''), 'unknown')) FROM traffic_events t WHERE t.session_id = e.session_id) END AS host
   FROM client_errors e WHERE e.occurred_at >= ?1 AND e.occurred_at < ?2
 ), attributed AS (
   SELECT x.*, CASE WHEN x.host IS NULL THEN NULL ELSE ${brandOfHost("x.host")} END AS brand_id FROM errors x

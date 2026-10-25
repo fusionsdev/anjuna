@@ -8,14 +8,13 @@ import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { TrendChart } from "../components/TrendChart";
 import { navigate, useSearch, viewPath } from "../router";
+import { DEFAULT_TRAFFIC_LOG_PERIOD, TRAFFIC_LOG_PERIOD_LABEL, readTrafficLogPeriod } from "../traffic-periods";
 import "./Traffic.css";
 
 type Breakdown = keyof TrafficReportResponse["breakdowns"];
 type BreakdownRow = TrafficReportResponse["breakdowns"][Breakdown][number];
 type RecentRow = TrafficReportResponse["recent"][number] & { n: number };
 
-const DEFAULT_PERIOD: TrafficLogPeriod = "24h";
-const PERIOD_LABEL: Record<TrafficLogPeriod, string> = { "24h": "24 ชม. (24h)", "7d": "7 วัน (7d)", "30d": "30 วัน (30d)" };
 const METRIC_LABEL: Record<(typeof TRAFFIC_METRICS)[number], string> = {
   landing_views: "เข้าชมหน้าแรก (Landing views)",
   form_starts: "เริ่มกรอกฟอร์ม (Form starts)",
@@ -27,15 +26,13 @@ const TABS: Array<[Breakdown, string]> = [
   ["brand", "แบรนด์"], ["hostname", "โดเมน (Hostname)"], ["device", "อุปกรณ์"], ["browser", "เบราว์เซอร์"], ["source", "แหล่งที่มา (Source)"],
 ];
 
-/** An unknown period reads as the default, so core never answers 422. */
 export function readTrafficPeriod(search: string): TrafficLogPeriod {
-  const value = new URLSearchParams(search).get("period");
-  return TRAFFIC_LOG_PERIODS.find((period) => period === value) ?? DEFAULT_PERIOD;
+  return readTrafficLogPeriod(new URLSearchParams(search).get("period"));
 }
 
 /** The default period leaves a clean /traffic. */
 export function trafficPath(period: TrafficLogPeriod): string {
-  return period === DEFAULT_PERIOD ? viewPath("traffic") : `${viewPath("traffic")}?period=${period}`;
+  return period === DEFAULT_TRAFFIC_LOG_PERIOD ? viewPath("traffic") : `${viewPath("traffic")}?period=${period}`;
 }
 
 const count = (n: number) => n.toLocaleString("en-US");
@@ -97,7 +94,7 @@ export function TrafficScreen() {
         </div>
         <div className="seg" role="group" aria-label="ช่วงเวลา">
           {TRAFFIC_LOG_PERIODS.map((key) => (
-            <button key={key} type="button" aria-pressed={period === key} onClick={() => navigate(trafficPath(key), { replace: true })}>{PERIOD_LABEL[key]}</button>
+            <button key={key} type="button" aria-pressed={period === key} onClick={() => navigate(trafficPath(key), { replace: true })}>{TRAFFIC_LOG_PERIOD_LABEL[key]}</button>
           ))}
         </div>
       </div>
