@@ -7,7 +7,7 @@ import { type Column, DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { TrendChart } from "../components/TrendChart";
-import { navigate, useSearch } from "../router";
+import { navigate, useSearch, viewPath } from "../router";
 import "./Traffic.css";
 
 type Breakdown = keyof TrafficReportResponse["breakdowns"];
@@ -35,7 +35,7 @@ export function readTrafficPeriod(search: string): TrafficLogPeriod {
 
 /** The default period leaves a clean /traffic. */
 export function trafficPath(period: TrafficLogPeriod): string {
-  return period === DEFAULT_PERIOD ? "/traffic" : `/traffic?period=${period}`;
+  return period === DEFAULT_PERIOD ? viewPath("traffic") : `${viewPath("traffic")}?period=${period}`;
 }
 
 const count = (n: number) => n.toLocaleString("en-US");

@@ -8,6 +8,7 @@ export const pageTitle: Record<View, string> = {
   "builder-keys": "คีย์ Builder", leads: "ลีด (Leads)", suppressions: "อีเมลที่บล็อก (Suppressions)",
   settings: "ตั้งค่า (Settings)",
   "brand-timeline": "ไทม์ไลน์แบรนด์ (Brand timeline)", // spec timeline
+  traffic: "ทราฟฟิก (Traffic)", errors: "ข้อผิดพลาดฝั่งเว็บ (Client errors)", // spec traffic
   "not-found": "ไม่พบหน้านี้",
 };
 

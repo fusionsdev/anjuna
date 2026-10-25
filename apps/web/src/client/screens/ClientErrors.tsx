@@ -6,7 +6,7 @@ import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { type Column, DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
-import { navigate, useSearch } from "../router";
+import { navigate, useSearch, viewPath } from "../router";
 import "./Traffic.css";
 
 type Row = ClientErrorsResponse["rows"][number];
@@ -36,7 +36,7 @@ export function clientErrorsPath(filters: ClientErrorFilters): string {
   if (filters.brand) params.set("brand", filters.brand);
   if (filters.type) params.set("type", filters.type);
   const query = params.toString();
-  return query ? `/errors?${query}` : "/errors";
+  return query ? `${viewPath("errors")}?${query}` : viewPath("errors");
 }
 
 const count = (n: number) => n.toLocaleString("en-US");
