@@ -14,11 +14,12 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
 
   const close = (refocus: boolean) => {
     setOpen(false);
-    if (refocus) buttonRef.current?.focus();
+    if (refocus) buttonRef.current?.focus({ preventScroll: true });
   };
+  // preventScroll: a focus-induced document scroll would trip the scroll-close handler below.
   const focusItem = (index: number) => {
     const count = items.length;
-    itemRefs.current[((index % count) + count) % count]?.focus();
+    itemRefs.current[((index % count) + count) % count]?.focus({ preventScroll: true });
   };
 
   // An outside mousedown closes the menu; the toggle button handles its own clicks.
@@ -29,7 +30,14 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
     };
     // A fixed list does not follow its button, so scrolling or resizing closes it.
     // Scrolling inside the list itself (long list, clamped height) keeps it open.
-    const onMove = (e: Event) => { if (!(e.target instanceof Node && listRef.current?.contains(e.target))) setOpen(false); };
+    // A document scroll event that arrives with the scroll position unchanged since opening (the browser settling
+    // after the list renders and takes focus) is not a user scroll, so it keeps the menu open.
+    const { scrollX, scrollY } = window;
+    const onMove = (e: Event) => {
+      if (e.target instanceof Node && listRef.current?.contains(e.target)) return;
+      if (e.type === "scroll" && (e.target === document || e.target === e.currentTarget) && window.scrollX === scrollX && window.scrollY === scrollY) return;
+      setOpen(false);
+    };
     document.addEventListener("mousedown", onDown);
     window.addEventListener("scroll", onMove, true);
     window.addEventListener("resize", onMove);
@@ -62,9 +70,16 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
     const left = Math.max(4, Math.min(rect.right - list.offsetWidth, window.innerWidth - list.offsetWidth - 4));
     setPos({ top, left, maxHeight });
   }, [open]);
+  // The shrink-to-fit width can grow once the list is placed: re-measure and keep the right edge inside the margin.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!open || !pos || !list) return;
+    const left = Math.max(4, Math.min(pos.left, window.innerWidth - 8 - list.offsetWidth));
+    if (left !== pos.left) setPos({ ...pos, left });
+  }, [open, pos]);
   // Opening moves focus to the first item so arrow keys work right away.
   useEffect(() => {
-    if (open) itemRefs.current[0]?.focus();
+    if (open) itemRefs.current[0]?.focus({ preventScroll: true });
   }, [open ]);
 
   const onMenuKeyDown = (e: React.KeyboardEvent) => {
@@ -91,7 +106,7 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
       {label}
     </button>
     {open && <div className="row-menu-list" role="menu" aria-label={label} onKeyDown={onMenuKeyDown} ref={listRef}
-      style={pos ? { position: "fixed", top: pos.top, left: pos.left, right: "auto", maxHeight: pos.maxHeight, overflowY: "auto" } : undefined}>
+      style={pos ? { position: "fixed", top: pos.top, left: pos.left, right: "auto", maxHeight: pos.maxHeight, maxWidth: "calc(100vw - 16px)", overflowY: "auto" } : undefined}>
       {items.map((item, index) => {
         const divider = item.group !== undefined && lastGroup !== undefined && item.group !== lastGroup;
         lastGroup = item.group;

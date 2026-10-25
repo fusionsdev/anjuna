@@ -125,10 +125,53 @@ describe("RowMenu", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("focuses with preventScroll on open, on arrow keys and when returning to the button", () => {
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    setup([]);
+    openMenu();
+    expect(focus).toHaveBeenCalled();
+    expect(focus.mock.calls.every((call) => (call[0] as FocusOptions | undefined)?.preventScroll === true)).toBe(true);
+    focus.mockClear();
+    fireEvent.keyDown(menu(), { key: "ArrowDown" });
+    fireEvent.keyDown(menu(), { key: "Escape" });
+    expect(focus.mock.calls.length).toBe(2);
+    expect(focus.mock.calls.every((call) => (call[0] as FocusOptions | undefined)?.preventScroll === true)).toBe(true);
+  });
+
+  it("keeps the right edge inside the 8 px margin when the list grows after placement", () => {
+    stubLayout({ top: 100, bottom: 130 }, 800, 150);
+    vi.stubGlobal("innerWidth", 375);
+    // First measure 120 px wide (fits), later measures 200 px (the shrink-to-fit width grew).
+    let measures = 0;
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute("role") !== "menu") return 0;
+      measures += 1;
+      return measures <= 1 ? 120 : 200;
+    });
+    vi.spyOn(HTMLButtonElement.prototype, "getBoundingClientRect").mockReturnValue(
+      { top: 100, bottom: 130, left: 320, right: 370, width: 50, height: 30, x: 320, y: 100, toJSON: () => ({}) } as DOMRect);
+    setup([]);
+    openMenu();
+    const left = parseFloat(menu().style.left);
+    expect(left + 200).toBeLessThanOrEqual(375 - 8);
+    expect(menu().style.maxWidth).toContain("100vw");
+  });
+
+  it("stays open on a document scroll event that leaves the scroll position unchanged", () => {
+    stubLayout({ top: 100, bottom: 130 }, 800, 150);
+    setup([]);
+    openMenu();
+    fireEvent.scroll(document);
+    expect(screen.queryByRole("menu")).not.toBeNull();
+    fireEvent.scroll(window);
+    expect(screen.queryByRole("menu")).not.toBeNull();
+  });
+
   it("closes on a window scroll and on resize", () => {
     stubLayout({ top: 100, bottom: 130 }, 800, 150);
     setup([]);
     openMenu();
+    vi.stubGlobal("scrollY", 40);
     fireEvent.scroll(window);
     expect(screen.queryByRole("menu")).toBeNull();
     openMenu();
