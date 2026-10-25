@@ -56,6 +56,7 @@ import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.
 import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
 import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json"; // spec traffic
 import clientErrors from "@anjuna/contracts/fixtures/admin/client-errors.response.json"; // spec traffic
+import { decodeAuditCursor, encodeAuditCursor } from "./audit-route.js"; // spec polish
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -335,14 +336,17 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, { ...suppressionsList, next_cursor: null });
     case "listAudit": {
       const own = gate.ok && gate.scope === "own";
-      const limit = auditQuery?.limit ?? 50;
-      const entries = [...state.audit]
+      const limit = auditQuery?.limit ?? 50; // spec polish: cursor and a real next_cursor
+      const before = auditQuery?.cursor === undefined ? null : decodeAuditCursor(auditQuery.cursor);
+      if (auditQuery?.cursor !== undefined && before === null) return err({ error: "invalid", request_id: rid, issues: [{ path: "cursor", message: "Invalid cursor" }] });
+      const matched = [...state.audit]
         .sort((x, y) => y.id - x.id)
+        .filter((e) => before === null || e.id < before)
         .filter((e) => (own ? e.actor_id === ctx.actor_id : !auditQuery?.actor_id || e.actor_id === auditQuery.actor_id))
         .filter((e) => !auditQuery?.target_type || e.target.type === auditQuery.target_type)
-        .filter((e) => !auditQuery?.target_id || e.target.id === auditQuery.target_id)
-        .slice(0, limit);
-      return json(200, { entries, next_cursor: null });
+        .filter((e) => !auditQuery?.target_id || e.target.id === auditQuery.target_id);
+      const entries = matched.slice(0, limit);
+      return json(200, { entries, next_cursor: matched.length > limit ? encodeAuditCursor(entries[entries.length - 1]!.id) : null });
     }
     case "funnelReport":
       return json(200, ctx.actor_role === "owner" ? funnelReport : { ...funnelReport, rows: funnelReport.rows.map((r) => ({ ...r, revenue: null })) });

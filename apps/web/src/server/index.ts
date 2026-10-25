@@ -8,9 +8,6 @@
  */
 import {
   AdminRole,
-  type AuditEntry,
-  AuditListResponse,
-  AuditQuery,
   BrandId,
   BrandPatchRequest,
   BrandStatusChangeRequest,
@@ -23,7 +20,7 @@ import {
 import { AUTH_ROLES } from "@anjuna/auth-db";
 import { z } from "zod";
 import { verifyAccess } from "./access.js";
-import { listLifecycleAudit, listPanelAudit, writePanelAudit } from "./audit.js";
+import { writePanelAudit } from "./audit.js";
 import { createAuth, type Auth } from "./auth.js";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
@@ -32,6 +29,7 @@ import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 import { handleDeployRoute } from "./deploys.js";
 import { handleTimelineRoute } from "./timeline.js";
+import { handleAuditRoute } from "./audit-route.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleLeadsRoute } from "./leads.js";
@@ -210,32 +208,8 @@ async function route(
   if (suppressions) return suppressions;
 
   // --- audit: core's rows (brand/config) plus the panel's own (sign-in, users) ---
-  if (path === "/api/audit" && method === "GET") {
-    const g = authorize("listAudit", ctx.actor_role);
-    if (!g.ok) return forbidden(g.error, rid);
-    const q = AuditQuery.safeParse(Object.fromEntries(url.searchParams));
-    if (!q.success) return invalid(q.error, rid);
-    const ownOnly = g.scope === "own";
-    if (ownOnly && q.data.actor_id && q.data.actor_id !== ctx.actor_id) {
-      return forbidden({ error: "forbidden_role", required_role: "owner" }, rid);
-    }
-    const limit = q.data.limit ?? 50;
-    const query = new URLSearchParams(url.searchParams);
-    if (ownOnly) query.set("actor_id", ctx.actor_id);
-    const core = await callCore(env, ctx, { endpoint: "listAudit", query });
-    if (core.status !== 200) return fromCore(core);
-    const coreList = AuditListResponse.parse(core.body);
-    const actorId = ownOnly ? ctx.actor_id : q.data.actor_id;
-    const skipLocal = (q.data.target_type && q.data.target_type !== "user") || q.data.cursor !== undefined;
-    const local = skipLocal ? [] : [...await listPanelAudit(env.FACTORY, { actorId, limit }), ...await listLifecycleAudit(env.FACTORY, { actorId, limit })];
-    // Core and the panel share the audit_log table in production: show each row once.
-    const isPanelRow = (e: AuditEntry) => e.action.startsWith("auth.") || e.action.startsWith("user.");
-    const merged = [...coreList.entries.filter((e) => !isPanelRow(e)), ...local];
-    const entries = [...new Map(merged.map((entry) => [entry.id, entry])).values()]
-      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : b.id - a.id))
-      .slice(0, limit);
-    return json(200, { entries, next_cursor: coreList.next_cursor });
-  }
+  const auditList = await handleAuditRoute(request, env, url, path, ctx); // spec polish
+  if (auditList) return auditList;
 
   // --- users (panel-only, owner only) ---
   if (path === "/api/users" && method === "GET") {

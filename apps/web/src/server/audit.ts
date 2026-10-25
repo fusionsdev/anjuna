@@ -77,14 +77,15 @@ interface Row {
   created_at: string;
 }
 
-/** Panel-only rows, newest first. `actorId` restricts to one actor (employee scope). */
-export async function listPanelAudit(db: D1Database, opts: { actorId?: string; limit: number }): Promise<AuditEntryT[]> {
+/** Panel-only rows, newest first. `actorId` restricts to one actor (employee scope); `beforeId` keeps rows with a lower id (paging). */
+export async function listPanelAudit(db: D1Database, opts: { actorId?: string; limit: number; beforeId?: number }): Promise<AuditEntryT[]> {
   const where = ["(action LIKE 'auth.%' OR action LIKE 'user.%')"];
   const binds: unknown[] = [];
   if (opts.actorId) {
     binds.push(opts.actorId);
     where.push(`actor_id = ?${binds.length}`);
   }
+  if (opts.beforeId !== undefined) { binds.push(opts.beforeId); where.push(`id < ?${binds.length}`); }
   binds.push(opts.limit);
   const { results } = await db
     .prepare(`SELECT * FROM audit_log WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?${binds.length}`)
@@ -106,10 +107,11 @@ export async function listPanelAudit(db: D1Database, opts: { actorId?: string; l
 
 /** Lifecycle rows are stored beside panel audit rows, but are separately scoped so an employee
  * sees only their own lifecycle actions while an owner sees the full factory history. */
-export async function listLifecycleAudit(db: D1Database, opts: { actorId?: string; limit: number }): Promise<AuditEntryT[]> {
+export async function listLifecycleAudit(db: D1Database, opts: { actorId?: string; limit: number; beforeId?: number }): Promise<AuditEntryT[]> {
   const where = ["action NOT LIKE 'auth.%'", "action NOT LIKE 'user.%'"];
   const binds: unknown[] = [];
   if (opts.actorId) { binds.push(opts.actorId); where.push(`actor_id = ?${binds.length}`); }
+  if (opts.beforeId !== undefined) { binds.push(opts.beforeId); where.push(`id < ?${binds.length}`); }
   binds.push(opts.limit);
   const { results } = await db.prepare(`SELECT * FROM audit_log WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?${binds.length}`).bind(...binds).all<Row>();
   return results.map((r) => AuditEntry.parse({ id: r.id, actor_id: r.actor_id, actor_role: r.actor_role, action: r.action, target: { type: r.entity_type, id: r.entity_id }, old: r.before_json ? JSON.parse(r.before_json) : null, new: r.after_json ? JSON.parse(r.after_json) : null, at: r.created_at }));
