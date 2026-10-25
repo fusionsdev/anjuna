@@ -5,6 +5,7 @@ import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandLabels } from "../brand-labels";
 import { useConfirm } from "../components/ConfirmDialog";
 import { EmptyState } from "../components/EmptyState";
+import { FilterBar } from "../components/FilterBar";
 import { LoadMore } from "../components/LoadMore";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
@@ -378,6 +379,7 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
         <div className="tl-presets" role="group" aria-label="ช่วงเวลา (Range)">
           {PRESET_LABEL.map((p) => <button key={p.value} type="button" className="btn" aria-pressed={range === p.value} onClick={() => apply({ ...filters, range: p.value })}>{p.label}</button>)}
         </div>
+        <FilterBar label="ตัวกรองไทม์ไลน์ (Timeline filters)" activeCount={customRange !== null && (customRange.from || customRange.to) ? 1 : 0}>
         <label>ตั้งแต่ (From)
           <input type="date" value={customRange?.from ?? ""} onChange={(e) => setDay("from", e.target.value)} />
         </label>
@@ -385,6 +387,7 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
           <input type="date" value={customRange?.to ?? ""} onChange={(e) => setDay("to", e.target.value)} />
         </label>
         <button type="button" className="btn" disabled={isDefault} onClick={() => navigate(window.location.pathname, { replace: true })}>ล้างตัวกรอง (Reset filters)</button>
+        </FilterBar>
       </div>
       <fieldset className="tl-types">
         <legend>การเปลี่ยนแปลง (Changes)</legend>

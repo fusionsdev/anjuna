@@ -450,4 +450,26 @@ describe("brand timeline screen", () => {
     }
     expect(css).toMatch(/\.tl-body \.pill \{[^}]*white-space: normal/);
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(<BrandTimelineScreen me={owner} brandId="b1" />);
+      await screen.findByText("โฆษณาหลักถูกปฏิเสธ");
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      // The range presets stay outside the modal.
+      expect(screen.getByRole("button", { name: "7 วัน" })).toBeTruthy();
+      expect(screen.queryByLabelText(/ตั้งแต่/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองไทม์ไลน์ (Timeline filters)" })).toBeTruthy();
+      expect(screen.getByLabelText(/ตั้งแต่/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

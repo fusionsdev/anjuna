@@ -5,6 +5,7 @@ import { ApiError, api, type Me, type PanelUser } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { DataTable, type Column } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
+import { FilterBar } from "../components/FilterBar";
 import { LoadMore } from "../components/LoadMore";
 import { Spinner } from "../components/Spinner";
 
@@ -130,6 +131,7 @@ export function AuditScreen({ me }: { me: Me }) {
       <p className="hint">{owner ? "แสดงทุกรายการ" : "แสดงเฉพาะรายการของคุณ"}</p>
       {owner && (
         <section className="panel" aria-label="ตัวกรองประวัติการแก้ไข (Audit filters)" style={{ marginTop: 16 }}>
+          <FilterBar label="ตัวกรองประวัติการแก้ไข (Audit filters)" activeCount={[actorId, targetType, targetId].filter(Boolean).length}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <label>ผู้ใช้ (Actor)
               <select value={actorId} onChange={(e) => setActorId(e.target.value)}>
@@ -157,6 +159,7 @@ export function AuditScreen({ me }: { me: Me }) {
               </label>
             )}
           </div>
+          </FilterBar>
         </section>
       )}
       {owner && usersFailed && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>โหลดชื่อผู้ใช้ไม่สำเร็จ (Could not load user names)</div>}

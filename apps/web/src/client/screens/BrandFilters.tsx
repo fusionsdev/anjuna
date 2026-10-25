@@ -1,4 +1,5 @@
 import { BRAND_CHIPS, BRAND_SORTS, type BrandChip, type BrandSortMode } from "../brand-health";
+import { FilterBar } from "../components/FilterBar";
 
 // spec brands (FUS-377). Local to the Brands screen on purpose: a shared FilterBar would collide with lane B.
 export function BrandFilters({ chip, onChip, counts, sort, onSort, owner, search, onSearch }: {
@@ -12,6 +13,8 @@ export function BrandFilters({ chip, onChip, counts, sort, onSort, owner, search
         {label} <span className="brand-chip-count">{counts[id]}</span>
       </button>)}
     </div>
+    {/* The chips stay outside the modal like segment buttons, so only sort and search count. */}
+    <FilterBar label="ตัวกรองแบรนด์ (Brand filters)" activeCount={(sort !== "issues" ? 1 : 0) + (search ? 1 : 0)}>
     <div className="brand-filter-fields">
       <label>เรียงลำดับ (Sort)
         <select value={sort} onChange={(e) => onSort(e.target.value as BrandSortMode)}>
@@ -22,5 +25,6 @@ export function BrandFilters({ chip, onChip, counts, sort, onSort, owner, search
         <input type="search" value={search} onChange={(e) => onSearch(e.target.value)} />
       </label>
     </div>
+    </FilterBar>
   </div>;
 }

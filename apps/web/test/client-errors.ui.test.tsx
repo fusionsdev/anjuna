@@ -369,4 +369,27 @@ describe("Client errors screen", () => {
     expect(errorCalls()).toHaveLength(before + 1);
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      window.history.replaceState(null, "", "/errors?type=timeout");
+      render(<ClientErrorsScreen me={owner} />);
+      await table();
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters) (1)" })).toBeTruthy();
+      // The period segment stays outside the modal.
+      expect(screen.getByRole("button", { name: "24 ชม. (24h)" })).toBeTruthy();
+      expect(screen.queryByRole("combobox", { name: "แบรนด์" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters) (1)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองข้อผิดพลาด (Client error filters)" })).toBeTruthy();
+      expect(screen.getByRole("combobox", { name: "แบรนด์" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });
