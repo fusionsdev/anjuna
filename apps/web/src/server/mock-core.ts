@@ -5,6 +5,7 @@
  * Remove once the panel runs against the CORE service binding.
  */
 import {
+  AddSuppressionRequest,
   AdminApi,
   BRAND_PATCH_FIELDS,
   BrandConfig,
@@ -12,6 +13,7 @@ import {
   BrandStatusChangeRequest,
   CONVERSIONS_ROW_LIMIT,
   ConversionsQuery,
+  RemoveSuppressionRequest,
   LeadAggregatesQuery,
   AlertsQuery,
   AuditQuery,
@@ -21,6 +23,7 @@ import {
   TrafficRiskQuery,
   LeadsQuery,
   LeadExportQuery,
+  SuppressionRow,
   SuppressionsQuery,
   TrafficBreakdownQuery,
   trafficWindow,
@@ -64,6 +67,7 @@ interface State {
   brands: Map<string, BrandConfig>;
   audit: AuditEntry[];
   nextAuditId: number;
+  suppressions: SuppressionRow[];
 }
 
 function initialState(): State {
@@ -102,6 +106,7 @@ function initialState(): State {
     ]),
     audit,
     nextAuditId: Math.max(0, ...audit.map((e) => e.id)) + 1,
+    suppressions: SuppressionRow.array().parse(structuredClone(suppressionsList.rows)),
   };
 }
 
@@ -166,6 +171,9 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   let reason: string | undefined;
   let auditQuery: AuditQuery | undefined;
   let conversionsQuery: ConversionsQuery | undefined;
+  let suppressionsQuery: SuppressionsQuery | undefined;
+  let addBody: AddSuppressionRequest | undefined;
+  let removeBody: RemoveSuppressionRequest | undefined;
   // spec leads
   let leadsQuery: LeadsQuery | undefined;
   let leadExportQuery: LeadExportQuery | undefined;
@@ -212,6 +220,15 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
   } else if (endpoint === "listSuppressions") {
     const q = SuppressionsQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+    suppressionsQuery = q.data;
+  } else if (endpoint === "addSuppression") {
+    const b = AddSuppressionRequest.safeParse(rawObj);
+    if (!b.success) return err({ error: "invalid", request_id: rid, issues: issues(b.error) });
+    addBody = b.data;
+  } else if (endpoint === "removeSuppression") {
+    const b = RemoveSuppressionRequest.safeParse(rawObj);
+    if (!b.success) return err({ error: "invalid", request_id: rid, issues: issues(b.error) });
+    removeBody = b.data;
   }
 
   if (endpoint === "trafficBreakdown") {
@@ -335,8 +352,36 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       );
       return json(200, { ...source, rows });
     }
-    case "listSuppressions":
-      return json(200, { ...suppressionsList, next_cursor: null });
+    case "listSuppressions": {
+      // spec polish: the mock filters by added_by only; q/reason/source/limit/cursor pass through untouched.
+      const by = suppressionsQuery?.added_by;
+      const rows = state.suppressions.filter((r) => !by || (by === "system" ? r.added_by === null : r.added_by === by));
+      return json(200, { rows, next_cursor: null });
+    }
+    case "addSuppression": {
+      const email = addBody!.email;
+      const existing = state.suppressions.find((r) => r.email === email);
+      if (existing) {
+        return err({ error: "conflict", request_id: rid, current_updated_at: existing.updated_at ?? existing.created_at });
+      }
+      const now = new Date().toISOString();
+      const row: SuppressionRow = {
+        email,
+        reason: addBody!.reason,
+        source: "manual",
+        added_by: ctx.actor_id,
+        created_at: now,
+        updated_at: null,
+      };
+      state.suppressions.push(row);
+      return json(201, row);
+    }
+    case "removeSuppression": {
+      const at = state.suppressions.findIndex((r) => r.email === removeBody!.email);
+      if (at === -1) return err({ error: "not_found", resource: "suppression", request_id: rid });
+      state.suppressions.splice(at, 1);
+      return json(200, { removed: true });
+    }
     case "listAudit": {
       const own = gate.ok && gate.scope === "own";
       const limit = auditQuery?.limit ?? 50; // spec polish: cursor and a real next_cursor
