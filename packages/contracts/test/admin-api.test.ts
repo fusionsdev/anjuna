@@ -339,7 +339,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   // The PII *fields* of getLead are owner-only inside the handler (core redacts by role), so the
   // endpoint table cannot show them. workers/core/test/admin.test.ts covers that field-level rule.
   { action: "View individual leads without PII", employee: "yes", covered_by: ["listLeads", "getLead", "leadExport"] },
-  { action: "Search the email suppression list", employee: "no", covered_by: ["listSuppressions"] },
+  { action: "Search the email suppression list; add and remove manually (FUS-382)", employee: "no", covered_by: ["listSuppressions", "addSuppression", "removeSuppression"] },
   { action: "View audit log", employee: "own", covered_by: ["listAudit"] },
   { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport"] },
   { action: "View conversion upload status, money hidden from employees (FUS-375)", employee: "yes", covered_by: ["conversionsReport"] },
@@ -439,9 +439,11 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/leads")).toEqual({ endpoint: "listLeads", params: {} });
     expect(matchAdminRoute("GET", "/admin/leads/export")).toEqual({ endpoint: "leadExport", params: {} });
     expect(matchAdminRoute("GET", "/admin/suppressions")).toEqual({ endpoint: "listSuppressions", params: {} });
+    expect(matchAdminRoute("POST", "/admin/suppressions")).toEqual({ endpoint: "addSuppression", params: {} });
+    expect(matchAdminRoute("POST", "/admin/suppressions/remove")).toEqual({ endpoint: "removeSuppression", params: {} });
     expect(matchAdminRoute("GET", "/admin/traffic/report")).toEqual({ endpoint: "trafficReport", params: {} }); // spec traffic
     expect(matchAdminRoute("GET", "/admin/client-errors")).toEqual({ endpoint: "clientErrors", params: {} }); // spec traffic
-    expect(ADMIN_ENDPOINTS).toHaveLength(21);
+    expect(ADMIN_ENDPOINTS).toHaveLength(23);
   });
 });
 

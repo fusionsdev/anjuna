@@ -1309,6 +1309,7 @@ describe("GET /admin/suppressions (FUS-376)", () => {
     expect(page).toEqual({
       rows: [{
         email: "alice@example.com", reason: "blocklisted", source: "listmonk",
+        added_by: null,
         created_at: "2026-10-01T00:00:00.000Z", updated_at: "2026-10-02T00:00:00.000Z",
       }],
       next_cursor: null,

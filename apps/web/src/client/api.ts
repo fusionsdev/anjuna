@@ -1,6 +1,6 @@
 import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
-import { GetLeadResponse, LeadsResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
+import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { BrandEditState } from "../shared/brand-edit";
 import { SettingsBrandsResponse } from "../shared/settings";
@@ -48,6 +48,15 @@ export interface PanelUser {
   email: string;
   role: AdminRole;
   banned: boolean;
+}
+
+/** A better-auth session row minus the token, as GET /api/users/:id/sessions returns it (spec polish D1.1). */
+export interface UserSession {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  ip_address: string | null;
+  user_agent: string | null;
 }
 
 export class ApiError extends Error {
@@ -121,6 +130,8 @@ export interface SuppressionFilterState {
   q: string;
   reason: SuppressionReason | "";
   source: SuppressionSource | "";
+  /** A user id, or "system" for sync rows. An empty string means the filter is not set. */
+  added_by: string;
 }
 
 function queryPath(path: string, entries: [string, string | null | undefined][]): string {
@@ -166,6 +177,14 @@ export const api = {
   users: () => request<{ users: PanelUser[] }>("GET", "/api/users").then((r) => r.users),
   createUser: (u: { email: string; name: string; password: string; role: AdminRole }) => request<unknown>("POST", "/api/users", u),
   setRole: (id: string, role: AdminRole) => request<unknown>("PATCH", `/api/users/${encodeURIComponent(id)}`, { role }),
+  // spec polish D1.1: owner-only user admin, same paths and bodies as server/users-admin.ts.
+  banUser: (id: string, reason?: string) => request<{ user: { id: string; banned: boolean } }>("POST", `/api/users/${encodeURIComponent(id)}/ban`, reason ? { reason } : {}),
+  unbanUser: (id: string) => request<{ user: { id: string; banned: boolean } }>("POST", `/api/users/${encodeURIComponent(id)}/unban`, {}),
+  resetUserPassword: (id: string, password: string) => request<{ user: { id: string } }>("POST", `/api/users/${encodeURIComponent(id)}/password`, { password }),
+  deleteUser: (id: string) => request<{ removed: boolean }>("DELETE", `/api/users/${encodeURIComponent(id)}`),
+  userSessions: (id: string) => request<{ sessions: UserSession[] }>("GET", `/api/users/${encodeURIComponent(id)}/sessions`),
+  revokeUserSessions: (id: string) => request<{ revoked: boolean }>("DELETE", `/api/users/${encodeURIComponent(id)}/sessions`),
+  revokeUserSession: (id: string, sessionId: string) => request<{ revoked: boolean }>("DELETE", `/api/users/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}`),
   lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[]; core_error?: CoreListError | null }>("GET", "/api/lifecycle/brands"),
   lifecycleBrand: (id: string) => request<{ brand: LifecycleBrandSummary }>("GET", `/api/lifecycle/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   createDraft: (body: Omit<CreateBrandDraftRequest, "brand_id" | "account" | "hostname"> & { domain: string; keyword_default: string; template_version_id: string; name?: string; profile?: BrandProfile }) =>
@@ -238,8 +257,13 @@ export const api = {
     queryPath("/api/leads/export", [...leadFilterEntries(filter), ["pii", pii ? "1" : null]]),
   /** Owner only: an employee gets 403 forbidden_role. */
   suppressions: (filter: SuppressionFilterState, cursor?: string | null) =>
-    request<unknown>("GET", queryPath("/api/suppressions", [["q", filter.q], ["reason", filter.reason], ["source", filter.source], ["cursor", cursor]]))
+    request<unknown>("GET", queryPath("/api/suppressions", [["q", filter.q], ["reason", filter.reason], ["source", filter.source], ["added_by", filter.added_by], ["cursor", cursor]]))
       .then((body) => SuppressionsResponse.parse(body)),
+  // spec polish D7.1: the address travels in the body, never in a URL or log.
+  addSuppression: (body: { email: string; reason?: SuppressionReason }) =>
+    request<unknown>("POST", "/api/suppressions", body).then((row) => AddSuppressionResponse.parse(row)),
+  removeSuppression: (email: string) =>
+    request<unknown>("POST", "/api/suppressions/remove", { email }).then((row) => RemoveSuppressionResponse.parse(row)),
   // spec brands
   deploys: (query: DeployHistoryQuery = {}) => {
     const params = new URLSearchParams();

@@ -578,25 +578,53 @@ export const SuppressionsQuery = z.strictObject({
   q: z.string().min(1).max(254).optional(),
   reason: SuppressionReason.optional(),
   source: SuppressionSource.optional(),
+  /** A user id, or `"system"` for rows with no actor (listmonk sync). */
+  added_by: z.string().min(1).max(128).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   cursor: SuppressionCursor.optional(),
 });
 export type SuppressionsQuery = z.infer<typeof SuppressionsQuery>;
 
+/** One suppression row. `added_by` is the actor who added it manually, null for sync rows. */
+export const SuppressionRow = z.strictObject({
+  email: z.string().max(254),
+  reason: SuppressionReason,
+  source: SuppressionSource,
+  added_by: z.string().min(1).max(128).nullable(),
+  created_at: Timestamp,
+  updated_at: Timestamp.nullable(),
+});
+export type SuppressionRow = z.infer<typeof SuppressionRow>;
+
 /** Every row is an email, so the endpoint is owner-only. */
 export const SuppressionsResponse = z.strictObject({
-  rows: z.array(
-    z.strictObject({
-      email: z.string().max(254),
-      reason: SuppressionReason,
-      source: SuppressionSource,
-      created_at: Timestamp,
-      updated_at: Timestamp.nullable(),
-    }),
-  ),
+  rows: z.array(SuppressionRow),
   next_cursor: z.string().nullable(),
 });
 export type SuppressionsResponse = z.infer<typeof SuppressionsResponse>;
+
+/** Lowercased and trimmed. The address travels in the body so it never appears in a URL or access log. */
+export const SuppressionEmail = z.string().trim().toLowerCase().max(254).pipe(z.email());
+
+export const AddSuppressionRequest = z.strictObject({
+  email: SuppressionEmail,
+  reason: SuppressionReason.optional().default("manual"),
+});
+export type AddSuppressionRequest = z.infer<typeof AddSuppressionRequest>;
+
+/** The inserted row. */
+export const AddSuppressionResponse = SuppressionRow;
+export type AddSuppressionResponse = z.infer<typeof AddSuppressionResponse>;
+
+export const RemoveSuppressionRequest = z.strictObject({
+  email: SuppressionEmail,
+});
+export type RemoveSuppressionRequest = z.infer<typeof RemoveSuppressionRequest>;
+
+export const RemoveSuppressionResponse = z.strictObject({
+  removed: z.literal(true),
+});
+export type RemoveSuppressionResponse = z.infer<typeof RemoveSuppressionResponse>;
 
 // --- GET /admin/audit ----------------------------------------------------------------------------
 
@@ -604,6 +632,7 @@ export type SuppressionsResponse = z.infer<typeof SuppressionsResponse>;
 export const ADMIN_AUDIT_ACTIONS = [
   "brand.update", "brand.pause", "brand.resume",
   "pii.lead_view", "pii.lead_export", "lead.export", "pii.suppression_search",
+  "suppression.add", "suppression.remove",
 ] as const;
 
 export const AuditActorRole = z.enum(["owner", "employee", "system"]);
@@ -671,7 +700,7 @@ export const AdminError = z.discriminatedUnion("error", [
     /** PATCH fields the caller may not change (absent when the whole endpoint is denied). */
     denied_fields: z.array(z.string()).min(1).optional(),
   }),
-  z.strictObject({ error: z.literal("not_found"), ...errorBase, resource: z.enum(["brand", "lead", "route"]) }),
+  z.strictObject({ error: z.literal("not_found"), ...errorBase, resource: z.enum(["brand", "lead", "route", "suppression"]) }),
   z.strictObject({ error: z.literal("conflict"), ...errorBase, current_updated_at: Timestamp }),
   z.strictObject({
     error: z.literal("invalid"),
@@ -943,6 +972,22 @@ export const AdminApi = {
     min_role: "owner",
     query: SuppressionsQuery,
     response: SuppressionsResponse,
+  },
+  /** Manual add. An address already suppressed answers 409 conflict. */
+  addSuppression: {
+    method: "POST",
+    path: "/admin/suppressions",
+    min_role: "owner",
+    request: AddSuppressionRequest,
+    response: AddSuppressionResponse,
+  },
+  /** Manual remove. An unknown address answers 404. */
+  removeSuppression: {
+    method: "POST",
+    path: "/admin/suppressions/remove",
+    min_role: "owner",
+    request: RemoveSuppressionRequest,
+    response: RemoveSuppressionResponse,
   },
   listAudit: {
     method: "GET",

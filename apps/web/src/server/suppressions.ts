@@ -1,9 +1,17 @@
 /**
- * Suppression search (FUS-376), proxied to core's read-only admin route. Every row is an email, so
- * the route is owner only and core audits each search.
- *   GET /api/suppressions?q=&reason=&source=&limit=&cursor=  -> SuppressionsResponse (owner)
+ * Suppressions (FUS-376 search, FUS-382 writes), proxied to core's admin routes. Every row is an
+ * email, so the routes are owner only; the address travels in the body, never in a URL or log.
+ *   GET  /api/suppressions?q=&reason=&source=&added_by=&limit=&cursor=  -> SuppressionsResponse
+ *   POST /api/suppressions           { email, reason? } -> 201 row (409 on a known address)
+ *   POST /api/suppressions/remove   { email }           -> 200 { removed: true } (404 unknown)
  */
-import { SuppressionsQuery, authorize, type AdminRequestContext } from "@anjuna/contracts";
+import {
+  AddSuppressionRequest,
+  RemoveSuppressionRequest,
+  SuppressionsQuery,
+  authorize,
+  type AdminRequestContext,
+} from "@anjuna/contracts";
 import type { z } from "zod";
 import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
@@ -34,13 +42,32 @@ export async function handleSuppressionsRoute(
   path: string,
   ctx: AdminRequestContext,
 ): Promise<Response | null> {
-  if (request.method !== "GET" || path !== "/api/suppressions") return null;
   const rid = ctx.request_id;
 
-  // The role gate answers before validation, so an employee learns nothing about the query.
-  const g = authorize("listSuppressions", ctx.actor_role);
-  if (!g.ok) return json(403, { ...g.error, request_id: rid });
-  const q = SuppressionsQuery.safeParse(Object.fromEntries(url.searchParams));
-  if (!q.success) return invalid(q.error, rid);
-  return fromCore(await callCore(env, ctx, { endpoint: "listSuppressions", query: url.searchParams }));
+  if (request.method === "GET" && path === "/api/suppressions") {
+    // The role gate answers before validation, so an employee learns nothing about the query.
+    const g = authorize("listSuppressions", ctx.actor_role);
+    if (!g.ok) return json(403, { ...g.error, request_id: rid });
+    const q = SuppressionsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return invalid(q.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "listSuppressions", query: url.searchParams }));
+  }
+
+  if (request.method === "POST" && path === "/api/suppressions") {
+    const g = authorize("addSuppression", ctx.actor_role);
+    if (!g.ok) return json(403, { ...g.error, request_id: rid });
+    const b = AddSuppressionRequest.safeParse(await request.json().catch(() => ({})));
+    if (!b.success) return invalid(b.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "addSuppression", body: b.data }));
+  }
+
+  if (request.method === "POST" && path === "/api/suppressions/remove") {
+    const g = authorize("removeSuppression", ctx.actor_role);
+    if (!g.ok) return json(403, { ...g.error, request_id: rid });
+    const b = RemoveSuppressionRequest.safeParse(await request.json().catch(() => ({})));
+    if (!b.success) return invalid(b.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "removeSuppression", body: b.data }));
+  }
+
+  return null;
 }
