@@ -82,9 +82,9 @@ describe("withThemeVars", () => {
     expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', JSON.stringify(vars))))
       .toEqual({ keyword_default: "Quick Loan", theme_vars: vars });
     expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', null))).toEqual({ keyword_default: "Quick Loan" });
-    expect(JSON.parse(withThemeVars("{}", JSON.stringify(EMPTY_THEME_VARS)))).toEqual({});
-    expect(JSON.parse(withThemeVars("{}", '{"primary":["--anjuna-blue"],"primary_dark":[],"secondary":[]}'))).toEqual({});
-    expect(JSON.parse(withThemeVars("{}", "not json"))).toEqual({});
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', JSON.stringify(EMPTY_THEME_VARS)))).toEqual({ keyword_default: "Quick Loan" });
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', '{"primary":["--anjuna-blue"],"primary_dark":[],"secondary":[]}'))).toEqual({ keyword_default: "Quick Loan" });
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', "not json"))).toEqual({ keyword_default: "Quick Loan" });
   });
 });
 

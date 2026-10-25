@@ -25,8 +25,9 @@ describe("extractThemeVars", () => {
 
   it("drops gray and neutral variables", () => {
     const css = ":root{--brand-gray:#6b7280;--brand-neutral:#737373;--brand:#1f7a4d}" +
-      ".a{background:var(--brand-neutral)}.b{background-color:var(--brand-neutral)}" +
-      ".c{background:var(--brand-neutral)}.d{background:var(--brand)}";
+      ".a{background:var(--brand-gray)}.b{background-color:var(--brand-gray)}" +
+      ".c{background:var(--brand-gray)}.d{background:var(--brand-neutral)}" +
+      ".e{background:var(--brand)}";
     expect(extractThemeVars(cssFiles(css)).primary).toEqual(["--brand"]);
   });
 
@@ -65,5 +66,10 @@ describe("extractThemeVars", () => {
   it("skips primary candidates too light for white text", () => {
     const css = ":root{--pale:#fafafa;--brand:#2563eb}.a{background:var(--pale)}.b{background:var(--pale)}.c{background:var(--brand)}";
     expect(extractThemeVars(cssFiles(css)).primary).toEqual(["--brand"]);
+  });
+
+  it("skips invalid names and keeps a valid primary", () => {
+    const css = ":root{--brand:#1f7a4d;--anjuna-ink:#10231c}.btn{background:var(--brand)}p{color:var(--anjuna-ink)}a{color:var(--anjuna-ink)}";
+    expect(extractThemeVars(cssFiles(css))).toEqual({ primary: ["--brand"], primary_dark: [], secondary: [] });
   });
 });

@@ -8,7 +8,7 @@
  *   secondary: most var() uses inside color, among the rest
  * One name or none per role; anything failing TemplateThemeVars becomes EMPTY_THEME_VARS.
  */
-import { EMPTY_THEME_VARS, TemplateThemeVars } from "@anjuna/contracts";
+import { EMPTY_THEME_VARS, TemplateThemeVars, ThemeVarName } from "@anjuna/contracts";
 import type { FileMap } from "./archive";
 import { allElements, decode, parseHtml, rawText } from "./html";
 
@@ -82,7 +82,9 @@ export function extractThemeVars(files: FileMap): TemplateThemeVars {
       }
     }
   }
-  const candidates = order.filter((name) => !BANNED.some((word) => name.toLowerCase().includes(word)));
+  const candidates = order.filter(
+    (name) => !BANNED.some((word) => name.toLowerCase().includes(word)) && ThemeVarName.safeParse(name).success,
+  );
   const candSet = new Set(candidates);
   for (const css of texts) {
     for (const m of css.matchAll(PROP_RE)) {
