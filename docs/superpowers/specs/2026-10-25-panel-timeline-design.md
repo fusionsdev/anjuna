@@ -184,7 +184,7 @@ At 375 px the page has no sideways scroll; the filter bar wraps.
 
 ### D7. "Change, then event" marker
 
-For each manual event row, the screen finds the newest change row (any category in the loaded list) whose `at` is at or before the event's `at`. When one exists, the row shows: "หลังการเปลี่ยนแปลง <duration> (<duration> after: <change label>)", where the change label is the category label plus the operation or action, and the duration uses the format of `fmtDuration` in `Deploys.tsx` (seconds, minutes, hours, then days "<d> วัน (<d>d)" past 48 hours). The text links to the change row (in-page anchor `#tl-<item_id>`). When no earlier change is loaded, the line is absent. The computation runs only over the loaded, filtered items, and with change categories filtered out no line shows.
+For each manual event row, the screen finds the newest change row (any category in the loaded list) whose `at` is at or before the event's `at`. When one exists, the row shows: "หลังการเปลี่ยนแปลงล่าสุด <duration> (after the last change): <change label>", where the change label is the category label plus the operation or action, and the duration uses the format of `fmtDuration` in `Deploys.tsx` (seconds, minutes, hours, then days "<d> วัน (<d>d)" past 48 hours). The text links to the change row (in-page anchor `#tl-<item_id>`). When no earlier change is loaded, the line is absent. The computation runs only over the loaded, filtered items, and with change categories filtered out no line shows.
 
 Also, a manual event that falls within 24 hours after a change gets the class `tl-near-change` (a left border), so a run of "change then problem" stands out while scrolling.
 
