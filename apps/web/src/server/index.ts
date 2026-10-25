@@ -31,6 +31,7 @@ import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
 import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
 import { handleDeployRoute } from "./deploys.js";
+import { handleTimelineRoute } from "./timeline.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleLeadsRoute } from "./leads.js";
@@ -118,6 +119,10 @@ async function route(
   // spec brands (FUS-377): cross-brand deploy timeline.
   const deploys = await handleDeployRoute(request, env, url, path, ctx);
   if (deploys) return deploys;
+
+  // spec timeline (FUS-380): brand timeline and manual Ads account events.
+  const timeline = await handleTimelineRoute(request, env, url, path, ctx);
+  if (timeline) return timeline;
 
   // spec settings (FUS-378): Owner-only settings read.
   const settings = await handleSettingsRoute(request, env, path, ctx);

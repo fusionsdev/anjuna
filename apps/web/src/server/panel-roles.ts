@@ -46,6 +46,12 @@ export const PANEL_ROLE_TABLE = {
   manageBuilderKeys: "owner",
   /** The Settings page: every brand's money routing and A/B config in one table, Owner only. */
   viewSettings: "owner",
+  /** The per-brand timeline of changes and Ads account events: employee and owner. */
+  viewBrandTimeline: "employee",
+  /** Adding a manual Ads account event: employee and owner. */
+  createAdsEvent: "employee",
+  /** Deleting a manual Ads account event: Owner only. */
+  deleteAdsEvent: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 

@@ -298,6 +298,9 @@ describe("role table coverage", () => {
       viewBuilderKeys: "employee",
       manageBuilderKeys: "owner",
       viewSettings: "owner",
+      viewBrandTimeline: "employee",
+      createAdsEvent: "employee",
+      deleteAdsEvent: "owner",
     });
   });
 });
