@@ -77,6 +77,19 @@ describe("brandSettings site text", () => {
   });
 });
 
+describe("brandSettings theme", () => {
+  it("brandSettings response accepts theme only as a valid BrandTheme or null", () => {
+    const data = fixture<object>("rpc/brandSettings.response.json");
+    const theme = { primary: "#0f766e", secondary: "#1e293b" };
+    expect(BrandSettingsResponse.parse({ ...data, theme })).toMatchObject({ theme });
+    expect(BrandSettingsResponse.parse({ ...data, theme: null })).toMatchObject({ theme: null });
+    expect(BrandSettingsResponse.safeParse({ ...data, theme: { primary: "#fff", secondary: "#000000" } }).success).toBe(false);
+    expect(BrandSettingsResponse.safeParse({ ...data, theme: { primary: "#0f766e" } }).success).toBe(false);
+    expect(BrandSettingsRequest.parse({ brand_id: "brand-a", include_theme: true })).toEqual({ brand_id: "brand-a", include_theme: true });
+    expect(BrandSettingsRequest.safeParse({ brand_id: "brand-a", include_theme: false }).success).toBe(false);
+  });
+});
+
 describe("recordClick", () => {
   it("golden request/response parse", () => {
     expect(RecordClickRequest.safeParse(fixture("rpc/recordClick.request.json")).success).toBe(true);

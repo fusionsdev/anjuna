@@ -282,6 +282,17 @@ describe("Anjuna additions", () => {
       await expect(insert({ brand_id: "brand-text-4", brand_name: "" })).rejects.toThrow(/CHECK constraint failed/);
     });
 
+    it("migration 0016 adds theme_json and refuses invalid JSON", async () => {
+      const cols = (await tableInfo(env.DB, "brand_runtime")).filter((c) => c.name === "theme_json");
+      expect(columnDefs(cols)).toEqual([{ name: "theme_json", type: "TEXT", notnull: 0, dflt_value: null, pk: 0 }]);
+      await insert({ brand_id: "brand-theme", theme_json: '{"primary":"#0f766e","secondary":"#1e293b"}' });
+      expect(await env.DB.prepare("SELECT theme_json FROM brand_runtime WHERE brand_id = 'brand-theme'").first())
+        .toEqual({ theme_json: '{"primary":"#0f766e","secondary":"#1e293b"}' });
+      await insert({ brand_id: "brand-theme-null" });
+      expect(await env.DB.prepare("SELECT theme_json FROM brand_runtime WHERE brand_id = 'brand-theme-null'").first()).toEqual({ theme_json: null });
+      await expect(insert({ brand_id: "brand-theme-bad", theme_json: "not json" })).rejects.toThrow(/CHECK constraint failed/);
+    });
+
     it("stores the per-brand drain route and enforces its shape", async () => {
       await insert({ brand_id: "brand-route", google_ads_account: "1234567890", google_conversion_action: "7754587837", adkit_project: "proj_A-1" });
       expect(await env.DB.prepare("SELECT google_ads_account, google_conversion_action, adkit_project FROM brand_runtime WHERE brand_id = 'brand-route'").first())
