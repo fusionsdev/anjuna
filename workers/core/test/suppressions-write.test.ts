@@ -81,6 +81,20 @@ describe("POST /admin/suppressions and /admin/suppressions/remove (FUS-382)", ()
     expect(body.current_updated_at).toBe("2026-10-01T00:00:00.000Z");
   });
 
+  it("two concurrent adds of one address answer 201 and 409 with one audit row", async () => {
+    const address = "race-two@example.com";
+    const [first, second] = await Promise.all([
+      sh.admin("/admin/suppressions", owner, post({ email: address })),
+      sh.admin("/admin/suppressions", owner, post({ email: address })),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([201, 409]);
+    const audits = await sh.factory
+      .prepare("SELECT count(*) AS count FROM audit_log WHERE entity_id = ?1 AND action = 'suppression.add'")
+      .bind(auditId(address))
+      .first<{ count: number }>();
+    expect(audits!.count).toBe(1);
+  });
+
   it("a duplicate add answers 409 with no second audit row", async () => {
     const address = "dup@example.com";
     const first = await sh.admin("/admin/suppressions", owner, post({ email: address }));
@@ -101,6 +115,22 @@ describe("POST /admin/suppressions and /admin/suppressions/remove (FUS-382)", ()
     expect(response.status).toBe(200);
     expect(RemoveSuppressionResponse.parse(await response.json())).toEqual({ removed: true });
     expect(await sh.db.prepare("SELECT email FROM suppressions WHERE email = 'gone@example.com'").first()).toBeNull();
+  });
+
+  it("two concurrent removes of one address answer 200 and 404 with one audit row", async () => {
+    const address = "race-gone@example.com";
+    expect((await sh.admin("/admin/suppressions", owner, post({ email: address }))).status).toBe(201);
+    const [first, second] = await Promise.all([
+      sh.admin("/admin/suppressions/remove", owner, post({ email: address })),
+      sh.admin("/admin/suppressions/remove", owner, post({ email: address })),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([200, 404]);
+    expect(await sh.db.prepare("SELECT email FROM suppressions WHERE email = ?1").bind(address).first()).toBeNull();
+    const audits = await sh.factory
+      .prepare("SELECT count(*) AS count FROM audit_log WHERE entity_id = ?1 AND action = 'suppression.remove'")
+      .bind(auditId(address))
+      .first<{ count: number }>();
+    expect(audits!.count).toBe(1);
   });
 
   it("removeSuppression on an unknown address answers 404", async () => {

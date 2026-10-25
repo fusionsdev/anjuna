@@ -1025,9 +1025,9 @@ async function listSuppressions(url: URL, env: Env, context: AdminRequestContext
   const result = await env.LEADS.prepare(
     `SELECT email, reason, source, added_by, created_at, updated_at
      FROM suppressions
-      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
-      ORDER BY email ASC
-      LIMIT ${add(limit + 1)}`,
+     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY email ASC
+     LIMIT ${add(limit + 1)}`,
   ).bind(...bindings).all<SuppressionSqlRow>();
 
   const page = result.results.slice(0, limit);
@@ -1108,12 +1108,13 @@ async function removeSuppression(request: Request, env: Env, context: AdminReque
   const body = parseWith(RemoveSuppressionRequest, raw, context);
   if (body instanceof Response) return body;
 
-  const existing = await env.LEADS.prepare(
-    "SELECT email, reason, source FROM suppressions WHERE email = ?1",
-  ).bind(body.email).first<Pick<SuppressionSqlRow, "email" | "reason" | "source">>();
-  if (!existing) return adminError(context, { error: "not_found", resource: "suppression" });
+  // Single DELETE: one of two concurrent removes wins; the other sees no row and
+  // answers 404 instead of writing a second audit row.
+  const removed = await env.LEADS.prepare(
+    "DELETE FROM suppressions WHERE email = ?1 RETURNING reason, source",
+  ).bind(body.email).first<Pick<SuppressionSqlRow, "reason" | "source">>();
+  if (!removed) return adminError(context, { error: "not_found", resource: "suppression" });
 
-  await env.LEADS.prepare("DELETE FROM suppressions WHERE email = ?1").bind(body.email).run();
   const now = new Date().toISOString();
   await writeAudit(
     env,
@@ -1121,7 +1122,7 @@ async function removeSuppression(request: Request, env: Env, context: AdminReque
     "suppression.remove",
     "suppression",
     await suppressionAuditId(body.email),
-    { reason: existing.reason, source: existing.source },
+    { reason: removed.reason, source: removed.source },
     null,
     now,
   );

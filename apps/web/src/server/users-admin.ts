@@ -55,6 +55,20 @@ const isNotFound = (e: unknown): boolean => {
   return status === 404 || status === "NOT_FOUND";
 };
 
+/**
+ * Empty body means "no fields" (ban allows it); anything else must parse as JSON,
+ * the core `readJsonObject` convention. Returns null when the body does not parse.
+ */
+const readJsonBody = async (request: Request): Promise<unknown | null> => {
+  const text = await request.text();
+  if (text.trim() === "") return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+};
+
 export async function handleUsersAdminRoute(
   request: Request,
   env: Env,
@@ -89,7 +103,9 @@ export async function handleUsersAdminRoute(
 
   if (ban) {
     if (userId === ctx.actor_id) return selfInvalid("You cannot ban yourself");
-    const body = BanBody.safeParse(await request.json().catch(() => ({})));
+    const raw = await readJsonBody(request);
+    if (raw === null) return invalid([{ path: "body", message: "Invalid JSON" }], rid);
+    const body = BanBody.safeParse(raw);
     if (!body.success) {
       return invalid(body.error.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })), rid);
     }
@@ -105,7 +121,7 @@ export async function handleUsersAdminRoute(
       action: "user.ban",
       entity_type: "user",
       entity_id: userId,
-      after: body.data.reason ? { reason: body.data.reason } : {},
+      after: { reason: body.data.reason ?? null },
     });
     return json(200, { user: { id: userId, banned: true } });
   }
@@ -135,11 +151,11 @@ export async function handleUsersAdminRoute(
     }
     try {
       await auth.api.setUserPassword({ body: { userId, newPassword: body.data.password }, headers: request.headers });
-      await auth.api.revokeUserSessions({ body: { userId }, headers: request.headers });
     } catch (e) {
       if (isNotFound(e)) return json(404, { error: "not_found", resource: "user", request_id: rid });
       throw e;
     }
+    // Written before the session revoke: a revoke failure must not lose the reset row.
     await writePanelAudit(env.FACTORY, {
       actor_id: ctx.actor_id,
       actor_role: ctx.actor_role,
@@ -147,6 +163,12 @@ export async function handleUsersAdminRoute(
       entity_type: "user",
       entity_id: userId,
     });
+    try {
+      await auth.api.revokeUserSessions({ body: { userId }, headers: request.headers });
+    } catch (e) {
+      if (isNotFound(e)) return json(404, { error: "not_found", resource: "user", request_id: rid });
+      throw e;
+    }
     return json(200, { user: { id: userId } });
   }
 

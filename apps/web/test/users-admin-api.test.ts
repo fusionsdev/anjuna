@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { PASSWORD, call, resetState, sessions, setupDatabases, signIn } from "./helpers";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import worker from "../src/server/index";
+import type { Auth } from "../src/server/auth.js";
+import { handleUsersAdminRoute } from "../src/server/users-admin.js";
+import { ORIGIN, PASSWORD, call, makeEnv, resetState, sessions, setupDatabases, signIn } from "./helpers";
 
 let owner: string;
 let employee: string;
@@ -74,6 +77,7 @@ describe("users admin routes", () => {
 
   it("ban, delete and password reset on yourself answer 422 with no change", async () => {
     const ownerId = await me(owner);
+    const auditBefore = (await fullAudit()).length;
     expect((await call(`/api/users/${ownerId}/ban`, { cookie: owner, method: "POST", body: { reason: "self" } })).status).toBe(422);
     expect((await call(`/api/users/${ownerId}`, { cookie: owner, method: "DELETE" })).status).toBe(422);
     expect((await call(`/api/users/${ownerId}/password`, { cookie: owner, method: "POST", body: { password: "new-password-456" } })).status).toBe(422);
@@ -82,6 +86,57 @@ describe("users admin routes", () => {
     expect(row).toMatchObject({ role: "owner", banned: null });
     const again = await signIn("owner@example.test");
     expect((await call("/api/me", { cookie: again })).status).toBe(200);
+
+    // Zero better-auth calls: the route is invoked directly with spying stubs,
+    // so any banUser/removeUser/setUserPassword/revokeUserSessions call would show up here.
+    const api = { banUser: vi.fn(), removeUser: vi.fn(), setUserPassword: vi.fn(), revokeUserSessions: vi.fn() };
+    const auth = { api } as unknown as Auth;
+    const ctx = { actor_id: ownerId, actor_role: "owner" as const, request_id: "req_self_spy" };
+    const direct = async (path: string, method: string) =>
+      handleUsersAdminRoute(
+        new Request(`https://app.test${path}`, { method, headers: { cookie: owner } }),
+        { AUTH: env.AUTH, FACTORY: env.FACTORY } as never,
+        path,
+        ctx,
+        auth,
+      );
+    expect((await direct(`/api/users/${ownerId}/ban`, "POST"))?.status).toBe(422);
+    expect((await direct(`/api/users/${ownerId}`, "DELETE"))?.status).toBe(422);
+    expect((await direct(`/api/users/${ownerId}/password`, "POST"))?.status).toBe(422);
+    expect(api.banUser).not.toHaveBeenCalled();
+    expect(api.removeUser).not.toHaveBeenCalled();
+    expect(api.setUserPassword).not.toHaveBeenCalled();
+    expect(api.revokeUserSessions).not.toHaveBeenCalled();
+    expect((await fullAudit()).length).toBe(auditBefore + 1);
+    expect((await fullAudit()).slice(auditBefore).every((r) => !r.action.startsWith("user."))).toBe(true);
+  });
+
+  it("ban with an unreadable body answers 422 with no change; an empty body still bans", async () => {
+    const { id, email } = await freshUser();
+    const cookie = await signIn(email);
+    const auditBefore = (await fullAudit()).length;
+    const raw = await worker.fetch(
+      new Request(`${ORIGIN}/api/users/${id}/ban`, {
+        method: "POST",
+        headers: { cookie: owner, origin: ORIGIN, "content-type": "application/json" },
+        body: "{not json",
+      }),
+      makeEnv(),
+    );
+    expect(raw.status).toBe(422);
+    expect(await raw.json()).toMatchObject({ error: "invalid" });
+    // Account and sessions unchanged, no audit row.
+    expect((await call("/api/me", { cookie })).status).toBe(200);
+    const row = await env.AUTH.prepare(`SELECT "banned" FROM "user" WHERE "id" = ?1`).bind(id).first<{ banned: number | null }>();
+    expect(row!.banned).toBeFalsy();
+    expect((await fullAudit()).length).toBe(auditBefore);
+    // An empty body stays allowed for ban.
+    const empty = await worker.fetch(
+      new Request(`${ORIGIN}/api/users/${id}/ban`, { method: "POST", headers: { cookie: owner, origin: ORIGIN } }),
+      makeEnv(),
+    );
+    expect(empty.status).toBe(200);
+    expect((await call("/api/me", { cookie })).status).toBe(401);
   });
 
   it("revoking your own sessions is allowed", async () => {
@@ -139,6 +194,19 @@ describe("users admin routes", () => {
     const res = await call(`/api/users/${a.id}/sessions/${list.sessions[0]!.id}`, { cookie: owner, method: "DELETE" });
     expect(res.status).toBe(404);
     expect((await call("/api/me", { cookie: cookieB })).status).toBe(200);
+  });
+
+  it("revoking one session ends only that session", async () => {
+    const { id, email } = await freshUser();
+    const c1 = await signIn(email);
+    const c2 = await signIn(email);
+    const list = (await (await call(`/api/users/${id}/sessions`, { cookie: owner })).json()) as { sessions: { id: string }[] };
+    expect(list.sessions.length).toBeGreaterThanOrEqual(2);
+    const res = await call(`/api/users/${id}/sessions/${list.sessions[0]!.id}`, { cookie: owner, method: "DELETE" });
+    expect(res.status).toBe(200);
+    // Exactly one of the two sessions is gone; the other still works.
+    const statuses = [(await call("/api/me", { cookie: c1 })).status, (await call("/api/me", { cookie: c2 })).status].sort();
+    expect(statuses).toEqual([200, 401]);
   });
 
   it("revoke all ends every session of the user", async () => {
