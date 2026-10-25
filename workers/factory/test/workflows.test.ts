@@ -529,6 +529,22 @@ describe("production lifecycle Workflow.run integration (local-only)", () => {
     expect(f.network).toHaveBeenCalledTimes(calls);
   });
 
+  it("install sends the draft theme in initial_runtime", async () => {
+    const f = await fixture();
+    await env.FACTORY.prepare("UPDATE brand_revisions SET config_json=? WHERE revision_id=?")
+      .bind(JSON.stringify({ profile: { theme: { primary: "#0F766E", secondary: "#1e293b" } } }), f.revision).run();
+    await runInstall(f);
+    expect(f.applied[0]!.initial_runtime).toMatchObject({
+      theme: { primary: "#0f766e", secondary: "#1e293b" },
+    });
+  });
+
+  it("install without theme sends null", async () => {
+    const f = await fixture();
+    await runInstall(f);
+    expect(f.applied[0]!.initial_runtime?.theme).toBeNull();
+  });
+
   it("replays a READY install with a fresh step cache without new installs, versions, domains or receipts", async () => {
     const f = await fixture();
     await runInstall(f);

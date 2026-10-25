@@ -2,7 +2,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { getReceipt, isQueuedCompensationInstall, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure } from "../src/receipt";
+import { deriveAuthoritativeRuntime, getReceipt, isQueuedCompensationInstall, saveReceipt, setInstallStatus, shouldRetainBrandLockOnFailure, type TenantRuntimeDefaults } from "../src/receipt";
 
 beforeAll(async () => {
   await applyD1Migrations(env.FACTORY, env.MIGRATIONS);
@@ -192,5 +192,19 @@ describe("lifecycle lock claim", () => {
     const retainedBrand = await env.FACTORY.prepare("SELECT status FROM brands WHERE brand_id = ?")
       .bind(brand).first<{ status: string }>();
     expect(retainedBrand?.status).toBe("installing");
+  });
+});
+
+describe("deriveAuthoritativeRuntime", () => {
+  const tenant: TenantRuntimeDefaults = {
+    account: "test", aid: "17244", prepop_base: "https://prepop.test",
+    amount_buckets: [100, 200, 500], form_route: "/apply",
+    keyword_default: "Quick Loan", form_version: "",
+  };
+  const artifact = { r2_key: "forms/a.zip", payload_version: "2026-01", bundle_form_version: "form@x" };
+
+  it("maps an invalid draft theme to null", () => {
+    const runtime = deriveAuthoritativeRuntime("brand-a", tenant, artifact, { primary: "red" });
+    expect(runtime.theme).toBeNull();
   });
 });

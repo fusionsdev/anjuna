@@ -151,7 +151,7 @@ export class InstallBrandWorkflow extends WorkflowEntrypoint<Env, InstallParams>
             name: brand.name,
             account: brand.account,
             previous_revision_id: brand.current_revision_id,
-            initial_runtime: deriveAuthoritativeRuntime(brand_id, tenant, artifact),
+            initial_runtime: deriveAuthoritativeRuntime(brand_id, tenant, artifact, (config.profile as { theme?: unknown } | undefined)?.theme),
           };
         }));
       });
