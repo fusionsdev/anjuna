@@ -5,6 +5,7 @@ import { BrandLabel, useBrandLabels } from "../brand-labels";
 import { DataTable, type Column } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { InstallProgress } from "../components/InstallProgress";
+import { LoadMore } from "../components/LoadMore";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
 import { operationLabel, statusBadgeTone, statusLabel } from "../labels";
@@ -17,6 +18,11 @@ const SOURCES: ReadonlyArray<{ value: DeploySource; label: string }> = [
 ];
 // The install states plus `done`, which is the only status an audit row carries.
 const STATUSES: readonly DeployStatus[] = ["queued", "running", "ready", "failed", "rolled_back", "done"];
+
+// spec polish D3.1: Load more grows the window from 50 to the server's cap of 200.
+const LIMIT_START = 50;
+const LIMIT_STEP = 50;
+const LIMIT_MAX = 200;
 
 /** What the feed says about each source it could not read. Exhaustive, so a new source id must write its own note. */
 const UNAVAILABLE_NOTE: Record<DeployUnavailableSource, string> = {
@@ -86,6 +92,11 @@ export function DeploysScreen({ me }: { me: Me }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, InstallWithReceipts>>({});
   const [detailError, setDetailError] = useState<Record<string, string>>({});
+  const [loadingMore, setLoadingMore] = useState(false);
+  // The key ties the grown limit to the filters that grew it: a filter change reads as the start limit again.
+  const filterKey = `${brand}\n${source}\n${status}`;
+  const [more, setMore] = useState({ key: filterKey, limit: LIMIT_START });
+  const limit = more.key === filterKey ? more.limit : LIMIT_START;
   // Guards a double click before the first receipts answer lands; the state cache covers every later expand.
   const loading = useRef(new Set<string>());
   const brandSelectRef = useRef<HTMLSelectElement>(null);
@@ -105,7 +116,7 @@ export function DeploysScreen({ me }: { me: Me }) {
 
   useEffect(() => {
     let active = true;
-    const query: DeployHistoryQuery = {};
+    const query: DeployHistoryQuery = { limit };
     if (brand) query.brand = brand;
     if (source) query.source = source as DeploySource;
     if (status) query.status = status as DeployStatus;
@@ -116,6 +127,7 @@ export function DeploysScreen({ me }: { me: Me }) {
       setHasMore(r.has_more);
       setUnavailable(r.unavailable);
       setShownFiltered(fromFilters);
+      setLoadingMore(false);
       setError(null);
     }, (e: unknown) => {
       // A failed feed is an error line, never a blank timeline that reads as "nothing happened".
@@ -124,10 +136,11 @@ export function DeploysScreen({ me }: { me: Me }) {
       setHasMore(false);
       setUnavailable([]);
       setShownFiltered(fromFilters);
+      setLoadingMore(false);
       setError(e instanceof ApiError ? e.thai : "โหลดประวัติการติดตั้งไม่สำเร็จ (Could not load the deploy history.)");
     });
     return () => { active = false; };
-  }, [brand, source, status]);
+  }, [brand, source, status, limit]);
 
   // A filter change closes the open row: it may leave the feed, then come back by itself when filters clear.
   useEffect(() => { setOpenId(null); }, [brand, source, status]);
@@ -149,6 +162,11 @@ export function DeploysScreen({ me }: { me: Me }) {
     const open = openId !== event.event_id;
     setOpenId(open ? event.event_id : null);
     if (open) loadDetail(event);
+  };
+  const loadMore = () => {
+    if (loadingMore || !hasMore || limit >= LIMIT_MAX) return;
+    setLoadingMore(true);
+    setMore({ key: filterKey, limit: Math.min(LIMIT_MAX, limit + LIMIT_STEP) });
   };
   const clearFilters = () => {
     setBrand(""); setSource(""); setStatus("");
@@ -256,7 +274,7 @@ export function DeploysScreen({ me }: { me: Me }) {
           </div>}
         </section>
         <div className="deploys-foot">
-          {hasMore && <p className="hint">แสดง {events.length} รายการล่าสุด</p>}
+          <LoadMore shown={events.length} hasMore={hasMore} atMax={limit >= LIMIT_MAX} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
           {unavailable.length > 0 && <p className="note">{unavailable.map((id) => UNAVAILABLE_NOTE[id]).join(" ")}</p>}
           <p className="hint"><a href="/audit" onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate("/audit"); }}>ดูประวัติการแก้ไขทั้งหมด (Full audit log)</a></p>
         </div>

@@ -288,17 +288,43 @@ describe("brand timeline screen", () => {
     expect(rowIds()).toEqual(["tl-ads-only"]);
   });
 
-  it("shows the core_audit note, the has_more note and the own-scope hint for an employee", async () => {
+  it("shows the core_audit note, Load more and the own-scope hint for an employee", async () => {
     await open(employee);
     expect(screen.queryByText(/ไทม์ไลน์ไม่ครบ/)).toBeNull();
-    expect(screen.queryByText(/แสดง 4 รายการล่าสุด/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
     expect(screen.queryByText(/คุณเห็นเฉพาะการแก้ไขที่คุณทำเอง/)).toBeNull();
     cleanup();
     respond = () => json(response({ unavailable: ["core_audit"], has_more: true, actor_scope: "own" }));
     await open(employee);
     expect(screen.getByText("ไทม์ไลน์ไม่ครบ: อ่านประวัติจาก Core ไม่ได้ (core_audit) การแก้ไขค่าของแบรนด์ที่ Core บันทึกอยู่อาจหายไป (Part of the timeline is missing: the core audit source is unavailable.)")).toBeTruthy();
-    expect(screen.getByText("แสดง 4 รายการล่าสุด ให้แคบช่วงวันที่เพื่อดูรายการเก่ากว่า (Showing the newest 4; narrow the date range to see older items)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeTruthy();
     expect(screen.getByText("คุณเห็นเฉพาะการแก้ไขที่คุณทำเอง การติดตั้งและเหตุการณ์ Ads แสดงครบ (You see only your own edits; deploys and Ads events are complete)")).toBeTruthy();
+  });
+
+  it("Load more re-fetches the timeline with limit 200", async () => {
+    respond = () => json(response({ has_more: true }));
+    await open();
+    expect(timelineCalls()[0]!.searchParams.get("limit")).toBe("100");
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+    // The bigger window replaces the rows; with has_more still true at the max the note shows instead of the button.
+    expect(screen.getByText("โฆษณาหลักถูกปฏิเสธ")).toBeTruthy();
+    expect(screen.getByText("แสดง 4 รายการ ซึ่งเป็นจำนวนสูงสุด กรุณาเลือกช่วงวันที่ให้แคบลง (Narrow the date range)")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
+  });
+
+  it("a date range change resets the timeline limit to 100", async () => {
+    respond = () => json(response({ has_more: true }));
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    expect(lastCall().searchParams.get("limit")).toBe("200");
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(timelineCalls()).toHaveLength(3));
+    expect(lastCall().searchParams.get("limit")).toBe("100");
+    expect(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeTruthy();
   });
 
   it("shows an empty state for a range without items", async () => {

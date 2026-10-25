@@ -1,10 +1,11 @@
 // spec timeline
 import { roleAtLeast, type DeployUnavailableSource } from "@anjuna/contracts";
-import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandLabels } from "../brand-labels";
 import { useConfirm } from "../components/ConfirmDialog";
 import { EmptyState } from "../components/EmptyState";
+import { LoadMore } from "../components/LoadMore";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
@@ -53,6 +54,10 @@ const UNAVAILABLE_NOTE: Record<DeployUnavailableSource, string> = {
 };
 
 const OWN_SCOPE_HINT = "คุณเห็นเฉพาะการแก้ไขที่คุณทำเอง การติดตั้งและเหตุการณ์ Ads แสดงครบ (You see only your own edits; deploys and Ads events are complete)";
+
+// spec polish D3.1: Load more doubles the window up to the server's cap of 200.
+const LIMIT_START = 100;
+const LIMIT_MAX = 200;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const fmtClock = (iso: string) => {
@@ -223,27 +228,49 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
   const rangeInverted = customRange !== null && customRange.from !== null && customRange.to !== null && customRange.from > customRange.to;
   // Nothing to ask for: no type is checked, or the range can match nothing.
   const noRequest = filters.types.length === 0 || rangeInverted;
+  const [loadingMore, setLoadingMore] = useState(false);
+  // The key ties the grown limit to the filters that grew it: a filter change reads as the start limit again.
+  const filtersKey = timelineSearch(filters);
+  const [more, setMore] = useState({ key: filtersKey, limit: LIMIT_START });
+  const limit = more.key === filtersKey ? more.limit : LIMIT_START;
+  // A limit-only change keeps the rows on screen; anything else falls back to the spinner.
+  const baseKey = `${brandId}\n${filtersKey}\n${noRequest}\n${reloadKey}`;
+  const lastBaseKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (noRequest) return;
     // A cleanup marks this request stale, so an answer for older filters never lands.
     let active = true;
-    setLoad({ state: "loading" });
-    api.brandTimeline(brandId, filtersToQuery(filters, new Date())).then(
-      (data) => { if (active) setLoad({ state: "ready", data }); },
+    if (lastBaseKey.current !== baseKey) {
+      lastBaseKey.current = baseKey;
+      setLoad({ state: "loading" });
+    }
+    api.brandTimeline(brandId, { ...filtersToQuery(filters, new Date()), limit }).then(
+      (data) => {
+        if (!active) return;
+        setLoad({ state: "ready", data });
+        setLoadingMore(false);
+      },
       (e: unknown) => {
         if (!active) return;
+        setLoadingMore(false);
         // A malformed id never names a brand, so it reads like an unknown one.
         if (e instanceof ApiError && (e.status === 404 || (e.status === 400 && e.body?.error === "invalid_brand_id"))) setLoad({ state: "missing" });
         else setLoad({ state: "error", message: e instanceof ApiError ? e.thai : "โหลดไทม์ไลน์ไม่สำเร็จ (Could not load the timeline.)" });
       },
     );
     return () => { active = false; };
-  }, [brandId, filters, noRequest, reloadKey]);
+  }, [brandId, filters, noRequest, reloadKey, limit, filtersKey, baseKey]);
 
   const items = load.state === "ready" ? load.data.items : [];
   const groups = useMemo(() => groupByDay(items), [items]);
   const since = useMemo(() => sinceLastChange(items), [items]);
+
+  const loadMore = () => {
+    if (loadingMore || load.state !== "ready" || !load.data.has_more || limit >= LIMIT_MAX) return;
+    setLoadingMore(true);
+    setMore({ key: filtersKey, limit: Math.min(LIMIT_MAX, limit + LIMIT_START) });
+  };
 
   const removeEvent = async (item: EventItem) => {
     const label = ADS_EVENT_LABEL[item.event.type];
@@ -352,7 +379,7 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
     <section className="panel tl-list" aria-label="รายการ (Timeline)">{body}</section>
     {load.state === "ready" && !noRequest && <div className="tl-notes">
       {load.data.unavailable.length > 0 && <p className="note">{load.data.unavailable.map((id) => UNAVAILABLE_NOTE[id]).join(" ")}</p>}
-      {load.data.has_more && <p className="hint">แสดง {items.length} รายการล่าสุด ให้แคบช่วงวันที่เพื่อดูรายการเก่ากว่า (Showing the newest {items.length}; narrow the date range to see older items)</p>}
+      <LoadMore shown={items.length} hasMore={load.data.has_more} atMax={limit >= LIMIT_MAX} loading={loadingMore} onMore={loadMore} narrowHint="กรุณาเลือกช่วงวันที่ให้แคบลง (Narrow the date range)" />
       {load.data.actor_scope === "own" && <p className="hint">{OWN_SCOPE_HINT}</p>}
     </div>}
     {confirmDialog}
