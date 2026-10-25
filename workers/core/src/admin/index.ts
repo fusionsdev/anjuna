@@ -432,7 +432,8 @@ async function patchBrand(
     // An invalid stored theme_json reads as null; clearing it still has to write NULL.
     const clearsStoredTheme = field === "theme" && requested === null && row.theme_json !== null;
     if (requested !== undefined && (clearsStoredTheme || !equalJson(requested, old))) {
-      changes.push({ field, column, stored, old, next: requested });
+      const auditOld = clearsStoredTheme && old === null && row.theme_json !== null ? row.theme_json : old;
+      changes.push({ field, column, stored, old: auditOld, next: requested });
     }
   }
 

@@ -1,4 +1,4 @@
-import { BrandSettingsResponse, type BrandSettingsResponse as PublicSettings } from "@anjuna/contracts";
+import { BrandSettingsResponse, BrandTheme, type BrandSettingsResponse as PublicSettings } from "@anjuna/contracts";
 import { BrandSettings, type BrandWorkerConfig } from "./config.js";
 import { CoreError, withCoreTimeout, type CoreClient } from "./core-client.js";
 
@@ -9,7 +9,7 @@ interface Entry { expires: number; value: PublicSettings | null; pending?: Promi
 export function createSettingsCache() {
   const clients = new WeakMap<CoreClient, Map<string, Entry>>();
   return async (config: BrandWorkerConfig): Promise<BrandSettings> => {
-    const fallback = BrandSettings.parse(config);
+    const fallback = BrandSettings.parse({ ...config, theme: null });
     let cache = clients.get(config.core);
     if (!cache) { cache = new Map(); clients.set(config.core, cache); }
     const cacheKey = `${fallback.brand_id}:${fallback.hostname}`;
@@ -36,7 +36,13 @@ export function createSettingsCache() {
           const result = await load({ include_site_text: true, include_theme: true })
             .catch(retry(() => load({ include_site_text: true })))
             .catch(retry(() => load({})));
-          const live = BrandSettingsResponse.parse(result.data);
+          const rawData: unknown = result.data;
+          const sanitized = rawData !== null && typeof rawData === "object" && "theme" in rawData
+            && (rawData as { theme: unknown }).theme !== null && (rawData as { theme: unknown }).theme !== undefined
+            && !BrandTheme.safeParse((rawData as { theme: unknown }).theme).success
+            ? { ...(rawData as Record<string, unknown>), theme: null }
+            : rawData;
+          const live = BrandSettingsResponse.parse(sanitized);
           // Apply existing identity/route checks before caching anything that will be served.
           BrandSettings.parse({ ...fallback, ...live, formRoute: live.form_route });
           current.value = live;

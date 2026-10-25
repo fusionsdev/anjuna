@@ -111,7 +111,7 @@ describe("live brand settings", () => {
     expect([response.status, await response.json()]).toEqual([404, { found: false }]);
   });
   // Deploy order: a brand runtime can reach a core deployed before site text, whose strict request schema answers 400.
-  it("asks once more without include_site_text when core answers 400, and serves no site text", async () => {
+  it("falls back through site text only to the bare request on 400s, and serves no site text", async () => {
     const bodies: Record<string, unknown>[] = [];
     const send = vi.fn(async (request: Request) => {
       const body = await request.json() as Record<string, unknown>;

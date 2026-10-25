@@ -8,7 +8,7 @@ describe("HexColor", () => {
     expect(HexColor.parse("#abcdef")).toBe("#abcdef");
   });
 
-  it.each(["#fff", "red", "rgb(0,0,0)", "#2563eb;}", "#2563eg", "", "#2563eb ", " #2563eb", "#12345", "#1234567"])("rejects %j", (value) => {
+  it.each(["#fff", "red", "rgb(0,0,0)", "#2563eb;}", "#2563eg", "", "#2563eb ", " #2563eb", "#12345", "#1234567"])("HexColor rejects short, named and functional colors: %j", (value) => {
     expect(HexColor.safeParse(value).success).toBe(false);
   });
 });

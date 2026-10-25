@@ -524,6 +524,10 @@ describe("brand theme through the admin API (FUS-381)", () => {
     expect(await storedTheme()).toEqual({ theme_json: null });
     expect((await get()).updated_at > before.updated_at).toBe(true);
     expect(await auditCount()).toBe(audits + 1);
+    const audit = await h.factory.prepare("SELECT action, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .first<{ action: string; before_json: string; after_json: string }>();
+    expect(JSON.parse(audit!.before_json)).toEqual({ theme: '{"primary":"#fff","secondary":"#000000"}' });
+    expect(JSON.parse(audit!.after_json)).toEqual({ theme: null });
   });
 
   it("PATCH with the same theme changes nothing", async () => {

@@ -91,22 +91,39 @@ describe("brand theme", () => {
   });
 
   it("ignores an invalid live theme and serves the template colors", async () => {
-    // Core unreachable or refused: the static fallback. Core answered: its live settings without a theme.
-    const unreachable = site();
+    // Core answered: its live settings without a theme.
     const answered = site();
     answered.core.settings = live();
     const invalidLive = site({ theme_vars: VARS });
     invalidLive.core.settings = live({ theme: { primary: "red", secondary: "#1e293b" } }) as never;
-    const invalidStatic = site({ theme_vars: VARS, theme: { primary: "#0f766e" } as never });
     const invalidVars = site({ theme_vars: { primary: ["--color-royal;color:red"], primary_dark: [], secondary: [] } as never });
     invalidVars.core.settings = live({ theme: THEME });
     const leakingVars = site({ theme_vars: { primary: ["--anjuna-royal"], primary_dark: [], secondary: [] } });
     leakingVars.core.settings = live({ theme: THEME });
-    for (const [themed, baseline] of [[invalidLive, unreachable], [invalidStatic, unreachable], [invalidVars, answered], [leakingVars, answered]] as const) {
+    for (const [themed, baseline] of [[invalidLive, answered], [invalidVars, answered], [leakingVars, answered]] as const) {
       const html = await (await themed.get("/")).text();
       expect(html).not.toContain("brand-theme");
       expect(html).toBe(await (await baseline.get("/")).text());
     }
+  });
+
+  it("ignores a theme baked into BRAND_CONFIG", async () => {
+    const baked = site({ theme_vars: VARS, theme: THEME });
+    const baseline = site({ theme_vars: VARS });
+    const html = await (await baked.get("/")).text();
+    expect(html).not.toContain("brand-theme");
+    expect(html).toBe(await (await baseline.get("/")).text());
+  });
+
+  it("keeps live paused and site text when core sends an invalid theme", async () => {
+    const pausedSite = site({ theme_vars: VARS });
+    pausedSite.core.settings = live({ paused: true, site_title: "Live Title", theme: { primary: "#fff", secondary: "#1e293b" } }) as never;
+    expect((await pausedSite.get("/")).status).toBe(503);
+    const textSite = site({ theme_vars: VARS });
+    textSite.core.settings = live({ site_title: "Live Title", theme: { primary: "#fff", secondary: "#1e293b" } }) as never;
+    const html = await (await textSite.get("/")).text();
+    expect(html).toContain("<title>Live Title</title>");
+    expect(html).not.toContain("brand-theme");
   });
 
   it("asks core with include_site_text and include_theme", async () => {
