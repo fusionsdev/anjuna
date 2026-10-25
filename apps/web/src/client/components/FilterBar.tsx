@@ -4,11 +4,11 @@ import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, us
 const NARROW_QUERY = "(max-width: 767px)";
 const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
-/** True while the viewport is under 768 px. jsdom has no matchMedia, so it reads false there. */
+/** True while the viewport is under 768 px. False on the server and in jsdom without matchMedia. */
 export function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(() => typeof window.matchMedia === "function" && window.matchMedia(NARROW_QUERY).matches);
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(NARROW_QUERY).matches);
   useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const query = window.matchMedia(NARROW_QUERY);
     const onChange = () => setNarrow(query.matches);
     onChange();
@@ -61,7 +61,7 @@ export function FilterBar({ label, activeCount, children }: { label: string; act
     return () => document.removeEventListener("keydown", onKey);
   }, [open ]);
 
-  // A filter change unmounts the modal with the old controls; never keep it open across renders that swap children.
+  // Crossing the 768 px breakpoint swaps the inline controls for the modal (or back); never keep the modal open across that swap.
   useEffect(() => { setOpen(false); }, [narrow]);
 
   if (!narrow) return <>{children}</>;

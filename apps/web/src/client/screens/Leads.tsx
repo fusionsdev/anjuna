@@ -156,6 +156,8 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
   ];
 
   const filtered = Boolean(filter.brand || filter.status || filter.q);
+  const defaults = defaultWindow();
+  const rangeActive = filter.from !== defaults.from || filter.to !== defaults.to ? 1 : 0;
   const empty = filtered
     ? <EmptyState title="ไม่พบลีดที่ตรงกับตัวกรอง (No leads match this filter)" hint="ลองเปลี่ยนแบรนด์ สถานะ หรือคำค้น (Try another brand, status or search)" />
     : <EmptyState title="ยังไม่มีลีดในช่วงนี้ (No leads in this window)" hint="ลองขยายช่วงวันที่ (Try a wider date range)" />;
@@ -171,7 +173,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
       </div>
     </div>
     <section className="panel" aria-label="ตัวกรองลีด (Lead filters)">
-      <FilterBar label="ตัวกรองลีด (Lead filters)" activeCount={[filter.brand, filter.status, filter.q].filter(Boolean).length}>
+      <FilterBar label="ตัวกรองลีด (Lead filters)" activeCount={[filter.brand, filter.status, filter.q].filter(Boolean).length + rangeActive}>
       <form onSubmit={search} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
         <label>แบรนด์ (Brand)
           <select value={filter.brand} onChange={(e) => update({ brand: e.target.value })}>

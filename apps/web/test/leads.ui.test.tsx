@@ -271,4 +271,33 @@ describe("Leads screen", () => {
       window.matchMedia = original;
     }
   });
+
+  it("counts a From/To range that differs from the default 30 days", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      // The default window counts nothing.
+      const first = renderScreen();
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /ตัวกรอง \(Filters\) \(\d+\)/ })).toBeNull();
+      await screen.findByTitle(SOLD_ID);
+      first.unmount();
+
+      // A custom 7-day window counts 1.
+      const today = new Date().toISOString().slice(0, 10);
+      const from = new Date(Date.parse(today) - 6 * 86_400_000).toISOString().slice(0, 10);
+      window.history.replaceState(null, "", `/leads?from=${from}&to=${today}`);
+      renderScreen();
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters) (1)" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters) (1)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองลีด (Lead filters)" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await screen.findByTitle(SOLD_ID);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

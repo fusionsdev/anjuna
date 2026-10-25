@@ -334,6 +334,9 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
     apply({ ...filters, range: { from: customRange?.from ?? null, to: customRange?.to ?? null, [side]: value || null } });
   const brandHref = routePath({ view: "brands", brandId });
   const isDefault = timelineSearch(filters) === "";
+  // Unchecked types plus a custom From/To range: the presets stay outside the modal, everything else counts.
+  const uncheckedTypes = CHANGE_CATEGORIES.length + ADS_EVENT_TYPES.length - filters.types.length;
+  const rangeActive = customRange !== null && (customRange.from || customRange.to) ? 1 : 0;
 
   const typeBox = (id: TimelineType, label: string) => <label key={id} className="tl-check">
     <input type="checkbox" checked={filters.types.includes(id)} onChange={() => toggleType(id)} />
@@ -379,24 +382,24 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
         <div className="tl-presets" role="group" aria-label="ช่วงเวลา (Range)">
           {PRESET_LABEL.map((p) => <button key={p.value} type="button" className="btn" aria-pressed={range === p.value} onClick={() => apply({ ...filters, range: p.value })}>{p.label}</button>)}
         </div>
-        <FilterBar label="ตัวกรองไทม์ไลน์ (Timeline filters)" activeCount={customRange !== null && (customRange.from || customRange.to) ? 1 : 0}>
+        <FilterBar label="ตัวกรองไทม์ไลน์ (Timeline filters)" activeCount={rangeActive + uncheckedTypes}>
         <label>ตั้งแต่ (From)
           <input type="date" value={customRange?.from ?? ""} onChange={(e) => setDay("from", e.target.value)} />
         </label>
         <label>ถึง (To)
           <input type="date" value={customRange?.to ?? ""} onChange={(e) => setDay("to", e.target.value)} />
         </label>
+        <fieldset className="tl-types">
+          <legend>การเปลี่ยนแปลง (Changes)</legend>
+          {CHANGE_CATEGORIES.map((id) => typeBox(id, CHANGE_CATEGORY_LABEL[id]))}
+        </fieldset>
+        <fieldset className="tl-types">
+          <legend>เหตุการณ์บัญชี Ads (Ads account events)</legend>
+          {ADS_EVENT_TYPES.map((id) => typeBox(id, ADS_EVENT_LABEL[id]))}
+        </fieldset>
         <button type="button" className="btn" disabled={isDefault} onClick={() => navigate(window.location.pathname, { replace: true })}>ล้างตัวกรอง (Reset filters)</button>
         </FilterBar>
       </div>
-      <fieldset className="tl-types">
-        <legend>การเปลี่ยนแปลง (Changes)</legend>
-        {CHANGE_CATEGORIES.map((id) => typeBox(id, CHANGE_CATEGORY_LABEL[id]))}
-      </fieldset>
-      <fieldset className="tl-types">
-        <legend>เหตุการณ์บัญชี Ads (Ads account events)</legend>
-        {ADS_EVENT_TYPES.map((id) => typeBox(id, ADS_EVENT_LABEL[id]))}
-      </fieldset>
     </section>
     <AddEventForm
       brandId={brandId}

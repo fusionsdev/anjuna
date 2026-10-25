@@ -463,11 +463,17 @@ describe("brand timeline screen", () => {
       // The range presets stay outside the modal.
       expect(screen.getByRole("button", { name: "7 วัน" })).toBeTruthy();
       expect(screen.queryByLabelText(/ตั้งแต่/)).toBeNull();
+      // The 10 type checkboxes live inside the modal too.
+      expect(screen.queryByRole("checkbox", { name: "แก้ไขใน factory (Factory edit)" })).toBeNull();
+      expect(screen.queryByRole("checkbox", { name: "อื่น ๆ (Other)" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
       expect(screen.getByRole("dialog", { name: "ตัวกรองไทม์ไลน์ (Timeline filters)" })).toBeTruthy();
       expect(screen.getByLabelText(/ตั้งแต่/)).toBeTruthy();
+      expect(screen.getByRole("checkbox", { name: "แก้ไขใน factory (Factory edit)" })).toBeTruthy();
+      expect(screen.getByRole("checkbox", { name: "อื่น ๆ (Other)" })).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
       expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("checkbox", { name: "แก้ไขใน factory (Factory edit)" })).toBeNull();
     } finally {
       window.matchMedia = original;
     }
