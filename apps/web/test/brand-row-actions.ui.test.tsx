@@ -263,4 +263,91 @@ describe("brand row actions menu", () => {
     fireEvent.click(within(document.querySelector(".brands-aside")!).getByRole("button", { name: /คัดลอก Final URL/ }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://brand-a.test/?keyword={keyword}"));
   });
+
+  /** brand-a is a selected draft; brand-b is a non-selected failed brand whose latest_install has the given status. */
+  function serveParity(status: "running" | "failed" | "ready") {
+    const latest = {
+      install_id: "ins-b", operation: "install", status,
+      started_at: "2026-10-06T00:00:00Z", finished_at: status === "running" ? null : "2026-10-06T00:01:00Z", started_by: "owner",
+    };
+    const a = base("brand-a", "draft");
+    const b = base("brand-b", "failed", { latest_install: latest });
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [a, b] }));
+    routes.set("GET /api/brands", () => json({ brands: [a, b].map((row) => ({
+      brand_id: row.brand_id, hostnames: row.hostnames, status: "live", flow_gate_mode: "param", ab_config: null,
+      form_version: "form@abcdef1", stats_7d: { leads: 0, sold: 0, pending: 0 },
+    })), generated_at: "2026-10-06T00:00:00Z" }));
+    for (const row of [a, b]) {
+      const id = row.brand_id;
+      routes.set(`GET /api/brands/${id}/checklist`, () => json({ brand_id: id, checklist: [] }));
+      routes.set(`GET /api/brands/${id}/installs`, () => json({ brand_id: id, installs: id === "brand-b" ? [{ install_id: "ins-b", status, error: null }] : [] }));
+      routes.set(`GET /api/brands/${id}/revisions`, () => json({ brand_id: id, current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
+    }
+    routes.set("GET /api/installs/ins-b", () => json({
+      install_id: "ins-b", brand_id: "brand-b", revision_id: "rev-1", status,
+      runtime_sync_status: status, receipts: [],
+    } satisfies InstallWithReceipts));
+  }
+
+  it.each(["running", "failed", "ready"] as const)(
+    "a non-selected row menu gated by latest_install %s equals the detail panel after selecting that row",
+    async (status) => {
+      serveParity(status);
+      render(<BrandLifecycle me={owner} />);
+      await screen.findAllByRole("button", { name: "จัดการ (Actions)" });
+      fireEvent.click(within((await rowOf("brand-b.test"))).getByRole("button", { name: "จัดการ (Actions)" }));
+      const menuB = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((el) => el.textContent ?? "").sort();
+      fireEvent.mouseDown(document.body);
+      fireEvent.click(await screen.findByRole("button", { name: /brand-b\.test/ }));
+      await waitFor(() => expect(document.querySelector(".brands-aside")!.textContent).toContain("brand-b.test"));
+      // Retry needs the install detail only the selected row has, so it is the one label the detail adds for a failed install.
+      // The detail hides deploy buttons while its history recovers, so wait until it settles on the menu's labels.
+      await waitFor(() => expect(detailLabels().filter((label) => label !== "ลองใหม่ (Retry)")).toEqual(menuB));
+    },
+  );
+
+  it("a queued row Rollback waits for the brand's revisions and shows the real target", async () => {
+    serveTwoBrands(() => json({}, 500));
+    const a = base("brand-a", "draft");
+    const b = base("brand-b", "live");
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [a, b] }));
+    let releaseRevisions!: () => void;
+    const revisionsGate = new Promise<void>((resolve) => { releaseRevisions = resolve; });
+    routes.set("GET /api/brands/brand-b/revisions", async () => {
+      await revisionsGate;
+      const revision = (n: number, current: boolean) => ({
+        revision_id: `rev-${n}`, revision: n, template_version_id: "tpl-1", form_artifact_id: "fa-1", bundle_form_version: "form@abcdef1",
+        worker_version_id: null, created_by: "owner", created_at: "2026-10-06T00:00:00Z", is_current: current,
+      });
+      return json({ brand_id: "brand-b", current_revision_id: "rev-2", rollback_target_revision_id: "rev-1", revisions: [revision(2, true), revision(1, false)] });
+    });
+    render(<BrandLifecycle me={owner} />);
+    await screen.findAllByRole("button", { name: "จัดการ (Actions)" });
+    fireEvent.click(within(await rowOf("brand-b.test")).getByRole("button", { name: "จัดการ (Actions)" }));
+    fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "ย้อนกลับ (Rollback)" }));
+    await waitFor(() => expect(document.querySelector(".brands-aside")!.textContent).toContain("brand-b.test"));
+    // Revisions still load: no confirm yet, so it cannot read "target unknown".
+    await waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-b/revisions")).toBe(true));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    releaseRevisions();
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("#1 (rev-1)");
+    expect(dialog.textContent).not.toContain("Rollback target unknown");
+    await answerConfirm(false);
+  });
+
+  it("a queued row Install is not sent while the brand's history is still recovering", async () => {
+    serveTwoBrands(() => json({ install_id: "op-b", brand_id: "brand-b", status: "running" }, 201));
+    let releaseInstalls!: () => void;
+    const installsGate = new Promise<void>((resolve) => { releaseInstalls = resolve; });
+    routes.set("GET /api/brands/brand-b/installs", async () => { await installsGate; return json({ brand_id: "brand-b", installs: [] }); });
+    render(<BrandLifecycle me={owner} />);
+    await screen.findAllByRole("button", { name: "จัดการ (Actions)" });
+    await chooseRowInstall("brand-b.test");
+    await waitFor(() => expect(document.querySelector(".brands-aside")!.textContent).toContain("brand-b.test"));
+    await waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-b/installs")).toBe(true));
+    expect(postsToB()).toHaveLength(0);
+    releaseInstalls();
+    await waitFor(() => expect(postsToB()).toHaveLength(1));
+  });
 });

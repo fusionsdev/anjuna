@@ -56,4 +56,27 @@ describe("RowMenu", () => {
     setup([], []);
     expect(screen.queryByRole("button", { name: "จัดการ (Actions)" })).toBeNull();
   });
+
+  it("aria-expanded is false when closed and true when open", () => {
+    setup([]);
+    const button = screen.getByRole("button", { name: "จัดการ (Actions)" });
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    openMenu();
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("closes when Tab leaves the menu and when focus moves outside it", () => {
+    render(<><RowMenu label="จัดการ (Actions)" items={[{ key: "a", label: "A", onSelect: () => undefined }]} /><button type="button">after</button></>);
+    openMenu();
+    fireEvent.keyDown(menu(), { key: "Tab" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "จัดการ (Actions)" }));
+    openMenu();
+    const item = within(menu()).getByRole("menuitem");
+    fireEvent.blur(item, { relatedTarget: screen.getByRole("button", { name: "after" }) });
+    expect(screen.queryByRole("menu")).toBeNull();
+    openMenu();
+    fireEvent.blur(within(menu()).getByRole("menuitem"), { relatedTarget: screen.getByRole("button", { name: "จัดการ (Actions)" }) });
+    expect(screen.getByRole("menu")).toBeTruthy();
+  });
 });

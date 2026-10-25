@@ -130,7 +130,10 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [state, setState] = useState<LifecycleState>();
   const [install, setInstall] = useState<InstallWithReceipts | undefined>();
   const [installError, setInstallError] = useState<string | null>(null);
-  const [recovering, setRecovering] = useState(false);
+  const [recovering, setRecoveringState] = useState(false);
+  // Mirrors `recovering` for effects that run in the commit that selected a brand, where the state value is still the old one.
+  const recoveringRef = useRef(false);
+  const setRecovering = (value: boolean) => { recoveringRef.current = value; setRecoveringState(value); };
   const [refresh, setRefresh] = useState(0);
   const [pendingOperation, setPendingOperation] = useState<{ brandId: string; generation: number; installId: string } | null>(null);
   // A deploy item chosen on a non-selected row selects that brand first; the item runs once the selection has committed,
@@ -548,12 +551,17 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     }
   }
   // The selection reset runs in a layout effect, so this passive effect sees the new brand selected with a fresh generation.
+  // It waits until the history recovery is done (the detail hides deploy buttons while it runs) and, for Rollback, until the
+  // revisions of this brand loaded or failed, then re-checks the shared gating: an item the detail would not offer is dropped.
   useEffect(() => {
     const queued = queuedDeploy.current;
-    if (!queued || !selected || selected.brand_id !== queued.brandId) return;
+    if (!queued || !selected) return;
+    if (selected.brand_id !== queued.brandId) { queuedDeploy.current = null; return; }
+    if (recoveringRef.current) return;
+    if (queued.key === "rollback" && (revisions === undefined || (revisions !== null && revisions.brand_id !== queued.brandId))) return;
     queuedDeploy.current = null;
-    runDeploy(queued.key, selected);
-  }, [selectedId, selected]);
+    if (rowMenuItems(selected).some((item) => item.key === queued.key)) runDeploy(queued.key, selected);
+  }, [selectedId, selected, recovering, revisions]);
   function rowAction(key: BrandActionKey, brand: LifecycleBrandSummary) {
     const site = siteUrl(brand.hostnames);
     switch (key) {
