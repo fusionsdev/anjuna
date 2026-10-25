@@ -33,7 +33,8 @@ beforeEach(() => {
     const url = new URL(input, "https://app.test");
     if (url.pathname === "/api/leads") return json(leadsFixture as LeadsResponse);
     if (url.pathname === `/api/leads/${LEAD_ID}`) return json(ownerLeadFixture);
-    if (url.pathname === "/api/suppressions") return json({ rows: [{ email: "bounced.person@example.com", reason: "bounce", source: "ses", created_at: "2026-10-01T00:00:00.000Z", updated_at: null }], next_cursor: null });
+    if (url.pathname === "/api/users") return json({ users: [] });
+    if (url.pathname === "/api/suppressions") return json({ rows: [{ email: "bounced.person@example.com", reason: "bounce", source: "ses", added_by: null, created_at: "2026-10-01T00:00:00.000Z", updated_at: null }], next_cursor: null });
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [], core_error: null });
     if (url.pathname === "/api/brands") return json({ brands: [], generated_at: "2026-10-23T00:00:00.000Z" });
     if (url.pathname === "/api/funnel") return json({ from: "2026-10-16T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", rows: [] });

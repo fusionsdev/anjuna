@@ -234,10 +234,10 @@ describe("Suppressions screen", () => {
     render(<SuppressionsScreen me={owner} />);
     await screen.findByText(BOUNCED);
     fireEvent.change(screen.getByLabelText("อีเมล (Email)"), { target: { value: "new@example.com" } });
-    fireEvent.change(screen.getByLabelText(/เหตุผลสำหรับอีเมลใหม่/), { target: { value: "manual" } });
+    fireEvent.change(screen.getByLabelText(/เหตุผลสำหรับอีเมลใหม่/), { target: { value: "complaint" } });
     fireEvent.click(screen.getByRole("button", { name: "เพิ่มอีเมล (Add)" }));
     await waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0]).toEqual({ url: "/api/suppressions", body: { email: "new@example.com", reason: "manual" } });
+    expect(posts[0]).toEqual({ url: "/api/suppressions", body: { email: "new@example.com", reason: "complaint" } });
     await waitFor(() => expect(requests.length).toBeGreaterThan(1));
     expect(await screen.findByText("เพิ่ม new@example.com แล้ว (Added new@example.com)")).toBeTruthy();
   });
@@ -267,6 +267,78 @@ describe("Suppressions screen", () => {
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toEqual({ url: "/api/suppressions/remove", body: { email: BOUNCED } });
     expect(await screen.findByText(`ลบ ${BOUNCED} แล้ว (Removed ${BOUNCED})`)).toBeTruthy();
+  });
+
+  it("Remove confirms with tone danger", async () => {
+    render(<SuppressionsScreen me={owner} />);
+    const row = (await screen.findByText(BOUNCED)).closest("tr")!;
+    fireEvent.click(within(row).getByRole("button", { name: "ลบ (Remove)" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByRole("button", { name: "ลบ (Remove)" }).className).toContain("danger");
+  });
+
+  it("a 409 on add shows Already suppressed, not the stale-data message", async () => {
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      const url = new URL(input, "https://app.test");
+      if (url.pathname === "/api/users") return Response.json({ users: userList });
+      if (url.pathname === "/api/suppressions" && (init?.method ?? "GET") === "POST") {
+        return Response.json({ error: "conflict" }, { status: 409 });
+      }
+      if (url.pathname === "/api/suppressions") {
+        requests.push(input);
+        return Response.json(firstPage);
+      }
+      throw new Error(`Unexpected fetch ${input}`);
+    });
+    const { container } = render(<SuppressionsScreen me={owner} />);
+    await screen.findByText(BOUNCED);
+    fireEvent.change(screen.getByLabelText("อีเมล (Email)"), { target: { value: BOUNCED } });
+    fireEvent.click(screen.getByRole("button", { name: "เพิ่มอีเมล (Add)" }));
+    expect(await screen.findByText("อีเมลนี้ถูกบล็อกอยู่แล้ว (Already suppressed)")).toBeTruthy();
+    expect(container.textContent).not.toContain("ข้อมูลถูกแก้ไขโดยคนอื่นแล้ว");
+  });
+
+  it("a 404 on remove shows Not found", async () => {
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      const url = new URL(input, "https://app.test");
+      if (url.pathname === "/api/users") return Response.json({ users: userList });
+      if (url.pathname === "/api/suppressions/remove") return Response.json({ error: "not_found" }, { status: 404 });
+      if (url.pathname === "/api/suppressions") {
+        requests.push(input);
+        return Response.json(firstPage);
+      }
+      throw new Error(`Unexpected fetch ${input}`);
+    });
+    render(<SuppressionsScreen me={owner} />);
+    const row = (await screen.findByText(BOUNCED)).closest("tr")!;
+    fireEvent.click(within(row).getByRole("button", { name: "ลบ (Remove)" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "ลบ (Remove)" }));
+    expect(await screen.findByText("ไม่พบอีเมลนี้ (Not found)")).toBeTruthy();
+  });
+
+  it("removing the last row of a later page reloads from the first page", async () => {
+    nextPage = {
+      rows: [{ email: "zed@example.com", reason: "manual", source: "manual", added_by: null, created_at: "2026-10-01T00:00:00.000Z", updated_at: null }],
+      next_cursor: null,
+    };
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      const url = new URL(input, "https://app.test");
+      if (url.pathname === "/api/users") return Response.json({ users: userList });
+      if (url.pathname === "/api/suppressions/remove") return Response.json({ removed: true });
+      if (url.pathname === "/api/suppressions") {
+        requests.push(input);
+        return Response.json(url.searchParams.has("cursor") && nextPage ? nextPage : firstPage);
+      }
+      throw new Error(`Unexpected fetch ${input}`);
+    });
+    render(<SuppressionsScreen me={owner} />);
+    await screen.findByText(BOUNCED);
+    fireEvent.click(await screen.findByRole("button", { name: "ถัดไป (Next)" }));
+    const row = (await screen.findByText("zed@example.com")).closest("tr")!;
+    fireEvent.click(within(row).getByRole("button", { name: "ลบ (Remove)" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "ลบ (Remove)" }));
+    await waitFor(() => expect(requests.length).toBeGreaterThan(2));
+    expect(requests[requests.length - 1]).toBe("/api/suppressions");
   });
 
   it("cancelling Remove sends no request", async () => {

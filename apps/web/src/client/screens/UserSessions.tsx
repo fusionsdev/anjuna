@@ -9,12 +9,20 @@ const fmt = (iso: string) => new Date(iso).toLocaleString("th-TH", { hour12: fal
 // spec polish D1.2: the sessions drawer. Drawer markup copies ConfigPanel's Drawer.
 export function UserSessionsDrawer({ user, onClose }: { user: PanelUser; onClose: () => void }) {
   const [sessions, setSessions] = useState<UserSession[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  const load = useCallback(
-    () => api.userSessions(user.id).then((r) => setSessions(r.sessions), (e) => setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ" })),
-    [user.id],
-  );
+  const load = useCallback(() => {
+    setLoadError(null);
+    return api.userSessions(user.id).then(
+      (r) => setSessions(r.sessions),
+      (e) => {
+        const text = e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ";
+        setLoadError(text);
+        setToast({ kind: "err", text });
+      },
+    );
+  }, [user.id]);
   useEffect(() => void load(), [load]);
 
   async function revoke(fn: () => Promise<unknown>, okText: string) {
@@ -37,7 +45,7 @@ export function UserSessionsDrawer({ user, onClose }: { user: PanelUser; onClose
           <button className="link" onClick={onClose}>ปิด (Close)</button>
         </header>
         {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={() => setToast(null)} />}
-        {!sessions ? <Spinner /> : sessions.length === 0 ? <EmptyState title="ไม่มีเซสชัน (No sessions)" /> : (
+        {loadError ? <p role="alert">{loadError}</p> : !sessions ? <Spinner /> : sessions.length === 0 ? <EmptyState title="ไม่มีเซสชัน (No sessions)" /> : (
           <>
             <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 8 }}>
               {sessions.map((s) => (

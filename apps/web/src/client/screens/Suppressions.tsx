@@ -29,12 +29,19 @@ function addedByCell(row: SuppressionRow, usersById: Map<string, PanelUser>) {
   return <code title="ผู้ใช้ที่ถูกลบ (Deleted user)" style={{ fontSize: "0.85em", overflowWrap: "anywhere" }}>{row.added_by}</code>;
 }
 // Keyed on the HTTP status only: ApiError.thai and the body can echo the searched email, so this screen never renders them.
+// The add and remove toasts use their own fixed messages for the same reason.
 const MESSAGES: Record<number, string> = {
   401: "เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง (Session expired)",
   403: "สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)",
   422: "ค่าค้นหาไม่ถูกต้อง (Invalid search)",
 };
 const message = (e: unknown) => (e instanceof ApiError ? MESSAGES[e.status] : undefined) ?? "ค้นหาไม่สำเร็จ (Search failed)";
+// An add or remove can fail with a stale page behind the toast, so these say what happened without the email.
+const writeMessage = (e: unknown, fallback: string) => {
+  if (e instanceof ApiError && e.status === 409) return "อีเมลนี้ถูกบล็อกอยู่แล้ว (Already suppressed)";
+  if (e instanceof ApiError && e.status === 404) return "ไม่พบอีเมลนี้ (Not found)";
+  return fallback;
+};
 const fmt = (iso: string) => new Date(iso).toLocaleString("th-TH", { hour12: false });
 
 /** An employee never reaches the owner screen, so no hook of it runs and no request is made. */
@@ -98,7 +105,7 @@ function OwnerSuppressions() {
       setAddEmail("");
       setReloadSeq((n) => n + 1);
     } catch (err) {
-      setToast({ kind: "err", text: err instanceof ApiError ? err.thai : "เพิ่มไม่สำเร็จ (Could not add)" });
+      setToast({ kind: "err", text: writeMessage(err, "เพิ่มไม่สำเร็จ (Could not add)") });
     }
   };
 
@@ -114,9 +121,11 @@ function OwnerSuppressions() {
     try {
       await api.removeSuppression(row.email);
       setToast({ kind: "ok", text: `ลบ ${row.email} แล้ว (Removed ${row.email})` });
+      // Back to page 1: the removed row may have been the last one on a later page.
+      setCursor(null);
       setReloadSeq((n) => n + 1);
     } catch (err) {
-      setToast({ kind: "err", text: err instanceof ApiError ? err.thai : "ลบไม่สำเร็จ (Could not remove)" });
+      setToast({ kind: "err", text: writeMessage(err, "ลบไม่สำเร็จ (Could not remove)") });
     }
   };
 

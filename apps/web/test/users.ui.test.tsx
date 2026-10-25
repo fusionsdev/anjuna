@@ -149,16 +149,34 @@ describe("Users screen admin actions and search", () => {
     await waitFor(() => expect(sent("DELETE", "/api/users/u2/sessions")).toHaveLength(1));
   });
 
-  it("search filters rows by name or email, case-insensitive", async () => {
+  it("search matches a name-only hit and an email-only hit separately", async () => {
+    users = [
+      { id: "me", email: "owner@example.test", name: "Owner", role: "owner", banned: false },
+      { id: "u2", email: "somchai@example.test", name: "Support Guy", role: "employee", banned: false },
+    ];
+    render(<UsersScreen me={me} />);
+    await screen.findByText("somchai@example.test");
+    const search = screen.getByLabelText("ค้นหาผู้ใช้ (Search users)");
+    // "SUPPORT" matches the name only, not the email.
+    fireEvent.change(search, { target: { value: "SUPPORT" } });
+    expect(screen.queryByText("owner@example.test")).toBeNull();
+    expect(screen.getByText("somchai@example.test")).toBeTruthy();
+    // "somchai" matches the email only, not the name.
+    fireEvent.change(search, { target: { value: "somchai" } });
+    expect(screen.queryByText("owner@example.test")).toBeNull();
+    expect(screen.getByText("somchai@example.test")).toBeTruthy();
+    expect(screen.getByText("Support Guy")).toBeTruthy();
+  });
+
+  it("a failed sessions load shows the error instead of spinning forever", async () => {
+    routes.set("GET /api/users/u2/sessions", () => json({ error: "boom" }, 500));
     render(<UsersScreen me={me} />);
     await screen.findByText("staff@example.test");
-    const search = screen.getByLabelText("ค้นหาผู้ใช้ (Search users)");
-    fireEvent.change(search, { target: { value: "STAFF" } });
-    expect(screen.queryByText("owner@example.test")).toBeNull();
-    expect(screen.getByText("staff@example.test")).toBeTruthy();
-    fireEvent.change(search, { target: { value: "banned" } });
-    expect(screen.queryByText("staff@example.test")).toBeNull();
-    expect(screen.getByText("banned@example.test")).toBeTruthy();
+    fireEvent.click(within(rowOf("staff@example.test")).getByRole("button", { name: "เซสชัน (Sessions)" }));
+    const drawer = await screen.findByRole("complementary", { name: /เซสชันของ staff@example.test/ });
+    await waitFor(() => expect(drawer.querySelector("p[role=alert]")).not.toBeNull());
+    expect(drawer.querySelector("p[role=alert]")!.textContent).toBe("เกิดข้อผิดพลาด (500)");
+    expect(within(drawer).queryByRole("status")).toBeNull();
   });
 
   it("a search with no match shows the empty state", async () => {

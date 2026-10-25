@@ -4,6 +4,7 @@ import { ApiError, api, type Me, type PanelUser } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
 import { DataTable, type Column } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
+import { Spinner } from "../components/Spinner";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
 import { UserSessionsDrawer } from "./UserSessions";
@@ -162,7 +163,9 @@ export function UsersScreen({ me }: { me: Me }) {
         <label>ค้นหา (Search)<input type="search" aria-label="ค้นหาผู้ใช้ (Search users)" placeholder="ชื่อหรืออีเมล (Name or email)" value={q} onChange={(e) => setQ(e.target.value)} /></label>
       </section>
       <section className="panel" style={{ marginTop: 16 }}>
-        <DataTable label="ผู้ใช้ (Users)" columns={columns} rows={rows} rowKey={(u) => u.id} empty={empty} />
+        {users === null
+          ? <Spinner />
+          : <DataTable label="ผู้ใช้ (Users)" columns={columns} rows={rows} rowKey={(u) => u.id} empty={empty} />}
       </section>
       <form
         className="panel"
