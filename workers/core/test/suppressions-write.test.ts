@@ -67,6 +67,34 @@ describe("POST /admin/suppressions and /admin/suppressions/remove (FUS-382)", ()
     expect(after!.count).toBe(before!.count);
   });
 
+  it("addSuppression answers 409 when the address lands just before the add call", async () => {
+    const address = "race@example.com";
+    // A concurrent add, or the listmonk sync, inserts the address first: no SELECT runs before this INSERT.
+    await sh.db
+      .prepare("INSERT INTO suppressions (email, reason, source, created_at, updated_at) VALUES (?1, 'blocklisted', 'listmonk', ?2, NULL)")
+      .bind(address, "2026-10-01T00:00:00.000Z")
+      .run();
+    const response = await sh.admin("/admin/suppressions", owner, post({ email: address }));
+    expect(response.status).toBe(409);
+    const body = await response.json() as { error: string; current_updated_at: string };
+    expect(body.error).toBe("conflict");
+    expect(body.current_updated_at).toBe("2026-10-01T00:00:00.000Z");
+  });
+
+  it("a duplicate add answers 409 with no second audit row", async () => {
+    const address = "dup@example.com";
+    const first = await sh.admin("/admin/suppressions", owner, post({ email: address }));
+    expect(first.status).toBe(201);
+    const retry = await sh.admin("/admin/suppressions", owner, post({ email: address, reason: "bounce" }));
+    expect(retry.status).toBe(409);
+    expect(await retry.json()).toMatchObject({ error: "conflict" });
+    const audits = await sh.factory
+      .prepare("SELECT count(*) AS count FROM audit_log WHERE entity_id = ?1 AND action = 'suppression.add'")
+      .bind(auditId(address))
+      .first<{ count: number }>();
+    expect(audits!.count).toBe(1);
+  });
+
   it("removeSuppression deletes the row and answers 200", async () => {
     await sh.admin("/admin/suppressions", owner, post({ email: "gone@example.com" }));
     const response = await sh.admin("/admin/suppressions/remove", owner, post({ email: "gone@example.com" }));
@@ -116,18 +144,20 @@ describe("POST /admin/suppressions and /admin/suppressions/remove (FUS-382)", ()
     await sh.admin("/admin/suppressions", owner, post({ email: address, reason: "complaint" }));
     await sh.admin("/admin/suppressions/remove", owner, post({ email: address }));
 
+    // Every audit row in the table: none may hold the address in any field.
     const rows = await sh.factory
-      .prepare("SELECT action, entity_type, entity_id, before_json, after_json FROM audit_log WHERE entity_id = ?1 ORDER BY id")
-      .bind(auditId(address))
+      .prepare("SELECT action, entity_type, entity_id, before_json, after_json FROM audit_log ORDER BY id")
       .all<{ action: string; entity_type: string; entity_id: string; before_json: string | null; after_json: string | null }>();
-    expect(rows.results.map((row) => row.action)).toEqual(["suppression.add", "suppression.remove"]);
     for (const row of rows.results) {
-      expect(row.entity_type).toBe("suppression");
-      expect(row.entity_id).toBe(auditId(address));
       for (const field of [row.entity_id, row.before_json, row.after_json]) {
-        expect(field ?? "", row.action).not.toContain(address);
+        expect(field ?? "", `${row.action}:${row.entity_id}`).not.toContain(address);
       }
     }
-    expect(JSON.parse(rows.results[0]!.after_json!)).toEqual({ reason: "complaint", source: "manual" });
+    const mine = rows.results.filter((row) => row.entity_id === auditId(address));
+    expect(mine.map((row) => row.action)).toEqual(["suppression.add", "suppression.remove"]);
+    for (const row of mine) expect(row.entity_type).toBe("suppression");
+    expect(JSON.parse(mine[0]!.after_json!)).toEqual({ reason: "complaint", source: "manual" });
+    expect(JSON.parse(mine[1]!.before_json!)).toEqual({ reason: "complaint", source: "manual" });
+    expect(mine[1]!.after_json).toBeNull();
   });
 });

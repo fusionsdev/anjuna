@@ -303,7 +303,7 @@ async function writeAudit(
   entityType: "brand" | "lead" | "lead_export" | "suppression",
   entityId: string,
   oldValue: JsonRecord | null,
-  newValue: JsonRecord,
+  newValue: JsonRecord | null,
   at: string,
 ): Promise<number> {
   const result = await env.FACTORY.prepare(
@@ -317,7 +317,7 @@ async function writeAudit(
     entityType,
     entityId,
     oldValue === null ? null : JSON.stringify(oldValue),
-    JSON.stringify(newValue),
+    newValue === null ? null : JSON.stringify(newValue),
     at,
   ).run();
   return result.meta.last_row_id;
@@ -1063,21 +1063,22 @@ async function addSuppression(request: Request, env: Env, context: AdminRequestC
   const body = parseWith(AddSuppressionRequest, raw, context);
   if (body instanceof Response) return body;
 
-  const existing = await env.LEADS.prepare(
-    "SELECT email, created_at, updated_at FROM suppressions WHERE email = ?1",
-  ).bind(body.email).first<Pick<SuppressionSqlRow, "email" | "created_at" | "updated_at">>();
-  if (existing) {
+  const now = new Date().toISOString();
+  // Single INSERT: a concurrent add or the listmonk sync that inserts the same
+  // address first answers 409 conflict instead of a PRIMARY KEY error.
+  const inserted = await env.LEADS.prepare(
+    "INSERT INTO suppressions (email, reason, source, added_by, created_at, updated_at) VALUES (?1, ?2, 'manual', ?3, ?4, NULL) ON CONFLICT(email) DO NOTHING",
+  ).bind(body.email, body.reason, context.actor_id, now).run();
+  if ((inserted.meta.changes ?? 0) === 0) {
+    const existing = await env.LEADS.prepare(
+      "SELECT email, created_at, updated_at FROM suppressions WHERE email = ?1",
+    ).bind(body.email).first<Pick<SuppressionSqlRow, "email" | "created_at" | "updated_at">>();
     return adminError(context, {
       error: "conflict",
       message: "Address is already suppressed",
-      current_updated_at: existing.updated_at ?? existing.created_at,
+      current_updated_at: existing?.updated_at ?? existing?.created_at ?? now,
     });
   }
-
-  const now = new Date().toISOString();
-  await env.LEADS.prepare(
-    "INSERT INTO suppressions (email, reason, source, added_by, created_at, updated_at) VALUES (?1, ?2, 'manual', ?3, ?4, NULL)",
-  ).bind(body.email, body.reason, context.actor_id, now).run();
   // Fails closed, as listSuppressions does: no try/catch. before/after hold reason and source only, never the address.
   await writeAudit(
     env,
@@ -1121,7 +1122,7 @@ async function removeSuppression(request: Request, env: Env, context: AdminReque
     "suppression",
     await suppressionAuditId(body.email),
     { reason: existing.reason, source: existing.source },
-    { removed: true },
+    null,
     now,
   );
   const response: RemoveSuppressionResponse = { removed: true };
