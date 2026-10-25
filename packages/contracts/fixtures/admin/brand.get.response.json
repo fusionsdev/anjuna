@@ -12,6 +12,7 @@
     "brand_name": null,
     "site_title": null,
     "site_description": null,
+    "theme": null,
     "amount_buckets": [
       500,
       1000,

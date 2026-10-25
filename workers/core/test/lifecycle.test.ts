@@ -231,6 +231,33 @@ describe("private factory lifecycle service", () => {
     const state = await h.factoryLifecycle("/runtime-state", "account-a-token", jsonBody({ brand_id: "brand-a", account: "account-a" }));
     expect(RuntimeStateResponse.parse(await state.json())).toMatchObject({ applied_revision_id: "revision-1", bundle_form_version: "form@bundle-1" });
   });
+
+  it("writes initial_runtime.theme on first install (FUS-381)", async () => {
+    await h.factory.prepare(`INSERT INTO brands (brand_id, name, account, domain, status, created_by, created_at, updated_at)
+      VALUES ('theme-brand', 'Theme Brand', 'account-a', 'theme-brand.example', 'draft', 'usr_owner_01',
+        '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z')`).run();
+    const request = apply({
+      brand_id: "theme-brand", install_id: "install-theme-first", hostnames: ["theme-brand.example"],
+      initial_runtime: { ...initialRuntime, theme: { primary: "#0F766E", secondary: "#1e293b" } },
+    });
+    const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(request));
+    expect(response.status).toBe(200);
+    expect(await h.db.prepare("SELECT theme_json FROM brand_runtime WHERE brand_id = 'theme-brand'").first())
+      .toEqual({ theme_json: '{"primary":"#0f766e","secondary":"#1e293b"}' });
+    expect(await h.db.prepare("SELECT theme_json FROM brand_runtime WHERE brand_id = 'new-brand'").first())
+      .toEqual({ theme_json: null });
+  });
+
+  it("keeps theme_json on a later install (FUS-381)", async () => {
+    const response = await h.factoryLifecycle("/runtime", "account-a-token", jsonBody(apply({
+      brand_id: "theme-brand", install_id: "install-theme-second", hostnames: ["theme-brand.example"],
+      expected_revision_id: "revision-1", target_revision_id: "revision-2",
+      initial_runtime: { ...initialRuntime, theme: { primary: "#ffffff", secondary: "#000000" } },
+    })));
+    expect(response.status).toBe(200);
+    expect(await h.db.prepare("SELECT theme_json, applied_revision_id FROM brand_runtime WHERE brand_id = 'theme-brand'").first())
+      .toEqual({ theme_json: '{"primary":"#0f766e","secondary":"#1e293b"}', applied_revision_id: "revision-2" });
+  });
 });
 
 describe("private panel Test-sold verification", () => {

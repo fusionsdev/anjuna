@@ -177,7 +177,7 @@ describe("authorize()", () => {
   });
 
   it("owner-only PATCH fields are rejected for an employee, each one listed", () => {
-    const employeeFields: string[] = ["keyword_default", "brand_name", "site_title", "site_description"];
+    const employeeFields: string[] = ["keyword_default", "brand_name", "site_title", "site_description", "theme"];
     const ownerOnly = BRAND_PATCH_FIELDS.filter((f) => !employeeFields.includes(f));
     for (const f of ownerOnly) {
       const r = authorize("patchBrand", "employee", { [f]: f === "rotate_postback_token" ? true : "x" });
@@ -293,6 +293,29 @@ describe("secrets never appear in GET fixtures", () => {
   it("the list summary has no account routing or token fields", () => {
     const b = ListBrandsResponse.parse(fixture(A("brands.list.response.json"))).brands[0]!;
     for (const k of ["aid", "prepop_base", "drain_key", "postback_token", "postback_token_hash"]) expect(Object.keys(b)).not.toContain(k);
+  });
+});
+
+describe("brand theme contract (FUS-381)", () => {
+  it("BrandConfig carries theme as lowercase #rrggbb or null and rejects a bad hex", () => {
+    const brand = fixture<{ brand: Record<string, unknown> }>(A("brand.get.response.json")).brand;
+    expect(BrandConfig.parse(brand).theme).toBeNull();
+    expect(BrandConfig.parse({ ...brand, theme: { primary: "#0F766E", secondary: "#1E293B" } }).theme)
+      .toEqual({ primary: "#0f766e", secondary: "#1e293b" });
+    expect(BrandConfig.safeParse({ ...brand, theme: { primary: "#fff", secondary: "#1e293b" } }).success).toBe(false);
+  });
+
+  it("BrandPatchRequest accepts a theme or null and rejects anything else", () => {
+    expect(BrandPatchRequest.parse({ theme: null }).theme).toBeNull();
+    expect(BrandPatchRequest.parse({ theme: { primary: "#2563EB", secondary: "#1E293B" } }).theme)
+      .toEqual({ primary: "#2563eb", secondary: "#1e293b" });
+    expect(BrandPatchRequest.safeParse({ theme: { primary: "red", secondary: "#1e293b" } }).success).toBe(false);
+    expect(BrandPatchRequest.safeParse({ theme: { primary: "#2563eb" } }).success).toBe(false);
+  });
+
+  it("theme is a patch field employees may edit (site text group)", () => {
+    expect(BRAND_PATCH_FIELDS).toContain("theme");
+    expect(authorize("patchBrand", "employee", { theme: { primary: "#2563eb", secondary: "#1e293b" } }).ok).toBe(true);
   });
 });
 

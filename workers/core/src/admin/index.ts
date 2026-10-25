@@ -51,6 +51,7 @@ import {
 import type { Env } from "../env.js";
 import { json } from "../http.js";
 import { globalPostbackDigest } from "../postback-token.js";
+import { parseStoredTheme } from "../rpc/runtime.js";
 import { loadConversions } from "./conversions-report.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 import { loadSpendReport } from "../spend.js";
@@ -78,6 +79,7 @@ interface BrandRow {
   brand_name: string | null;
   site_title: string | null;
   site_description: string | null;
+  theme_json: string | null;
   google_ads_account: string | null;
   google_conversion_action: string | null;
   adkit_project: string | null;
@@ -248,6 +250,7 @@ function brandConfig(row: BrandRow, globalPostback = false): BrandConfig {
     brand_name: row.brand_name,
     site_title: row.site_title,
     site_description: row.site_description,
+    theme: parseStoredTheme(row.theme_json),
     amount_buckets: parseJson(row.amount_buckets) as number[],
     ab_config: lowercaseAbConfig(parseJson(row.ab_config_json)),
     flow_gate_mode: row.flow_gate_mode as BrandConfig["flow_gate_mode"],
@@ -273,7 +276,7 @@ function brandColumns(includeFormVersion: boolean, table = ""): string {
   const columns = [
     "brand_id", "account", "hostnames", "drain_key", "postback_token_hash", "aid",
     "prepop_base", "amount_buckets", "flow_gate_mode", "paused", "ab_config_json",
-    "keyword_default", "brand_name", "site_title", "site_description",
+    "keyword_default", "brand_name", "site_title", "site_description", "theme_json",
     "google_ads_account", "google_conversion_action", "adkit_project", "created_at", "updated_at",
     ...(includeFormVersion ? ["form_version"] : []),
   ];
@@ -422,6 +425,8 @@ async function patchBrand(
     ["google_conversion_action", "google_conversion_action", patch.google_conversion_action,
       before.google_conversion_action, patch.google_conversion_action],
     ["adkit_project", "adkit_project", patch.adkit_project, before.adkit_project, patch.adkit_project],
+    ["theme", "theme_json", patch.theme, before.theme,
+      patch.theme === undefined ? undefined : patch.theme === null ? null : JSON.stringify(patch.theme)],
   ];
   for (const [field, column, requested, old, stored] of candidates) {
     if (requested !== undefined && !equalJson(requested, old)) {

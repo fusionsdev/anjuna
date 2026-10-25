@@ -120,12 +120,13 @@ async function applyRuntime(request: Request, env: Env, account: string): Promis
     await env.LEADS.prepare(`INSERT INTO brand_runtime
         (brand_id, account, hostnames, drain_key, postback_token_hash, aid, prepop_base,
          amount_buckets, flow_gate_mode, paused, keyword_default, form_route, form_version,
-         applied_revision_id, last_lifecycle_install_id, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, 'param', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)`)
+         applied_revision_id, last_lifecycle_install_id, created_at, updated_at, theme_json)
+        VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, 'param', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15)`)
         .bind(input.brand_id, account, JSON.stringify(input.hostnames), initial.drain_key,
           initial.aid, initial.prepop_base, JSON.stringify(initial.amount_buckets), detached ? 1 : 0,
           initial.keyword_default, initial.form_route, initial.form_version, nextRevision,
-          input.install_id, timestamp).run();
+          input.install_id, timestamp,
+          initial.theme == null ? null : JSON.stringify(initial.theme)).run();
     await ensureApplyAudit(env, input, auditBefore, auditAfter, timestamp);
   } else {
     const nextFormVersion = input.bundle_form_version ?? input.initial_runtime?.form_version ?? current.form_version;
