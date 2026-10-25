@@ -177,7 +177,8 @@ describe("brand row actions menu", () => {
     }
   });
 
-  it("a hanging row install locks its brand and survives another brand's command", async () => {
+  /** Two draft brands; brand-a is auto-selected, brand-b is only a row. */
+  function serveTwoBrands(postB: Handler) {
     const a = base("brand-a", "draft");
     const b = base("brand-b", "draft");
     routes.set("GET /api/lifecycle/brands", () => json({ brands: [a, b] }));
@@ -191,44 +192,53 @@ describe("brand row actions menu", () => {
       routes.set(`GET /api/brands/${id}/installs`, () => json({ brand_id: id, installs: [] }));
       routes.set(`GET /api/brands/${id}/revisions`, () => json({ brand_id: id, current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
     }
-    let releaseB!: (value: Response) => void;
-    routes.set("POST /api/brands/brand-b/install", () => new Promise<Response>((resolve) => { releaseB = resolve; }));
-    routes.set("POST /api/brands/brand-a/install", () => json({ install_id: "op-a", brand_id: "brand-a", status: "running" }, 201));
-    for (const [id, op] of [["op-a", "op-a"], ["op-b", "op-b"]] as const) {
-      const brandId = id === "op-a" ? "brand-a" : "brand-b";
-      routes.set(`GET /api/installs/${op}`, () => json({
-        install_id: id, brand_id: brandId, revision_id: "rev-1", status: "running",
-        runtime_sync_status: "running", receipts: [],
-      } satisfies InstallWithReceipts));
-    }
-    const closeMenu = () => fireEvent.mouseDown(document.body);
-    const menuOf = async (domain: string) => {
-      closeMenu();
-      const pick = await screen.findByRole("button", { name: new RegExp(domain.replace(".", "\\.")) });
-      fireEvent.click(within(pick.closest("tr")!).getByRole("button", { name: "จัดการ (Actions)" }));
-      const items = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((el) => el.textContent ?? "");
-      closeMenu();
-      return items;
-    };
-    const chooseInstall = async (domain: string) => {
-      closeMenu();
-      const pick = await screen.findByRole("button", { name: new RegExp(domain.replace(".", "\\.")) });
-      fireEvent.click(within(pick.closest("tr")!).getByRole("button", { name: "จัดการ (Actions)" }));
-      fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "ติดตั้ง (Install)" }));
-    };
+    routes.set("POST /api/brands/brand-b/install", postB);
+    routes.set("GET /api/installs/op-b", () => json({
+      install_id: "op-b", brand_id: "brand-b", revision_id: "rev-1", status: "running",
+      runtime_sync_status: "running", receipts: [],
+    } satisfies InstallWithReceipts));
+  }
+  const rowOf = async (domain: string) => (await screen.findByRole("button", { name: new RegExp(domain.replace(".", "\.")) })).closest("tr")!;
+  const chooseRowInstall = async (domain: string) => {
+    fireEvent.click(within(await rowOf(domain)).getByRole("button", { name: "จัดการ (Actions)" }));
+    fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "ติดตั้ง (Install)" }));
+  };
+  const postsToB = () => requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-b/install");
+
+  it("a row deploy on another brand selects it and tracks the install like the detail button", async () => {
+    serveTwoBrands(() => json({ install_id: "op-b", brand_id: "brand-b", status: "running" }, 201));
     render(<BrandLifecycle me={owner} />);
     await screen.findAllByRole("button", { name: "จัดการ (Actions)" });
-    // Brand B is not selected; its Install hangs in flight.
-    await chooseInstall("brand-b.test");
-    await waitFor(() => expect(requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-b/install")).toHaveLength(1));
-    expect(await menuOf("brand-b.test")).not.toContain("ติดตั้ง (Install)");
-    // Brand A's own command completes while B hangs; B stays locked.
-    await chooseInstall("brand-a.test");
-    await waitFor(() => expect(requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-a/install")).toHaveLength(1));
-    expect(await menuOf("brand-b.test")).not.toContain("ติดตั้ง (Install)");
+    expect(document.querySelector(".brands-aside")!.textContent).toContain("brand-a.test");
+    await chooseRowInstall("brand-b.test");
+    // The brand is selected, the POST went out once, and the detail shows the tracked install.
+    await waitFor(() => expect(document.querySelector(".brands-aside")!.textContent).toContain("brand-b.test"));
+    await waitFor(() => expect(document.body.textContent).toContain("op-b"));
+    expect(postsToB()).toHaveLength(1);
+    // The poll reads the accepted install again (first read after the POST, then one per 3 s tick).
+    await waitFor(() => expect(requests.filter((r) => r.path === "/api/installs/op-b").length).toBeGreaterThanOrEqual(2), { timeout: 6000 });
+    expect(postsToB()).toHaveLength(1);
+  }, 15000);
+
+  it("choosing a row deploy while its POST hangs sends one POST only", async () => {
+    let releaseB!: (value: Response) => void;
+    serveTwoBrands(() => new Promise<Response>((resolve) => { releaseB = resolve; }));
+    render(<BrandLifecycle me={owner} />);
+    await screen.findAllByRole("button", { name: "จัดการ (Actions)" });
+    await chooseRowInstall("brand-b.test");
+    await waitFor(() => expect(postsToB()).toHaveLength(1));
+    // Selecting the brand by row click mid-flight must not enable a second Install.
+    fireEvent.click(await screen.findByRole("button", { name: /brand-b\.test/ }));
+    await waitFor(() => expect(document.querySelector(".brands-aside")!.textContent).toContain("brand-b.test"));
+    const detailInstall = [...document.querySelector(".brands-aside")!.querySelectorAll("button")].find((el) => el.textContent === "ติดตั้ง (Install)");
+    expect(detailInstall === undefined || (detailInstall as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(await rowOf("brand-b.test")).getByRole("button", { name: "จัดการ (Actions)" }));
+    expect(within(await screen.findByRole("menu")).queryByRole("menuitem", { name: "ติดตั้ง (Install)" })).toBeNull();
+    fireEvent.mouseDown(document.body);
+    expect(postsToB()).toHaveLength(1);
     releaseB(json({ install_id: "op-b", brand_id: "brand-b", status: "running" }, 201));
-    await waitFor(async () => expect(await menuOf("brand-b.test")).toContain("ติดตั้ง (Install)"));
-    expect(requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-b/install")).toHaveLength(1);
+    await waitFor(() => expect(document.body.textContent).toContain("op-b"));
+    expect(postsToB()).toHaveLength(1);
   });
 
   it("a brand without a form artifact has no menu Install and sends no POST", async () => {

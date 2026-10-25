@@ -57,8 +57,7 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
 /**
  * One gating for the detail panel and the brand row menu, so they cannot drift.
  * The selected row uses the detail inputs (install detail, pendingOperation, recovery_required).
- * Any other row uses brand.status, brand.latest_install?.status, its own rowPending lock and
- * recoveryRequired false. Retry and Recover need the install detail only the selected row has;
+ * Any other row uses brand.status, brand.latest_install?.status and recoveryRequired false. Retry and Recover need the install detail only the selected row has;
  * a brand without a form artifact keeps a disabled Install the menu hides and the handler refuses.
  */
 export type BrandActionKey = "install" | "rollback" | "redeploy" | "redeployLatest" | "recover" | "resumeWizard" | "duplicate" | "retry" | "timeline" | "openSite" | "copyFinalUrl" | "runtimeConfig";
@@ -134,11 +133,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [recovering, setRecovering] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [pendingOperation, setPendingOperation] = useState<{ brandId: string; generation: number; installId: string } | null>(null);
-  // Row-menu commands on non-selected brands lock per brandId, set synchronously before the
-  // request is sent, so a second menu open cannot send a second request and one brand's
-  // command cannot overwrite or clear another brand's tracking.
-  const [rowPending, setRowPending] = useState<ReadonlySet<string>>(new Set());
-  const rowPendingRef = useRef<Set<string>>(new Set());
+  // A deploy item chosen on a non-selected row selects that brand first; the item runs once the selection has committed,
+  // through the same handlers and tracking as the detail buttons.
+  const queuedDeploy = useRef<{ key: BrandActionKey; brandId: string } | null>(null);
   const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
   const [leadId, setLeadId] = useState("");
   // undefined while loading, null when the request failed (a core-only brand has no factory revisions).
@@ -404,30 +401,6 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       if (canCommit(token, selected.brand_id)) setRecovering(false);
     }
   }
-  /** A row menu acts on its own row's brand; the selected brand keeps its tracking (generation, recovering, install detail). Any other brand locks only its own rowPending entry, never the shared pendingOperation. */
-  async function dispatchOperationFor(brand: LifecycleBrandSummary, action: () => Promise<{ install_id: string }>, retryOf?: string) {
-    if (selected && brand.brand_id === selected.brand_id) {
-      await dispatchOperation(action, retryOf);
-      return;
-    }
-    if (rowPendingRef.current.has(brand.brand_id)) return;
-    rowPendingRef.current.add(brand.brand_id);
-    setRowPending(new Set(rowPendingRef.current));
-    const token = operationToken();
-    try {
-      const result = await action();
-      try {
-        await api.installDetail(result.install_id);
-      } catch { /* The brand history recovery picks the install up once the brand is selected. */ }
-      await load(token);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
-      await load(token);
-    } finally {
-      rowPendingRef.current.delete(brand.brand_id);
-      setRowPending(new Set(rowPendingRef.current));
-    }
-  }
   /** Asks first. False when declined, or when the brand changed while the dialog was open (the generation moved on). */
   async function confirmForBrand(options: ConfirmOptions): Promise<boolean> {
     const generation = operationGeneration.current;
@@ -452,7 +425,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       confirmDisabled: Boolean(loaded) && !targetId,
     });
     if (!ok) return;
-    await dispatchOperationFor(brand, () => api.rollbackLifecycle(brandId));
+    await dispatchOperation(() => api.rollbackLifecycle(brandId));
   }
   async function copyFinalUrl(target: LifecycleBrandSummary | undefined = selected) {
     if (!target) return;
@@ -494,7 +467,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       confirmLabel: "ติดตั้งใหม่ (Redeploy)",
     });
     if (!ok) return;
-    await dispatchOperationFor(target, () => api.redeploy(brandId));
+    await dispatchOperation(() => api.redeploy(brandId));
   }
   async function redeployLatest(target: LifecycleBrandSummary | undefined = selected) {
     const newer = target?.newer_form;
@@ -506,13 +479,13 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       confirmLabel: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)",
     });
     if (!ok) return;
-    await dispatchOperationFor(target, () => api.redeploy(brandId, newer.form_artifact_id));
+    await dispatchOperation(() => api.redeploy(brandId, newer.form_artifact_id));
   }
   async function startInstall(target: LifecycleBrandSummary | undefined = selected) {
     if (!target) return;
     // The detail button is disabled and the menu hides Install for this; refuse here too so no path sends the POST.
     if (target.bundle_form_version == null || target.payload_version == null) return;
-    await dispatchOperationFor(target, () => api.install(target.brand_id, target.current_revision_id ?? undefined));
+    await dispatchOperation(() => api.install(target.brand_id, target.current_revision_id ?? undefined));
   }
   async function retry() {
     if (!selected || !install) return;
@@ -521,7 +494,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   async function retryFor(brand: LifecycleBrandSummary, installId?: string) {
     const id = installId ?? (brand.brand_id === selectedIdRef.current ? install?.install_id : brand.latest_install?.install_id);
     if (!id) return;
-    await dispatchOperationFor(brand, async () => { const accepted = await api.retryInstall(id); setUpgradeRefresh((value) => value + 1); return accepted; }, id);
+    await dispatchOperation(async () => { const accepted = await api.retryInstall(id); setUpgradeRefresh((value) => value + 1); return accepted; }, id);
   }
   async function recover(target: LifecycleBrandSummary | undefined = selected) {
     if (!target) return;
@@ -533,7 +506,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       tone: "danger",
     });
     if (!ok) return;
-    await dispatchOperationFor(target, () => api.recover(brandId));
+    await dispatchOperation(() => api.recover(brandId));
   }
 
   /** Pause or resume from the table row. The confirm text matches the ConfigPanel button. */
@@ -564,8 +537,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
 
   /** A row menu item acts on its row's brand through the same handlers as the detail buttons. */
-  function rowAction(key: BrandActionKey, brand: LifecycleBrandSummary) {
-    const site = siteUrl(brand.hostnames);
+  function runDeploy(key: BrandActionKey, brand: LifecycleBrandSummary) {
     switch (key) {
       case "install": void startInstall(brand); break;
       case "rollback": void rollback(brand); break;
@@ -573,6 +545,33 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       case "redeployLatest": void redeployLatest(brand); break;
       case "recover": void recover(brand); break;
       case "retry": void retryFor(brand); break;
+    }
+  }
+  // The selection reset runs in a layout effect, so this passive effect sees the new brand selected with a fresh generation.
+  useEffect(() => {
+    const queued = queuedDeploy.current;
+    if (!queued || !selected || selected.brand_id !== queued.brandId) return;
+    queuedDeploy.current = null;
+    runDeploy(queued.key, selected);
+  }, [selectedId, selected]);
+  function rowAction(key: BrandActionKey, brand: LifecycleBrandSummary) {
+    const site = siteUrl(brand.hostnames);
+    switch (key) {
+      case "install":
+      case "rollback":
+      case "redeploy":
+      case "redeployLatest":
+        if (brand.brand_id === selectedIdRef.current) runDeploy(key, brand);
+        else {
+          queuedDeploy.current = { key, brandId: brand.brand_id };
+          selectedIdRef.current = brand.brand_id;
+          setSelectedId(brand.brand_id);
+          onSelectBrand?.(brand.brand_id);
+        }
+        break;
+      // Recover and Retry exist only on the selected row.
+      case "recover":
+      case "retry": if (brand.brand_id === selectedIdRef.current) runDeploy(key, brand); break;
       case "resumeWizard": setWizard({ brandId: brand.brand_id }); break;
       case "duplicate": setDuplicateOf(brand); break;
       case "timeline": navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); break;
@@ -582,7 +581,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     }
   }
 
-  /** The row menu gating equals the detail panel: the selected row uses the detail inputs, any other row brand.status, latest_install and its own rowPending lock. Retry and Recover stay on the selected row with install detail loaded; a disabled Install (missing form artifact) is hidden. */
+  /** The row menu gating equals the detail panel: the selected row uses the detail inputs, any other row brand.status and latest_install. Retry and Recover stay on the selected row with install detail loaded; a disabled Install (missing form artifact) is hidden. */
   function rowMenuItems(brand: LifecycleBrandSummary): RowMenuItem[] {
     const isSelected = brand.brand_id === selectedId;
     const gating = isSelected
@@ -593,7 +592,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       }
       : {
         installStatus: brand.latest_install?.status,
-        pending: rowPending.has(brand.brand_id),
+        pending: false,
         recoveryRequired: false,
       };
     const site = siteUrl(brand.hostnames);
