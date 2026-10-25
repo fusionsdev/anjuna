@@ -4,6 +4,7 @@ import { ApiError, api, type Me } from "../api";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleState } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
+import { RowMenu, type RowMenuItem } from "../components/RowMenu";
 import { StatusBadge } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
 import { flowGateLabel, operationLabel, statusBadgeTone, statusLabel } from "../labels";
@@ -52,6 +53,53 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
   core_list_response_invalid: "ข้อมูลรายการแบรนด์จาก Core ไม่ถูกต้อง (Core brand list response is invalid)",
   core_list_account_missing: "ยังไม่ได้ตั้งค่าบัญชีสำหรับรายการแบรนด์ Core (Core brand list account is not configured)",
 };
+
+/**
+ * One gating for the detail panel and the brand row menu, so they cannot drift.
+ * The selected row uses the detail inputs (install detail, pendingOperation, recovery_required).
+ * Any other row uses brand.status, brand.latest_install?.status, its own pendingOperation and
+ * recoveryRequired false, so Retry and Recover need the install detail only the selected row has.
+ */
+export type BrandActionKey = "install" | "rollback" | "redeploy" | "redeployLatest" | "recover" | "resumeWizard" | "duplicate" | "retry" | "timeline" | "openSite" | "copyFinalUrl" | "runtimeConfig";
+export interface BrandActionItem { key: BrandActionKey; label: string; group: "deploy" | "other"; tone?: "danger" }
+export interface BrandActionGating {
+  brand: LifecycleBrandSummary;
+  installStatus?: InstallWithReceipts["status"];
+  pendingOperation?: boolean;
+  recoveryRequired?: boolean;
+  role: Me["role"];
+  hasSite: boolean;
+  hasRuntime: boolean;
+  hasRedeployLatest?: boolean;
+  hasResumeWizard?: boolean;
+  hasDuplicate?: boolean;
+  hasRetryTarget?: boolean;
+  hasCopy?: boolean;
+}
+export function brandActionItems(g: BrandActionGating): BrandActionItem[] {
+  const { brand } = g;
+  const actions = lifecycleMutationAvailability(brand.status, g.installStatus, g.pendingOperation, g.recoveryRequired);
+  const owner = g.role === "owner";
+  const managed = brand.status !== "unmanaged";
+  const items: BrandActionItem[] = [];
+  if (managed && actions.install) items.push({ key: "install", label: "ติดตั้ง (Install)", group: "deploy" });
+  if (managed && owner && actions.rollback) items.push({ key: "rollback", label: "ย้อนกลับ (Rollback)", group: "deploy" });
+  if (managed && owner && brand.status === "live" && actions.rollback) {
+    items.push({ key: "redeploy", label: "ติดตั้งใหม่ (Redeploy)", group: "deploy" });
+    if (brand.newer_form && g.hasRedeployLatest) items.push({ key: "redeployLatest", label: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)", group: "deploy" });
+  }
+  if (managed && actions.recover && owner) items.push({ key: "recover", label: "กู้คืน (Recover, Owner)", group: "deploy", tone: "danger" });
+  if (managed && actions.retry && g.hasRetryTarget) items.push({ key: "retry", label: "ลองใหม่ (Retry)", group: "deploy" });
+  if (managed && (brand.status === "draft" || brand.status === "failed") && g.hasResumeWizard) items.push({ key: "resumeWizard", label: "ทำต่อในวิซาร์ด (Resume in wizard)", group: "other" });
+  if (managed && g.hasDuplicate) items.push({ key: "duplicate", label: "ทำสำเนา (Duplicate)", group: "other" });
+  items.push({ key: "timeline", label: "ไทม์ไลน์ (Timeline)", group: "other" });
+  if (g.hasSite) {
+    items.push({ key: "openSite", label: "เปิดเว็บไซต์ (Open site)", group: "other" });
+    if (g.hasCopy) items.push({ key: "copyFinalUrl", label: "คัดลอก Final URL (Copy Final URL)", group: "other" });
+  }
+  if (g.hasRuntime) items.push({ key: "runtimeConfig", label: "ตั้งค่าแบรนด์ (Runtime config)", group: "other" });
+  return items;
+}
 
 /**
  * wizardRequest: a counter the app raises to open the New brand wizard from its menu.
@@ -104,6 +152,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   selectedIdRef.current = selectedId;
   // The brand and current_revision_id the latest revisions fetch was issued for, and a sequence number so only the latest fetch commits.
   const revisionsFetch = useRef<{ brandId: string; currentRevisionId: string | null; seq: number } | null>(null);
+  // A failed row-menu copy on another brand selects that brand first; the URL rides along and lands in its detail field.
+  const pendingManualCopy = useRef<{ brandId: string; url: string } | null>(null);
   const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
@@ -174,6 +224,10 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     setLeadId("");
     setRevisions(undefined);
     setManualCopyUrl(null);
+    if (pendingManualCopy.current && selected?.brand_id === pendingManualCopy.current.brandId) {
+      setManualCopyUrl(pendingManualCopy.current.url);
+      pendingManualCopy.current = null;
+    }
     if (!selected) { setRecovering(false); return () => { active = false; }; }
     setRecovering(true);
     const token = operationToken();
@@ -343,15 +397,37 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       if (canCommit(token, selected.brand_id)) setRecovering(false);
     }
   }
+  /** A row menu acts on its own row's brand; the selected brand keeps its tracking (generation, recovering, install detail). */
+  async function dispatchOperationFor(brand: LifecycleBrandSummary, action: () => Promise<{ install_id: string }>, retryOf?: string) {
+    if (selected && brand.brand_id === selected.brand_id) {
+      await dispatchOperation(action, retryOf);
+      return;
+    }
+    const token = operationToken();
+    try {
+      const result = await action();
+      setPendingOperation({ brandId: brand.brand_id, generation: token.generation, installId: result.install_id });
+      try {
+        await api.installDetail(result.install_id);
+      } catch { /* The brand history recovery picks the install up once the brand is selected. */ }
+      // Selecting the brand mid-flight keeps the pending install so its poll starts; otherwise clear it.
+      if (selectedIdRef.current !== brand.brand_id) setPendingOperation(null);
+      await load(token);
+    } catch (e) {
+      setPendingOperation(null);
+      setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
+      await load(token);
+    }
+  }
   /** Asks first. False when declined, or when the brand changed while the dialog was open (the generation moved on). */
   async function confirmForBrand(options: ConfirmOptions): Promise<boolean> {
     const generation = operationGeneration.current;
     const ok = await confirm(options);
     return ok && operationGeneration.current === generation;
   }
-  async function rollback() {
-    if (!selected) return;
-    const brandId = selected.brand_id;
+  async function rollback(brand: LifecycleBrandSummary | undefined = selected) {
+    if (!brand) return;
+    const brandId = brand.brand_id;
     const loaded = revisions?.brand_id === brandId ? revisions : undefined;
     const targetId = loaded?.rollback_target_revision_id ?? null;
     const target = targetId ? loaded?.revisions.find((r) => r.revision_id === targetId) : undefined;
@@ -367,67 +443,78 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       confirmDisabled: Boolean(loaded) && !targetId,
     });
     if (!ok) return;
-    await dispatchOperation(() => api.rollbackLifecycle(brandId));
+    await dispatchOperationFor(brand, () => api.rollbackLifecycle(brandId));
   }
-  async function copyFinalUrl() {
-    if (!selected) return;
-    const url = finalUrl(selected.hostnames);
+  async function copyFinalUrl(target: LifecycleBrandSummary | undefined = selected) {
+    if (!target) return;
+    const url = finalUrl(target.hostnames);
     if (!url) return;
-    const brandId = selected.brand_id;
-    const domain = selected.hostnames[0];
+    const brandId = target.brand_id;
+    const domain = target.hostnames[0];
     // jsdom and a non-HTTPS origin have no navigator.clipboard, and a present one can still reject (permission, focus).
     try {
       const clipboard = navigator.clipboard;
       if (!clipboard) throw new Error("clipboard unavailable");
       await clipboard.writeText(url);
-      // An install or rollback bumps operationGeneration for the same brand; only a brand change makes the result stale.
-      if (selectedIdRef.current !== brandId) return;
-      setManualCopyUrl(null);
+      pendingManualCopy.current = null;
+      if (selectedIdRef.current === brandId) setManualCopyUrl(null);
       showToast("ok", `คัดลอก Final URL ของ ${domain} แล้ว (Copied the Final URL for ${domain})`);
     } catch {
-      if (selectedIdRef.current !== brandId) return;
-      setManualCopyUrl(url);
+      // The read-only field lives in the selected brand's detail: select the row first, then show it there.
+      // The selection reset runs after this commit, so the pending URL rides along and is applied there.
+      if (selectedIdRef.current !== brandId) {
+        pendingManualCopy.current = { brandId, url };
+        setSelectedId(brandId);
+        onSelectBrand?.(brandId);
+      } else {
+        setManualCopyUrl(url);
+      }
       showToast("err", `คัดลอกอัตโนมัติไม่ได้ กรุณาคัดลอก Final URL ของ ${domain} จากช่องข้างปุ่มเอง (Could not copy; copy the Final URL from the field by hand)`);
     }
   }
   // Pause lives in core and the factory brand stays live, so a paused brand can be redeployed; it stays paused.
-  function pausedNote() {
-    return runtimeBrands.find((brand) => brand.brand_id === selectedId)?.status === "paused" ? "\n\nแบรนด์นี้ยังคงหยุดชั่วคราว (The brand stays paused.)" : "";
+  function pausedNote(brandId: string | null = selectedId) {
+    return runtimeBrands.find((brand) => brand.brand_id === brandId)?.status === "paused" ? "\n\nแบรนด์นี้ยังคงหยุดชั่วคราว (The brand stays paused.)" : "";
   }
-  async function redeploy() {
-    if (!selected) return;
-    const brandId = selected.brand_id;
+  async function redeploy(target: LifecycleBrandSummary | undefined = selected) {
+    if (!target) return;
+    const brandId = target.brand_id;
     const ok = await confirmForBrand({
       title: "ติดตั้งแบรนด์นี้ใหม่ด้วยเวอร์ชันเทมเพลตและ form ปัจจุบัน?",
-      body: `Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.${pausedNote()}`,
+      body: `Redeploy at the current template version and form. If a step fails, it rolls back to the previous version.${pausedNote(brandId)}`,
       confirmLabel: "ติดตั้งใหม่ (Redeploy)",
     });
     if (!ok) return;
-    await dispatchOperation(() => api.redeploy(brandId));
+    await dispatchOperationFor(target, () => api.redeploy(brandId));
   }
-  async function redeployLatest() {
-    const target = selected?.newer_form;
-    if (!selected || !target) return;
-    const brandId = selected.brand_id;
+  async function redeployLatest(target: LifecycleBrandSummary | undefined = selected) {
+    const newer = target?.newer_form;
+    if (!target || !newer) return;
+    const brandId = target.brand_id;
     const ok = await confirmForBrand({
-      title: `ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${target.bundle_form_version} แทน ${selected.bundle_form_version ?? "—"}?`,
-      body: `Redeploy with form ${target.bundle_form_version}, replacing ${selected.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.${pausedNote()}`,
+      title: `ติดตั้งแบรนด์นี้ใหม่พร้อมฟอร์ม ${newer.bundle_form_version} แทน ${target.bundle_form_version ?? "—"}?`,
+      body: `Redeploy with form ${newer.bundle_form_version}, replacing ${target.bundle_form_version ?? "the current form"}. If a step fails, it rolls back to the previous version and form.${pausedNote(brandId)}`,
       confirmLabel: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)",
     });
     if (!ok) return;
-    await dispatchOperation(() => api.redeploy(brandId, target.form_artifact_id));
+    await dispatchOperationFor(target, () => api.redeploy(brandId, newer.form_artifact_id));
   }
-  async function startInstall() {
-    if (!selected) return;
-    await dispatchOperation(() => api.install(selected.brand_id, selected.current_revision_id ?? undefined));
+  async function startInstall(target: LifecycleBrandSummary | undefined = selected) {
+    if (!target) return;
+    await dispatchOperationFor(target, () => api.install(target.brand_id, target.current_revision_id ?? undefined));
   }
   async function retry() {
     if (!selected || !install) return;
-    await dispatchOperation(async () => { const accepted = await api.retryInstall(install.install_id); setUpgradeRefresh((value) => value + 1); return accepted; }, install.install_id);
+    await retryFor(selected, install.install_id);
   }
-  async function recover() {
-    if (!selected) return;
-    const brandId = selected.brand_id;
+  async function retryFor(brand: LifecycleBrandSummary, installId?: string) {
+    const id = installId ?? (brand.brand_id === selectedIdRef.current ? install?.install_id : brand.latest_install?.install_id);
+    if (!id) return;
+    await dispatchOperationFor(brand, async () => { const accepted = await api.retryInstall(id); setUpgradeRefresh((value) => value + 1); return accepted; }, id);
+  }
+  async function recover(target: LifecycleBrandSummary | undefined = selected) {
+    if (!target) return;
+    const brandId = target.brand_id;
     const ok = await confirmForBrand({
       title: "กู้คืนแบรนด์นี้?",
       body: "Recover runs the compensation install for this brand.",
@@ -435,7 +522,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       tone: "danger",
     });
     if (!ok) return;
-    await dispatchOperation(() => api.recover(brandId));
+    await dispatchOperationFor(target, () => api.recover(brandId));
   }
 
   /** Pause or resume from the table row. The confirm text matches the ConfigPanel button. */
@@ -465,6 +552,52 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     }
   }
 
+  /** A row menu item acts on its row's brand through the same handlers as the detail buttons. */
+  function rowAction(key: BrandActionKey, brand: LifecycleBrandSummary) {
+    const site = siteUrl(brand.hostnames);
+    switch (key) {
+      case "install": void startInstall(brand); break;
+      case "rollback": void rollback(brand); break;
+      case "redeploy": void redeploy(brand); break;
+      case "redeployLatest": void redeployLatest(brand); break;
+      case "recover": void recover(brand); break;
+      case "retry": void retryFor(brand); break;
+      case "resumeWizard": setWizard({ brandId: brand.brand_id }); break;
+      case "duplicate": setDuplicateOf(brand); break;
+      case "timeline": navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); break;
+      case "openSite": if (site) window.open(site, "_blank", "noopener,noreferrer"); break;
+      case "copyFinalUrl": void copyFinalUrl(brand); break;
+      case "runtimeConfig": setConfigBrandId(brand.brand_id); break;
+    }
+  }
+
+  /** The row menu gating equals the detail panel: the selected row uses the detail inputs, any other row brand.status, latest_install and its own pendingOperation. */
+  function rowMenuItems(brand: LifecycleBrandSummary): RowMenuItem[] {
+    const isSelected = brand.brand_id === selectedId;
+    const gating = isSelected
+      ? {
+        installStatus: install?.status,
+        pending: recovering || (pendingOperation?.brandId === selectedId && pendingOperation.generation === operationGeneration.current),
+        recoveryRequired: install?.recovery_required === true,
+      }
+      : {
+        installStatus: brand.latest_install?.status,
+        pending: pendingOperation?.brandId === brand.brand_id && pendingOperation.generation === operationGeneration.current,
+        recoveryRequired: false,
+      };
+    const site = siteUrl(brand.hostnames);
+    return brandActionItems({
+      brand, installStatus: gating.installStatus, pendingOperation: gating.pending, recoveryRequired: gating.recoveryRequired,
+      role: me.role, hasSite: site !== null, hasRuntime: runtimeBrands.some((runtime) => runtime.brand_id === brand.brand_id),
+      hasRedeployLatest: true, hasResumeWizard: true, hasDuplicate: true,
+      hasRetryTarget: isSelected ? install !== undefined : brand.latest_install != null,
+      hasCopy: true,
+    }).map((item): RowMenuItem => ({
+      key: item.key, label: item.label, group: item.group, tone: item.tone,
+      onSelect: () => rowAction(item.key, brand),
+    }));
+  }
+
   async function startUpgradeAll() {
     const ok = await confirm({
       title: "เริ่มอัปเกรดทุกแบรนด์?",
@@ -477,6 +610,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
 
   const runtimeBrand = runtimeBrands.find((brand) => brand.brand_id === selectedId);
+  // A row menu opens Runtime config for its own row without selecting it, so the panel follows configBrandId, not the selection.
+  const configBrand = configBrandId ? runtimeBrands.find((brand) => brand.brand_id === configBrandId) : undefined;
 
   // The install the wizard started is picked up by the brand's history recovery, which polls it.
   if (wizard) return <BrandWizard key={wizard.brandId ?? "new"} me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); onWizardClosed?.(); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); onSelectBrand?.(brandId); }} />;
@@ -540,6 +675,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
                       onClick={(e) => { e.stopPropagation(); void toggleStatus(runtime); }}>
                       {runtime.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
                     </button>}
+                    <RowMenu label="จัดการ (Actions)" items={rowMenuItems(brand)} />
                   </td>
                   <td data-label="โฟลว์ (Flow gate)">{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
                   {owner && <td data-label="ค่าโฆษณา (Spend)" className="blue">{usd(money.spend)}</td>}
@@ -579,7 +715,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       </div>
     </div>
     {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); onSelectBrand?.(brandId); }} />}
-    {configBrandId && configBrandId === selectedId && runtimeBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={selected?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
+    {configBrandId && configBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={brands.find((brand) => brand.brand_id === configBrandId)?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
     {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
     {toast && <Toast key={toast.id} kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
@@ -595,14 +731,21 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
  */
 export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, checklist, revisions, revisionsRetrying = false, onRetryRevisions, onCopyFinalUrl, manualCopyUrl, leadId, onLeadIdChange, onInstall, onRollback, onRedeploy, onRedeployLatest, onRetry, onRecover, onResumeWizard, onDuplicate, onChecklist }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; checklist: Partial<Record<ChecklistItemName, ChecklistEvidence | undefined>>; revisions?: BrandRevisionsResponse | null; revisionsRetrying?: boolean; onRetryRevisions?: () => void; onCopyFinalUrl?: () => void; manualCopyUrl?: string | null; leadId: string; onLeadIdChange: (value: string) => void; onInstall: () => void; onRollback: () => void; onRedeploy: () => void; onRedeployLatest?: () => void; onRetry: () => void; onRecover: () => void; onResumeWizard?: () => void; onDuplicate?: () => void; onChecklist: (item: ChecklistItemName, leadId?: string) => void }) {
   const lifecycleStatus = state?.lifecycle_status ?? (brand.status === "installing" ? "running" : brand.status === "live" ? "ready" : brand.status);
-  const actions = lifecycleMutationAvailability(brand.status, install?.status, pendingOperation, install?.recovery_required === true);
+  // The same gating as the row menu; the buttons below keep their labels, order and handlers.
+  const actionItems = brandActionItems({
+    brand, installStatus: install?.status, pendingOperation, recoveryRequired: install?.recovery_required === true,
+    role: me.role, hasSite: siteUrl(brand.hostnames) !== null, hasRuntime: false,
+    hasRedeployLatest: onRedeployLatest !== undefined, hasResumeWizard: onResumeWizard !== undefined,
+    hasDuplicate: onDuplicate !== undefined, hasRetryTarget: install !== undefined, hasCopy: onCopyFinalUrl !== undefined,
+  });
+  const showAction = (key: BrandActionKey) => actionItems.some((item) => item.key === key);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
   const site = siteUrl(brand.hostnames);
   const finalUrlFieldId = useId();
   return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</h2><p className="muted">{brand.name && brand.name !== (brand.hostnames[0] ?? brand.name ?? brand.brand_id) && `${brand.name} · `}form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
-    {isManaged && <div className="side-actions">{actions.install && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button className="btn" onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.recover && me.role === "owner" && <button className="btn danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{onResumeWizard && (brand.status === "draft" || brand.status === "failed") && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
+    {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{showAction("rollback") && <button className="btn" onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{showAction("redeploy") && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{showAction("recover") && <button className="btn danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
     {/* spec timeline: the managed-only row above would hide it for an unmanaged brand */}
     <div className="side-actions"><a className="btn" href={routePath({ view: "brand-timeline", brandId: brand.brand_id })} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); }}>ไทม์ไลน์ (Timeline)</a></div>
     {site && <div className="side-actions">
@@ -613,7 +756,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
         <input id={finalUrlFieldId} className="final-url-field" readOnly autoFocus value={manualCopyUrl} onFocus={(e) => e.currentTarget.select()} />
       </div>}
     </div>}
-    {install && <div className="section"><h3>ความคืบหน้าการติดตั้ง (Install progress)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p><InstallProgress install={install} canRetry={actions.retry} onRetry={onRetry} /></div>}
+    {install && <div className="section"><h3>ความคืบหน้าการติดตั้ง (Install progress)</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p><InstallProgress install={install} canRetry={showAction("retry")} onRetry={onRetry} /></div>}
     {revisions !== undefined && <section className="section"><h3>ประวัติเวอร์ชัน (Revision history)</h3>
       {revisions === null
         // A core-only brand has no factory revisions, so its failed load is a missing history, not an error.
