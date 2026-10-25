@@ -39,6 +39,7 @@ import { handleSettingsRoute } from "./settings.js";
 import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
 import { handleTrafficRiskRoute } from "./traffic-risk.js";
+import { handleTrafficLogRoute } from "./traffic-log.js"; // spec traffic
 import { handleWizardRoute } from "./wizard.js";
 
 const json = (status: number, body: unknown): Response =>
@@ -314,6 +315,10 @@ async function route(
 
   const trafficRisk = await handleTrafficRiskRoute(request, env, url, path, ctx);
   if (trafficRisk) return trafficRisk;
+
+  // spec traffic
+  const trafficLog = await handleTrafficLogRoute(request, env, url, path, ctx);
+  if (trafficLog) return trafficLog;
 
   if (path === "/api/mailing" && method === "GET") {
     const g = authorize("mailingStatus", ctx.actor_role);
