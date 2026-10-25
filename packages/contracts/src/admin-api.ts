@@ -1025,8 +1025,13 @@ export const BRAND_PATCH_FIELD_GROUPS = {
   },
   site_text: {
     min_role: "employee",
-    fields: ["brand_name", "site_title", "site_description", "theme"],
+    fields: ["brand_name", "site_title", "site_description"],
     plan_action: "Edit site text",
+  },
+  brand_colors: {
+    min_role: "employee",
+    fields: ["theme"],
+    plan_action: "Edit brand colors",
   },
   ab_weights: {
     min_role: "owner",

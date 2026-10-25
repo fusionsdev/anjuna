@@ -499,11 +499,31 @@ describe("brand theme through the admin API (FUS-381)", () => {
 
   it("PATCH theme null clears theme_json", async () => {
     expect((await save({ theme: { primary: "#0f766e", secondary: "#1e293b" } })).status).toBe(200);
+    const before = await get();
+    const audits = await auditCount();
     const cleared = await save({ theme: null });
     expect(cleared.status).toBe(200);
     expect(BrandPatchResponse.parse(await cleared.json())).toMatchObject({ changed: ["theme"], brand: { theme: null } });
     expect(await storedTheme()).toEqual({ theme_json: null });
     expect((await get()).theme).toBeNull();
+    expect((await get()).updated_at > before.updated_at).toBe(true);
+    expect(await auditCount()).toBe(audits + 1);
+    const audit = await h.factory.prepare("SELECT action, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .first<{ action: string; before_json: string; after_json: string }>();
+    expect(JSON.parse(audit!.before_json)).toEqual({ theme: { primary: "#0f766e", secondary: "#1e293b" } });
+    expect(JSON.parse(audit!.after_json)).toEqual({ theme: null });
+  });
+
+  it("PATCH theme null clears an invalid stored theme_json", async () => {
+    await setStored('{"primary":"#fff","secondary":"#000000"}');
+    const before = await get();
+    const audits = await auditCount();
+    const cleared = await save({ theme: null });
+    expect(cleared.status).toBe(200);
+    expect(BrandPatchResponse.parse(await cleared.json())).toMatchObject({ changed: ["theme"], brand: { theme: null } });
+    expect(await storedTheme()).toEqual({ theme_json: null });
+    expect((await get()).updated_at > before.updated_at).toBe(true);
+    expect(await auditCount()).toBe(audits + 1);
   });
 
   it("PATCH with the same theme changes nothing", async () => {

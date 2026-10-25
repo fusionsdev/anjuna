@@ -313,7 +313,8 @@ describe("brand theme contract (FUS-381)", () => {
     expect(BrandPatchRequest.safeParse({ theme: { primary: "#2563eb" } }).success).toBe(false);
   });
 
-  it("theme is a patch field employees may edit (site text group)", () => {
+  it("theme is a patch field employees may edit (brand colors group)", () => {
+    expect(BRAND_PATCH_FIELD_GROUPS.brand_colors.fields).toEqual(["theme"]);
     expect(BRAND_PATCH_FIELDS).toContain("theme");
     expect(authorize("patchBrand", "employee", { theme: { primary: "#2563eb", secondary: "#1e293b" } }).ok).toBe(true);
   });
@@ -329,6 +330,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "Export high-risk clicks for a refund request (FUS-372)", employee: "no", covered_by: ["trafficRiskExport"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
   { action: "Edit site text", employee: "yes", covered_by: ["patch:site_text"] },
+  { action: "Edit brand colors", employee: "yes", covered_by: ["patch:brand_colors"] },
   { action: "Pause / resume a brand", employee: "yes", covered_by: ["pauseBrand", "resumeBrand"] },
   { action: "Change A/B weights", employee: "no", covered_by: ["patch:ab_weights"] },
   { action: "Change amount buckets", employee: "no", covered_by: ["patch:amount_buckets"] },
