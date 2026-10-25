@@ -25,8 +25,26 @@ describe("extractThemeVars", () => {
 
   it("drops gray and neutral variables", () => {
     const css = ":root{--brand-gray:#6b7280;--brand-neutral:#737373;--brand:#1f7a4d}" +
-      ".a{background:var(--brand-gray)}.b{background-color:var(--brand-gray)}.c{background:var(--brand)}";
+      ".a{background:var(--brand-neutral)}.b{background-color:var(--brand-neutral)}" +
+      ".c{background:var(--brand-neutral)}.d{background:var(--brand)}";
     expect(extractThemeVars(cssFiles(css)).primary).toEqual(["--brand"]);
+  });
+
+  it("ignores variables whose value is not a lone hex", () => {
+    const css = ":root{--surface:#123 url(bg.png);--two:#1f7a4d,#22aa55}" +
+      ".a{background:var(--surface)}.b{background:var(--two)}";
+    expect(extractThemeVars(cssFiles(css))).toEqual(EMPTY_THEME_VARS);
+  });
+
+  it("accepts a hex value followed by !important", () => {
+    const css = ":root{--ok:#1f7a4d !important}.a{background:var(--ok)}";
+    expect(extractThemeVars(cssFiles(css)).primary).toEqual(["--ok"]);
+  });
+
+  it("counts only the exact variable name inside var()", () => {
+    const css = ":root{--brand:#1f7a4d;--brand_alt:#fafafa}" +
+      ".a{background:var(--brand_alt)}.b{background:var(--brand_alt)}";
+    expect(extractThemeVars(cssFiles(css))).toEqual(EMPTY_THEME_VARS);
   });
 
   it("returns EMPTY_THEME_VARS when no hex variable is used as a background", () => {

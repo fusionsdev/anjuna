@@ -13,10 +13,16 @@ import type { FileMap } from "./archive";
 import { allElements, decode, parseHtml, rawText } from "./html";
 
 const BANNED = ["gray", "grey", "slate", "zinc", "neutral", "stone", "white", "black"];
-const DECL_RE = /(--[a-zA-Z0-9-]+)\s*:\s*#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-fA-F])/g;
+const DECL_RE = /(--[a-zA-Z0-9-]+)\s*:\s*([^;{}]+)/g;
 const PROP_RE = /([a-zA-Z-]+)\s*:\s*([^;{}]+)/g;
 const MIN_WHITE_CONTRAST = 3;
-const VAR_RE = /var\(\s*(--[a-zA-Z0-9-]+)/g;
+const VAR_RE = /var\(\s*(--[a-zA-Z0-9-]+)(?=[,\s)])/g;
+
+/** The value is a lone 3- or 6-digit hex (trimmed, up to `;` or `}`, `!important` allowed); else null. */
+function loneHex(value: string): string | null {
+  const hex = value.replace(/\s*!\s*important\s*$/i, "").trim();
+  return /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(hex) ? hex.slice(1) : null;
+}
 
 /** Every .css file plus the <style> elements of index.html, comments stripped. */
 function cssTexts(files: FileMap): string[] {
@@ -63,23 +69,32 @@ export function extractThemeVars(files: FileMap): TemplateThemeVars {
   const hexOf = new Map<string, string>();
   const bg = new Map<string, number>();
   const fg = new Map<string, number>();
-  for (const css of cssTexts(files)) {
+  const texts = cssTexts(files);
+  for (const css of texts) {
     for (const m of css.matchAll(DECL_RE)) {
+      const hex = loneHex(m[2]!);
+      if (!hex) continue;
       const name = m[1]!;
       if (!seen.has(name)) {
         seen.add(name);
-        hexOf.set(name, m[2]!);
+        hexOf.set(name, hex);
         order.push(name);
       }
     }
+  }
+  const candidates = order.filter((name) => !BANNED.some((word) => name.toLowerCase().includes(word)));
+  const candSet = new Set(candidates);
+  for (const css of texts) {
     for (const m of css.matchAll(PROP_RE)) {
       const prop = m[1]!.toLowerCase();
       if (prop !== "background" && prop !== "background-color" && prop !== "color") continue;
       const uses = prop === "color" ? fg : bg;
-      for (const v of m[2]!.matchAll(VAR_RE)) uses.set(v[1]!, (uses.get(v[1]!) ?? 0) + 1);
+      for (const v of m[2]!.matchAll(VAR_RE)) {
+        if (!candSet.has(v[1]!)) continue;
+        uses.set(v[1]!, (uses.get(v[1]!) ?? 0) + 1);
+      }
     }
   }
-  const candidates = order.filter((name) => !BANNED.some((word) => name.toLowerCase().includes(word)));
   const primary = top(
     candidates.filter((name) => whiteContrast(hexOf.get(name)!) >= MIN_WHITE_CONTRAST),
     bg,
