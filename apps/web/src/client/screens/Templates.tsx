@@ -131,7 +131,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
                   <span className="hint">ส่งโดย {t.submitted_by_label ?? "-"} · {t.created_at}</span>
                 </span>
               </button>
-              {me.role === "owner" && status === "awaiting_approval" && <button type="button" className="btn pri" style={{ margin: "0 14px 12px", alignSelf: "start" }} aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => void approve(t.template_version_id)}>อนุมัติ</button>}
+              {me.role === "owner" && status === "awaiting_approval" && !currentDetail && <button type="button" className="btn pri" style={{ margin: "0 14px 12px", alignSelf: "start" }} aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => void approve(t.template_version_id)}>อนุมัติ</button>}
             </article>
           );
         })}

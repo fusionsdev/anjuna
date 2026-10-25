@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { TemplateDetailResponse, TemplateListResponse } from "@anjuna/contracts";
-import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
+import worker from "../src/server/index";
+import { ORIGIN, call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 const NOW = "2026-10-17T00:00:00.000Z";
 const SHOT = "screenshots/tv-bolt-1/r/screenshot_desktop.png";
@@ -190,6 +191,18 @@ describe("templates API", () => {
     const bad = { primary: ["--ok", "color: red"], primary_dark: [], secondary: [] };
     const refused = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: { theme_vars: bad }, env: makeEnv({ FACTORY_WORKER }) });
     expect([refused.status, await refused.json()]).toEqual([422, { error: "invalid_theme_vars" }]);
+    expect(dispatched).toHaveLength(0);
+    const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string | null }>();
+    expect(row!.theme_vars_json).toBeNull();
+  });
+
+  it("approve rejects a malformed JSON body", async () => {
+    const dispatched: unknown[] = [];
+    const FACTORY_WORKER = { fetch: async (req: Request) => { dispatched.push(await req.json()); return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const refused = await worker.fetch(new Request(`${ORIGIN}/api/templates/tv-bolt-1/approve`, {
+      method: "POST", headers: { cookie: owner, origin: ORIGIN, "content-type": "application/json" }, body: "{not json",
+    }), makeEnv({ FACTORY_WORKER }));
+    expect([refused.status, await refused.json()]).toEqual([400, { error: "invalid_json" }]);
     expect(dispatched).toHaveLength(0);
     const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string | null }>();
     expect(row!.theme_vars_json).toBeNull();

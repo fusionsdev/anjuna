@@ -180,7 +180,15 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     if (id === null) return notFound("template");
     if (!env.FACTORY_WORKER) return json(502, { error: "factory_dispatch_failed", message: "Factory Worker binding is missing" });
     // An empty body or {} approves with the detected map; only theme_vars is read, identity comes from the session.
-    const raw = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const text = await request.text();
+    let raw: Record<string, unknown> | null = null;
+    if (text.length > 0) {
+      try {
+        raw = JSON.parse(text) as Record<string, unknown> | null;
+      } catch {
+        return json(400, { error: "invalid_json" });
+      }
+    }
     const approveRequest = TemplateApproveRequest.safeParse({ theme_vars: raw?.theme_vars });
     if (!approveRequest.success) return json(422, { error: "invalid_theme_vars" });
     if (approveRequest.data.theme_vars) {

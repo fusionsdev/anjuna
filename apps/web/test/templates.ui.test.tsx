@@ -204,6 +204,15 @@ describe("Templates screen", () => {
     await waitFor(() => expect(approveRequests()).toHaveLength(1));
   });
 
+  it("hides the card Approve while that version's detail is open", async () => {
+    render(<TemplatesScreen me={owner} />);
+    expect(await screen.findByRole("button", { name: "อนุมัติ Bolt Harbor v1" })).toBeTruthy();
+    fireEvent.click(screen.getByText("Bolt Harbor"));
+    await screen.findByText("Harbor | Funding");
+    expect(screen.queryByRole("button", { name: "อนุมัติ Bolt Harbor v1" })).toBeNull();
+    expect(screen.getByRole("button", { name: "อนุมัติ (Approve)" })).toBeTruthy();
+  });
+
   it("screen shows the detected map", async () => {
     const themeVars = { primary: ["--brand", "--accent"], primary_dark: ["--brand-dark"], secondary: [] };
     routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, template: { ...detail.template, theme_vars: themeVars } }));
