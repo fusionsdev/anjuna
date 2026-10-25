@@ -111,7 +111,7 @@
   - admin `PATCH theme stores lowercase JSON, bumps updated_at and audits old and new`.
   - admin `PATCH theme null clears theme_json`.
   - admin `PATCH with the same theme changes nothing`.
-  - admin `PATCH rejects an invalid hex with 400`.
+  - admin `PATCH rejects an invalid hex with 422` (admin validation convention).
   - admin `serves an invalid stored theme as null` in GET.
   - lifecycle `writes initial_runtime.theme on first install`.
   - lifecycle `keeps theme_json on a later install`.
