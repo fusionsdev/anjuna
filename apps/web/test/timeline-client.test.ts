@@ -11,6 +11,7 @@ import {
   isNearChange,
   localInputNow,
   localInputToIso,
+  normalizeTypes,
   parseTimelineSearch,
   sinceLastChange,
   timelineSearch,
@@ -49,6 +50,23 @@ describe("timeline labels", () => {
     for (const category of CHANGE_CATEGORIES) expect(CHANGE_CATEGORY_LABEL[category]).toBeTruthy();
     expect(ADS_EVENT_TONE).toMatchObject({ ad_disapproved: "bad", account_suspended: "bad", account_reinstated: "live", policy_warning: "warn", bot_visit_observed: "warn", other: "mute" });
   });
+
+  it("uses the exact spec D2 and D5 label strings", () => {
+    expect(ADS_EVENT_LABEL).toEqual({
+      ad_disapproved: "โฆษณาถูกปฏิเสธ (Ad disapproved)",
+      account_suspended: "บัญชีถูกระงับ (Account suspended)",
+      account_reinstated: "บัญชีกลับมาใช้ได้ (Account reinstated)",
+      policy_warning: "คำเตือนนโยบาย (Policy warning)",
+      bot_visit_observed: "พบการเข้าชมของบอท (Bot visit observed)",
+      other: "อื่น ๆ (Other)",
+    });
+    expect(CHANGE_CATEGORY_LABEL).toEqual({
+      config: "แก้ค่าแบรนด์ (Config change)",
+      pause_resume: "หยุด/เปิดแบรนด์ (Pause/Resume)",
+      deploy: "ติดตั้ง/ย้อนกลับ (Deploy/Rollback)",
+      factory_edit: "แก้ไขใน factory (Factory edit)",
+    });
+  });
 });
 
 describe("timeline filters in the URL", () => {
@@ -72,6 +90,15 @@ describe("timeline filters in the URL", () => {
     for (const filters of cases) expect(parseTimelineSearch(timelineSearch(filters))).toEqual(filters);
     expect(timelineSearch({ range: "7d", types: ALL })).toBe("?range=7d");
     expect(timelineSearch({ range: { from: "2026-07-01", to: "2026-07-15" }, types: ["config", "other"] })).toBe("?from=2026-07-01&to=2026-07-15&types=config,other");
+  });
+
+  it("normalizeTypes dedupes and puts types in canonical order, so a non-canonical list round-trips through the URL", () => {
+    expect(normalizeTypes(["other", "config", "other", "deploy", "ad_disapproved", "config"])).toEqual(["config", "deploy", "ad_disapproved", "other"]);
+    expect(normalizeTypes([])).toEqual([]);
+    expect(normalizeTypes([...ALL].reverse())).toEqual(ALL);
+    const filters: TimelineFilters = { range: "7d", types: normalizeTypes(["other", "bot_visit_observed", "factory_edit", "config"]) };
+    expect(filters.types).toEqual(["config", "factory_edit", "bot_visit_observed", "other"]);
+    expect(parseTimelineSearch(timelineSearch(filters))).toEqual(filters);
   });
 
   it("unknown type ids and bad dates are dropped", () => {

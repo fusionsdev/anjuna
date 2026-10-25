@@ -330,6 +330,15 @@ describe("brand timeline screen", () => {
     expect(screen.queryByRole("button", { name: "30 วัน" })).toBeNull();
   });
 
+  it("a 400 invalid_brand_id shows the same Brand not found card without Retry", async () => {
+    respond = () => json({ error: "invalid_brand_id" }, 400);
+    render(<BrandTimelineScreen me={owner} brandId="b1" />);
+    await screen.findByText("ไม่พบแบรนด์ (Brand not found)");
+    expect(screen.queryByRole("button", { name: "ลองใหม่ (Retry)" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "30 วัน" })).toBeNull();
+  });
+
   it("keeps the filter bar wrapping and long text breaking so 375 px has no sideways scroll", () => {
     const css = readFileSync(resolve(process.cwd(), "src/client/screens/BrandTimeline.css"), "utf8");
     expect(css).toMatch(/\.tl-filter-row \{[^}]*flex-wrap: wrap/);

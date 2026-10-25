@@ -1,8 +1,9 @@
-import type { DeployEvent } from "@anjuna/contracts";
+import type { AdminRole, DeployEvent } from "@anjuna/contracts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../src/client/api";
 import { BrandTimelineScreen } from "../src/client/screens/BrandTimeline";
+import { PANEL_ROLE_TABLE } from "../src/server/panel-roles";
 import type { TimelineItem, TimelineResponse } from "../src/shared/timeline";
 
 const owner: Me = { id: "owner", email: "owner@example.test", role: "owner" };
@@ -164,6 +165,24 @@ describe("brand timeline: add event", () => {
     expect(timeInput().getAttribute("aria-describedby")).toBeNull();
   });
 
+  it("a 422 with field and non-field issues toasts only the non-field issues", async () => {
+    await open();
+    handle = (call) => call.method === "POST"
+      ? json({ error: "invalid", issues: [
+        { path: "occurred_at", message: "occurred_at is in the future" },
+        { path: "brand_id", message: "is unknown" },
+        { path: "", message: "body is not an object" },
+      ] }, 422)
+      : undefined;
+    fireEvent.click(submitButton());
+    const toast = await screen.findByRole("alert");
+    expect(toast.textContent).toContain("ข้อมูลไม่ถูกต้อง: brand_id is unknown; body is not an object");
+    expect(toast.textContent).not.toContain("occurred_at is in the future");
+    // The field issue shows once, under its field.
+    expect(screen.getAllByText("occurred_at is in the future")).toHaveLength(1);
+    expect(form().getByText("occurred_at is in the future")).toBeTruthy();
+  });
+
   it("another error shows ApiError.thai in an error toast and keeps the form", async () => {
     await open();
     handle = (call) => call.method === "POST" ? json({ error: "bad_gateway" }, 502) : undefined;
@@ -182,6 +201,8 @@ describe("brand timeline: add event", () => {
     expect(submitButton().disabled).toBe(false);
     fireEvent.change(typeSelect(), { target: { value: "other" } });
     expect(screen.getByText(message)).toBeTruthy();
+    // The message describes the textarea.
+    expect(noteBox().getAttribute("aria-describedby")!.split(" ")).toContain(screen.getByText(message).id);
     expect(submitButton().disabled).toBe(true);
     // Spaces alone are still empty.
     fireEvent.change(noteBox(), { target: { value: "   " } });
@@ -191,6 +212,7 @@ describe("brand timeline: add event", () => {
     fireEvent.change(noteBox(), { target: { value: "ดูผิดปกติ" } });
     expect(screen.queryByText(message)).toBeNull();
     expect(submitButton().disabled).toBe(false);
+    expect(noteBox().getAttribute("aria-describedby")).toBeNull();
   });
 
   it("disables submit while in flight and sends one request", async () => {
@@ -265,5 +287,62 @@ describe("brand timeline: delete", () => {
     expect(row("ads-e2")).toBeTruthy();
     expect(timelineCalls()).toHaveLength(1);
     expect(within(row("ads-e2")).getByRole("button", { name: "ลบ (Delete)" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  const deleteButton = (id: string) => within(row(id)).getByRole("button", { name: "ลบ (Delete)" });
+  const confirmDelete = async (id: string) => {
+    fireEvent.click(deleteButton(id));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "ลบ (Delete)" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  };
+
+  it("a second delete finishing does not re-enable the button of a delete still in flight", async () => {
+    await open(owner);
+    const pending = new Map<string, (r: Response) => void>();
+    handle = (call) => call.method === "DELETE" ? new Promise<Response>((resolve) => { pending.set(call.path, resolve); }) : undefined;
+    await confirmDelete("ads-e1");
+    await waitFor(() => expect(deleteButton("ads-e1").hasAttribute("disabled")).toBe(true));
+    await confirmDelete("ads-e2");
+    await waitFor(() => expect(pending.size).toBe(2));
+    expect(deleteButton("ads-e1").hasAttribute("disabled")).toBe(true);
+    expect(deleteButton("ads-e2").hasAttribute("disabled")).toBe(true);
+
+    pending.get("/api/brands/b1/ads-events/e2")!(json({ error: "bad_gateway" }, 502));
+    await screen.findByRole("alert");
+    await waitFor(() => expect(deleteButton("ads-e2").hasAttribute("disabled")).toBe(false));
+    expect(deleteButton("ads-e1").hasAttribute("disabled")).toBe(true);
+
+    pending.get("/api/brands/b1/ads-events/e1")!(json({ error: "bad_gateway" }, 502));
+    await waitFor(() => expect(deleteButton("ads-e1").hasAttribute("disabled")).toBe(false));
+  });
+
+  it("a delete that answers 404 shows the error toast and reloads the list", async () => {
+    await open(owner);
+    handle = (call) => {
+      if (call.method === "DELETE") {
+        items = items.filter((i) => i.item_id !== "ads-e1");
+        return json({ error: "not_found", resource: "ads_event" }, 404);
+      }
+      return undefined;
+    };
+    await confirmDelete("ads-e1");
+    const toast = await screen.findByRole("alert");
+    expect(toast.textContent).toContain("ไม่พบข้อมูล");
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    await waitFor(() => expect(document.getElementById("tl-ads-e1")).toBeNull());
+    expect(row("ads-e2")).toBeTruthy();
+  });
+
+  it("shows Delete by the panel role table, not by a fixed owner check", async () => {
+    const table = PANEL_ROLE_TABLE as { deleteAdsEvent: AdminRole };
+    const original = table.deleteAdsEvent;
+    table.deleteAdsEvent = "employee";
+    try {
+      await open(employee);
+      expect(screen.getAllByRole("button", { name: "ลบ (Delete)" })).toHaveLength(2);
+    } finally {
+      table.deleteAdsEvent = original;
+    }
   });
 });

@@ -35,7 +35,7 @@ export type RangePreset = "7d" | "30d" | "90d" | "all";
 export interface TimelineFilters {
   /** A preset, or local calendar days `YYYY-MM-DD` (null = open end). */
   range: RangePreset | { from: string | null; to: string | null };
-  /** Every type id means no type filter. */
+  /** Every type id means no type filter. Canonical order (the four categories, then the six event types), no duplicates: build it with `normalizeTypes`. */
   types: TimelineType[];
 }
 
@@ -52,6 +52,9 @@ const PRESETS: readonly RangePreset[] = ["7d", "30d", "90d", "all"];
 const PRESET_DAYS = { "7d": 7, "30d": 30, "90d": 90 } as const;
 const DAY_MS = 24 * 3600_000;
 const DEFAULT_PRESET: RangePreset = "30d";
+
+/** Dedupes and sorts into the canonical order that the URL round trip produces. */
+export const normalizeTypes = (types: readonly TimelineType[]): TimelineType[] => ALL_TYPES.filter((id) => types.includes(id));
 
 const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
 
@@ -97,7 +100,7 @@ export function timelineSearch(filters: TimelineFilters): string {
   } else {
     parts.push(`from=${filters.range.from ?? ""}`, `to=${filters.range.to ?? ""}`);
   }
-  const chosen = ALL_TYPES.filter((id) => filters.types.includes(id));
+  const chosen = normalizeTypes(filters.types);
   if (chosen.length !== ALL_TYPES.length) parts.push(`types=${chosen.join(",")}`);
   return parts.length ? `?${parts.join("&")}` : "";
 }
@@ -116,7 +119,7 @@ export function filtersToQuery(filters: TimelineFilters, now: Date): TimelineReq
     if (from) query.from = localDate(from.y, from.m, from.d, 0, 0, 0, 0).toISOString();
     if (to) query.to = localDate(to.y, to.m, to.d, 23, 59, 59, 999).toISOString();
   }
-  const chosen = ALL_TYPES.filter((id) => filters.types.includes(id));
+  const chosen = normalizeTypes(filters.types);
   if (chosen.length > 0 && chosen.length < ALL_TYPES.length) query.types = chosen.join(",");
   return query;
 }

@@ -21,6 +21,8 @@ beforeEach(() => {
     if (path === "/api/lifecycle/brands") return json({ brands: [lifecycle("b1"), lifecycle("legacy-1", { status: "unmanaged", hostnames: ["legacy.test"] })] });
     if (path === "/api/upgrade-all/latest") return json({ upgrade: null });
     if (path === "/api/brands") return json({ brands: [], generated_at: "2026-10-25T00:00:00.000Z" });
+    // An unmanaged brand has no factory record.
+    if (path === "/api/brands/legacy-1/revisions" || path === "/api/brands/legacy-1/installs") return json({ error: "not_found" }, 404);
     if (path.endsWith("/checklist")) return json({ brand_id: "b1", checklist: [] });
     if (path.endsWith("/installs")) return json({ brand_id: "b1", installs: [] });
     if (path.endsWith("/revisions")) return json({ brand_id: "b1", current_revision_id: null, rollback_target_revision_id: null, revisions: [] });

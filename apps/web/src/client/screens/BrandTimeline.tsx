@@ -1,5 +1,5 @@
 // spec timeline
-import type { DeployUnavailableSource } from "@anjuna/contracts";
+import { roleAtLeast, type DeployUnavailableSource } from "@anjuna/contracts";
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandLabels } from "../brand-labels";
@@ -10,6 +10,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { Toast } from "../components/Toast";
 import { operationLabel, statusBadgeTone, statusLabel } from "../labels";
 import { isPlainLeftClick, navigate, routePath, useSearch } from "../router";
+import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import {
   ADS_EVENT_LABEL,
   ADS_EVENT_TONE,
@@ -20,6 +21,7 @@ import {
   isNearChange,
   localInputNow,
   localInputToIso,
+  normalizeTypes,
   parseTimelineSearch,
   sinceLastChange,
   timelineSearch,
@@ -155,10 +157,10 @@ function AddEventForm({ brandId, onSaved, onError }: { brandId: string; onSaved:
         const rest: string[] = [];
         for (const issue of err.body.issues) {
           if (isFormField(issue.path)) (next[issue.path] ??= []).push(issue.message);
-          else rest.push(`${issue.path} ${issue.message}`);
+          else rest.push(`${issue.path} ${issue.message}`.trim());
         }
         setIssues(next);
-        if (rest.length) onError(err.thai);
+        if (rest.length) onError(`ข้อมูลไม่ถูกต้อง: ${rest.join("; ")}`);
       } else {
         onError(err instanceof ApiError ? err.thai : "บันทึกเหตุการณ์ไม่สำเร็จ (Could not save the event.)");
       }
@@ -171,6 +173,7 @@ function AddEventForm({ brandId, onSaved, onError }: { brandId: string; onSaved:
     {issues[field].map((message) => <p key={message} className="tl-field-error">{message}</p>)}
   </div>;
   const invalid = (field: FormField) => (issues[field] ? true : undefined);
+  const noteDescribedBy = [needsNote && `${ids}-note-need`, issues.note && `${ids}-note-err`].filter(Boolean).join(" ") || undefined;
 
   return <section className="panel tl-form-panel" aria-label="บันทึกเหตุการณ์ (Add event)">
     <p className="tl-form-head">บันทึกเหตุการณ์ (Add event)</p>
@@ -191,8 +194,8 @@ function AddEventForm({ brandId, onSaved, onError }: { brandId: string; onSaved:
       </div>
       <label>
         <span id={`${ids}-note`}>หมายเหตุ (Note)</span>
-        <textarea value={note} maxLength={NOTE_MAX} aria-labelledby={`${ids}-note`} aria-invalid={invalid("note") ?? (needsNote ? true : undefined)} aria-describedby={issues.note ? `${ids}-note-err` : undefined} onChange={(e) => setNote(e.target.value)} />
-        {needsNote && <p className="tl-field-error">{OTHER_NEEDS_NOTE}</p>}
+        <textarea value={note} maxLength={NOTE_MAX} aria-labelledby={`${ids}-note`} aria-invalid={invalid("note") ?? (needsNote ? true : undefined)} aria-describedby={noteDescribedBy} onChange={(e) => setNote(e.target.value)} />
+        {needsNote && <p id={`${ids}-note-need`} className="tl-field-error">{OTHER_NEEDS_NOTE}</p>}
         {fieldIssues("note")}
       </label>
       <p className="hint tl-counter">{note.length}/{NOTE_MAX}</p>
@@ -204,10 +207,10 @@ function AddEventForm({ brandId, onSaved, onError }: { brandId: string; onSaved:
 }
 
 export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }) {
-  const isOwner = me.role === "owner";
+  const canDelete = roleAtLeast(me.role, PANEL_ROLE_TABLE.deleteAdsEvent);
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [confirm, confirmDialog] = useConfirm();
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set());
   const search = useSearch();
   const filters = useMemo(() => parseTimelineSearch(search), [search]);
   const labelOf = useBrandLabels();
@@ -230,7 +233,8 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
       (data) => { if (active) setLoad({ state: "ready", data }); },
       (e: unknown) => {
         if (!active) return;
-        if (e instanceof ApiError && e.status === 404) setLoad({ state: "missing" });
+        // A malformed id never names a brand, so it reads like an unknown one.
+        if (e instanceof ApiError && (e.status === 404 || (e.status === 400 && e.body?.error === "invalid_brand_id"))) setLoad({ state: "missing" });
         else setLoad({ state: "error", message: e instanceof ApiError ? e.thai : "โหลดไทม์ไลน์ไม่สำเร็จ (Could not load the timeline.)" });
       },
     );
@@ -251,15 +255,21 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
       tone: "danger",
     });
     if (!ok) return;
-    setDeletingId(item.item_id);
+    setDeletingIds((ids) => new Set(ids).add(item.item_id));
     try {
       await api.deleteAdsEvent(brandId, item.event.event_id);
       setToast({ kind: "ok", text: "ลบแล้ว (Deleted)" });
       reload();
     } catch (e) {
       setToast({ kind: "err", text: e instanceof ApiError ? e.thai : "ลบไม่สำเร็จ (Could not delete the event.)" });
+      // Someone else already removed it: the list is stale.
+      if (e instanceof ApiError && e.status === 404) reload();
     } finally {
-      setDeletingId(null);
+      setDeletingIds((ids) => {
+        const next = new Set(ids);
+        next.delete(item.item_id);
+        return next;
+      });
     }
   };
 
@@ -267,7 +277,7 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
 
   const apply = (next: TimelineFilters) => navigate(window.location.pathname + timelineSearch(next), { replace: true });
   const toggleType = (id: TimelineType) =>
-    apply({ ...filters, types: filters.types.includes(id) ? filters.types.filter((t) => t !== id) : [...filters.types, id] });
+    apply({ ...filters, types: normalizeTypes(filters.types.includes(id) ? filters.types.filter((t) => t !== id) : [...filters.types, id]) });
   const setDay = (side: "from" | "to", value: string) =>
     apply({ ...filters, range: { from: customRange?.from ?? null, to: customRange?.to ?? null, [side]: value || null } });
   const brandHref = routePath({ view: "brands", brandId });
@@ -299,7 +309,7 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
       <ol className="tl-rows">
         {group.items.map((item) => item.kind === "change"
           ? <ChangeRow key={item.item_id} item={item} />
-          : <EventRow key={item.item_id} item={item} since={since.get(item.item_id)} onDelete={isOwner ? () => void removeEvent(item) : undefined} deleting={deletingId === item.item_id} />)}
+          : <EventRow key={item.item_id} item={item} since={since.get(item.item_id)} onDelete={canDelete ? () => void removeEvent(item) : undefined} deleting={deletingIds.has(item.item_id)} />)}
       </ol>
     </section>);
   }
