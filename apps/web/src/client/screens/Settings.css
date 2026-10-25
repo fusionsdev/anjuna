@@ -1,11 +1,11 @@
 /* Settings screen only. The shared console classes (.panel .head .sub .tw .data-table .stack .hint .note .neg .pill .p-* .brand-label .btn .mono) come from styles.css. */
 /* The table scrolls inside .data-table; the page itself must not scroll sideways. */
 .settings-page { min-width: 0; }
-.settings-page .data-table td { white-space: nowrap; }
 .settings-page .data-table td:nth-child(4) { white-space: normal; }
 /* Long URLs and keys wrap instead of widening the table. */
 .settings-page .data-table td.mono { white-space: normal; overflow-wrap: anywhere; }
 @media (min-width: 768px) {
+  .settings-page .data-table td { white-space: nowrap; }
   .settings-page .data-table td:nth-child(4) { min-width: 220px; }
   .settings-page .data-table td.mono { min-width: 120px; }
 }
