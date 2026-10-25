@@ -45,7 +45,16 @@ interface AuditRow {
   id: number; actor_id: string; actor_role: DeployEvent["started_role"]; action: string; entity_id: string; created_at: string;
 }
 
-async function installEvents(db: D1Database, q: DeployHistoryQuery, limit: number): Promise<DeployEvent[]> {
+/** An optional instant window; each bound is a contract timestamp, compared as an instant (julianday), never as text. */
+export interface DeployRange { from?: string; to?: string }
+
+/** Appends `julianday(column) >=/<= julianday(?)` for each bound that is set; with no bound it adds nothing. */
+export function pushRange(where: string[], binds: unknown[], column: string, range: DeployRange): void {
+  if (range.from !== undefined) { where.push(`julianday(${column}) >= julianday(?)`); binds.push(range.from); }
+  if (range.to !== undefined) { where.push(`julianday(${column}) <= julianday(?)`); binds.push(range.to); }
+}
+
+export async function installEvents(db: D1Database, q: DeployHistoryQuery, limit: number, range: DeployRange = {}): Promise<DeployEvent[]> {
   const where: string[] = [];
   const binds: unknown[] = [];
   if (q.brand) { where.push("brand_id = ?"); binds.push(q.brand); }
@@ -53,6 +62,7 @@ async function installEvents(db: D1Database, q: DeployHistoryQuery, limit: numbe
   if (q.operation === "install" || q.operation === "rollback") { where.push("kind = ?"); binds.push(q.operation); }
   if (q.operation === "upgrade") where.push(`kind = 'upgrade' AND NOT ${IS_REDEPLOY}`);
   if (q.operation === "redeploy") where.push(`kind = 'upgrade' AND ${IS_REDEPLOY}`);
+  pushRange(where, binds, "started_at", range);
   // julianday() reads the offset in "+07:00", so the LIMIT cuts at the same instant order the merge sorts by.
   const { results } = await db.prepare(
     `SELECT install_id, brand_id, kind, status, from_revision_id, to_revision_id, is_canary, started_by, started_role, started_at, finished_at, error
@@ -104,12 +114,13 @@ const auditEvent = (eventId: string, brandId: string, action: string, actorId: s
   };
 };
 
-async function factoryAuditEvents(db: D1Database, q: DeployHistoryQuery, limit: number, onlyActor: string | null): Promise<DeployEvent[]> {
+export async function factoryAuditEvents(db: D1Database, q: DeployHistoryQuery, limit: number, onlyActor: string | null, range: DeployRange = {}): Promise<DeployEvent[]> {
   const actions = DEPLOY_AUDIT_ACTIONS.map(() => "(action = ? OR substr(action, 1, ?) = ?)").join(" OR ");
   const binds: unknown[] = DEPLOY_AUDIT_ACTIONS.flatMap((a) => [a, a.length + 1, `${a}.`]);
   const where = ["entity_type = 'brand'", `(${actions})`];
   if (q.brand) { where.push("entity_id = ?"); binds.push(q.brand); }
   if (onlyActor) { where.push("actor_id = ?"); binds.push(onlyActor); }
+  pushRange(where, binds, "created_at", range);
   const { results } = await db.prepare(
     `SELECT id, actor_id, actor_role, action, entity_id, created_at FROM audit_log
        WHERE ${where.join(" AND ")} ORDER BY julianday(created_at) DESC, id DESC LIMIT ?`,
@@ -117,7 +128,7 @@ async function factoryAuditEvents(db: D1Database, q: DeployHistoryQuery, limit: 
   return results.flatMap((r) => auditEvent(`audit-${r.id}`, r.entity_id, r.action, r.actor_id, r.actor_role, r.created_at) ?? []);
 }
 
-async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHistoryQuery, limit: number, onlyActor: string | null): Promise<{ events: DeployEvent[]; more: boolean } | null> {
+export async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHistoryQuery, limit: number, onlyActor: string | null, range: DeployRange = {}): Promise<{ events: DeployEvent[]; more: boolean } | null> {
   // Core rejects a limit above 200 (AUDIT_PAGE_LIMIT), so at limit=200 it cannot be asked for one extra row;
   // next_cursor tells us it holds more.
   const query = new URLSearchParams({ target_type: "brand", limit: String(Math.min(limit + 1, CORE_AUDIT_MAX)) });
@@ -130,13 +141,15 @@ async function coreAuditEvents(env: Env, ctx: AdminRequestContext, q: DeployHist
   const events = parsed.data.entries
     .filter((e) => e.target.type === "brand" && isCoreDeployAuditAction(e.action) && BrandId.safeParse(e.target.id).success)
     .filter((e) => (!q.brand || e.target.id === q.brand) && (!onlyActor || e.actor_id === onlyActor))
+    // Core's listAudit has no date filter, so the window is applied here.
+    .filter((e) => (range.from === undefined || Date.parse(e.at) >= Date.parse(range.from)) && (range.to === undefined || Date.parse(e.at) <= Date.parse(range.to)))
     .flatMap((e) => auditEvent(`core-audit-${e.id}`, e.target.id, e.action, e.actor_id, e.actor_role, e.at) ?? []);
   // The filters above can drop rows from the limit+1 page, so only core's cursor says whether it holds more.
   return { events, more: parsed.data.next_cursor !== null };
 }
 
 // Newest instant first; the text of the timestamp is no guide because offsets differ between rows.
-const byInstantDesc = (a: DeployEvent, b: DeployEvent): number =>
+export const byInstantDesc = (a: DeployEvent, b: DeployEvent): number =>
   Date.parse(b.started_at) - Date.parse(a.started_at) || (a.event_id < b.event_id ? 1 : a.event_id > b.event_id ? -1 : 0);
 
 interface RevisionRow {
