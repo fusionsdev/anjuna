@@ -250,4 +250,25 @@ describe("Leads screen", () => {
     expect(cells[6]!.textContent).toBe("");
     expect(container.textContent).not.toContain("null");
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      window.history.replaceState(null, "", "/leads?status=sold");
+      renderScreen();
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters) (1)" })).toBeTruthy();
+      expect(screen.queryByLabelText(/สถานะ/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters) (1)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองลีด (Lead filters)" })).toBeTruthy();
+      expect(screen.getByLabelText(/สถานะ/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await screen.findByTitle(SOLD_ID);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

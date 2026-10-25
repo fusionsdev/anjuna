@@ -7,6 +7,7 @@ import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { type Column, DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
+import { FilterBar } from "../components/FilterBar";
 import { LoadMore } from "../components/LoadMore";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
@@ -167,6 +168,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
           ))}
         </div>
       </div>
+      <FilterBar label="ตัวกรองคอนเวอร์ชัน (Conversion filters)" activeCount={(status !== "all" ? 1 : 0) + (brand ? 1 : 0)}>
       <div className="conv-filters">
         <div className="conv-chips" role="group" aria-label="สถานะ">
           {STATUS_CHIPS.map(([key, label]) => (
@@ -179,6 +181,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
           {options.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
         </select>
       </div>
+      </FilterBar>
       {!load && <Spinner />}
       {load && "error" in load && <p role="alert">{load.error}</p>}
       {report && (

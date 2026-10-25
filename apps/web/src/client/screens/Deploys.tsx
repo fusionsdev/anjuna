@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandLabels } from "../brand-labels";
 import { DataTable, type Column } from "../components/DataTable";
+import { FilterBar } from "../components/FilterBar";
 import { EmptyState } from "../components/EmptyState";
 import { InstallProgress } from "../components/InstallProgress";
 import { LoadMore } from "../components/LoadMore";
@@ -245,6 +246,7 @@ export function DeploysScreen({ me }: { me: Me }) {
       </div>
     </div>
     <p className="hint">{me.role === "owner" ? "แสดงทุกเหตุการณ์ (All events)" : "แสดงงานติดตั้งทั้งหมด และเฉพาะประวัติการแก้ไขของคุณ (Every install, only your own audit rows)"}</p>
+    <FilterBar label="ตัวกรองประวัติการติดตั้ง (Deploy filters)" activeCount={[brand, source, status].filter(Boolean).length}>
     <div className="deploys-filters">
       <div className="deploys-filter">
         <label>แบรนด์ (Brand)
@@ -273,6 +275,7 @@ export function DeploysScreen({ me }: { me: Me }) {
         </label>
       </div>
     </div>
+    </FilterBar>
     {error
       ? <p className="error" role="alert">{error}</p>
       : !events ? <Spinner />

@@ -591,4 +591,24 @@ describe("deploy history screen", () => {
     expect(screen.getByRole("table", { name: "ประวัติการติดตั้ง" })).toBeTruthy();
     expect(rows()).toHaveLength(6);
   });
+
+  it("on a narrow screen the filters sit behind the Filters button", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(<DeploysScreen me={owner} />);
+      await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
+      expect(screen.queryByRole("combobox", { name: "แบรนด์ (Brand)" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
+      expect(screen.getByRole("dialog", { name: "ตัวกรองประวัติการติดตั้ง (Deploy filters)" })).toBeTruthy();
+      expect(screen.getByRole("combobox", { name: "แบรนด์ (Brand)" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });
