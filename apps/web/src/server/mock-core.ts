@@ -49,6 +49,8 @@ import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.jso
 import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
 import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.json";
 import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
+import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json";
+import clientErrors from "@anjuna/contracts/fixtures/admin/client-errors.response.json";
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -367,6 +369,11 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       const hostname = url.searchParams.get("hostname");
       return json(200, { ...trafficRiskExport, rows: trafficRiskExport.rows.filter((row) => !hostname || row.hostname === hostname) });
     }
+    // spec traffic: golden fixtures; Task 4 adds query handling.
+    case "trafficReport":
+      return json(200, trafficReport);
+    case "clientErrors":
+      return json(200, clientErrors);
     default: {
       const unexpected: never = endpoint;
       return err({ error: "not_found", resource: "route", request_id: `${rid}:${String(unexpected)}` });
