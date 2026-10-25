@@ -498,6 +498,17 @@ describe("template step brand colors", () => {
     expect(patches()).toHaveLength(0);
   });
 
+  it("template step disables colors for a template without color variables", async () => {
+    const empty = detail("tv-1");
+    routes.set("GET /api/templates/tv-1", () => json({ ...empty, template: { ...empty.template, theme_vars: { primary: [], primary_dark: [], secondary: [] } } }));
+    hold({ contact: CONTACT, copy: {} });
+    setup(employee, { brandId: "brand_new", initialStep: 1 });
+    await heading("เทมเพลต (Template)");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true));
+    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)");
+  });
+
   it("pickers are disabled with the no-variables note when the template maps none", () => {
     render(<TemplatePanel templates={[]} selected="" theme={null} onTheme={vi.fn()} themeVars={{ primary: [], primary_dark: [], secondary: [] }} onSelect={vi.fn()} />);
     expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true);
