@@ -1,6 +1,6 @@
 import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
-import { GetLeadResponse, LeadsResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
+import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { BrandEditState } from "../shared/brand-edit";
 import { SettingsBrandsResponse } from "../shared/settings";
@@ -130,6 +130,8 @@ export interface SuppressionFilterState {
   q: string;
   reason: SuppressionReason | "";
   source: SuppressionSource | "";
+  /** A user id, or "system" for sync rows. An empty string means the filter is not set. */
+  added_by: string;
 }
 
 function queryPath(path: string, entries: [string, string | null | undefined][]): string {
@@ -255,8 +257,13 @@ export const api = {
     queryPath("/api/leads/export", [...leadFilterEntries(filter), ["pii", pii ? "1" : null]]),
   /** Owner only: an employee gets 403 forbidden_role. */
   suppressions: (filter: SuppressionFilterState, cursor?: string | null) =>
-    request<unknown>("GET", queryPath("/api/suppressions", [["q", filter.q], ["reason", filter.reason], ["source", filter.source], ["cursor", cursor]]))
+    request<unknown>("GET", queryPath("/api/suppressions", [["q", filter.q], ["reason", filter.reason], ["source", filter.source], ["added_by", filter.added_by], ["cursor", cursor]]))
       .then((body) => SuppressionsResponse.parse(body)),
+  // spec polish D7.1: the address travels in the body, never in a URL or log.
+  addSuppression: (body: { email: string; reason?: SuppressionReason }) =>
+    request<unknown>("POST", "/api/suppressions", body).then((row) => AddSuppressionResponse.parse(row)),
+  removeSuppression: (email: string) =>
+    request<unknown>("POST", "/api/suppressions/remove", { email }).then((row) => RemoveSuppressionResponse.parse(row)),
   // spec brands
   deploys: (query: DeployHistoryQuery = {}) => {
     const params = new URLSearchParams();
