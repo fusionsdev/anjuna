@@ -462,6 +462,105 @@ describe("site text through the admin API", () => {
   });
 });
 
+describe("brand theme through the admin API (FUS-381)", () => {
+  const save = (patch: unknown) =>
+    h.admin("/admin/brands/brand-a", employee, { method: "PATCH", body: JSON.stringify(patch) });
+  const get = async () => GetBrandResponse.parse(await (await h.admin("/admin/brands/brand-a", employee)).json()).brand;
+  const setStored = (value: string | null) =>
+    h.db.prepare("UPDATE brand_runtime SET theme_json = ?1 WHERE brand_id = 'brand-a'").bind(value).run();
+  const storedTheme = () =>
+    h.db.prepare("SELECT theme_json FROM brand_runtime WHERE brand_id = 'brand-a'").first<{ theme_json: string | null }>();
+
+  it("GET returns theme null for a brand without one and the stored theme otherwise", async () => {
+    await setStored(null);
+    expect((await get()).theme).toBeNull();
+    await setStored('{"primary":"#0f766e","secondary":"#1e293b"}');
+    expect((await get()).theme).toEqual({ primary: "#0f766e", secondary: "#1e293b" });
+  });
+
+  it("PATCH theme stores lowercase JSON, bumps updated_at and audits old and new", async () => {
+    await setStored(null);
+    const before = await get();
+    const audits = await auditCount();
+    const ok = await save({ theme: { primary: "#0F766E", secondary: "#1E293B" } });
+    expect(ok.status).toBe(200);
+    const parsed = BrandPatchResponse.parse(await ok.json());
+    expect(parsed.changed).toEqual(["theme"]);
+    expect(parsed.brand.theme).toEqual({ primary: "#0f766e", secondary: "#1e293b" });
+    expect(parsed.brand.updated_at > before.updated_at).toBe(true);
+    expect(await storedTheme()).toEqual({ theme_json: '{"primary":"#0f766e","secondary":"#1e293b"}' });
+    expect(await auditCount()).toBe(audits + 1);
+    const audit = await h.factory.prepare("SELECT action, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .first<{ action: string; before_json: string; after_json: string }>();
+    expect(audit!.action).toBe("brand.update");
+    expect(JSON.parse(audit!.before_json)).toEqual({ theme: null });
+    expect(JSON.parse(audit!.after_json)).toEqual({ theme: { primary: "#0f766e", secondary: "#1e293b" } });
+  });
+
+  it("PATCH theme null clears theme_json", async () => {
+    expect((await save({ theme: { primary: "#0f766e", secondary: "#1e293b" } })).status).toBe(200);
+    const before = await get();
+    const audits = await auditCount();
+    const cleared = await save({ theme: null });
+    expect(cleared.status).toBe(200);
+    expect(BrandPatchResponse.parse(await cleared.json())).toMatchObject({ changed: ["theme"], brand: { theme: null } });
+    expect(await storedTheme()).toEqual({ theme_json: null });
+    expect((await get()).theme).toBeNull();
+    expect((await get()).updated_at > before.updated_at).toBe(true);
+    expect(await auditCount()).toBe(audits + 1);
+    const audit = await h.factory.prepare("SELECT action, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .first<{ action: string; before_json: string; after_json: string }>();
+    expect(JSON.parse(audit!.before_json)).toEqual({ theme: { primary: "#0f766e", secondary: "#1e293b" } });
+    expect(JSON.parse(audit!.after_json)).toEqual({ theme: null });
+  });
+
+  it("PATCH theme null clears an invalid stored theme_json", async () => {
+    await setStored('{"primary":"#fff","secondary":"#000000"}');
+    const before = await get();
+    const audits = await auditCount();
+    const cleared = await save({ theme: null });
+    expect(cleared.status).toBe(200);
+    expect(BrandPatchResponse.parse(await cleared.json())).toMatchObject({ changed: ["theme"], brand: { theme: null } });
+    expect(await storedTheme()).toEqual({ theme_json: null });
+    expect((await get()).updated_at > before.updated_at).toBe(true);
+    expect(await auditCount()).toBe(audits + 1);
+    const audit = await h.factory.prepare("SELECT action, before_json, after_json FROM audit_log ORDER BY id DESC LIMIT 1")
+      .first<{ action: string; before_json: string; after_json: string }>();
+    expect(JSON.parse(audit!.before_json)).toEqual({ theme: '{"primary":"#fff","secondary":"#000000"}' });
+    expect(JSON.parse(audit!.after_json)).toEqual({ theme: null });
+  });
+
+  it("PATCH with the same theme changes nothing", async () => {
+    const theme = { primary: "#0f766e", secondary: "#1e293b" };
+    expect((await save({ theme })).status).toBe(200);
+    const before = await get();
+    const audits = await auditCount();
+    const same = await save({ theme: { primary: "#0F766E", secondary: "#1E293B" } });
+    expect(same.status).toBe(200);
+    expect(BrandPatchResponse.parse(await same.json())).toMatchObject({ changed: [], audit_id: null });
+    expect((await get()).updated_at).toBe(before.updated_at);
+    expect(await auditCount()).toBe(audits);
+  });
+
+  it("PATCH rejects an invalid hex with 422", async () => {
+    for (const bad of [
+      { theme: { primary: "#fff", secondary: "#1e293b" } },
+      { theme: { primary: "#0f766e" } },
+      { theme: "red" },
+    ]) {
+      expect((await save(bad)).status, JSON.stringify(bad)).toBe(422);
+    }
+  });
+
+  it("serves an invalid stored theme as null in GET", async () => {
+    await setStored('{"primary":"#fff","secondary":"#000000"}');
+    const response = await h.admin("/admin/brands/brand-a", employee);
+    expect(response.status).toBe(200);
+    expect(GetBrandResponse.parse(await response.json()).brand.theme).toBeNull();
+    await setStored(null);
+  });
+});
+
 describe("postback token state with a tenant-wide token", () => {
   let g: Harness;
   beforeAll(async () => {

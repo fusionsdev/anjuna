@@ -1,4 +1,4 @@
-import { BrandSettingsResponse, SiteBrandName, SiteDescription, SiteTitle, type BrandSettingsResponse as PublicSettings } from "@anjuna/contracts";
+import { BrandSettingsResponse, BrandTheme, SiteBrandName, SiteDescription, SiteTitle, type BrandSettingsResponse as PublicSettings } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 
 export interface RuntimeRow {
@@ -15,12 +15,13 @@ export interface RuntimeRow {
   brand_name: string | null;
   site_title: string | null;
   site_description: string | null;
+  theme_json: string | null;
 }
 
 export function getRuntime(env: Env, brandId: string): Promise<RuntimeRow | null> {
   return env.LEADS.prepare(`SELECT brand_id, hostnames, aid, prepop_base, amount_buckets,
     flow_gate_mode, paused, ab_config_json, keyword_default, form_route,
-    brand_name, site_title, site_description
+    brand_name, site_title, site_description, theme_json
     FROM brand_runtime WHERE brand_id = ?1`).bind(brandId).first<RuntimeRow>();
 }
 
@@ -31,7 +32,18 @@ function validOrNull(schema: { safeParse(value: unknown): { success: true; data:
   return parsed.success ? parsed.data : null;
 }
 
-export function publicSettings(row: RuntimeRow, includeSiteText = false): PublicSettings {
+/** A stored theme that no longer parses as valid colors is served as null (template colors), never as a 503. */
+export function parseStoredTheme(json: string | null): BrandTheme | null {
+  if (json === null) return null;
+  try {
+    const parsed = BrandTheme.safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+export function publicSettings(row: RuntimeRow, includeSiteText = false, includeTheme = false): PublicSettings {
   return BrandSettingsResponse.parse({
     flow_gate_mode: row.flow_gate_mode, paused: row.paused === 1,
     amount_buckets: JSON.parse(row.amount_buckets),
@@ -43,6 +55,8 @@ export function publicSettings(row: RuntimeRow, includeSiteText = false): Public
       site_title: validOrNull(SiteTitle, row.site_title),
       site_description: validOrNull(SiteDescription, row.site_description),
     } : {}),
+    // Old brand runtimes parse this response strictly: add the theme only when asked.
+    ...(includeTheme ? { theme: parseStoredTheme(row.theme_json) } : {}),
   });
 }
 

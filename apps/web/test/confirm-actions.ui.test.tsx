@@ -15,7 +15,7 @@ const brand = LifecycleBrandSummary.parse({
 });
 const initialConfig: BrandConfig = {
   brand_id: "brand-a", account: "test-account", hostnames: ["renderable.test"], status: "live",
-  form_version: "form@abcdef1", keyword_default: "Quick Loan", brand_name: null, site_title: null, site_description: null, amount_buckets: [100, 500],
+  form_version: "form@abcdef1", keyword_default: "Quick Loan", brand_name: null, site_title: null, site_description: null, theme: null, amount_buckets: [100, 500],
   ab_config: null, flow_gate_mode: "param", aid: "123", prepop_base: "https://buyer.example/apply", drain_key: "brand-a",
   google_ads_account: null, google_conversion_action: null, adkit_project: null,
   postback_token: "set", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z",

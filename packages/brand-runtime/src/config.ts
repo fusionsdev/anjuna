@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
-  AbConfig, AmountBuckets, BRAND_ASSET_PATHS, BrandId, FlowGateMode, FormRoute, Hostname, ProxyPaths, RuntimeConfig,
-  SiteBrandName, SiteDescription, SiteTitle, TemplateTextDefaults, isBrandClean,
+  AbConfig, AmountBuckets, BRAND_ASSET_PATHS, BrandId, BrandTheme, FlowGateMode, FormRoute, Hostname, ProxyPaths, RuntimeConfig,
+  SiteBrandName, SiteDescription, SiteTitle, TemplateTextDefaults, TemplateThemeVars, isBrandClean,
 } from "@anjuna/contracts";
 import type { CoreClient, FetchBinding } from "./core-client.js";
 
@@ -33,6 +33,10 @@ export const BrandSettings = z.object({
   brand_name: SiteBrandName.nullable().default(null).catch(null),
   site_title: SiteTitle.nullable().default(null).catch(null),
   site_description: SiteDescription.nullable().default(null).catch(null),
+  /** Brand colors from core live settings. Null = template colors. Invalid values become null. */
+  theme: BrandTheme.nullable().default(null).catch(null),
+  /** Template CSS variables per color role, baked into the revision (factory config_json.theme_vars). */
+  theme_vars: TemplateThemeVars.nullable().default(null).catch(null),
   default_variant: RuntimeConfig.shape.variant.default("lite_v1"),
   ab_config: AbConfig.nullable().default(null),
   proxies: ProxyPaths.default({ posthog: "/_t", sentry: "/_e" }),

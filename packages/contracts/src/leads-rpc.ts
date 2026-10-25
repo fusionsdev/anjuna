@@ -16,6 +16,7 @@ import { AbConfig, AmountBuckets, FlowGateMode } from "./admin-api.js";
 import { BrandAssetBody, BrandAssetKind } from "./brand-assets.js";
 import { FormRoute, Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
+import { BrandTheme } from "./theme.js";
 
 /** Opaque server-minted token (click session, continuation, handoff). URL- and cookie-safe. */
 export { OpaqueToken } from "./common.js";
@@ -176,6 +177,8 @@ export const BrandSettingsRequest = z.strictObject({
   brand_id: BrandId,
   /** Brand runtimes with site text support ask for it. Older runtimes omit it and keep the old strict shape. */
   include_site_text: z.literal(true).optional(),
+  /** Brand runtimes with brand color support ask for it. Older runtimes omit it and keep the old strict shape. */
+  include_theme: z.literal(true).optional(),
 });
 export const BrandSettingsResponse = z.strictObject({
   flow_gate_mode: FlowGateMode,
@@ -188,6 +191,8 @@ export const BrandSettingsResponse = z.strictObject({
   brand_name: SiteBrandName.nullable().optional(),
   site_title: SiteTitle.nullable().optional(),
   site_description: SiteDescription.nullable().optional(),
+  /** Present only when the request set include_theme. Null = use the template colors. An invalid value reads as null. */
+  theme: BrandTheme.nullable().optional().catch(null),
 });
 export type BrandSettingsResponse = z.infer<typeof BrandSettingsResponse>;
 

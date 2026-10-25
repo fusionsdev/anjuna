@@ -28,6 +28,7 @@ import { z } from "zod";
 import { BrandId, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
 import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
+import { BrandTheme } from "./theme.js";
 import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, TrafficRiskResponse } from "./traffic-risk.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
 import { SpendPeriod, SpendQuery, SpendReportResponse } from "./spend.js";
@@ -202,6 +203,8 @@ export const BrandConfig = z.strictObject({
   brand_name: SiteBrandName.nullable(),
   site_title: SiteTitle.nullable(),
   site_description: SiteDescription.nullable(),
+  /** The brand's two colors (FUS-381). Null = the template colors. */
+  theme: BrandTheme.nullable(),
   amount_buckets: AmountBuckets,
   ab_config: AbConfig.nullable(),
   flow_gate_mode: FlowGateMode,
@@ -240,6 +243,7 @@ export const BRAND_PATCH_FIELDS = [
   "google_conversion_action",
   "adkit_project",
   "rotate_postback_token",
+  "theme",
 ] as const;
 export type BrandPatchField = (typeof BRAND_PATCH_FIELDS)[number];
 
@@ -263,6 +267,8 @@ export const BrandPatchRequest = z
     google_conversion_action: GoogleConversionAction.nullable().optional(),
     adkit_project: AdkitProject.nullable().optional(),
     rotate_postback_token: z.literal(true).optional(),
+    /** Null resets the brand to the template colors. */
+    theme: BrandTheme.nullable().optional(),
     /** `BrandConfig.updated_at` the editor loaded. Stale -> 409 conflict. */
     expected_updated_at: Timestamp.optional(),
   })
@@ -1021,6 +1027,11 @@ export const BRAND_PATCH_FIELD_GROUPS = {
     min_role: "employee",
     fields: ["brand_name", "site_title", "site_description"],
     plan_action: "Edit site text",
+  },
+  brand_colors: {
+    min_role: "employee",
+    fields: ["theme"],
+    plan_action: "Edit brand colors",
   },
   ab_weights: {
     min_role: "owner",

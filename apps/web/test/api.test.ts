@@ -252,6 +252,7 @@ describe("role table coverage", () => {
       brand_name: "Table Brand",
       site_title: "Table Brand | Options",
       site_description: "Compare options from lending partners.",
+      theme: { primary: "#0f766e", secondary: "#1e293b" },
       ab_config: { experiment_id: "exp-2026-10", variants: [{ id: "a", weight: 50 }, { id: "b", weight: 50 }] },
       amount_buckets: [500, 1000, 1500, 2500, 3000],
       flow_gate_mode: "signed_cookie",

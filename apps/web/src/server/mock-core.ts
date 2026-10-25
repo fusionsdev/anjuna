@@ -75,6 +75,7 @@ function initialState(): State {
     brand_name: null,
     site_title: null,
     site_description: null,
+    theme: null,
     amount_buckets: [500, 1000, 1500],
     ab_config: bSummary.ab_config,
     flow_gate_mode: bSummary.flow_gate_mode,

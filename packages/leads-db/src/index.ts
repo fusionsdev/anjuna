@@ -24,6 +24,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0013_brand_listmonk_list.sql",
   "0014_ad_spend.sql",
   "0015_traffic_risk.sql",
+  "0016_brand_theme.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
@@ -119,6 +120,8 @@ export interface BrandRuntimeRow {
   brand_name: string | null;
   site_title: string | null;
   site_description: string | null;
+  /** JSON-encoded BrandTheme from the control panel Settings; null = the template colors. */
+  theme_json: string | null;
   /** Google Ads drain route from the control panel; null = not routed (the drain skips the brand). */
   google_ads_account: string | null;
   google_conversion_action: string | null;

@@ -9,6 +9,7 @@ import { AdkitProject, GoogleAdsAccount, GoogleConversionAction } from "./admin-
 import { cleanKeyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { TEMPLATE_RULES } from "./template.js";
+import { BrandTheme } from "./theme.js";
 import { V1_UNSUPPORTED_STATES } from "./v1.js";
 
 /** 50 states and DC. Uppercase only: a lowercase code is refused, not normalized. */
@@ -108,6 +109,7 @@ export const BrandProfile = z.strictObject({
   disclosures: Disclosures.optional(),
   copy: Copy.optional(),
   ads: Ads.optional(),
+  theme: BrandTheme.optional(),
 });
 export type BrandProfile = z.infer<typeof BrandProfile>;
 

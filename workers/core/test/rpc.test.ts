@@ -91,6 +91,23 @@ describe("brandSettings site text", () => {
   });
 });
 
+describe("brandSettings theme", () => {
+  it("returns theme only when include_theme is set", async () => {
+    await h.db.prepare(`UPDATE brand_runtime SET theme_json = '{"primary":"#0f766e","secondary":"#1e293b"}' WHERE brand_id = 'brand-a'`).run();
+    const legacy = await (await rpc("brandSettings", { brand_id: "brand-a" })).json() as Record<string, unknown>;
+    expect("theme" in legacy).toBe(false);
+    const current = await (await rpc("brandSettings", { brand_id: "brand-a", include_theme: true })).json();
+    expect(current).toMatchObject({ theme: { primary: "#0f766e", secondary: "#1e293b" } });
+  });
+
+  it("serves an invalid stored theme as null", async () => {
+    await h.db.prepare(`UPDATE brand_runtime SET theme_json = '{"primary":"#fff","secondary":"#000000"}' WHERE brand_id = 'brand-a'`).run();
+    const response = await rpc("brandSettings", { brand_id: "brand-a", include_theme: true });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ theme: null });
+  });
+});
+
 describe("brandAsset", () => {
   const body = Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").toString("base64");
   async function storeAsset(brand: string, kind: string, contentType = "image/svg+xml", base64 = body) {

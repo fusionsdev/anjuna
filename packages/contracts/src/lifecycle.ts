@@ -6,6 +6,7 @@ import {
 import { AdminRequestContext, AdminRole, AuditActorRole, AmountBuckets, DrainKey, FormVersion, PrepopBase } from "./admin-api.js";
 import { BrandProfile } from "./brand-draft.js";
 import { FormRoute, Keyword } from "./runtime-config.js";
+import { BrandTheme } from "./theme.js";
 
 const Id = z.string().min(1).max(128);
 export const SealedTemplateVersion = z.strictObject({
@@ -211,6 +212,8 @@ export const InitialRuntime = z.strictObject({
   form_route: FormRoute,
   keyword_default: Keyword,
   form_version: FormVersion,
+  /** The draft's colors (FUS-381), written to brand_runtime.theme_json on first install only. */
+  theme: BrandTheme.nullable().optional(),
 });
 export type InitialRuntime = z.infer<typeof InitialRuntime>;
 

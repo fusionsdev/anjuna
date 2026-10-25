@@ -177,7 +177,7 @@ describe("authorize()", () => {
   });
 
   it("owner-only PATCH fields are rejected for an employee, each one listed", () => {
-    const employeeFields: string[] = ["keyword_default", "brand_name", "site_title", "site_description"];
+    const employeeFields: string[] = ["keyword_default", "brand_name", "site_title", "site_description", "theme"];
     const ownerOnly = BRAND_PATCH_FIELDS.filter((f) => !employeeFields.includes(f));
     for (const f of ownerOnly) {
       const r = authorize("patchBrand", "employee", { [f]: f === "rotate_postback_token" ? true : "x" });
@@ -296,6 +296,30 @@ describe("secrets never appear in GET fixtures", () => {
   });
 });
 
+describe("brand theme contract (FUS-381)", () => {
+  it("BrandConfig carries theme as lowercase #rrggbb or null and rejects a bad hex", () => {
+    const brand = fixture<{ brand: Record<string, unknown> }>(A("brand.get.response.json")).brand;
+    expect(BrandConfig.parse(brand).theme).toBeNull();
+    expect(BrandConfig.parse({ ...brand, theme: { primary: "#0F766E", secondary: "#1E293B" } }).theme)
+      .toEqual({ primary: "#0f766e", secondary: "#1e293b" });
+    expect(BrandConfig.safeParse({ ...brand, theme: { primary: "#fff", secondary: "#1e293b" } }).success).toBe(false);
+  });
+
+  it("BrandPatchRequest accepts a theme or null and rejects anything else", () => {
+    expect(BrandPatchRequest.parse({ theme: null }).theme).toBeNull();
+    expect(BrandPatchRequest.parse({ theme: { primary: "#2563EB", secondary: "#1E293B" } }).theme)
+      .toEqual({ primary: "#2563eb", secondary: "#1e293b" });
+    expect(BrandPatchRequest.safeParse({ theme: { primary: "red", secondary: "#1e293b" } }).success).toBe(false);
+    expect(BrandPatchRequest.safeParse({ theme: { primary: "#2563eb" } }).success).toBe(false);
+  });
+
+  it("theme is a patch field employees may edit (brand colors group)", () => {
+    expect(BRAND_PATCH_FIELD_GROUPS.brand_colors.fields).toEqual(["theme"]);
+    expect(BRAND_PATCH_FIELDS).toContain("theme");
+    expect(authorize("patchBrand", "employee", { theme: { primary: "#2563eb", secondary: "#1e293b" } }).ok).toBe(true);
+  });
+});
+
 /**
  * The T12 plan's role matrix (docs/plans/t12-control-panel.md, "Roles"), rows that this API
  * implements. Rows owned by other tasks (add brand/install, rollback, upgrade-all, data-subject
@@ -306,6 +330,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "Export high-risk clicks for a refund request (FUS-372)", employee: "no", covered_by: ["trafficRiskExport"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
   { action: "Edit site text", employee: "yes", covered_by: ["patch:site_text"] },
+  { action: "Edit brand colors", employee: "yes", covered_by: ["patch:brand_colors"] },
   { action: "Pause / resume a brand", employee: "yes", covered_by: ["pauseBrand", "resumeBrand"] },
   { action: "Change A/B weights", employee: "no", covered_by: ["patch:ab_weights"] },
   { action: "Change amount buckets", employee: "no", covered_by: ["patch:amount_buckets"] },
