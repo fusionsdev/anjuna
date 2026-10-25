@@ -267,6 +267,20 @@ describe("factory-db constraints", () => {
       .rejects.toThrow(/CHECK constraint failed/);
   });
 
+  it("migration 0010 adds theme_vars_json", async () => {
+    await run("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('t-theme', 'Themed', 'react_spa', 'bk_1', ?1)", NOW);
+    await run(
+      `INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, created_by, created_at, theme_vars_json)
+       VALUES ('tv-theme', 't-theme', 1, ?1, 'k', 'bk_1', ?2, ?3)`,
+      "f".repeat(64), NOW, JSON.stringify({ primary: ["--brand"], primary_dark: [], secondary: [] }),
+    );
+    expect(await env.DB.prepare(
+      "SELECT json_extract(theme_vars_json, '$.primary[0]') AS primary_var FROM template_versions WHERE template_version_id = 'tv-theme'",
+    ).first()).toEqual({ primary_var: "--brand" });
+    await expect(run("UPDATE template_versions SET theme_vars_json = 'not json' WHERE template_version_id = 'tv-theme'"))
+      .rejects.toThrow(/CHECK constraint failed/);
+  });
+
   it("allows one brand per domain", async () => {
     await expect(
       run(

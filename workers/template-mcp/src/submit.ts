@@ -26,6 +26,7 @@ import { decode } from "./html";
 import { loadFromUrl, type Loaded } from "./input";
 import { visibleBodyText } from "./probe";
 import { extractTextDefaults } from "./text-defaults";
+import { extractThemeVars } from "./theme-vars";
 import { otherBrands, similarityCheck, type SimilarityReport } from "./tools";
 
 const FIXED_MTIME = new Date(2000, 0, 1, 0, 0, 0);
@@ -162,6 +163,7 @@ export async function submitTemplate(env: Env, request: SubmitRequest): Promise<
   }
   const sha256 = await sha256Hex(zip);
   const text_defaults = extractTextDefaults(files);
+  const theme_vars = extractThemeVars(files);
 
   const existing = await env.FACTORY.prepare("SELECT template_version_id, version, status FROM template_versions WHERE sha256 = ?1")
     .bind(sha256)
@@ -169,8 +171,8 @@ export async function submitTemplate(env: Env, request: SubmitRequest): Promise<
   if (existing?.status === "rejected") {
     // Same bytes, earlier failed certification (for example a screenshot outage): certify that version again.
     await env.FACTORY.prepare(
-      "UPDATE template_versions SET status = 'draft', text_defaults_json = ?2, submitted_by_key_id = ?3, submitted_by_label = ?4 WHERE template_version_id = ?1 AND status = 'rejected'",
-    ).bind(existing.template_version_id, JSON.stringify(text_defaults), request.submitted_by.key_id, request.submitted_by.label).run();
+      "UPDATE template_versions SET status = 'draft', text_defaults_json = ?2, submitted_by_key_id = ?3, submitted_by_label = ?4, theme_vars_json = ?5 WHERE template_version_id = ?1 AND status = 'rejected'",
+    ).bind(existing.template_version_id, JSON.stringify(text_defaults), request.submitted_by.key_id, request.submitted_by.label, JSON.stringify(theme_vars)).run();
     return certifyAndReport(env, { ...existing, sha256 }, { warnings: importWarnings, text_defaults, similarity: null });
   }
   if (existing) {
@@ -215,6 +217,7 @@ export async function submitTemplate(env: Env, request: SubmitRequest): Promise<
     created_by: request.created_by,
     submitted_by: request.submitted_by,
     text_defaults,
+    theme_vars,
   });
   return certifyAndReport(env, imported, { warnings: importWarnings, text_defaults, similarity: brief });
 }
