@@ -7,6 +7,7 @@ export const pageTitle: Record<View, string> = {
   conversions: "คอนเวอร์ชัน (Conversions)", alerts: "การแจ้งเตือน", deploys: "ประวัติการติดตั้ง", mailing: "รายชื่ออีเมล", audit: "ประวัติการแก้ไข", users: "ผู้ใช้",
   "builder-keys": "คีย์ Builder", leads: "ลีด (Leads)", suppressions: "อีเมลที่บล็อก (Suppressions)",
   settings: "ตั้งค่า (Settings)",
+  "brand-timeline": "ไทม์ไลน์แบรนด์ (Brand timeline)", // spec timeline
   "not-found": "ไม่พบหน้านี้",
 };
 

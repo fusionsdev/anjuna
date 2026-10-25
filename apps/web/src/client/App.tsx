@@ -3,6 +3,7 @@ import { ApiError, api, type Me } from "./api";
 import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
+import { BrandTimelineScreen } from "./screens/BrandTimeline";
 import { ConversionsScreen } from "./screens/Conversions";
 import { DeploysScreen } from "./screens/Deploys";
 import { FunnelScreen } from "./screens/Funnel";
@@ -95,7 +96,7 @@ export function App() {
         await api.signOut().catch(() => undefined);
         setMe(null);
       }}
-      nav={<SidebarNav items={items} current={view} onOpen={open} />}
+      nav={<SidebarNav items={items} current={view === "brand-timeline" ? "brands" : view} onOpen={open} />}
     >
       {view === "home" && <HomeScreen me={me} onGo={open} />}
       {(view === "brands" || view === "new-brand") && (
@@ -109,6 +110,8 @@ export function App() {
           onNewBrand={() => open("new-brand")}
         />
       )}
+      {/* spec timeline */}
+      {route.view === "brand-timeline" && <BrandTimelineScreen me={me} brandId={route.brandId} />}
       {view === "deploys" && <DeploysScreen me={me} />}
       {view === "templates" && (
         <TemplatesScreen

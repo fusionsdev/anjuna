@@ -19,6 +19,8 @@ export type Route =
   | { view: "suppressions" }
   // spec settings
   | { view: "settings" }
+  // spec timeline
+  | { view: "brand-timeline"; brandId: string }
   | { view: "not-found"; path: string };
 export type View = Route["view"];
 
@@ -61,6 +63,12 @@ export function parseRoute(pathname: string, hash = ""): Route {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   const fixed = STATIC[path];
   if (fixed) return fixed;
+  // spec timeline
+  const timeline = /^\/brands\/([^/]+)\/timeline$/.exec(path);
+  if (timeline) {
+    const id = decode(timeline[1]!);
+    return id === null ? { view: "brands", brandId: null } : { view: "brand-timeline", brandId: id };
+  }
   const one = /^\/(brands|templates|leads)\/([^/]+)$/.exec(path);
   if (one) {
     const id = decode(one[2]!);
@@ -78,6 +86,8 @@ export function routePath(route: Route): string {
       return route.templateId ? `/templates/${encodeURIComponent(route.templateId)}` : "/templates";
     case "leads":
       return route.leadId ? `/leads/${encodeURIComponent(route.leadId)}` : "/leads";
+    case "brand-timeline": // spec timeline
+      return `/brands/${encodeURIComponent(route.brandId)}/timeline`;
     case "not-found":
       return route.path;
     default:
@@ -88,6 +98,7 @@ export function routePath(route: Route): string {
 export function viewPath(view: Exclude<View, "not-found">): string {
   switch (view) {
     case "home": return "/";
+    case "brand-timeline": return "/brands"; // needs a brand id, so routePath builds it; a bare view falls back to the list
     case "new-brand": return "/brands/new";
     default: return `/${view}`;
   }
