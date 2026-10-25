@@ -66,6 +66,19 @@ export function ColorPair(props: { value: BrandTheme | null; onChange(next: Bran
     onChange({ primary: shownPrimary, secondary: next });
   };
 
+  // Leaving a field with invalid text puts the last valid color back, so the field never disagrees with what is saved.
+  const onPrimaryBlur = () => {
+    if (HexColor.safeParse(primaryText).success) return;
+    setPrimaryText(shownPrimary);
+    setPrimaryError(null);
+  };
+
+  const onSecondaryBlur = () => {
+    if (HexColor.safeParse(secondaryText).success) return;
+    setSecondaryText(shownSecondary);
+    setSecondaryError(null);
+  };
+
   // The shown colors may not change on reset, so the effects above would not clear typed text.
   const onReset = () => {
     setPrimaryText(DEFAULT_PRIMARY);
@@ -80,13 +93,13 @@ export function ColorPair(props: { value: BrandTheme | null; onChange(next: Bran
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ minWidth: 140 }}>สีหลัก (Primary)</span>
         <input type="color" aria-label="สีหลัก (Primary)" value={primaryParsed.success ? primaryParsed.data : shownPrimary} disabled={disabled} onChange={(e) => onPrimaryColor(e.target.value)} />
-        <input type="text" aria-label="รหัสสีหลัก (Primary hex)" value={primaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onPrimaryText(e.target.value)} />
+        <input type="text" aria-label="รหัสสีหลัก (Primary hex)" value={primaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onPrimaryText(e.target.value)} onBlur={onPrimaryBlur} />
       </div>
       {primaryError && <p className="neg" role="alert">{primaryError}</p>}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ minWidth: 140 }}>สีรอง (Secondary)</span>
         <input type="color" aria-label="สีรอง (Secondary)" value={secondaryParsed.success ? secondaryParsed.data : shownSecondary} disabled={disabled} onChange={(e) => onSecondaryColor(e.target.value)} />
-        <input type="text" aria-label="รหัสสีรอง (Secondary hex)" value={secondaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onSecondaryText(e.target.value)} />
+        <input type="text" aria-label="รหัสสีรอง (Secondary hex)" value={secondaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onSecondaryText(e.target.value)} onBlur={onSecondaryBlur} />
       </div>
       {secondaryError && <p className="neg" role="alert">{secondaryError}</p>}
       <div>

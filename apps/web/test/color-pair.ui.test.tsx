@@ -31,6 +31,20 @@ describe("ColorPair", () => {
     expect(onChange).toHaveBeenLastCalledWith({ primary: "#0f766e", secondary: "#1e293b" });
   });
 
+  it("blur reverts invalid hex text to the last valid value", () => {
+    const onChange = vi.fn();
+    render(<ColorPair value={{ primary: "#2563eb", secondary: "#1e293b" }} onChange={onChange} />);
+    fireEvent.change(hexField("รหัสสีหลัก (Primary hex)"), { target: { value: "#12" } });
+    fireEvent.change(hexField("รหัสสีรอง (Secondary hex)"), { target: { value: "zz" } });
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
+    fireEvent.blur(hexField("รหัสสีหลัก (Primary hex)"));
+    fireEvent.blur(hexField("รหัสสีรอง (Secondary hex)"));
+    expect(hexField("รหัสสีหลัก (Primary hex)").value).toBe("#2563eb");
+    expect(hexField("รหัสสีรอง (Secondary hex)").value).toBe("#1e293b");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("use template colors sends null", () => {
     const onChange = vi.fn();
     render(<ColorPair value={{ primary: "#0f766e", secondary: "#1e293b" }} onChange={onChange} />);

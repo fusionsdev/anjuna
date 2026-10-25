@@ -463,10 +463,17 @@ describe("template step brand colors", () => {
   const PRIMARY_HEX = "รหัสสีหลัก (Primary hex)";
   const RESET = "ใช้สีของเทมเพลต (Use template colors)";
 
+  const mapDetail = () => {
+    const mapped = detail("tv-1");
+    routes.set("GET /api/templates/tv-1", () => json({ ...mapped, template: { ...mapped.template, theme_vars: { primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: [] } } }));
+  };
+
   it("template step saves profile.theme in the draft", async () => {
+    mapDetail();
     hold({ contact: CONTACT, copy: {} });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต (Template)");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(false));
     fireEvent.change(screen.getByLabelText("สีหลัก (Primary)"), { target: { value: "#112233" } });
     fireEvent.change(screen.getByLabelText("สีรอง (Secondary)"), { target: { value: "#445566" } });
     next();
@@ -476,8 +483,7 @@ describe("template step brand colors", () => {
   });
 
   it("reset saves the draft without theme", async () => {
-    const mapped = detail("tv-1");
-    routes.set("GET /api/templates/tv-1", () => json({ ...mapped, template: { ...mapped.template, theme_vars: { primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: [] } } }));
+    mapDetail();
     hold({ contact: CONTACT, theme: THEME });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต (Template)");
@@ -492,12 +498,29 @@ describe("template step brand colors", () => {
   });
 
   it("makes no extra request when the colors are untouched", async () => {
+    mapDetail();
     hold({ contact: CONTACT, theme: THEME });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต (Template)");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(false));
     next();
     await heading("ข้อความ (Copy)");
     expect(patches()).toHaveLength(0);
+  });
+
+  it("a template without color variables saves the draft without theme", async () => {
+    const empty = detail("tv-1");
+    routes.set("GET /api/templates/tv-1", () => json({ ...empty, template: { ...empty.template, theme_vars: { primary: [], primary_dark: [], secondary: [] } } }));
+    hold({ contact: CONTACT, theme: THEME });
+    setup(employee, { brandId: "brand_new", initialStep: 1 });
+    await heading("เทมเพลต (Template)");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true));
+    next();
+    await heading("ข้อความ (Copy)");
+    expect(patches()).toHaveLength(1);
+    const profile = patches()[0]!.body.profile as Record<string, unknown>;
+    expect(profile).toEqual({ contact: CONTACT });
+    expect("theme" in profile).toBe(false);
   });
 
   it("template step disables colors for a template without color variables", async () => {

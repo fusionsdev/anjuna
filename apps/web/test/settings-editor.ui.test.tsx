@@ -40,6 +40,14 @@ describe("SettingsEditor", () => {
     render(<Harness b={brand({ theme: { primary: "#0f766e", secondary: "#1e293b" } })} />);
     expect(valueOf("รหัสสีหลัก (Primary hex)")).toBe("#0f766e");
     expect(valueOf("รหัสสีรอง (Secondary hex)")).toBe("#1e293b");
+    expect(valueOf("สีหลัก (Primary)")).toBe("#0f766e");
+    expect(valueOf("สีรอง (Secondary)")).toBe("#1e293b");
+  });
+
+  it("settings shows template defaults for a null theme", () => {
+    render(<Harness b={brand({ theme: null })} />);
+    expect(valueOf("สีหลัก (Primary)")).toBe("#2563eb");
+    expect(valueOf("สีรอง (Secondary)")).toBe("#1e293b");
   });
 
   it("an invalid drain key shows its error, sets aria-invalid and disables Review and save", () => {

@@ -85,8 +85,11 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
       if (!active) return;
       setTemplateText(detail.template.text_defaults);
       // A version imported before the color map existed answers null: no variables, not "still loading".
-      setThemeVars(detail.template.theme_vars ?? EMPTY_THEME_VARS);
-    }, () => { if (active) { setTemplateText(null); setThemeVars(null); } });
+      const vars = detail.template.theme_vars ?? EMPTY_THEME_VARS;
+      setThemeVars(vars);
+      // The pickers are disabled without variables, so a theme stored earlier is dropped here and the next save removes it.
+      if (vars.primary.length === 0 && vars.primary_dark.length === 0 && vars.secondary.length === 0) setTheme(null);
+    },() => { if (active) { setTemplateText(null); setThemeVars(null); } });
     return () => { active = false; };
   }, [templateId, stepId]);
 
