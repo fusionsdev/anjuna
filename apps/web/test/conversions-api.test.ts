@@ -120,6 +120,31 @@ describe("GET /api/conversions", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("GET /api/conversions passes limit to core and answers 422 for limit=1001", async () => {
+    const seen: Request[] = [];
+    const fetch = vi.fn(async (request: Request) => {
+      seen.push(request);
+      return Response.json({ ...employeeFixture, period: "30d" });
+    });
+    const env = makeEnv({ MOCK_CORE: "0", CORE: { fetch } as unknown as Fetcher });
+    expect((await call("/api/conversions?period=30d&limit=400", { cookie: owner, env })).status).toBe(200);
+    expect(new URL(seen[0]!.url).searchParams.get("limit")).toBe("400");
+    for (const limit of ["0", "1001"]) {
+      const response = await call(`/api/conversions?period=30d&limit=${limit}`, { cookie: owner, env });
+      expect(response.status, limit).toBe(422);
+      expect(AdminError.parse(await response.json())).toMatchObject({ error: "invalid" });
+    }
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("mock core slices rows by limit and sets truncated", async () => {
+    const all = ConversionsReportResponse.parse(await (await call("/api/conversions?period=30d", { cookie: owner })).json());
+    expect(all.truncated).toBe(false);
+    const cut = ConversionsReportResponse.parse(await (await call("/api/conversions?period=30d&limit=2", { cookie: owner })).json());
+    expect(cut.rows.map((r) => r.lead_id)).toEqual(all.rows.slice(0, 2).map((r) => r.lead_id));
+    expect(cut.truncated).toBe(true);
+  });
+
   it("forwards period, status and brand and the employee context to GET /admin/conversions", async () => {
     const seen: Request[] = [];
     const fetch = vi.fn(async (request: Request) => {

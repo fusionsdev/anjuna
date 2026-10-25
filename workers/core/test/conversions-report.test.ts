@@ -165,6 +165,33 @@ describe("GET /admin/conversions", () => {
     expect(filtered.truncated).toBe(false);
   });
 
+  it("conversionsReport honours limit and sets truncated", async () => {
+    await seed("l-1", "brand-a", { status: "uploaded", updated_at: "2026-10-20T08:00:03.000Z" });
+    await seed("l-2", "brand-a", { status: "uploaded", updated_at: "2026-10-20T08:00:02.000Z" });
+    await seed("l-3", "brand-a", { status: "uploaded", updated_at: "2026-10-20T08:00:01.000Z" });
+    const two = await parsed("&limit=2");
+    expect(short(two.rows)).toEqual(["l-1", "l-2"]);
+    expect(two.truncated).toBe(true);
+    expect(two.totals.uploaded).toBe(3);
+    const three = await parsed("&limit=3");
+    expect(short(three.rows)).toEqual(["l-1", "l-2", "l-3"]);
+    expect(three.truncated).toBe(false);
+  });
+
+  it("conversionsReport without limit returns at most 200 rows as before", async () => {
+    await seed("l-1", "brand-a", { status: "uploaded" });
+    const body = await parsed();
+    expect(body.rows).toHaveLength(1);
+    expect(body.truncated).toBe(false);
+  });
+
+  it("rejects limit 0 and limit 1001 with 422", async () => {
+    for (const limit of ["0", "1001"]) {
+      const response = await h.admin(`/admin/conversions?period=7d&now=${now}&limit=${limit}`, owner);
+      expect(response.status, limit).toBe(422);
+    }
+  });
+
   it("redacts money for an employee", async () => {
     await seedMixed();
     // A payload echo with the value 85 inside: the owner sees it, an employee gets null.

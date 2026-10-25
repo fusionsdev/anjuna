@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "../fixtures/admin/conversions.response.json";
-import { AdminApi, ConversionsQuery, ConversionsReportResponse, conversionReasonCode, employeeLastError } from "../src/index.js";
+import { AdminApi, CONVERSIONS_MAX_LIMIT, ConversionsQuery, ConversionsReportResponse, conversionReasonCode, employeeLastError } from "../src/index.js";
 
 describe("conversionReasonCode", () => {
   it.each([
@@ -61,6 +61,15 @@ describe("conversions schemas", () => {
     expect(ConversionsQuery.parse({ period: "7d" })).toEqual({ period: "7d", status: "all" });
     expect(ConversionsQuery.safeParse({ period: "90d" }).success).toBe(false);
     expect(ConversionsQuery.safeParse({ period: "7d", extra: "1" }).success).toBe(false);
+  });
+
+  it("ConversionsQuery accepts limit 1 and 1000 and rejects 0 and 1001", () => {
+    expect(ConversionsQuery.parse({ period: "7d", limit: "1" }).limit).toBe(1);
+    expect(ConversionsQuery.parse({ period: "7d", limit: "1000" }).limit).toBe(CONVERSIONS_MAX_LIMIT);
+    expect(ConversionsQuery.safeParse({ period: "7d", limit: "0" }).success).toBe(false);
+    expect(ConversionsQuery.safeParse({ period: "7d", limit: "1001" }).success).toBe(false);
+    expect(ConversionsQuery.safeParse({ period: "7d", limit: "1.5" }).success).toBe(false);
+    expect(ConversionsQuery.parse({ period: "7d" }).limit).toBeUndefined();
   });
 
   it("parses the owner fixture and an employee shape with null money", () => {
