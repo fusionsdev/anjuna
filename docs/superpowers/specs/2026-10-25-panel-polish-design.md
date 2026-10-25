@@ -14,7 +14,7 @@ Parallel lane FUS-381 (brand colors) touches `brand-runtime`, the contracts them
 
 Each PR branches from fresh origin/main after the previous one merges. PR 3 does not depend on PR 2 and may start once PR 1 merges.
 
-Out of scope (blocked list in the audit): LP wizard data, Download, the `aurum-14-step` rename, conversion requeue, passive bot logging, multi-network server post. Also out of scope: Mailing search (D2.4), a real brand delete (D8.3).
+Out of scope (blocked list in the audit): LP wizard data, Download, the `aurum-14-step` rename, conversion requeue, passive bot logging, multi-network server post. Also out of scope: Mailing search (cut by the owner on 2026-10-25, D2.4), a real brand delete (D8.3).
 
 ## Baseline facts
 
@@ -56,9 +56,9 @@ Mock core `listAudit` honours `cursor`, `limit` and its filters and returns a re
 
 The Users screen changes in PR 2; its search box ships there (D1.6).
 
-### D2.4 Mailing search is not built
+### D2.4 Mailing search is cut
 
-The Mailing screen shows four counts and no list. `MailingStatusResponse` is documented as never holding an address. A search needs a new list of email addresses visible to employees. That is a new PII surface, so it waits for an owner decision (status.md, NEEDS OWNER). Suppressions already has search.
+The owner cut Mailing search on 2026-10-25. The Mailing screen shows four counts and no list, and `MailingStatusResponse` is documented as never holding an address. A search would need a new list of email addresses visible to employees, a new PII surface. No email list is built for Mailing. Suppressions already has search.
 
 ### D3.1 Load more on Deploys, Timeline and Conversions
 
