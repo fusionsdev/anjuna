@@ -1,0 +1,62 @@
+/* Brand timeline screen only. The shared console classes (.panel .head .sub .stack .hint .note .pill .p-* .btn .mono .empty-state) come from styles.css. */
+.timeline-page { min-width: 0; }
+.timeline-page .head a { overflow-wrap: anywhere; }
+
+/* The bar wraps at any width; at 375 px every control drops to its own line instead of widening the page. */
+.tl-filters { display: flex; flex-direction: column; gap: var(--space-3); }
+.tl-filter-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+.tl-filter-row label { margin-bottom: 0; }
+.tl-presets { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.tl-presets .btn[aria-pressed="true"] { background: var(--moneybg); border-color: var(--money); color: var(--money); }
+.tl-types { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; border: 0; min-width: 0; }
+.tl-types legend { padding: 0; margin-bottom: var(--space-1); font-size: var(--text-sm); color: var(--muted); }
+.tl-check { flex-direction: row; align-items: center; gap: var(--space-2); margin-bottom: 0; }
+.tl-check input { margin: 0; }
+
+.tl-list { padding-block: var(--space-3); }
+.tl-day + .tl-day { margin-top: var(--space-4); }
+.tl-day-head { font-size: var(--text-lg); font-weight: 500; margin: 0 0 var(--space-2); }
+.tl-rows { list-style: none; margin: 0; padding: 0; position: relative; }
+/* The vertical rule runs through the middle of the 14 px marker column, which starts after the 3 px row border. */
+.tl-rows::before { content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 2px; background: var(--line); }
+
+.tl-row { position: relative; display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: var(--space-3); padding: var(--space-2) 0; border-left: 3px solid transparent; }
+.tl-row:target { background: var(--spendbg); }
+.tl-row.tl-near-change { border-left-color: var(--leak); }
+.tl-marker { position: relative; width: 14px; height: 14px; margin-top: 3px; background: var(--spend); border: 2px solid var(--raised); box-sizing: border-box; }
+.tl-marker-change { border-radius: 2px; }
+.tl-marker-event { border-radius: 50%; }
+.tl-tone-live { background: var(--money); }
+.tl-tone-warn { background: var(--leak); }
+.tl-tone-bad { background: var(--bad); }
+.tl-tone-mute { background: var(--muted); }
+.tl-tone-blue { background: var(--spend); }
+
+.tl-body { min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.tl-body p { margin: 0; }
+.tl-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+.tl-line time { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
+.tl-category { font-weight: 500; }
+/* Every cell that can hold operator or server text breaks anywhere; .pill is nowrap in styles.css, so the badges here may wrap too. */
+.tl-category, .tl-what, .tl-versions, .tl-note, .tl-actor, .tl-since a, .tl-body .pill { overflow-wrap: anywhere; }
+.tl-body .pill { white-space: normal; }
+.tl-versions { font-size: var(--text-sm); color: var(--muted); }
+.tl-note { white-space: pre-wrap; }
+.tl-meta { font-size: var(--text-sm); color: var(--muted); }
+.tl-since { font-size: var(--text-sm); }
+
+.tl-error { background: var(--badbg); color: var(--bad); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+.tl-error p { margin: 0; }
+.tl-notes { display: flex; flex-direction: column; gap: var(--space-2); }
+.tl-notes .note, .tl-notes .hint { margin: 0; }
+
+.tl-actions { margin-top: var(--space-1); }
+
+.tl-form-head { font-size: var(--text-lg); font-weight: 500; margin: 0 0 var(--space-2); }
+.tl-form { display: flex; flex-direction: column; gap: var(--space-2); }
+.tl-form-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.tl-form-row label { flex: 1 1 200px; min-width: 0; }
+.tl-form select, .tl-form input, .tl-form textarea { width: 100%; box-sizing: border-box; }
+.tl-counter { margin: 0; text-align: right; }
+.tl-field-error { margin: 0; color: var(--bad); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.tl-form-actions { display: flex; }

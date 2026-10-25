@@ -62,6 +62,7 @@ describe("factory-db migrations", () => {
     expect(results.map((r) => r.name)).toEqual([...FACTORY_DB_MIGRATIONS]);
     expect(await userTables(env.DB)).toEqual(
       [
+        "ads_account_events",
         "audit_log",
         "brand_assets",
         "brand_revisions",
@@ -116,6 +117,33 @@ describe("factory-db constraints", () => {
     await expect(insert("b1", "favicon", "image/gif", 10)).rejects.toThrow(/CHECK constraint failed/);
     await expect(insert("b1", "favicon", "image/png", 262145)).rejects.toThrow(/CHECK constraint failed/);
     await expect(insert("missing", "favicon", "image/png", 10)).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("checks ads account event type, role and note length", async () => {
+    let n = 0;
+    const insert = (type: string, role: string, note: string) => run(
+      "INSERT INTO ads_account_events (event_id, brand_id, type, occurred_at, note, created_by, created_role, created_at) VALUES (?1, 'b1', ?2, ?3, ?4, 'u1', ?5, ?3)",
+      `ev-check-${++n}`, type, NOW, note, role,
+    );
+    await insert("ad_disapproved", "employee", "");
+    await expect(insert("bogus", "employee", "")).rejects.toThrow(/CHECK constraint failed: type IN/);
+    await expect(insert("other", "system", "")).rejects.toThrow(/CHECK constraint failed: created_role IN/);
+    await expect(insert("other", "owner", "x".repeat(501))).rejects.toThrow(/CHECK constraint failed: length\(note\) <= 500/);
+    await insert("other", "owner", "x".repeat(500));
+  });
+
+  it("indexes ads account events by brand and time", async () => {
+    const row = await env.DB.prepare("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = 'idx_ads_account_events_brand'").first<{ tbl_name: string }>();
+    expect(row?.tbl_name).toBe("ads_account_events");
+  });
+
+  it("has no foreign key on ads account event brand ids", async () => {
+    await run(
+      "INSERT INTO ads_account_events (event_id, brand_id, type, occurred_at, created_by, created_role, created_at) VALUES ('ev-core-only', 'core-only', 'other', ?1, 'u1', 'owner', ?1)",
+      NOW,
+    );
+    const row = await env.DB.prepare("SELECT note FROM ads_account_events WHERE event_id = 'ev-core-only'").first<{ note: string }>();
+    expect(row?.note).toBe("");
   });
 
   it("records one receipt per install step (idempotent re-runs)", async () => {

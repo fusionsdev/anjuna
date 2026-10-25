@@ -3,6 +3,8 @@ import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisio
 import { GetLeadResponse, LeadsResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { SettingsBrandsResponse } from "../shared/settings";
+import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
+import type { TimelineRequestQuery } from "./timeline";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
 import type {
   AdminRole,
@@ -235,4 +237,12 @@ export const api = {
   },
   brandRevisions: (brandId: string) =>
     request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/revisions`).then((body) => BrandRevisionsResponse.parse(body)),
+  // spec timeline
+  brandTimeline: (brandId: string, query: TimelineRequestQuery = {}) =>
+    request<unknown>("GET", queryPath(`/api/brands/${encodeURIComponent(brandId)}/timeline`, [["from", query.from], ["to", query.to], ["types", query.types], ["limit", query.limit === undefined ? undefined : String(query.limit)]]))
+      .then((body) => TimelineResponse.parse(body)),
+  createAdsEvent: (brandId: string, body: CreateAdsEventRequest) =>
+    request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/ads-events`, body).then((result) => AdsAccountEvent.parse((result as { event?: unknown } | null)?.event)),
+  deleteAdsEvent: (brandId: string, eventId: string) =>
+    request<unknown>("DELETE", `/api/brands/${encodeURIComponent(brandId)}/ads-events/${encodeURIComponent(eventId)}`).then((result) => AdsAccountEvent.parse((result as { deleted?: unknown } | null)?.deleted)),
 };
