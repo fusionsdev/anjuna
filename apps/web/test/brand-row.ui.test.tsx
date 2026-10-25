@@ -150,3 +150,38 @@ describe("brand row status badge", () => {
     expect(badge.className).toContain("p-live");
   });
 });
+
+describe("brand table cards", () => {
+  it("brand table cells carry data-label", async () => {
+    render(<BrandLifecycle me={owner} />);
+    const row = await rowOf("live.example");
+    const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
+    expect(labels).toEqual([
+      "แบรนด์ (Brand)",
+      "สถานะ (Status)",
+      "โฟลว์ (Flow gate)",
+      "ค่าโฆษณา (Spend)",
+      "คลิก (Clicks)",
+      "ลีด (Leads)",
+      "ต้นทุน/ลีด (Cost per lead)",
+      "กำไร (Profit)",
+    ]);
+    const stats = row.nextElementSibling!;
+    expect(stats.className).toContain("stats");
+    expect(stats.querySelector("td")!.getAttribute("data-label")).toBe("");
+  });
+
+  it("brand table cells carry data-label without the owner-only cells for a non-owner", async () => {
+    render(<BrandLifecycle me={{ ...owner, role: "employee" }} />);
+    const row = await rowOf("live.example");
+    const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
+    expect(labels).toEqual([
+      "แบรนด์ (Brand)",
+      "สถานะ (Status)",
+      "โฟลว์ (Flow gate)",
+      "คลิก (Clicks)",
+      "ลีด (Leads)",
+    ]);
+    expect(row.nextElementSibling!.querySelector("td")!.getAttribute("data-label")).toBe("");
+  });
+});

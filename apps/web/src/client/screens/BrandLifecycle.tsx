@@ -533,28 +533,28 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
               const badgeStatus = brand.status === "live" && runtime?.status === "paused" ? "paused" : brand.status;
               return <Fragment key={brand.brand_id}>
                 <tr className={isSelected ? "click sel" : "click"} onClick={select}>
-                  <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && brand.name !== name && <small className="muted"> {brand.name}</small>}</button></td>
-                  <td>
+                  <td data-label="แบรนด์ (Brand)"><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && brand.name !== name && <small className="muted"> {brand.name}</small>}</button></td>
+                  <td data-label="สถานะ (Status)">
                     <StatusBadge tone={statusBadgeTone[badgeStatus] ?? "mute"} label={statusLabel[badgeStatus] ?? badgeStatus} />
                     {runtime && canToggle && <button type="button" className={runtime.status === "live" ? "btn warn row-action" : "btn pri row-action"} disabled={toggling.has(brand.brand_id)}
                       onClick={(e) => { e.stopPropagation(); void toggleStatus(runtime); }}>
                       {runtime.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
                     </button>}
                   </td>
-                  <td>{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
-                  {owner && <td className="blue">{usd(money.spend)}</td>}
-                  <td>{count(money.clicks)}</td>
-                  <td>{count(money.leads)}</td>
+                  <td data-label="โฟลว์ (Flow gate)">{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
+                  {owner && <td data-label="ค่าโฆษณา (Spend)" className="blue">{usd(money.spend)}</td>}
+                  <td data-label="คลิก (Clicks)">{count(money.clicks)}</td>
+                  <td data-label="ลีด (Leads)">{count(money.leads)}</td>
                   {owner && <>
-                    <td>{usd(money.costPerLead)}</td>
-                    <td className={money.profit === null ? undefined : money.profit < 0 ? "neg" : "pos"}>{usd(money.profit)}</td>
+                    <td data-label="ต้นทุน/ลีด (Cost per lead)">{usd(money.costPerLead)}</td>
+                    <td data-label="กำไร (Profit)" className={money.profit === null ? undefined : money.profit < 0 ? "neg" : "pos"}>{usd(money.profit)}</td>
                   </>}
                 </tr>
-                <tr className={isSelected ? "click sel stats" : "click stats"} onClick={select}><td colSpan={columns}><BrandStatsRow name={name} stats={stats} /></td></tr>
+                <tr className={isSelected ? "click sel stats" : "click stats"} onClick={select}><td colSpan={columns} data-label=""><BrandStatsRow name={name} stats={stats} /></td></tr>
               </Fragment>;
             })}
-            {brands.length === 0 && <tr><td colSpan={columns} className="muted">ยังไม่มีแบรนด์ (No brands yet)</td></tr>}
-            {brands.length > 0 && sortedRows.length === 0 && <tr><td colSpan={columns}>
+            {brands.length === 0 && <tr><td colSpan={columns} data-label="" className="muted">ยังไม่มีแบรนด์ (No brands yet)</td></tr>}
+            {brands.length > 0 && sortedRows.length === 0 && <tr><td colSpan={columns} data-label="">
               <EmptyState title="ไม่พบแบรนด์ที่ตรงกับตัวกรอง (No brands match the filter)" hint="ลองล้างตัวกรองหรือคำค้นหา (Try clearing the filter or the search)"
                 action={<button type="button" className="btn" onClick={() => { setChip("all"); setSearch(""); }}>ล้างตัวกรอง (Clear filter)</button>} />
             </td></tr>}
