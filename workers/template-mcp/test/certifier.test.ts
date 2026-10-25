@@ -67,6 +67,34 @@ describe("importTemplateVersion", () => {
       importTemplateVersion(env.FACTORY, env.ARTIFACTS, bigZip, { template_id: "big", template_name: "Big", framework: "astro", created_by: "u" }),
     ).rejects.toThrow();
   });
+
+  /** ZIP whose index.html declares a brand hex variable and uses it as a background. */
+  const themedZip = () =>
+    toZip(withIndex(goodSite(), (html) =>
+      html.replace("</head>", '<style>:root{--harbor-blue:#2563eb}.hb-top{background:var(--harbor-blue)}</style></head>')));
+
+  it("import without theme_vars detects them from the zip", async () => {
+    const result = await importTemplateVersion(env.FACTORY, env.ARTIFACTS, themedZip(), {
+      template_id: "themed",
+      template_name: "Themed",
+      framework: "astro",
+      created_by: "test-user",
+    });
+    const tv = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = ?").bind(result.template_version_id).first<{ theme_vars_json: string | null }>();
+    expect(JSON.parse(tv!.theme_vars_json!)).toEqual({ primary: ["--harbor-blue"], primary_dark: [], secondary: [] });
+
+    // An explicit null stays NULL (slightly different ZIP: sha256 is UNIQUE).
+    const nullZip = toZip(withIndex(goodSite(), (html) => html.replace("</title>", " explicit-null</title>")));
+    const explicitNull = await importTemplateVersion(env.FACTORY, env.ARTIFACTS, nullZip, {
+      template_id: "themed",
+      template_name: "Themed",
+      framework: "astro",
+      created_by: "test-user",
+      theme_vars: null,
+    });
+    const nullRow = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = ?").bind(explicitNull.template_version_id).first<{ theme_vars_json: string | null }>();
+    expect(nullRow!.theme_vars_json).toBeNull();
+  });
 });
 
 // Exercise both entry points: certification must also reject archives stored by
