@@ -484,7 +484,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const runtimeList = runtimeError ? null : runtimeBrands;
   const tableRows = brands.map((brand) => ({
     brand,
-    name: brand.name ?? brand.hostnames[0] ?? brand.brand_id,
+    name: brand.hostnames[0] ?? brand.name ?? brand.brand_id,
     health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id), { coreListFailed: coreListError !== null }),
     money: brandMoney(brand.brand_id, runtimeList, periodFunnel, spend),
     stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
@@ -533,7 +533,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
               const badgeStatus = brand.status === "live" && runtime?.status === "paused" ? "paused" : brand.status;
               return <Fragment key={brand.brand_id}>
                 <tr className={isSelected ? "click sel" : "click"} onClick={select}>
-                  <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && <small className="muted"> {brand.hostnames[0]}</small>}</button></td>
+                  <td><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && brand.name !== name && <small className="muted"> {brand.name}</small>}</button></td>
                   <td>
                     <StatusBadge tone={statusBadgeTone[badgeStatus] ?? "mute"} label={statusLabel[badgeStatus] ?? badgeStatus} />
                     {runtime && canToggle && <button type="button" className={runtime.status === "live" ? "btn warn row-action" : "btn pri row-action"} disabled={toggling.has(brand.brand_id)}
@@ -600,7 +600,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
   const site = siteUrl(brand.hostnames);
   const finalUrlFieldId = useId();
-  return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.name ?? brand.hostnames[0] ?? brand.brand_id}</h2><p className="muted">{brand.name && `${brand.hostnames[0]} · `}{brand.brand_id} · form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
+  return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</h2><p className="muted">{brand.name && brand.name !== brand.hostnames[0] && `${brand.name} · `}form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
     {isManaged && <div className="side-actions">{actions.install && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง (Install)</button>}{me.role === "owner" && actions.rollback && <button className="btn" onClick={onRollback}>ย้อนกลับ (Rollback)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่ (Redeploy)</button>}{me.role === "owner" && brand.status === "live" && actions.rollback && brand.newer_form && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)</button>}{actions.recover && me.role === "owner" && <button className="btn danger" onClick={onRecover}>กู้คืน (Recover, Owner)</button>}{onResumeWizard && (brand.status === "draft" || brand.status === "failed") && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด (Resume in wizard)</button>}{onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา (Duplicate)</button>}{actions.install && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
     {/* spec timeline: the managed-only row above would hide it for an unmanaged brand */}

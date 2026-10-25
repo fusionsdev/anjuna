@@ -80,6 +80,17 @@ export function SettingsScreen() {
   // The draft starts from the loaded brand each time a row opens; the editor then owns every edit to it.
   const openNow = (brand: BrandConfig) => { session.current++; setDraft(draftFromBrand(brand)); setBanner(null); setEditing(brand.brand_id); };
 
+  // spec polish D8.2: ?brand=<id> (the ConfigPanel link) opens that brand's editor once, when the rows first load. An unknown id opens nothing.
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (!rows || deepLinkDone.current) return;
+    deepLinkDone.current = true;
+    const id = new URLSearchParams(window.location.search).get("brand");
+    const brand = id ? rows.find((r) => r.brand_id === id)?.brand : null;
+    if (brand) openNow(brand);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
+
   /** Asks once. On discard the guard is cleared and the drawer closed here, because the router navigates on `true` even if the guard cleared itself. */
   const askDiscard = useCallback(async () => {
     // The drawer is locked while a save is in flight, so the page stays: a discard now would hide a save that core still applies.

@@ -165,3 +165,18 @@ describe("Settings in the app", () => {
     expect(requests).not.toContain("/api/settings/brands");
   });
 });
+
+describe("Settings ?brand= deep link (spec polish D8.2)", () => {
+  it("Settings opens the editor for ?brand=<id>", async () => {
+    window.history.replaceState(null, "", "/settings?brand=brand-alpha");
+    render(<SettingsScreen />);
+    expect(await screen.findByRole("complementary", { name: "แก้ไขตั้งค่า alpha.example.test (Edit settings)" })).toBeTruthy();
+  });
+
+  it("Settings ignores an unknown ?brand id", async () => {
+    window.history.replaceState(null, "", "/settings?brand=nope");
+    render(<SettingsScreen />);
+    await rowOf("alpha.example.test");
+    expect(screen.queryByRole("complementary", { name: /Edit settings/ })).toBeNull();
+  });
+});

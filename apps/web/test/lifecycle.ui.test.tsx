@@ -45,8 +45,8 @@ const resumeName = "เปิดใช้งานต่อ (Resume)";
 const keywordSection = "คีย์เวิร์ดเริ่มต้น (Keyword default)";
 const saveName = "บันทึก (Save)";
 const bucketsLabel = "ช่วงยอดเงิน (Amount buckets)";
-const abWeightLabel = "น้ำหนัก A/B (A/B weight)";
-const saveAbName = "บันทึก A/B (Save A/B)";
+const abSummarySection = "น้ำหนัก A/B (A/B weights)";
+const editInSettingsName = "แก้ไขใน Settings (Edit in Settings)";
 const flowGateSection = "เกตของโฟลว์ (Flow gate)";
 const closeName = "ปิด (Close)";
 const rotateName = "หมุนโทเคน (Rotate token)";
@@ -198,7 +198,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
   });
 
-  it("loads API rows and opens working runtime pause, keyword, buckets, A/B and gate controls", async () => {
+  it("loads API rows and opens working runtime pause, keyword, buckets and gate controls", async () => {
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeDefined();
     await openRuntimeConfig();
@@ -221,9 +221,10 @@ describe("mounted lifecycle UI with API responses", () => {
     fireEvent.click(section(panel, bucketsLabel).getByRole("button", { name: saveName }));
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ amount_buckets: [200, 600] }));
 
-    fireEvent.change(await within(panel).findByRole("slider", { name: abWeightLabel }), { target: { value: "70" } });
-    fireEvent.click(within(panel).getByRole("button", { name: saveAbName }));
-    await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ ab_config: { variants: [{ id: "lite_v1", weight: 70 }, { id: "full_v1", weight: 30 }] } }));
+    // spec polish D8.2: A/B is read-only here and points to Settings.
+    expect(section(panel, abSummarySection).getByText("exp-1: Lite (lite_v1) 50% / 14 ขั้น (aurum-14-step) 50%")).toBeDefined();
+    expect(section(panel, abSummarySection).getByRole("link", { name: editInSettingsName }).getAttribute("href")).toBe("/settings?brand=brand-a");
+    expect(within(panel).queryByRole("slider")).toBeNull();
 
     fireEvent.change(section(panel, flowGateSection).getByRole("combobox"), { target: { value: "signed_cookie" } });
     await answerConfirm(true);
@@ -251,6 +252,7 @@ describe("mounted lifecycle UI with API responses", () => {
     await within(panel).findAllByRole("textbox");
     expect(within(panel).queryByRole("button", { name: pauseName })).toBeNull();
     expect(section(panel, keywordSection).getByRole("textbox")).toBeDefined();
+    expect(within(panel).queryByRole("heading", { name: abSummarySection })).toBeNull();
     expect(within(panel).queryByRole("textbox", { name: bucketsLabel })).toBeNull();
     expect(within(panel).queryByRole("combobox")).toBeNull();
     expect(within(panel).queryByRole("button", { name: rotateName })).toBeNull();
@@ -267,7 +269,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("button", { name: pauseName });
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", "โลโก้และไอคอน (Logo and favicon)", rollbackName, "เวอร์ชันเทมเพลต (Template version, Owner เท่านั้น)", "น้ำหนัก A/B (A/B weights, รวมต้องเป็น 100%)", bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
+      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", "โลโก้และไอคอน (Logo and favicon)", rollbackName, "เวอร์ชันเทมเพลต (Template version, Owner เท่านั้น)", abSummarySection, bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
     ]);
     for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)", accountLabel, actionLabel, projectLabel]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
     expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();
@@ -310,17 +312,27 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(lastBody("/api/brands/brand-a")).not.toHaveProperty("google_conversion_action");
   });
 
-  it("shows the brand name in the list and the detail header with the hostname as secondary text", async () => {
+  // spec polish D6.1: the domain leads; the name follows in small muted text.
+  it("a brand row shows the domain first and the name after it", async () => {
     runtimeAvailable = false;
     lifecycleRows = [{ ...brand, name: "Level Lending" }];
     render(<BrandLifecycle me={employee} />);
-    const item = await screen.findByRole("button", { name: /Level Lending/ });
-    expect(item.textContent).toContain("renderable.test");
-    expect(within(item).getByText("Level Lending").tagName).toBe("B");
-    expect(within(item).getByText("renderable.test").tagName).not.toBe("B");
-    const header = await screen.findByRole("heading", { name: "Level Lending" });
-    expect(header.textContent).toBe("Level Lending");
-    expect(header.closest("section")!.textContent).toContain("renderable.test");
+    const item = await screen.findByRole("button", { name: /renderable\.test/ });
+    expect(item.textContent).toContain("Level Lending");
+    expect(within(item).getByText("renderable.test").tagName).toBe("B");
+    expect(within(item).getByText("Level Lending").tagName).not.toBe("B");
+  });
+
+  it("the detail header shows the domain and no raw brand id", async () => {
+    runtimeAvailable = false;
+    lifecycleRows = [{ ...brand, name: "Level Lending" }];
+    render(<BrandLifecycle me={employee} />);
+    const header = await screen.findByRole("heading", { name: "renderable.test" });
+    expect(header.textContent).toBe("renderable.test");
+    const subtitle = header.nextElementSibling!;
+    expect(subtitle.textContent).toContain("Level Lending");
+    expect(subtitle.textContent).not.toContain("brand-a");
+    expect(screen.queryByRole("heading", { name: "Level Lending" })).toBeNull();
   });
 
   it("falls back to the hostname when a brand has no stored name", async () => {
@@ -661,7 +673,7 @@ describe("7-day stats row in the brands list", () => {
     routes.set("GET /api/funnel", () => json({ from: "2026-09-29T00:00:00.000Z", to: "2026-10-06T00:00:00.000Z", rows: [] }));
     render(<BrandLifecycle me={employee} />);
     await expectStats(/renderable.test/, ["คลิก (Clicks) 0", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
-    await expectStats(/Draft Co/, ["คลิก (Clicks) —", "ลีด (Leads) —", "ขายได้ (Sold) —", "รอผล (Pending) —"]);
+    await expectStats(/draft\.test/, ["คลิก (Clicks) —", "ลีด (Leads) —", "ขายได้ (Sold) —", "รอผล (Pending) —"]);
   });
 
   it("shows every number as unknown when both sources fail, and clicks alone when only the funnel fails", async () => {
