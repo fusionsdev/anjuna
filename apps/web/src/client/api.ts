@@ -1,6 +1,7 @@
 import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { GetLeadResponse, LeadsResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
+import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { BrandEditState } from "../shared/brand-edit";
 import { SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
@@ -218,6 +219,14 @@ export const api = {
   /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */
   trafficRiskExportUrl: (period: RiskPeriod, hostname?: string) =>
     `/api/traffic/risk/export?${new URLSearchParams({ period, ...(hostname ? { hostname } : {}) })}`,
+  // spec traffic
+  trafficReport: (period: TrafficLogPeriod) =>
+    request<unknown>("GET", `/api/traffic/report?${new URLSearchParams({ period })}`).then((body) => TrafficReportResponse.parse(body)),
+  /** A plain link: the browser downloads the CSV with the session cookie. */
+  trafficReportCsvUrl: (period: TrafficLogPeriod) => `/api/traffic/report.csv?${new URLSearchParams({ period })}`,
+  clientErrors: (q: { period: TrafficLogPeriod; brand_id?: string; error_type?: string; cursor?: string }) =>
+    request<unknown>("GET", queryPath("/api/client-errors", [["period", q.period], ["brand_id", q.brand_id], ["error_type", q.error_type], ["cursor", q.cursor]]))
+      .then((body) => ClientErrorsResponse.parse(body)),
   // spec leads
   leads: (filter: LeadFilterState, cursor?: string | null) =>
     request<unknown>("GET", queryPath("/api/leads", [...leadFilterEntries(filter), ["cursor", cursor]])).then((body) => LeadsResponse.parse(body)),

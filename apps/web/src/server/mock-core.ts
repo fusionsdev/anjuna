@@ -23,6 +23,10 @@ import {
   SuppressionsQuery,
   TrafficBreakdownQuery,
   trafficWindow,
+  ClientErrorsQuery, // spec traffic
+  TrafficReportQuery, // spec traffic
+  trafficLogBuckets, // spec traffic
+  trafficLogWindow, // spec traffic
   adminContextFromHeaders,
   authorize,
   employeeLastError,
@@ -49,6 +53,8 @@ import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.jso
 import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
 import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.json";
 import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
+import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json"; // spec traffic
+import clientErrors from "@anjuna/contracts/fixtures/admin/client-errors.response.json"; // spec traffic
 
 interface State {
   brands: Map<string, BrandConfig>;
@@ -366,6 +372,33 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
     case "trafficRiskExport": {
       const hostname = url.searchParams.get("hostname");
       return json(200, { ...trafficRiskExport, rows: trafficRiskExport.rows.filter((row) => !hostname || row.hostname === hostname) });
+    }
+    // spec traffic: golden fixtures with the query period echoed; the employee view nulls error_message.
+    case "trafficReport": {
+      const q = TrafficReportQuery.safeParse(Object.fromEntries(url.searchParams));
+      if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+      const window = trafficLogWindow(q.data.period);
+      const first = trafficReport.trend[0]!;
+      const zero = { landing_views: 0, form_starts: 0, leads: 0, validation_errors: 0, redirect_errors: 0 };
+      const trend = trafficLogBuckets(window).map((at, i) => (i === 0 ? { ...first, at } : { ...zero, at }));
+      return json(200, { ...trafficReport, period: q.data.period, ...window, trend });
+    }
+    case "clientErrors": {
+      const q = ClientErrorsQuery.safeParse(Object.fromEntries(url.searchParams));
+      if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+      const owner = ctx.actor_role === "owner";
+      const inBrand = clientErrors.rows.filter((r) => !q.data.brand_id || r.brand_id === q.data.brand_id);
+      const tally = new Map<string, number>();
+      for (const r of inBrand) tally.set(r.error_type, (tally.get(r.error_type) ?? 0) + 1);
+      const counts = [...tally]
+        .map(([error_type, count]) => ({ error_type, count }))
+        .sort((a, b) => b.count - a.count || (a.error_type < b.error_type ? -1 : a.error_type > b.error_type ? 1 : 0));
+      const rows = inBrand
+        .filter((r) => !q.data.error_type || r.error_type === q.data.error_type)
+        .filter((r) => !q.data.cursor || r.id < Number(q.data.cursor))
+        .map((r) => ({ ...r, error_message: owner ? r.error_message : null }));
+      const { from, to } = trafficLogWindow(q.data.period);
+      return json(200, { ...clientErrors, period: q.data.period, from, to, counts, rows });
     }
     default: {
       const unexpected: never = endpoint;

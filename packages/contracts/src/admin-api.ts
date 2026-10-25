@@ -32,6 +32,7 @@ import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, Tr
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
 import { SpendPeriod, SpendQuery, SpendReportResponse } from "./spend.js";
 import { CONVERSION_STATUSES, ConversionReasonCode, ConversionStatus } from "./conversions.js";
+import { ClientErrorsQuery, ClientErrorsResponse, TrafficReportQuery, TrafficReportResponse } from "./traffic-log.js"; // spec traffic
 
 // --- roles and request context ------------------------------------------------------------------
 
@@ -992,6 +993,15 @@ export const AdminApi = {
     min_role: "owner",
     query: TrafficRiskExportQuery,
     response: TrafficRiskExportResponse,
+  },
+  // spec traffic
+  trafficReport: {
+    method: "GET", path: "/admin/traffic/report", min_role: "employee",
+    query: TrafficReportQuery, response: TrafficReportResponse,
+  },
+  clientErrors: {
+    method: "GET", path: "/admin/client-errors", min_role: "employee",
+    query: ClientErrorsQuery, response: ClientErrorsResponse,
   },
 } as const;
 export type AdminEndpoint = keyof typeof AdminApi;

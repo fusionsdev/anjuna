@@ -12,6 +12,8 @@ import {
   AdminRequestContext,
   AlertsQuery,
   AlertsReportResponse,
+  ClientErrorsResponse,
+  TrafficReportResponse,
   adminContextFromHeaders,
   adminContextToHeaders,
   AuditListResponse,
@@ -88,6 +90,8 @@ describe("golden fixtures validate", () => {
     ["conversions.response.json", ConversionsReportResponse],
     ["traffic-risk.response.json", TrafficRiskResponse],
     ["traffic-risk.export.response.json", TrafficRiskExportResponse],
+    ["traffic-report.response.json", TrafficReportResponse], // spec traffic
+    ["client-errors.response.json", ClientErrorsResponse], // spec traffic
     ["error.unauthorized.json", AdminError],
     ["error.forbidden-role.endpoint.json", AdminError],
     ["error.forbidden-role.fields.json", AdminError],
@@ -123,6 +127,8 @@ describe("golden fixtures validate", () => {
     expect(AdminApi.conversionsReport.response.safeParse(fixture(A("conversions.response.json"))).success).toBe(true);
     expect(AdminApi.trafficRisk.response.safeParse(fixture(A("traffic-risk.response.json"))).success).toBe(true);
     expect(AdminApi.trafficRiskExport.response.safeParse(fixture(A("traffic-risk.export.response.json"))).success).toBe(true);
+    expect(AdminApi.trafficReport.response.safeParse(fixture(A("traffic-report.response.json"))).success).toBe(true); // spec traffic
+    expect(AdminApi.clientErrors.response.safeParse(fixture(A("client-errors.response.json"))).success).toBe(true); // spec traffic
   });
 
   it("every error code maps to the agreed HTTP status", () => {
@@ -296,7 +302,7 @@ describe("secrets never appear in GET fixtures", () => {
  * deletion, manage users) are listed separately and must NOT appear in the table.
  */
 const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by: (AdminEndpoint | `patch:${string}`)[] }[] = [
-  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "trafficBreakdown", "alertsReport", "mailingStatus", "trafficRisk"] },
+  { action: "View brands, funnel, alerts, mailing status", employee: "yes", covered_by: ["listBrands", "getBrand", "leadAggregates", "funnelReport", "trafficBreakdown", "alertsReport", "mailingStatus", "trafficRisk", "trafficReport", "clientErrors"] },
   { action: "Export high-risk clicks for a refund request (FUS-372)", employee: "no", covered_by: ["trafficRiskExport"] },
   { action: "Edit keyword default", employee: "yes", covered_by: ["patch:keyword"] },
   { action: "Edit site text", employee: "yes", covered_by: ["patch:site_text"] },
@@ -408,7 +414,9 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/leads")).toEqual({ endpoint: "listLeads", params: {} });
     expect(matchAdminRoute("GET", "/admin/leads/export")).toEqual({ endpoint: "leadExport", params: {} });
     expect(matchAdminRoute("GET", "/admin/suppressions")).toEqual({ endpoint: "listSuppressions", params: {} });
-    expect(ADMIN_ENDPOINTS).toHaveLength(19);
+    expect(matchAdminRoute("GET", "/admin/traffic/report")).toEqual({ endpoint: "trafficReport", params: {} }); // spec traffic
+    expect(matchAdminRoute("GET", "/admin/client-errors")).toEqual({ endpoint: "clientErrors", params: {} }); // spec traffic
+    expect(ADMIN_ENDPOINTS).toHaveLength(21);
   });
 });
 

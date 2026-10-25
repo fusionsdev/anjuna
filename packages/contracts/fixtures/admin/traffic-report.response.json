@@ -1,0 +1,52 @@
+{
+  "period": "7d",
+  "from": "2026-10-27T00:00:00.000Z",
+  "to": "2026-11-02T12:34:00.000Z",
+  "bucket": "day",
+  "totals": { "landing_views": 160, "form_starts": 72, "leads": 21, "validation_errors": 9, "redirect_errors": 2 },
+  "breakdowns": {
+    "brand": [
+      { "key": "brand-a", "landing_views": 100, "form_starts": 48, "leads": 15, "validation_errors": 6, "redirect_errors": 1 },
+      { "key": "brand-b", "landing_views": 60, "form_starts": 24, "leads": 6, "validation_errors": 3, "redirect_errors": 1 }
+    ],
+    "hostname": [
+      { "key": "brand-a.example", "landing_views": 100, "form_starts": 48, "leads": 15, "validation_errors": 6, "redirect_errors": 1 },
+      { "key": "brand-b.example", "landing_views": 60, "form_starts": 24, "leads": 6, "validation_errors": 3, "redirect_errors": 1 }
+    ],
+    "device": [
+      { "key": "mobile", "landing_views": 110, "form_starts": 50, "leads": 14, "validation_errors": 6, "redirect_errors": 1 },
+      { "key": "desktop", "landing_views": 50, "form_starts": 22, "leads": 7, "validation_errors": 3, "redirect_errors": 1 }
+    ],
+    "browser": [
+      { "key": "chrome", "landing_views": 90, "form_starts": 40, "leads": 12, "validation_errors": 5, "redirect_errors": 1 },
+      { "key": "safari", "landing_views": 70, "form_starts": 32, "leads": 9, "validation_errors": 4, "redirect_errors": 1 }
+    ],
+    "source": [
+      { "key": "google", "landing_views": 120, "form_starts": 56, "leads": 17, "validation_errors": 7, "redirect_errors": 1 },
+      { "key": "unknown", "landing_views": 40, "form_starts": 16, "leads": 4, "validation_errors": 2, "redirect_errors": 1 }
+    ]
+  },
+  "trend": [
+    { "at": "2026-10-27T00:00:00.000Z", "landing_views": 20, "form_starts": 9, "leads": 3, "validation_errors": 1, "redirect_errors": 0 },
+    { "at": "2026-10-28T00:00:00.000Z", "landing_views": 24, "form_starts": 11, "leads": 3, "validation_errors": 2, "redirect_errors": 1 },
+    { "at": "2026-10-29T00:00:00.000Z", "landing_views": 18, "form_starts": 8, "leads": 2, "validation_errors": 1, "redirect_errors": 0 },
+    { "at": "2026-10-30T00:00:00.000Z", "landing_views": 26, "form_starts": 12, "leads": 4, "validation_errors": 1, "redirect_errors": 0 },
+    { "at": "2026-10-31T00:00:00.000Z", "landing_views": 22, "form_starts": 10, "leads": 3, "validation_errors": 2, "redirect_errors": 1 },
+    { "at": "2026-11-01T00:00:00.000Z", "landing_views": 30, "form_starts": 14, "leads": 4, "validation_errors": 1, "redirect_errors": 0 },
+    { "at": "2026-11-02T00:00:00.000Z", "landing_views": 20, "form_starts": 8, "leads": 2, "validation_errors": 1, "redirect_errors": 0 }
+  ],
+  "recent": [
+    {
+      "at": "2026-11-02T12:31:07.000Z", "event_type": "lead_submitted", "hostname": "brand-a.example", "brand_id": "brand-a",
+      "form_step": 4, "error_code": null, "device": "mobile", "browser": "chrome", "source": "google", "session_ref": "3f9a1c0be274"
+    },
+    {
+      "at": "2026-11-02T12:29:40.000Z", "event_type": "form_validation_failed", "hostname": "brand-b.example", "brand_id": "brand-b",
+      "form_step": 2, "error_code": "invalid_zip", "device": "desktop", "browser": "safari", "source": null, "session_ref": "a81d05e7c9b2"
+    },
+    {
+      "at": "2026-11-02T12:25:02.000Z", "event_type": "landing_viewed", "hostname": "brand-a.example", "brand_id": "brand-a",
+      "form_step": null, "error_code": null, "device": "mobile", "browser": "chrome", "source": "google", "session_ref": "0d4e6b7a1f33"
+    }
+  ]
+}

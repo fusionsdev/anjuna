@@ -18,6 +18,8 @@ import { NotFound } from "./screens/NotFound";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
 import { SettingsScreen } from "./screens/Settings";
+import { TrafficScreen } from "./screens/Traffic"; // spec traffic
+import { ClientErrorsScreen } from "./screens/ClientErrors"; // spec traffic
 import { roleAtLeast } from "@anjuna/contracts";
 import { PANEL_ROLE_TABLE } from "../server/panel-roles";
 import { navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
@@ -76,6 +78,8 @@ export function App() {
     { id: "new-brand", label: "สร้างแบรนด์ใหม่", show: true },
     { id: "templates", label: "เทมเพลต", show: true },
     { id: "funnel", label: "ฟันเนล", show: true, gap: true },
+    { id: "traffic", label: "ทราฟฟิก (Traffic)", show: true }, // spec traffic
+    { id: "errors", label: "ข้อผิดพลาดฝั่งเว็บ (Client errors)", show: true }, // spec traffic
     { id: "leads", label: "ลีด (Leads)", show: true }, // spec leads
     { id: "conversions", label: "คอนเวอร์ชัน", show: true },
     { id: "alerts", label: "การแจ้งเตือน", show: true, badge: alertCount !== null ? { count: alertCount, label: `${alertCount} รายการที่ต้องจัดการ` } : null },
@@ -122,6 +126,9 @@ export function App() {
       )}
       {view === "builder-keys" && <BuilderKeysScreen me={me} />}
       {view === "funnel" && <FunnelScreen />}
+      {/* spec traffic */}
+      {view === "traffic" && <TrafficScreen />}
+      {view === "errors" && <ClientErrorsScreen me={me} />}
       {view === "conversions" && <ConversionsScreen me={me} />}
       {view === "alerts" && <AlertsScreen />}
       {view === "mailing" && <MailingScreen />}
