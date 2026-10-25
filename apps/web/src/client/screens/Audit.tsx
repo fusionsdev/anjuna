@@ -19,11 +19,12 @@ const TARGET_TYPES: ReadonlyArray<{ value: string; label: string }> = [
   { value: "suppression", label: "รายการบล็อก (suppression)" },
 ];
 
-function actorCell(entry: AuditEntry, usersById: Map<string, PanelUser>, me: Me) {
+function actorCell(entry: AuditEntry, usersById: Map<string, PanelUser>, me: Me, usersFailed: boolean) {
   if (entry.actor_role === "system") return <span>ระบบ (system)</span>;
   const user = usersById.get(entry.actor_id);
   if (user) return <span style={{ overflowWrap: "anywhere" }}>{user.name} ({user.email})</span>;
   if (entry.actor_id === me.id) return <span style={{ overflowWrap: "anywhere" }}>{me.email}</span>;
+  if (usersFailed) return <code style={{ fontSize: "0.85em", overflowWrap: "anywhere" }}>{entry.actor_id}</code>;
   return <code title="ผู้ใช้ที่ถูกลบ (Deleted user)" style={{ fontSize: "0.85em", overflowWrap: "anywhere" }}>{entry.actor_id}</code>;
 }
 
@@ -33,10 +34,13 @@ export function AuditScreen({ me }: { me: Me }) {
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [users, setUsers] = useState<PanelUser[]>([]);
+  const [usersFailed, setUsersFailed] = useState(false);
   const [actorId, setActorId] = useState("");
   const [targetType, setTargetType] = useState("");
   const [targetId, setTargetId] = useState("");
+  const [targetIdInput, setTargetIdInput] = useState("");
   const domains = useBrandDomains();
   const labelOf = (brandId: string) => domains.get(brandId) ?? brandId;
   // Bumped on every first-page load, so a Load more answer for old filters is dropped.
@@ -47,8 +51,8 @@ export function AuditScreen({ me }: { me: Me }) {
     if (!owner) return;
     let active = true;
     api.users().then(
-      (list) => { if (active) setUsers(list); },
-      () => { if (active) setUsers([]); },
+      (list) => { if (active) { setUsers(list); setUsersFailed(false); } },
+      () => { if (active) { setUsers([]); setUsersFailed(true); } },
     );
     return () => { active = false; };
   }, [owner]);
@@ -61,6 +65,9 @@ export function AuditScreen({ me }: { me: Me }) {
   useEffect(() => {
     const mine = ++generation.current;
     setLoadingMore(false);
+    setEntries([]);
+    setNextCursor(null);
+    setLoadMoreError(null);
     api.audit(query).then(
       (r) => {
         if (generation.current !== mine) return;
@@ -87,8 +94,13 @@ export function AuditScreen({ me }: { me: Me }) {
         setEntries((prev) => (prev ? [...prev, ...page.entries] : page.entries));
         setNextCursor(page.next_cursor);
         setLoadingMore(false);
+        setLoadMoreError(null);
       },
-      () => { if (generation.current === mine) setLoadingMore(false); },
+      (e: unknown) => {
+        if (generation.current !== mine) return;
+        setLoadingMore(false);
+        setLoadMoreError(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ");
+      },
     );
   };
 
@@ -97,7 +109,7 @@ export function AuditScreen({ me }: { me: Me }) {
 
   const columns: Column<AuditEntry>[] = [
     { key: "at", header: "เวลา", cell: (e) => fmt(e.at) },
-    { key: "actor", header: "ผู้ใช้", cell: (e) => actorCell(e, usersById, me) },
+    { key: "actor", header: "ผู้ใช้", cell: (e) => actorCell(e, usersById, me, usersFailed) },
     {
       key: "role",
       header: "สิทธิ์",
@@ -125,31 +137,33 @@ export function AuditScreen({ me }: { me: Me }) {
               </select>
             </label>
             <label>ประเภทเป้าหมาย (Target type)
-              <select value={targetType} onChange={(e) => { setTargetType(e.target.value); setTargetId(""); }}>
+              <select value={targetType} onChange={(e) => { setTargetType(e.target.value); setTargetId(""); setTargetIdInput(""); }}>
                 <option value="">ทั้งหมด (All)</option>
                 {TARGET_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </label>
             {targetType === "brand" ? (
               <label>แบรนด์ (Brand)
-                <select value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+                <select value={targetId} onChange={(e) => { setTargetId(e.target.value); setTargetIdInput(e.target.value); }}>
                   <option value="">ทั้งหมด (All)</option>
                   {brandOptions.map(([id, domain]) => <option key={id} value={id}>{domain}</option>)}
                 </select>
               </label>
             ) : (
               <label>รหัสเป้าหมาย (Target ID)
-                <input type="text" value={targetId} onChange={(e) => setTargetId(e.target.value)} />
+                <input type="text" value={targetIdInput} onChange={(e) => setTargetIdInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") setTargetId(targetIdInput); }} onBlur={() => setTargetId(targetIdInput)} />
               </label>
             )}
           </div>
         </section>
       )}
+      {owner && usersFailed && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>โหลดชื่อผู้ใช้ไม่สำเร็จ (Could not load user names)</div>}
       {error && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>{error}</div>}
       {!entries && !error && <Spinner />}
       {entries && (
         <section className="panel" style={{ marginTop: 16 }}>
           <DataTable label="ประวัติการแก้ไข" columns={columns} rows={entries} rowKey={(e) => String(e.id)} empty={<EmptyState title="ยังไม่มีรายการ" />} />
+          {loadMoreError && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>{loadMoreError}</div>}
           <LoadMore shown={entries.length} hasMore={nextCursor !== null} atMax={false} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
         </section>
       )}

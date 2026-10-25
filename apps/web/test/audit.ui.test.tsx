@@ -183,4 +183,81 @@ describe("Audit screen", () => {
     expect(within(table).getByText("brand.resume")).toBeTruthy();
     expect(within(table).queryByText("brand.pause")).toBeNull();
   });
+
+  it("Load more during a filter reload sends no stale cursor", async () => {
+    mockLabels();
+    mockUsers();
+    let release: ((value: { entries: AuditEntry[]; next_cursor: string | null }) => void) | undefined;
+    const auditSpy = vi.spyOn(api, "audit").mockImplementation((query) => {
+      if (query?.actor_id === "u2") return new Promise((resolve) => { release = resolve; });
+      return Promise.resolve({ entries: [entry({ id: 2 })], next_cursor: "cur2" });
+    });
+    render(<AuditScreen me={me} />);
+    await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+    await screen.findByRole("option", { name: "Alice A (alice@example.test)" });
+    auditSpy.mockClear();
+    fireEvent.change(screen.getByLabelText(/ผู้ใช้ \(Actor\)/), { target: { value: "u2" } });
+    const btn = screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" });
+    if (btn) fireEvent.click(btn);
+    expect(auditSpy).not.toHaveBeenCalledWith(expect.objectContaining({ cursor: "cur2" }));
+    expect(auditSpy.mock.calls.filter(([q]) => q?.cursor)).toHaveLength(0);
+    await act(async () => {
+      release!({ entries: [entry({ id: 3, actor_id: "u2", action: "brand.resume" })], next_cursor: null });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const table = await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+    expect(within(table).getByText("brand.resume")).toBeTruthy();
+  });
+
+  it("a failed Load more shows the error and a retry works", async () => {
+    mockLabels();
+    mockUsers();
+    let fail = true;
+    vi.spyOn(api, "audit").mockImplementation(async (query) => {
+      if (query?.cursor === "cur2") {
+        if (fail) throw new ApiError(503, { error: "internal" });
+        return { entries: [entry({ id: 1, action: "brand.resume" })], next_cursor: null };
+      }
+      return { entries: [entry({ id: 2 })], next_cursor: "cur2" };
+    });
+    render(<AuditScreen me={me} />);
+    const table = await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    expect(await screen.findByText("เกิดข้อผิดพลาด (503)")).toBeTruthy();
+    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(1);
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(within(table).getAllByRole("row").slice(1)).toHaveLength(2));
+    expect(within(table).getByText("brand.resume")).toBeTruthy();
+    expect(screen.queryByText("เกิดข้อผิดพลาด (503)")).toBeNull();
+  });
+
+  it("typing a target id sends one request on Enter", async () => {
+    mockLabels();
+    mockUsers();
+    const auditSpy = vi.spyOn(api, "audit").mockResolvedValue({ entries: [entry({ id: 2 })], next_cursor: null });
+    render(<AuditScreen me={me} />);
+    await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+    fireEvent.change(screen.getByLabelText(/ประเภทเป้าหมาย \(Target type\)/), { target: { value: "user" } });
+    await waitFor(() => expect(auditSpy).toHaveBeenCalledWith(expect.objectContaining({ target_type: "user" })));
+    auditSpy.mockClear();
+    const input = screen.getByLabelText(/รหัสเป้าหมาย \(Target ID\)/);
+    fireEvent.change(input, { target: { value: "u" } });
+    fireEvent.change(input, { target: { value: "u9" } });
+    expect(auditSpy).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(auditSpy).toHaveBeenCalledWith(expect.objectContaining({ target_type: "user", target_id: "u9" })));
+    expect(auditSpy.mock.calls.filter(([q]) => q?.target_id)).toHaveLength(1);
+  });
+
+  it("a failed users load shows the note and no deleted-user title", async () => {
+    mockLabels();
+    vi.spyOn(api, "users").mockRejectedValue(new ApiError(503, { error: "internal" }));
+    vi.spyOn(api, "audit").mockResolvedValue({ entries: [entry({ actor_id: "gone-1" })], next_cursor: null });
+    render(<AuditScreen me={me} />);
+    expect(await screen.findByText("โหลดชื่อผู้ใช้ไม่สำเร็จ (Could not load user names)")).toBeTruthy();
+    const table = await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+    const raw = within(table).getByText("gone-1");
+    expect(raw.getAttribute("title")).not.toBe("ผู้ใช้ที่ถูกลบ (Deleted user)");
+  });
 });
