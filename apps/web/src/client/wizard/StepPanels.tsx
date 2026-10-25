@@ -1,6 +1,7 @@
 /** The body of each wizard step. All state lives in BrandWizard; these are controlled inputs. */
-import { COPY_KEYWORD_MARKER, COPY_LIMITS, COPY_TEXT_MAX, SITE_TEXT_LIMITS, type CopyField, type TemplateTextDefaults, type TemplateVersionSummary } from "@anjuna/contracts";
+import { COPY_KEYWORD_MARKER, COPY_LIMITS, COPY_TEXT_MAX, SITE_TEXT_LIMITS, type BrandTheme, type CopyField, type TemplateTextDefaults, type TemplateThemeVars, type TemplateVersionSummary } from "@anjuna/contracts";
 import type { ZoneCheckResponse } from "../../shared/wizard";
+import { ColorPair } from "../components/ColorPair";
 import { FIELD_LABEL } from "./messages";
 import { copyFieldErrors, visibleCopyLength, type FieldErrors, type FieldKey, type WizardForm } from "./steps";
 
@@ -75,7 +76,9 @@ export function BrandPanel({ form, errors, set, hasDraft, zone, onCheckZone }: F
   );
 }
 
-export function TemplatePanel({ templates, selected, error, onSelect }: { templates: TemplateVersionSummary[]; selected: string; error?: string; onSelect: (id: string) => void }) {
+export function TemplatePanel({ templates, selected, error, onSelect, theme, onTheme, themeVars }: { templates: TemplateVersionSummary[]; selected: string; error?: string; onSelect: (id: string) => void; theme: BrandTheme | null; onTheme: (next: BrandTheme | null) => void; themeVars?: TemplateThemeVars | null }) {
+  // Unknown map (null/undefined) keeps the pickers on; a map with no variables at all turns them off.
+  const noVars = !!themeVars && themeVars.primary.length === 0 && themeVars.primary_dark.length === 0 && themeVars.secondary.length === 0;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12, marginTop: 12 }}>
       {templates.length === 0 && <p role="status">ยังไม่มีเทมเพลตที่อนุมัติ ให้ Owner อนุมัติเทมเพลตก่อน (No approved template yet, ask the Owner to approve one)</p>}
@@ -89,6 +92,11 @@ export function TemplatePanel({ templates, selected, error, onSelect }: { templa
         ))}
       </div>
       {error && <p className="neg" role="alert">{error}</p>}
+      <div style={{ display: "grid", gap: 8, gridColumn: "1 / -1" }}>
+        <h3>สีแบรนด์ (Brand colors)</h3>
+        {noVars && <p role="note" className="hint">เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)</p>}
+        <ColorPair value={theme} onChange={onTheme} disabled={noVars} />
+      </div>
     </div>
   );
 }

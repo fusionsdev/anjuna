@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 import { BrandWizard } from "../src/client/screens/BrandWizard";
+import { TemplatePanel } from "../src/client/wizard/StepPanels";
 import { PANEL_ROLE_TABLE } from "../src/server/panel-roles";
 import type { Me } from "../src/client/api";
 
@@ -126,7 +127,8 @@ describe("per-step validation", () => {
     ]);
     next();
     await heading("เทมเพลต (Template)");
-    expect(screen.queryByRole("textbox")).toBeNull();
+    // Only the two brand color hex fields are text inputs on this step.
+    expect(screen.getAllByRole("textbox").map((box) => box.getAttribute("aria-label"))).toEqual(["รหัสสีหลัก (Primary hex)", "รหัสสีรอง (Secondary hex)"]);
     expect(screen.queryByText(/APR|Representative example|Unsupported states|Min term|Max term/)).toBeNull();
     expect(screen.queryByRole("heading", { name: "ผลิตภัณฑ์ (Product)" })).toBeNull();
   });
@@ -453,6 +455,54 @@ describe("template step without approved templates", () => {
     await heading("เทมเพลต (Template)");
     expect(screen.getByRole("status").textContent).toContain("ยังไม่มีเทมเพลตที่อนุมัติ");
     expect((screen.getByRole("button", { name: "ถัดไป (Next)" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("template step brand colors", () => {
+  const THEME = { primary: "#112233", secondary: "#445566" };
+  const PRIMARY_HEX = "รหัสสีหลัก (Primary hex)";
+  const RESET = "ใช้สีของเทมเพลต (Use template colors)";
+
+  it("template step saves profile.theme in the draft", async () => {
+    hold({ contact: CONTACT, copy: {} });
+    setup(employee, { brandId: "brand_new", initialStep: 1 });
+    await heading("เทมเพลต (Template)");
+    fireEvent.change(screen.getByLabelText("สีหลัก (Primary)"), { target: { value: "#112233" } });
+    fireEvent.change(screen.getByLabelText("สีรอง (Secondary)"), { target: { value: "#445566" } });
+    next();
+    await heading("ข้อความ (Copy)");
+    expect(patches()).toHaveLength(1);
+    expect(patches()[0]!.body).toEqual({ profile: { contact: CONTACT, copy: {}, theme: THEME } });
+  });
+
+  it("reset saves the draft without theme", async () => {
+    hold({ contact: CONTACT, theme: THEME });
+    setup(employee, { brandId: "brand_new", initialStep: 1 });
+    await heading("เทมเพลต (Template)");
+    expect(text(PRIMARY_HEX).value).toBe("#112233");
+    fireEvent.click(screen.getByRole("button", { name: RESET }));
+    next();
+    await heading("ข้อความ (Copy)");
+    expect(patches()).toHaveLength(1);
+    const profile = patches()[0]!.body.profile as Record<string, unknown>;
+    expect(profile).toEqual({ contact: CONTACT });
+    expect("theme" in profile).toBe(false);
+  });
+
+  it("makes no extra request when the colors are untouched", async () => {
+    hold({ contact: CONTACT, theme: THEME });
+    setup(employee, { brandId: "brand_new", initialStep: 1 });
+    await heading("เทมเพลต (Template)");
+    next();
+    await heading("ข้อความ (Copy)");
+    expect(patches()).toHaveLength(0);
+  });
+
+  it("pickers are disabled with the no-variables note when the template maps none", () => {
+    render(<TemplatePanel templates={[]} selected="" theme={null} onTheme={vi.fn()} themeVars={{ primary: [], primary_dark: [], secondary: [] }} onSelect={vi.fn()} />);
+    expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)");
   });
 });
 
