@@ -1,13 +1,18 @@
 // spec traffic
 import type { TrafficReportResponse } from "@anjuna/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
+import trafficFixture from "@anjuna/contracts/fixtures/admin/traffic-report.response.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/client/api";
 import { TrendChart } from "../src/client/components/TrendChart";
 
+const originalTz = process.env.TZ;
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
 });
 
 type Bucket = TrafficReportResponse["trend"][number];
@@ -44,15 +49,21 @@ describe("TrendChart", () => {
     expect(container.innerHTML).not.toMatch(/NaN|Infinity/);
   });
 
-  it("labels hourly buckets HH:00 and daily buckets YYYY-MM-DD in UTC", () => {
-    // 23:00Z is the next calendar day in UTC+7, so a local-time label would read 06:00 and 2026-10-21.
-    const hours = [bucket("2026-10-20T23:00:00.000Z", 1, 0), bucket("2026-10-21T00:00:00.000Z", 2, 1)];
-    const hourly = render(<TrendChart trend={hours} bucket="hour" />);
-    expect([...hourly.container.querySelectorAll("svg g > title")].map((t) => t.textContent!.split(": ")[0])).toEqual(["23:00", "00:00"]);
-    hourly.unmount();
+  const labels = (container: HTMLElement) => [...container.querySelectorAll("svg g > title")].map((t) => t.textContent!.split(": ")[0]);
 
-    const daily = render(<TrendChart trend={[bucket("2026-10-20T00:00:00.000Z", 1, 0)]} bucket="day" />);
-    expect(daily.container.querySelector("svg g > title")!.textContent!.split(": ")[0]).toBe("2026-10-20");
+  it("labels hourly buckets HH:00 in UTC, not in the viewer's time zone", () => {
+    // 23:00Z reads 06:00 in UTC+7, so a local-time label would differ.
+    process.env.TZ = "Asia/Bangkok";
+    const hours = [bucket("2026-10-20T23:00:00.000Z", 1, 0), bucket("2026-10-21T00:00:00.000Z", 2, 1)];
+    const { container } = render(<TrendChart trend={hours} bucket="hour" />);
+    expect(labels(container)).toEqual(["23:00", "00:00"]);
+  });
+
+  it("labels daily buckets YYYY-MM-DD in UTC, not in the viewer's time zone", () => {
+    // Midnight UTC on Oct 20 is still Oct 19 in Los Angeles.
+    process.env.TZ = "America/Los_Angeles";
+    const { container } = render(<TrendChart trend={[bucket("2026-10-20T00:00:00.000Z", 1, 0)]} bucket="day" />);
+    expect(labels(container)).toEqual(["2026-10-20"]);
   });
 
   it("draws the landing and leads polylines with one point per bucket", () => {
@@ -119,5 +130,12 @@ describe("api.trafficReport", () => {
     await expect(api.trafficReport("7d")).rejects.toThrow();
     expect(fetcher.mock.calls[0]![0]).toBe("/api/traffic/report?period=7d");
     expect(api.trafficReportCsvUrl("30d")).toBe("/api/traffic/report.csv?period=30d");
+  });
+
+  it("parses the golden fixture", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(trafficFixture), { status: 200, headers: { "content-type": "application/json" } })));
+    const report = await api.trafficReport("7d");
+    expect(report.trend.length).toBeGreaterThan(0);
+    expect(report.trend.length).toBe(trafficFixture.trend.length);
   });
 });
