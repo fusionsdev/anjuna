@@ -1,4 +1,4 @@
-import { BrandSettingsResponse, BrandTheme, type BrandSettingsResponse as PublicSettings } from "@anjuna/contracts";
+import { BrandSettingsResponse, type BrandSettingsResponse as PublicSettings } from "@anjuna/contracts";
 import { BrandSettings, type BrandWorkerConfig } from "./config.js";
 import { CoreError, withCoreTimeout, type CoreClient } from "./core-client.js";
 
@@ -36,13 +36,7 @@ export function createSettingsCache() {
           const result = await load({ include_site_text: true, include_theme: true })
             .catch(retry(() => load({ include_site_text: true })))
             .catch(retry(() => load({})));
-          const rawData: unknown = result.data;
-          const sanitized = rawData !== null && typeof rawData === "object" && "theme" in rawData
-            && (rawData as { theme: unknown }).theme !== null && (rawData as { theme: unknown }).theme !== undefined
-            && !BrandTheme.safeParse((rawData as { theme: unknown }).theme).success
-            ? { ...(rawData as Record<string, unknown>), theme: null }
-            : rawData;
-          const live = BrandSettingsResponse.parse(sanitized);
+          const live = BrandSettingsResponse.parse(result.data);
           // Apply existing identity/route checks before caching anything that will be served.
           BrandSettings.parse({ ...fallback, ...live, formRoute: live.form_route });
           current.value = live;

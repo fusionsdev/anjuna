@@ -108,11 +108,16 @@ describe("brand theme", () => {
   });
 
   it("ignores a theme baked into BRAND_CONFIG", async () => {
-    const baked = site({ theme_vars: VARS, theme: THEME });
-    const baseline = site({ theme_vars: VARS });
-    const html = await (await baked.get("/")).text();
-    expect(html).not.toContain("brand-theme");
-    expect(html).toBe(await (await baseline.get("/")).text());
+    // Core answered 200 with no theme (null, or no key at all from a core deployed before brand colors).
+    for (const answer of [live({ theme: null }), live()]) {
+      const baseline = site({ theme_vars: VARS });
+      baseline.core.settings = answer as never;
+      const baked = site({ theme_vars: VARS, theme: THEME });
+      baked.core.settings = answer as never;
+      const html = await (await baked.get("/")).text();
+      expect(html).not.toContain("brand-theme");
+      expect(html).toBe(await (await baseline.get("/")).text());
+    }
   });
 
   it("keeps live paused and site text when core sends an invalid theme", async () => {
@@ -122,6 +127,17 @@ describe("brand theme", () => {
     const textSite = site({ theme_vars: VARS });
     textSite.core.settings = live({ site_title: "Live Title", theme: { primary: "#fff", secondary: "#1e293b" } }) as never;
     const html = await (await textSite.get("/")).text();
+    expect(html).toContain("<title>Live Title</title>");
+    expect(html).not.toContain("brand-theme");
+  });
+
+  it("keeps live paused and site text when core sends an invalid theme over HTTPS", async () => {
+    const answer = (extra: Record<string, unknown>) => async () =>
+      Response.json(live({ site_title: "Live Title", theme: { primary: "#fff", secondary: "#1e293b" }, ...extra }));
+    const paused = site({ theme_vars: VARS, core: new HttpsCoreClient({ credential: "test" }, vi.fn(answer({ paused: true }))) });
+    expect((await paused.get("/")).status).toBe(503);
+    const text = site({ theme_vars: VARS, core: new HttpsCoreClient({ credential: "test" }, vi.fn(answer({}))) });
+    const html = await (await text.get("/")).text();
     expect(html).toContain("<title>Live Title</title>");
     expect(html).not.toContain("brand-theme");
   });

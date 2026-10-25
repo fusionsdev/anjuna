@@ -191,8 +191,8 @@ export const BrandSettingsResponse = z.strictObject({
   brand_name: SiteBrandName.nullable().optional(),
   site_title: SiteTitle.nullable().optional(),
   site_description: SiteDescription.nullable().optional(),
-  /** Present only when the request set include_theme. Null = use the template colors. */
-  theme: BrandTheme.nullable().optional(),
+  /** Present only when the request set include_theme. Null = use the template colors. An invalid value reads as null. */
+  theme: BrandTheme.nullable().optional().catch(null),
 });
 export type BrandSettingsResponse = z.infer<typeof BrandSettingsResponse>;
 
