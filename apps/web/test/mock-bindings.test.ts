@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DeployHistoryResponse, SealedTemplatesResponse, TemplateSubmitResult } from "@anjuna/contracts";
+import { DeployHistoryResponse, SealedTemplatesResponse, TemplateListResponse, TemplateSubmitResult } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 import { withMockBindings } from "../src/server/mock-bindings";
 
@@ -56,6 +56,17 @@ describe("mock bindings for local preview", () => {
     const response = await call("/api/templates/import", { cookie: employee, method: "POST", env: mockEnv, body: { url: "https://harbor.example.com/", template_name: "Bolt Harbor" } });
     expect(response.status).toBe(200);
     expect(TemplateSubmitResult.parse(await response.json())).toMatchObject({ status: "awaiting_approval", version: 1 });
+  });
+
+  it("MOCK_CORE=1: an imported template appears in the list and its detail answers 200", async () => {
+    const imported = await call("/api/templates/import", { cookie: employee, method: "POST", env: mockEnv, body: { url: "https://harbor.example.com/", template_name: "Bolt Harbor" } });
+    expect(imported.status).toBe(200);
+    const result = TemplateSubmitResult.parse(await imported.json());
+    const listed = await call("/api/templates", { cookie: employee, env: mockEnv });
+    expect(listed.status).toBe(200);
+    expect(TemplateListResponse.parse(await listed.json()).templates.map((t) => t.template_version_id)).toContain(result.template_version_id);
+    const detail = await call(`/api/templates/${encodeURIComponent(result.template_version_id!)}`, { cookie: employee, env: mockEnv });
+    expect(detail.status).toBe(200);
   });
 
   it("a present CORE_LIFECYCLE binding is used even with MOCK_CORE=1", async () => {

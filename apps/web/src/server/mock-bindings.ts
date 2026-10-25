@@ -17,6 +17,11 @@ import { ZoneCheckRequest, ZoneCheckResponse } from "../shared/wizard.js";
 import type { Env } from "./env.js";
 import { mockCoreFetch } from "./mock-core.js";
 
+interface MockSubmitter {
+  key_id: string | null;
+  label: string;
+}
+
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const notFound = (path: string): Response => json(404, { error: "not_found", resource: "route", path });
@@ -110,12 +115,35 @@ function factoryWorker(): Fetcher {
   });
 }
 
-async function submitted(templateId: string, templateName: string): Promise<Response> {
+/**
+ * The mock import writes the same FACTORY rows the real template MCP import writes
+ * (`workers/template-mcp/src/certifier.ts` importTemplateVersion): the parent templates row and a
+ * template_versions row. Status is 'certified' so the panel lists it as awaiting_approval, like the
+ * returned result. Ids are deterministic (`${templateId}-v${version}`, next version per template);
+ * the sha is per version so a repeat import of the same template never hits the UNIQUE constraint.
+ */
+async function submitted(env: Env, templateId: string, templateName: string, submittedBy: MockSubmitter | null, createdBy: string): Promise<Response> {
+  const row = await env.FACTORY.prepare("SELECT COALESCE(MAX(version), 0) AS max_v FROM template_versions WHERE template_id = ?1")
+    .bind(templateId).first<{ max_v: number }>();
+  const version = (row?.max_v ?? 0) + 1;
+  const templateVersionId = `${templateId}-v${version}`;
+  const sha256 = await sha256Hex(`${templateId}:${version}`);
+  const now = new Date().toISOString();
+  await env.FACTORY.batch([
+    env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id, name, framework, created_by, created_at) VALUES (?1, ?2, 'react_spa', ?3, ?4)")
+      .bind(templateId, templateName, createdBy, now),
+    env.FACTORY.prepare(`INSERT OR IGNORE INTO template_versions
+        (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at,
+         text_defaults_json, submitted_by_key_id, submitted_by_label)
+        VALUES (?1, ?2, ?3, ?4, ?5, 'certified', ?6, ?7, NULL, ?8, ?9)`)
+      .bind(templateVersionId, templateId, version, sha256, `templates/${templateId}/${sha256}.zip`,
+        createdBy, now, submittedBy?.key_id ?? null, submittedBy?.label ?? null),
+  ]);
   return json(200, TemplateSubmitResult.parse({
     status: "awaiting_approval",
-    template_version_id: `${templateId}-v1`,
-    version: 1,
-    sha256: await sha256Hex(templateId),
+    template_version_id: templateVersionId,
+    version,
+    sha256,
     dashboard_url: null,
     issues: [],
     warnings: [],
@@ -125,19 +153,40 @@ async function submitted(templateId: string, templateName: string): Promise<Resp
   }));
 }
 
-function templateMcp(): Fetcher {
+function submitterOf(value: unknown): MockSubmitter | null {
+  if (!value || typeof value !== "object") return null;
+  const { key_id, label } = value as { key_id?: unknown; label?: unknown };
+  return typeof label === "string"
+    ? { key_id: typeof key_id === "string" ? key_id : null, label }
+    : null;
+}
+
+function submitterFromForm(form: FormData): MockSubmitter | null {
+  const raw = form.get("submitted_by");
+  if (typeof raw !== "string") return null;
+  try {
+    return submitterOf(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function templateMcp(env: Env): Fetcher {
   return stub({
     "/submit-zip": async (request) => {
       const form = await request.formData().catch(() => null);
       const id = form?.get("template_id");
       const name = form?.get("template_name");
-      return typeof id === "string" && typeof name === "string" ? submitted(id, name) : invalid();
+      if (typeof id !== "string" || typeof name !== "string") return invalid();
+      const createdBy = form?.get("created_by");
+      return submitted(env, id, name, form ? submitterFromForm(form) : null, typeof createdBy === "string" ? createdBy : "mock-preview");
     },
     "/submit-url": async (request) => {
-      const input = await body(request) as { template_id?: unknown; template_name?: unknown } | null;
+      const input = await body(request) as { template_id?: unknown; template_name?: unknown; submitted_by?: unknown; created_by?: unknown } | null;
       const name = typeof input?.template_name === "string" ? input.template_name : null;
       if (name === null) return invalid();
-      return submitted(typeof input?.template_id === "string" ? input.template_id : templateSlug(name), name);
+      return submitted(env, typeof input?.template_id === "string" ? input.template_id : templateSlug(name), name,
+        submitterOf(input?.submitted_by), typeof input?.created_by === "string" ? input.created_by : "mock-preview");
     },
   });
 }
@@ -150,6 +199,6 @@ export function withMockBindings(env: Env): Env {
     ...env,
     CORE_LIFECYCLE: env.CORE_LIFECYCLE ?? coreLifecycle(env),
     FACTORY_WORKER: env.FACTORY_WORKER ?? factoryWorker(),
-    TEMPLATE_MCP: env.TEMPLATE_MCP ?? templateMcp(),
+    TEMPLATE_MCP: env.TEMPLATE_MCP ?? templateMcp(env),
   };
 }
