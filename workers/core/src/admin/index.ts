@@ -26,6 +26,8 @@ import {
   LeadId,
   LeadsQuery,
   SuppressionsQuery,
+  AddSuppressionRequest,
+  RemoveSuppressionRequest,
   adminContextFromHeaders,
   authorize,
   leadOutcome,
@@ -47,6 +49,8 @@ import {
   type LeadListRow,
   type LeadsResponse,
   type SuppressionsResponse,
+  type AddSuppressionResponse,
+  type RemoveSuppressionResponse,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
 import { json } from "../http.js";
@@ -294,7 +298,8 @@ async function writeAudit(
   context: AdminRequestContext,
   action:
     | "brand.update" | "brand.pause" | "brand.resume"
-    | "pii.lead_view" | "pii.lead_export" | "lead.export" | "pii.suppression_search",
+    | "pii.lead_view" | "pii.lead_export" | "lead.export" | "pii.suppression_search"
+    | "suppression.add" | "suppression.remove",
   entityType: "brand" | "lead" | "lead_export" | "suppression",
   entityId: string,
   oldValue: JsonRecord | null,
@@ -987,6 +992,7 @@ interface SuppressionSqlRow {
   email: string;
   reason: string;
   source: string;
+  added_by: string | null;
   created_at: string;
   updated_at: string | null;
 }
@@ -1011,15 +1017,17 @@ async function listSuppressions(url: URL, env: Env, context: AdminRequestContext
   if (query.q !== undefined) clauses.push(`email LIKE ${add(`%${likeEscape(query.q.toLowerCase())}%`)} ESCAPE '\\'`);
   if (query.reason !== undefined) clauses.push(`reason = ${add(query.reason)}`);
   if (query.source !== undefined) clauses.push(`source = ${add(query.source)}`);
+  if (query.added_by === "system") clauses.push("added_by IS NULL");
+  else if (query.added_by !== undefined) clauses.push(`added_by = ${add(query.added_by)}`);
   if (cursor !== null) clauses.push(`email > ${add(cursor)}`);
   const limit = query.limit ?? 50;
 
   const result = await env.LEADS.prepare(
-    `SELECT email, reason, source, created_at, updated_at
+    `SELECT email, reason, source, added_by, created_at, updated_at
      FROM suppressions
-     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
-     ORDER BY email ASC
-     LIMIT ${add(limit + 1)}`,
+      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+      ORDER BY email ASC
+      LIMIT ${add(limit + 1)}`,
   ).bind(...bindings).all<SuppressionSqlRow>();
 
   const page = result.results.slice(0, limit);
@@ -1039,6 +1047,84 @@ async function listSuppressions(url: URL, env: Env, context: AdminRequestContext
     rows: page as SuppressionsResponse["rows"],
     next_cursor: result.results.length > limit && last ? encodeSuppressionCursor(last.email) : null,
   };
+  return json(response);
+}
+
+/** First 16 hex chars of SHA-256 of the lowercased address: the audit id never holds the address. */
+async function suppressionAuditId(email: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email.toLowerCase()));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
+
+/** Owner-only at the endpoint table. Writes source "manual" with the caller as added_by. */
+async function addSuppression(request: Request, env: Env, context: AdminRequestContext): Promise<Response> {
+  const raw = await readJsonObject(request, context);
+  if (raw instanceof Response) return raw;
+  const body = parseWith(AddSuppressionRequest, raw, context);
+  if (body instanceof Response) return body;
+
+  const existing = await env.LEADS.prepare(
+    "SELECT email, created_at, updated_at FROM suppressions WHERE email = ?1",
+  ).bind(body.email).first<Pick<SuppressionSqlRow, "email" | "created_at" | "updated_at">>();
+  if (existing) {
+    return adminError(context, {
+      error: "conflict",
+      message: "Address is already suppressed",
+      current_updated_at: existing.updated_at ?? existing.created_at,
+    });
+  }
+
+  const now = new Date().toISOString();
+  await env.LEADS.prepare(
+    "INSERT INTO suppressions (email, reason, source, added_by, created_at, updated_at) VALUES (?1, ?2, 'manual', ?3, ?4, NULL)",
+  ).bind(body.email, body.reason, context.actor_id, now).run();
+  // Fails closed, as listSuppressions does: no try/catch. before/after hold reason and source only, never the address.
+  await writeAudit(
+    env,
+    context,
+    "suppression.add",
+    "suppression",
+    await suppressionAuditId(body.email),
+    null,
+    { reason: body.reason, source: "manual" },
+    now,
+  );
+  const response: AddSuppressionResponse = {
+    email: body.email,
+    reason: body.reason,
+    source: "manual",
+    added_by: context.actor_id,
+    created_at: now,
+    updated_at: null,
+  };
+  return json(response, 201);
+}
+
+/** Owner-only at the endpoint table. The address travels in the body so it never appears in a URL or access log. */
+async function removeSuppression(request: Request, env: Env, context: AdminRequestContext): Promise<Response> {
+  const raw = await readJsonObject(request, context);
+  if (raw instanceof Response) return raw;
+  const body = parseWith(RemoveSuppressionRequest, raw, context);
+  if (body instanceof Response) return body;
+
+  const existing = await env.LEADS.prepare(
+    "SELECT email, reason, source FROM suppressions WHERE email = ?1",
+  ).bind(body.email).first<Pick<SuppressionSqlRow, "email" | "reason" | "source">>();
+  if (!existing) return adminError(context, { error: "not_found", resource: "suppression" });
+
+  await env.LEADS.prepare("DELETE FROM suppressions WHERE email = ?1").bind(body.email).run();
+  const now = new Date().toISOString();
+  await writeAudit(
+    env,
+    context,
+    "suppression.remove",
+    "suppression",
+    await suppressionAuditId(body.email),
+    { reason: existing.reason, source: existing.source },
+    { removed: true },
+    now,
+  );
+  const response: RemoveSuppressionResponse = { removed: true };
   return json(response);
 }
 
@@ -1155,6 +1241,8 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   if (route.endpoint === "listLeads") return listLeads(new URL(request.url), env, context);
   if (route.endpoint === "leadExport") return leadExport(new URL(request.url), env, context);
   if (route.endpoint === "listSuppressions") return listSuppressions(new URL(request.url), env, context);
+  if (route.endpoint === "addSuppression") return addSuppression(request, env, context);
+  if (route.endpoint === "removeSuppression") return removeSuppression(request, env, context);
 
   if (route.endpoint === "listBrands") return listBrands(env);
   if (route.endpoint === "leadAggregates") return leadAggregates(new URL(request.url), env, context);

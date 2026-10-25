@@ -157,10 +157,29 @@ describe("Mailing", () => {
   it("The reverse sync fills suppressions", async () => {
     listmonk.suppressions.set("rev@example.com", "blocklisted");
     await syncSuppressions(db, listmonk, [1]);
-    
+
     const supp = await db.prepare("SELECT * FROM suppressions WHERE email = 'rev@example.com'").first<any>();
     expect(supp).toBeDefined();
     expect(supp.reason).toBe("blocklisted");
+  });
+  it("syncSuppressions keeps added_by on a manual row (FUS-382)", async () => {
+    await db.prepare(
+      "INSERT INTO suppressions (email, reason, source, added_by, created_at) VALUES ('manual@example.com', 'manual', 'manual', 'usr_owner_01', datetime('now'))",
+    ).run();
+    await db.prepare(
+      "INSERT INTO suppressions (email, reason, source, added_by, created_at) VALUES ('kept@example.com', 'blocklisted', 'manual', 'usr_owner_01', datetime('now'))",
+    ).run();
+    // listmonk reports both: one with a new reason, one with the same reason.
+    listmonk.suppressions.set("manual@example.com", "blocklisted");
+    listmonk.suppressions.set("kept@example.com", "blocklisted");
+    await syncSuppressions(db, listmonk, [1]);
+
+    const changed = await db.prepare("SELECT * FROM suppressions WHERE email = 'manual@example.com'").first<any>();
+    expect(changed.reason).toBe("blocklisted");
+    expect(changed.added_by).toBe("usr_owner_01");
+    const kept = await db.prepare("SELECT * FROM suppressions WHERE email = 'kept@example.com'").first<any>();
+    expect(kept.reason).toBe("blocklisted");
+    expect(kept.added_by).toBe("usr_owner_01");
   });
   it("sends to the brand's own list before the tenant fallback, and falls back for a brand without one", async () => {
     await seedRuntime("brandA", 31);
