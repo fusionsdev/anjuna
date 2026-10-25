@@ -220,6 +220,7 @@ export function SettingsScreen() {
     {
       key: "edit",
       header: "การทำงาน (Actions)",
+      label: "",
       cell: (r) => r.brand
         ? <button type="button" className="btn" aria-label={`แก้ไข (Edit) ${r.hostname}`} onClick={() => open(r.brand!)}>แก้ไข (Edit)</button>
         : null,

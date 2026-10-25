@@ -96,6 +96,13 @@ describe("Settings table", () => {
     expect((await rowOf("beta.example.test")).getByRole("button", { name: /แก้ไข \(Edit\)/ })).toBeTruthy();
   });
 
+  it("the Settings Edit column has an empty card label", async () => {
+    render(<SettingsScreen />);
+    const a = await rowOf("alpha.example.test");
+    const editCell = a.getByRole("button", { name: /แก้ไข \(Edit\)/ }).closest("td")!;
+    expect(editCell.getAttribute("data-label")).toBe("");
+  });
+
   it("Edit opens the drawer with the row's values and Close closes it", async () => {
     render(<SettingsScreen />);
     const a = await rowOf("alpha.example.test");

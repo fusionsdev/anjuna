@@ -31,6 +31,39 @@ describe("DataTable", () => {
     expect(cell.getAttribute("colspan")).toBe("2");
     expect(within(cell).getByText("ยังไม่มีรายการ")).toBeTruthy();
   });
+
+  it("DataTable writes data-label from a string header", () => {
+    render(<DataTable label="rows" columns={columns} rows={[{ id: "a1", n: 1200 }]} rowKey={(r) => r.id} empty="none" />);
+    const cells = screen.getByRole("table", { name: "rows" }).querySelectorAll("tbody td");
+    expect(cells[0]!.getAttribute("data-label")).toBe("ID");
+    expect(cells[1]!.getAttribute("data-label")).toBe("N");
+  });
+
+  it("DataTable prefers Column.label over the header", () => {
+    render(
+      <DataTable
+        label="rows"
+        columns={[{ key: "id", header: "ID", label: "รหัส (ID)", cell: (r: Row) => r.id }]}
+        rows={[{ id: "a1", n: 1 }]}
+        rowKey={(r) => r.id}
+        empty="none"
+      />,
+    );
+    expect(screen.getByRole("table", { name: "rows" }).querySelector("tbody td")!.getAttribute("data-label")).toBe("รหัส (ID)");
+  });
+
+  it("a column with label empty string has an empty data-label", () => {
+    render(
+      <DataTable
+        label="rows"
+        columns={[{ key: "id", header: "ID", label: "", cell: (r: Row) => r.id }]}
+        rows={[{ id: "a1", n: 1 }]}
+        rowKey={(r) => r.id}
+        empty="none"
+      />,
+    );
+    expect(screen.getByRole("table", { name: "rows" }).querySelector("tbody td")!.getAttribute("data-label")).toBe("");
+  });
 });
 
 describe("StatusBadge", () => {
