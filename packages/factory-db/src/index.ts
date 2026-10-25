@@ -13,6 +13,7 @@ export const FACTORY_DB_MIGRATIONS = [
   "0006_template_uploads.sql",
   "0007_builder_key_secret.sql",
   "0008_brand_assets.sql",
+  "0009_ads_account_events.sql",
 ] as const;
 
 export const TEMPLATE_FRAMEWORKS = ["astro", "next_export", "react_spa"] as const;
