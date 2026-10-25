@@ -38,6 +38,17 @@ describe("ColorPair", () => {
     expect(onChange).toHaveBeenCalledWith(null);
   });
 
+  it("use template colors clears invalid hex text and its error", () => {
+    const onChange = vi.fn();
+    render(<ColorPair value={null} onChange={onChange} />);
+    fireEvent.change(hexField("รหัสสีหลัก (Primary hex)"), { target: { value: "#12" } });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "ใช้สีของเทมเพลต (Use template colors)" }));
+    expect(hexField("รหัสสีหลัก (Primary hex)").value).toBe("#2563eb");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(onChange).toHaveBeenCalledWith(null);
+  });
+
   it("shows template defaults when null and disables everything when disabled", () => {
     const onChange = vi.fn();
     const { container } = render(<ColorPair value={null} onChange={onChange} disabled />);

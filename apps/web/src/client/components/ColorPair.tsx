@@ -66,6 +66,15 @@ export function ColorPair(props: { value: BrandTheme | null; onChange(next: Bran
     onChange({ primary: shownPrimary, secondary: next });
   };
 
+  // The shown colors may not change on reset, so the effects above would not clear typed text.
+  const onReset = () => {
+    setPrimaryText(DEFAULT_PRIMARY);
+    setSecondaryText(DEFAULT_SECONDARY);
+    setPrimaryError(null);
+    setSecondaryError(null);
+    onChange(null);
+  };
+
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -81,7 +90,7 @@ export function ColorPair(props: { value: BrandTheme | null; onChange(next: Bran
       </div>
       {secondaryError && <p className="neg" role="alert">{secondaryError}</p>}
       <div>
-        <button type="button" className="btn" disabled={disabled} onClick={() => onChange(null)}>ใช้สีของเทมเพลต (Use template colors)</button>
+        <button type="button" className="btn" disabled={disabled} onClick={onReset}>ใช้สีของเทมเพลต (Use template colors)</button>
       </div>
     </div>
   );
