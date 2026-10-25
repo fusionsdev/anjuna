@@ -4,7 +4,7 @@ import {
   type AdminRole, type ClientErrorsQuery,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
-import { BRAND_OF_HOST, sessionRef } from "./traffic-log.js";
+import { brandOfHost, sessionRef } from "./traffic-log.js";
 
 // An error's host is the lowest host seen for its session. A row with an empty session id has no host and no brand.
 // occurred_at is client text, so the window compares as text and a malformed value normally falls outside it.
@@ -15,7 +15,7 @@ WITH errors AS (
       ELSE (SELECT MIN(lower(t.hostname)) FROM traffic_events t WHERE t.session_id = e.session_id) END AS host
   FROM client_errors e WHERE e.occurred_at >= ?1 AND e.occurred_at < ?2
 ), attributed AS (
-  SELECT *, CASE WHEN host IS NULL THEN NULL ELSE ${BRAND_OF_HOST} END AS brand_id FROM errors
+  SELECT x.*, CASE WHEN x.host IS NULL THEN NULL ELSE ${brandOfHost("x.host")} END AS brand_id FROM errors x
 )
 `;
 

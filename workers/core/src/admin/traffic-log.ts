@@ -14,13 +14,14 @@ export async function sessionRef(hostname: string | null, sessionId: string): Pr
 }
 
 /**
- * Maps the enclosing query's `host` column to a brand id through brand_runtime.hostnames (exact or `www.`
- * match), falling back to the host. Same rule as traffic.ts, copied so that file stays unchanged.
+ * Maps a host column of the enclosing query to a brand id through brand_runtime.hostnames (exact or `www.`
+ * match), falling back to the host. Pass a qualified column (`s.host`) so the subquery cannot bind its own
+ * columns. Same rule as traffic.ts, copied so that file stays unchanged.
  */
-export const BRAND_OF_HOST = `COALESCE((
+export const brandOfHost = (column: string): string => `COALESCE((
   SELECT MIN(b.brand_id) FROM brand_runtime b, json_each(b.hostnames) h
-  WHERE lower(h.value) = host OR lower(h.value) = 'www.' || host
-), host)`;
+  WHERE lower(h.value) = ${column} OR lower(h.value) = 'www.' || ${column}
+), ${column})`;
 
 const HOST = "COALESCE(NULLIF(lower(hostname), ''), 'unknown')";
 
@@ -44,7 +45,7 @@ WITH events AS (
     MAX(CASE WHEN event_type = 'redirect_failed' THEN 1 ELSE 0 END) AS redirect_errors
   FROM events GROUP BY host, session_id
 ), attributed AS (
-  SELECT *, ${BRAND_OF_HOST} AS brand_id FROM sessions
+  SELECT s.*, ${brandOfHost("s.host")} AS brand_id FROM sessions s
 )
 `;
 
@@ -87,15 +88,15 @@ export async function loadTrafficReport(
     }),
     sessionQuery(`SELECT ${bucket} AS at, ${SUMS} FROM attributed GROUP BY ${bucket}`),
     env.LEADS.prepare(`
-      SELECT created_at, event_type, host, session_id, form_step, error_code, device, browser, source,
-        ${BRAND_OF_HOST} AS brand_id
+      SELECT r.created_at, r.event_type, r.host, r.session_id, r.form_step, r.error_code, r.device, r.browser, r.source,
+        ${brandOfHost("r.host")} AS brand_id
       FROM (
         SELECT id, created_at, event_type, session_id, form_step, ${HOST} AS host,
           NULLIF(error_code, '') AS error_code, NULLIF(device_class, '') AS device,
           NULLIF(browser_family, '') AS browser, NULLIF(trim(source), '') AS source
         FROM traffic_events WHERE created_at >= ?1 AND created_at < ?2
         ORDER BY created_at DESC, id DESC LIMIT ${TRAFFIC_RECENT_LIMIT}
-      ) ORDER BY created_at DESC, id DESC`).bind(from, to),
+      ) r ORDER BY r.created_at DESC, r.id DESC`).bind(from, to),
   ]);
 
   const [totals, ...rest] = results;
