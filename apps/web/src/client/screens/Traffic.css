@@ -35,6 +35,7 @@
 .ce-count { font-variant-numeric: tabular-nums; opacity: 0.75; }
 .ce-message { max-width: 360px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--text-xs); }
 .ce-more { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.ce-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: var(--badbg); color: var(--bad); }
+/* .note.ce-error: styles.css loads after this file, so a bare class would lose to .note. */
+.note.ce-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: var(--badbg); color: var(--bad); }
 .ce-error p { margin: 0; }
 .ce-page .data-table { max-width: 100%; overflow-x: auto; }

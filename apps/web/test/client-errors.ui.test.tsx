@@ -1,5 +1,5 @@
 import errorsFixture from "@anjuna/contracts/fixtures/admin/client-errors.response.json";
-import type { ClientErrorsResponse } from "@anjuna/contracts";
+import { CLIENT_ERROR_TYPES_LIMIT, type ClientErrorsResponse } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../src/client/api";
@@ -43,6 +43,7 @@ afterEach(() => {
 
 describe("Client errors screen", () => {
   it("loads 24h errors and shows a chip per type with its count", async () => {
+    respond = (url) => json({ ...fixture, period: url.searchParams.get("period"), rows: fixture.rows.map((r, i) => (i === 1 ? { ...r, occurred_at: "2026-11-02 12:20:11" } : r)) });
     render(<ClientErrorsScreen me={owner} />);
     const rows = await bodyRows();
     expect(errorCalls()).toHaveLength(1);
@@ -61,8 +62,11 @@ describe("Client errors screen", () => {
     // The time is the stored text, not a locale-formatted date.
     expect(cells[0]).toBe("2026-11-02T12:20:11.000Z");
     expect(cells[1]).toBe("timeout");
-    expect(cells[2]).toContain("a.example");
+    await waitFor(() => expect(within(rows[0]!).getAllByRole("cell")[2]!.textContent).toContain("a.example"));
     expect(cells[3]).toBe("step-2");
+    expect(within(await table()).getByRole("columnheader", { name: "เวลา (UTC)" })).toBeTruthy();
+    // A stored value that is not ISO text shows exactly as stored.
+    expect(within(rows[1]!).getAllByRole("cell")[0]!.textContent).toBe("2026-11-02 12:20:11");
     expect(cells[4]).toBe("3f9a1c0be274");
     expect(cells[5]).toBe("Request timed out");
     expect(within(rows[0]!).getByText("3f9a1c0be274").className).toContain("mono");
@@ -169,7 +173,9 @@ describe("Client errors screen", () => {
     render(<ClientErrorsScreen me={owner} />);
     await table();
     fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("โหลดเพิ่มไม่สำเร็จ");
+    const failure = await screen.findByRole("alert");
+    expect(failure.textContent).toContain("โหลดเพิ่มไม่สำเร็จ");
+    expect(failure.className).toContain("ce-error");
     const paged = errorCalls()[1]!.searchParams;
     expect([paged.get("period"), paged.get("brand_id"), paged.get("error_type"), paged.get("cursor")]).toEqual(["7d", "brand-a", "timeout", "9"]);
     expect(await bodyRows()).toHaveLength(1);
@@ -247,6 +253,86 @@ describe("Client errors screen", () => {
     expect(await bodyRows()).toHaveLength(1);
   });
 
+  it("drops a first load that answers after the period changed", async () => {
+    const waiting: Array<{ url: URL; resolve: (response: Response) => void }> = [];
+    respond = (url) => new Promise<Response>((resolve) => { waiting.push({ url, resolve }); });
+    render(<ClientErrorsScreen me={owner} />);
+    await waitFor(() => expect(waiting).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน (30d)" }));
+    await waitFor(() => expect(waiting).toHaveLength(2));
+    expect(waiting[1]!.url.searchParams.get("period")).toBe("30d");
+
+    waiting[1]!.resolve(json({ ...fixture, counts: [{ error_type: "new_type", count: 9 }], rows: [row(7)], next_cursor: null }));
+    await waitFor(() => expect(screen.getByRole("table").textContent).toContain("message 7"));
+    await act(async () => {
+      waiting[0]!.resolve(json({ ...fixture, rows: [row(52)], next_cursor: null }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.getByRole("table").textContent).not.toContain("message 52");
+    expect(await bodyRows()).toHaveLength(1);
+    const chips = within(screen.getByRole("group", { name: "ประเภท" })).getAllByRole("button");
+    expect(chips.map((chip) => chip.textContent)).toEqual(["ทั้งหมด 9", "new_type 9"]);
+  });
+
+  it("keeps every chip, and the clicked one, while a type request is held and after it fails", async () => {
+    const held: Array<(response: Response) => void> = [];
+    respond = (url) => (url.searchParams.has("error_type") ? new Promise<Response>((resolve) => { held.push(resolve); }) : json(fixture));
+    render(<ClientErrorsScreen me={owner} />);
+    await table();
+    const chip = screen.getByRole("button", { name: "timeout 2" });
+    chip.focus();
+    fireEvent.click(chip);
+    await waitFor(() => expect(held).toHaveLength(1));
+
+    const names = () => within(screen.getByRole("group", { name: "ประเภท" })).getAllByRole("button").map((button) => button.textContent);
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(names()).toEqual(["ทั้งหมด 3", "timeout 2", "submission_error 1"]);
+    expect(screen.getByRole("button", { name: "timeout 2" })).toBe(chip);
+    expect(document.activeElement).toBe(chip);
+    expect(pressed("timeout 2")).toBe("true");
+
+    held[0]!(json({ error: "internal" }, 500));
+    await screen.findByRole("alert");
+    expect(names()).toEqual(["ทั้งหมด 3", "timeout 2", "submission_error 1"]);
+  });
+
+  it("drops the counts when the period or the brand changes, not before", async () => {
+    const held: Array<(response: Response) => void> = [];
+    respond = (url) => (url.searchParams.get("period") === "7d" ? new Promise<Response>((resolve) => { held.push(resolve); }) : json(fixture));
+    render(<ClientErrorsScreen me={owner} />);
+    await table();
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน (7d)" }));
+    await waitFor(() => expect(held).toHaveLength(1));
+    expect(within(screen.getByRole("group", { name: "ประเภท" })).getAllByRole("button").map((button) => button.textContent)).toEqual(["ทั้งหมด"]);
+  });
+
+  it("shows no number on the all chip when the types list is at its cap", async () => {
+    const counts = (n: number) => Array.from({ length: n }, (_, i) => ({ error_type: `type_${i}`, count: 1 }));
+    respond = () => json({ ...fixture, counts: counts(CLIENT_ERROR_TYPES_LIMIT), rows: [] });
+    const view = render(<ClientErrorsScreen me={owner} />);
+    await table();
+    const first = () => within(screen.getByRole("group", { name: "ประเภท" })).getAllByRole("button")[0]!;
+    expect(first().textContent).toBe("ทั้งหมด");
+    view.unmount();
+
+    // A selected type that is missing from the counts adds a chip but is not a real type.
+    window.history.replaceState(null, "", "/errors?type=gone");
+    respond = () => json({ ...fixture, counts: counts(CLIENT_ERROR_TYPES_LIMIT - 1), rows: [] });
+    render(<ClientErrorsScreen me={owner} />);
+    await table();
+    expect(first().textContent).toBe(`ทั้งหมด ${CLIENT_ERROR_TYPES_LIMIT - 1}`);
+  });
+
+  it("reads unknown URL values as the defaults and sends only the period", async () => {
+    window.history.replaceState(null, "", "/errors?period=bogus&brand=Bad&type=");
+    render(<ClientErrorsScreen me={owner} />);
+    await table();
+    expect([...errorCalls()[0]!.searchParams.keys()]).toEqual(["period"]);
+    expect(errorCalls()[0]!.searchParams.get("period")).toBe("24h");
+    expect(pressed("24 ชม. (24h)")).toBe("true");
+    expect(pressed("ทั้งหมด 3")).toBe("true");
+  });
+
   it("shows the empty state, the spinner and the error card with Retry", async () => {
     respond = () => json({ ...fixture, counts: [], rows: [] });
     const view = render(<ClientErrorsScreen me={owner} />);
@@ -260,6 +346,8 @@ describe("Client errors screen", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("เกิดข้อผิดพลาด (500)");
     expect(screen.queryByRole("table")).toBeNull();
+    // The red tone lives on .note.ce-error, because styles.css loads after Traffic.css and .note would win.
+    expect(alert.className).toContain("ce-error");
     const before = errorCalls().length;
 
     respond = (url) => json({ ...fixture, period: url.searchParams.get("period") });

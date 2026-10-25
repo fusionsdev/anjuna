@@ -41,7 +41,8 @@ export function clientErrorsPath(filters: ClientErrorFilters): string {
 
 const count = (n: number) => n.toLocaleString("en-US");
 
-type Loaded = { counts: ClientErrorsResponse["counts"]; rows: Row[]; next: string | null };
+type Counts = ClientErrorsResponse["counts"];
+type Loaded = { rows: Row[]; next: string | null };
 type Load = Loaded | { error: string } | null;
 
 export function ClientErrorsScreen({ me }: { me: Me }) {
@@ -49,6 +50,10 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
   const { period, brand, type } = readClientErrorFilters(useSearch());
   const domains = useBrandDomains();
   const [load, setLoad] = useState<Load>(null);
+  // Counts ignore the type filter in core, so they outlive a type change (and a failed request) and belong to one period and brand.
+  const [counted, setCounted] = useState<{ key: string; counts: Counts } | null>(null);
+  const countsKey = `${period}|${brand ?? ""}`;
+  const counts = counted && counted.key === countsKey ? counted.counts : null;
   const [attempt, setAttempt] = useState(0);
   const [paging, setPaging] = useState<"idle" | "busy" | "failed">("idle");
   // Bumped on every filter change, so a page that arrives for old filters is dropped.
@@ -59,7 +64,11 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
     setLoad(null);
     setPaging("idle");
     api.clientErrors({ period, brand_id: brand ?? undefined, error_type: type ?? undefined }).then(
-      (page) => { if (generation.current === mine) setLoad({ counts: page.counts, rows: page.rows, next: page.next_cursor }); },
+      (page) => {
+        if (generation.current !== mine) return;
+        setCounted({ key: `${period}|${brand ?? ""}`, counts: page.counts });
+        setLoad({ rows: page.rows, next: page.next_cursor });
+      },
       (e: unknown) => { if (generation.current === mine) setLoad({ error: e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ" }); },
     );
     return () => { generation.current += 1; };
@@ -86,7 +95,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
 
   const columns: Column<Row>[] = [
     // The stored client text, not a parsed date.
-    { key: "at", header: "เวลา", cell: (row) => row.occurred_at },
+    { key: "at", header: "เวลา (UTC)", cell: (row) => row.occurred_at },
     { key: "type", header: "ประเภท", mono: true, cell: (row) => row.error_type },
     { key: "brand", header: "แบรนด์", cell: (row) => (row.brand_id ? <BrandLabel brandId={row.brand_id} domain={labelOf(row.brand_id)} /> : "—") },
     { key: "screen", header: "หน้าจอ", cell: (row) => row.screen_id ?? "—" },
@@ -102,11 +111,11 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
   ];
 
   const loaded = load && !("error" in load) ? load : null;
-  const chips = loaded ? [...loaded.counts] : [];
+  const chips = counts ? [...counts] : [];
   // A selected type stays visible even when the current brand has none of it.
-  if (loaded && type && !chips.some((chip) => chip.error_type === type)) chips.push({ error_type: type, count: 0 });
+  if (counts && type && !chips.some((chip) => chip.error_type === type)) chips.push({ error_type: type, count: 0 });
   // Past the types cap the sum would undercount, so the "all" chip then shows no number.
-  const total = chips.length < CLIENT_ERROR_TYPES_LIMIT ? chips.reduce((sum, chip) => sum + chip.count, 0) : null;
+  const total = counts && counts.length < CLIENT_ERROR_TYPES_LIMIT ? chips.reduce((sum, chip) => sum + chip.count, 0) : null;
 
   return (
     <div className="ce-page">
@@ -124,7 +133,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
       <div className="ce-filters">
         <div className="ce-chips" role="group" aria-label="ประเภท">
           <button type="button" aria-pressed={type === null} onClick={() => change({ type: null })}>
-            ทั้งหมด{loaded && total !== null && <>{" "}<span className="ce-count">{count(total)}</span></>}
+            ทั้งหมด{total !== null && <>{" "}<span className="ce-count">{count(total)}</span></>}
           </button>
           {chips.map((chip) => (
             <button key={chip.error_type} type="button" aria-pressed={type === chip.error_type} onClick={() => change({ type: chip.error_type })}>
@@ -154,7 +163,7 @@ export function ClientErrorsScreen({ me }: { me: Me }) {
             rowKey={(row) => String(row.id)}
             empty={<EmptyState title="ไม่มีข้อผิดพลาดในช่วงนี้" />}
           />
-          {paging === "failed" && <p className="note neg" role="alert">โหลดเพิ่มไม่สำเร็จ</p>}
+          {paging === "failed" && <p className="note neg ce-error" role="alert">โหลดเพิ่มไม่สำเร็จ</p>}
           {loaded.next && (
             <div className="ce-more">
               <button type="button" className="btn" disabled={paging === "busy"} onClick={loadMore}>โหลดเพิ่ม (Load more)</button>
