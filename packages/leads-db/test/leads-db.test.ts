@@ -9,6 +9,7 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   click_sessions: ["experiment_id", "variant", "keyword", "brand_id"],
   consent_evidence: ["consent_text_hash", "consent_brand", "gpc"],
   traffic_events: ["risk_score", "risk_signals"], // 0015, FUS-372
+  suppressions: ["added_by"], // 0017, FUS-382
 };
 const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity"];
 
