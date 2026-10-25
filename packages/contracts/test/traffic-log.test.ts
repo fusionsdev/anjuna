@@ -35,6 +35,13 @@ describe("traffic log windows", () => {
     expect(w30.bucket).toBe("day");
     expect(trafficLogBuckets(w30)).toHaveLength(30);
   });
+
+  it("trafficLogBuckets keeps 24, 7 and 30 buckets when now is exactly on a UTC midnight", () => {
+    const now = new Date("2026-11-02T00:00:00.000Z");
+    expect(trafficLogBuckets(trafficLogWindow("24h", now))).toHaveLength(24);
+    expect(trafficLogBuckets(trafficLogWindow("7d", now))).toHaveLength(7);
+    expect(trafficLogBuckets(trafficLogWindow("30d", now))).toHaveLength(30);
+  });
 });
 
 describe("traffic report and client errors schemas", () => {
@@ -49,6 +56,9 @@ describe("traffic report and client errors schemas", () => {
   it("ClientErrorsQuery rejects a bad cursor, an unknown period and an extra key", () => {
     expect(ClientErrorsQuery.safeParse({ cursor: "0" }).success).toBe(false);
     expect(ClientErrorsQuery.safeParse({ cursor: "abc" }).success).toBe(false);
+    expect(ClientErrorsQuery.safeParse({ cursor: "01" }).success).toBe(false);
+    expect(ClientErrorsQuery.safeParse({ cursor: "1234567890123456" }).success).toBe(false);
+    expect(ClientErrorsQuery.safeParse({ cursor: "123456789012345" }).success).toBe(true);
     expect(ClientErrorsQuery.safeParse({ period: "today" }).success).toBe(false);
     expect(ClientErrorsQuery.safeParse({ foo: 1 }).success).toBe(false);
     expect(ClientErrorsQuery.parse({})).toEqual({ period: "24h" });

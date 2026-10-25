@@ -92,7 +92,8 @@ export const TrafficReportResponse = z.strictObject({
 });
 export type TrafficReportResponse = z.infer<typeof TrafficReportResponse>;
 
-export const ClientErrorCursor = z.string().regex(/^[1-9][0-9]{0,15}$/);
+/** Positive integer text of at most 15 digits, so every valid cursor is below `Number.MAX_SAFE_INTEGER`. */
+export const ClientErrorCursor = z.string().regex(/^[1-9][0-9]{0,14}$/);
 export type ClientErrorCursor = z.infer<typeof ClientErrorCursor>;
 
 export const ClientErrorsQuery = z.strictObject({
@@ -121,7 +122,7 @@ export const ClientErrorsResponse = z.strictObject({
   period: TrafficLogPeriod,
   from: z.iso.datetime(),
   to: z.iso.datetime(),
-  counts: z.array(z.strictObject({ error_type: z.string(), count: Count })).max(CLIENT_ERROR_TYPES_LIMIT),
+  counts: z.array(z.strictObject({ error_type: z.string().min(1).max(64), count: Count })).max(CLIENT_ERROR_TYPES_LIMIT),
   rows: z.array(ClientErrorRow).max(CLIENT_ERRORS_PAGE_LIMIT),
   next_cursor: ClientErrorCursor.nullable(),
 });
