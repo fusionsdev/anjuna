@@ -101,7 +101,10 @@ export function DeploysScreen({ me }: { me: Me }) {
   // Re-key during render on every filter change, so returning to an earlier filter never revives its grown limit.
   if (more.key !== filterKey) setMore({ key: filterKey, limit: LIMIT_START });
   // The limit of the events on screen. atMax reads it, and a failed Load more falls back to it so a retry works.
+  // loadedKey names the filters it was loaded for: only the pair together may skip a request, so the
+  // StrictMode second run still fetches while the first answer is dropped by its cleanup.
   const loadedLimit = useRef(LIMIT_START);
+  const loadedKey = useRef<string | null>(null);
   // A limit-only change keeps the table on screen; anything else refetches over the shown rows.
   const lastBaseKey = useRef<string | null>(null);
   // Guards a double click before the first receipts answer lands; the state cache covers every later expand.
@@ -126,12 +129,13 @@ export function DeploysScreen({ me }: { me: Me }) {
     if (lastBaseKey.current !== filterKey) {
       lastBaseKey.current = filterKey;
       loadedLimit.current = LIMIT_START;
+      loadedKey.current = null;
       setLoadMoreError(null);
-    } else if (limit === loadedLimit.current) {
+    } else if (loadedKey.current === filterKey && limit === loadedLimit.current) {
       // A failed Load more fell back to the loaded limit: the rows already shown are the answer.
       return () => { active = false; };
     }
-    const growing = limit !== loadedLimit.current;
+    const growing = loadedKey.current === filterKey && limit !== loadedLimit.current;
     const query: DeployHistoryQuery = { limit };
     if (brand) query.brand = brand;
     if (source) query.source = source as DeploySource;
@@ -139,6 +143,7 @@ export function DeploysScreen({ me }: { me: Me }) {
     const fromFilters = brand !== "" || source !== "" || status !== "";
     api.deploys(query).then((r) => {
       if (!active) return;
+      loadedKey.current = filterKey;
       loadedLimit.current = limit;
       setEvents(r.events);
       setHasMore(r.has_more);

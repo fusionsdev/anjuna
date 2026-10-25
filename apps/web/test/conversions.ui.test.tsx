@@ -1,6 +1,7 @@
 import conversionsFixture from "@anjuna/contracts/fixtures/admin/conversions.response.json";
 import type { ConversionsReportResponse } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../src/client/api";
 import { navigate } from "../src/client/router";
@@ -384,6 +385,24 @@ describe("Conversions page: load more", () => {
     await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("400"));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(conversionCalls().map((url) => url.searchParams.get("limit"))).toEqual(["200", "400", "400"]);
+  });
+
+  it("renders under StrictMode with a delayed first response", async () => {
+    let release!: (response: Response) => void;
+    let calls = 0;
+    respond = () => {
+      calls += 1;
+      if (calls === 1) return new Promise<Response>((resolve) => { release = resolve; });
+      return json(report);
+    };
+    render(<StrictMode><ConversionsScreen me={owner} /></StrictMode>);
+    // The StrictMode second run re-requests while the first answer is still held.
+    await waitFor(() => expect(conversionCalls()).toHaveLength(2));
+    await table();
+    expect(screen.getAllByRole("row")).toHaveLength(1 + report.rows.length);
+    // The held first answer lands late and must not wipe the rows.
+    await act(async () => { release(json({ ...report, rows: [] })); });
+    expect(screen.getAllByRole("row")).toHaveLength(1 + report.rows.length);
   });
 
   it("drops a late Load more response after a filter change", async () => {

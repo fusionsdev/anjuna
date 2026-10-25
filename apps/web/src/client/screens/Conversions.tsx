@@ -85,8 +85,11 @@ export function ConversionsScreen({ me }: { me: Me }) {
   const limit = more.key === filterKey ? more.limit : LIMIT_START;
   // Re-key during render on every filter change, so returning to an earlier filter never revives its grown limit.
   if (more.key !== filterKey) setMore({ key: filterKey, limit: LIMIT_START });
-  // The limit of the report on screen. atMax reads it, and a failed Load more falls back to it so a retry works.
+  // The limit of the report on screen. A failed Load more falls back to it so a retry works.
+  // loadedKey names the filters it was loaded for: only the pair together may skip a request, so the
+  // StrictMode second run still fetches while the first answer is dropped by its cleanup.
   const loadedLimit = useRef(LIMIT_START);
+  const loadedKey = useRef<string | null>(null);
   // A limit-only change keeps the table on screen; anything else falls back to the spinner.
   const lastBaseKey = useRef<string | null>(null);
 
@@ -96,16 +99,18 @@ export function ConversionsScreen({ me }: { me: Me }) {
     if (lastBaseKey.current !== filterKey) {
       lastBaseKey.current = filterKey;
       loadedLimit.current = LIMIT_START;
+      loadedKey.current = null;
       setLoad(null);
       setLoadMoreError(null);
-    } else if (limit === loadedLimit.current) {
+    } else if (loadedKey.current === filterKey && limit === loadedLimit.current) {
       // A failed Load more fell back to the loaded limit: the rows already shown are the answer.
       return () => { current = false; };
     }
-    const growing = limit !== loadedLimit.current;
+    const growing = loadedKey.current === filterKey && limit !== loadedLimit.current;
     api.conversions({ period, status: status === "all" ? undefined : status, brand: brand ?? undefined, limit }).then(
       (report) => {
         if (!current) return;
+        loadedKey.current = filterKey;
         loadedLimit.current = limit;
         setLoad({ report, limit });
         setLoadMoreError(null);

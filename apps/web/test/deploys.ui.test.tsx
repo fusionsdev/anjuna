@@ -1,5 +1,6 @@
 import { LifecycleBrandSummary, type DeployEvent, type InstallWithReceipts } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/client/api";
 import { DeploysScreen } from "../src/client/screens/Deploys";
@@ -461,6 +462,25 @@ describe("deploy history screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
     await waitFor(() => expect(deploysPaths()).toEqual(["/api/deploys?limit=50", "/api/deploys?limit=100", "/api/deploys?limit=100"]));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(rows()).toHaveLength(6);
+  });
+
+  it("renders under StrictMode with a delayed first response", async () => {
+    let release!: (response: Response) => void;
+    let calls = 0;
+    const base = feed;
+    feed = (params) => {
+      calls += 1;
+      if (calls === 1) return new Promise<Response>((resolve) => { release = resolve; });
+      return base(params);
+    };
+    render(<StrictMode><DeploysScreen me={owner} /></StrictMode>);
+    // The StrictMode second run re-requests while the first answer is still held.
+    await waitFor(() => expect(deploysPaths()).toHaveLength(2));
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    expect(rows()).toHaveLength(6);
+    // The held first answer lands late and must not wipe the rows.
+    await act(async () => { release(json({ events: [], has_more: false, unavailable: [] })); });
     expect(rows()).toHaveLength(6);
   });
 

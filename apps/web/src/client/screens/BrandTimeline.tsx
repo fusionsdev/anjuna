@@ -238,7 +238,10 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
   // Re-key during render on every brand or filter change, so returning to an earlier one never revives its grown limit.
   if (more.key !== limitKey) setMore({ key: limitKey, limit: LIMIT_START });
   // The limit of the rows on screen. atMax reads it, and a failed Load more falls back to it so a retry works.
+  // loadedKey names the base key it was loaded for: only the pair together may skip a request, so the
+  // StrictMode second run still fetches while the first answer is dropped by its cleanup.
   const loadedLimit = useRef(LIMIT_START);
+  const loadedKey = useRef<string | null>(null);
   // A limit-only change keeps the rows on screen; anything else falls back to the spinner.
   const baseKey = `${brandId}\n${filtersKey}\n${noRequest}\n${reloadKey}`;
   const lastBaseKey = useRef<string | null>(null);
@@ -250,16 +253,18 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
     if (lastBaseKey.current !== baseKey) {
       lastBaseKey.current = baseKey;
       loadedLimit.current = LIMIT_START;
+      loadedKey.current = null;
       setLoad({ state: "loading" });
       setLoadMoreError(null);
-    } else if (limit === loadedLimit.current) {
+    } else if (loadedKey.current === baseKey && limit === loadedLimit.current) {
       // A failed Load more fell back to the loaded limit: the rows already shown are the answer.
       return () => { active = false; };
     }
-    const growing = limit !== loadedLimit.current;
+    const growing = loadedKey.current === baseKey && limit !== loadedLimit.current;
     api.brandTimeline(brandId, { ...filtersToQuery(filters, new Date()), limit }).then(
       (data) => {
         if (!active) return;
+        loadedKey.current = baseKey;
         loadedLimit.current = limit;
         setLoad({ state: "ready", data });
         setLoadingMore(false);

@@ -1,5 +1,6 @@
 import type { DeployEvent } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -333,6 +334,24 @@ describe("brand timeline screen", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
     expect(timelineCalls().map((url) => url.searchParams.get("limit"))).toEqual(["100", "200", "200"]);
+  });
+
+  it("renders under StrictMode with a delayed first response", async () => {
+    let release!: (response: Response) => void;
+    let calls = 0;
+    respond = () => {
+      calls += 1;
+      if (calls === 1) return new Promise<Response>((resolve) => { release = resolve; });
+      return json(response());
+    };
+    render(<StrictMode><BrandTimelineScreen me={owner} brandId="b1" /></StrictMode>);
+    // The StrictMode second run re-requests while the first answer is still held.
+    await waitFor(() => expect(timelineCalls()).toHaveLength(2));
+    await screen.findByText("โฆษณาหลักถูกปฏิเสธ");
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    // The held first answer lands late and must not wipe the rows.
+    await act(async () => { release(json(response({ items: [] }))); });
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
   });
 
   it("a date range change resets the timeline limit to 100", async () => {
