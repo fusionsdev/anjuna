@@ -95,7 +95,7 @@
 ### Task A3: admin GET/PATCH and first-install theme
 
 **Files:**
-- Modify: `packages/contracts/src/admin-api.ts:194-260` (`BrandConfig.theme: BrandTheme.nullable()`, `BrandPatchRequest.theme: BrandTheme.nullable().optional()`, `"theme"` appended to `BRAND_PATCH_FIELDS`)
+- Modify: `packages/contracts/src/admin-api.ts:194-260` (`BrandConfig.theme: BrandTheme.nullable()`, `BrandPatchRequest.theme: BrandTheme.nullable().optional()`, `"theme"` appended to `BRAND_PATCH_FIELDS`); patch field group `brand_colors` (min role employee, plan action "Edit brand colors"), same role as site text
 - Modify: `packages/contracts/src/lifecycle.ts:206-214` (`InitialRuntime.theme: BrandTheme.nullable().optional()`)
 - Modify: `workers/core/src/admin/index.ts` (column list, `brandConfig`, patch candidate `["theme", "theme_json", …]`)
 - Modify: `workers/core/src/lifecycle.ts:120-128` (INSERT writes `theme_json`; UPDATE untouched)
