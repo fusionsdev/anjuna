@@ -108,7 +108,7 @@ export type TemplateImportRequest = z.infer<typeof TemplateImportRequest>;
 export const TemplateApproveRequest = z.strictObject({ theme_vars: TemplateThemeVars.optional() });
 export type TemplateApproveRequest = z.infer<typeof TemplateApproveRequest>;
 
-export const TemplateApproveResponse =z.strictObject({
+export const TemplateApproveResponse = z.strictObject({
   ok: z.literal(true),
   template_version_id: z.string(),
   sealed_by: z.string(),

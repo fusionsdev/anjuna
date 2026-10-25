@@ -54,6 +54,16 @@ const auditActions = async (brandId: string) => (await env.FACTORY.prepare("SELE
 describe("change the template version of a live brand (redeploy)", () => {
   const redeployWith = (cookie: string, brandId: string, body: unknown) => call(`/api/brands/${brandId}/redeploy`, { cookie, method: "POST", body, env: testEnv() });
 
+  it("redeploy bakes the target version theme_vars", async () => {
+    const themeVars = { primary: ["--brand"], primary_dark: ["--brand-dark"], secondary: [] };
+    await env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,theme_vars_json,created_by,created_at) VALUES ('tv-themed','tpl-2',4,'sha-5','templates/tv-themed','sealed','owner','2026-10-01T00:00:00Z',?1,'owner','2026-10-01T00:00:00Z')")
+      .bind(JSON.stringify(themeVars)).run();
+    const { brandId } = await liveBrand();
+    expect((await redeployWith(owner, brandId, { template_version_id: "tv-themed" })).status).toBe(201);
+    const next = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id=? AND revision=2").bind(brandId).first<{ config_json: string }>();
+    expect(JSON.parse(next!.config_json).theme_vars).toEqual(themeVars);
+  });
+
   it("creates revision N+1 on the chosen sealed template with its text defaults, keeps the profile and starts the upgrade install", async () => {
     const { brandId, revisionId } = await liveBrand();
     const response = await redeployWith(owner, brandId, { template_version_id: "tv-2" });

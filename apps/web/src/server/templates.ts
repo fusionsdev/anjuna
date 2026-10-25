@@ -192,9 +192,20 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     const approveRequest = TemplateApproveRequest.safeParse({ theme_vars: raw?.theme_vars });
     if (!approveRequest.success) return json(422, { error: "invalid_theme_vars" });
     if (approveRequest.data.theme_vars) {
-      // A sealed version is immutable (trigger in migration 0001), so the corrected map is stored only before the seal.
-      await env.FACTORY.prepare("UPDATE template_versions SET theme_vars_json = ?2 WHERE template_version_id = ?1 AND status <> 'sealed'")
-        .bind(id, JSON.stringify(approveRequest.data.theme_vars)).run();
+      // A sealed version is immutable (trigger in migration 0001), so the corrected map is stored only on a certified
+      // version, the one status the seal accepts. A changed map and its audit row are written in one batch.
+      const nextJson = JSON.stringify(approveRequest.data.theme_vars);
+      const stored = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'certified'")
+        .bind(id).first<{ theme_vars_json: string | null }>();
+      if (stored && stored.theme_vars_json !== nextJson) {
+        await env.FACTORY.batch([
+          env.FACTORY.prepare("UPDATE template_versions SET theme_vars_json = ?2 WHERE template_version_id = ?1 AND status = 'certified'").bind(id, nextJson),
+          env.FACTORY.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,before_json,after_json,created_at)
+            SELECT ?3,?4,'template.theme_vars','template_version',?1,?5,?2,?6
+            WHERE EXISTS (SELECT 1 FROM template_versions WHERE template_version_id = ?1 AND status = 'certified' AND theme_vars_json = ?2)`)
+            .bind(id, nextJson, ctx.actor_id, ctx.actor_role, stored.theme_vars_json, new Date().toISOString()),
+        ]);
+      }
     }
     let response: Response;
     try {

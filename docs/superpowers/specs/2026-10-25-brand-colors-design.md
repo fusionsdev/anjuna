@@ -79,7 +79,7 @@ Fixture: demo14's CSS. Expected: `primary: ["--color-royal"]`, `primary_dark: ["
 
 ## 5. Rollout
 
-Migrations ship as files only: core `packages/leads-db/migrations/0016_brand_theme.sql` and factory `packages/factory-db/migrations/0010_template_theme_vars.sql` (next free numbers on main 8d63efb). No deploy and no remote D1 in this lane. The owner deploys once after Spec 7: migrations, core, anjuna-web, then brand-runtime.
+Migrations ship as files only: core `packages/leads-db/migrations/0016_brand_theme.sql` and factory `packages/factory-db/migrations/0010_template_theme_vars.sql` (next free numbers on main 8d63efb). No deploy and no remote D1 in this lane. The owner deploys once after Spec 7: migrations, core, anjuna-web, then brand-runtime. Versions sealed before migration 0010 keep `theme_vars_json` NULL (sealed rows are immutable), so an existing brand gets colors only after a new template version is imported, sealed and applied by redeploy or upgrade-all.
 
 ## 6. PRs
 
