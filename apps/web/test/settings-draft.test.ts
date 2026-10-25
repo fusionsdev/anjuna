@@ -58,6 +58,14 @@ describe("settings draft", () => {
     expect(buildPatch(b, edit(b, { keyword_default: "   " }))).toEqual({ keyword_default: null });
   });
 
+  it("a changed theme patches theme and null resets it", () => {
+    const b = make({ theme: { primary: "#0f766e", secondary: "#1e293b" } });
+    const next = { primary: "#abcdef", secondary: "#1e293b" };
+    expect(buildPatch(b, edit(b, { theme: next }))).toEqual({ theme: next });
+    expect(buildPatch(b, edit(b, { theme: null }))).toEqual({ theme: null });
+    expect(diffRows(b, { theme: null })).toEqual([{ field: "theme", label: "สีแบรนด์ (Brand colors)", before: "#0f766e / #1e293b", after: "สีของเทมเพลต (Template colors)" }]);
+  });
+
   it("turning A/B off patches ab_config null", () => {
     const b = make();
     const d = edit(b, { ab_on: false });
@@ -274,6 +282,14 @@ describe("rebaseDraft", () => {
     expect(rebased.experiment_id).toBe("exp-1");
     expect(rebased.arms).toEqual(draft.arms);
     expect(rebased.ab_on).toBe(true);
+  });
+
+  it("an untouched theme takes the new base theme and an edited theme keeps the draft", () => {
+    const oldBase = make({ theme: { primary: "#0f766e", secondary: "#1e293b" } });
+    const newBase = make({ theme: { primary: "#111111", secondary: "#222222" } });
+    expect(rebaseDraft(oldBase, newBase, edit(oldBase, { aid: "999" })).theme).toEqual({ primary: "#111111", secondary: "#222222" });
+    const edited = { primary: "#abcdef", secondary: "#1e293b" };
+    expect(rebaseDraft(oldBase, newBase, edit(oldBase, { theme: edited })).theme).toEqual(edited);
   });
 
   it("a draft equal to the old base becomes the new base", () => {

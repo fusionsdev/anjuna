@@ -1,6 +1,7 @@
 // spec settings: the controlled row drawer. Settings.tsx owns the draft so it can guard and reload it.
 import { cleanKeyword, type BrandConfig } from "@anjuna/contracts";
 import { useEffect, useRef, type ReactNode } from "react";
+import { ColorPair } from "../components/ColorPair";
 import { flowGateLabel } from "../labels";
 import {
   KNOWN_FORMS,
@@ -116,6 +117,11 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
             <Field id="settings-keyword" label={SETTINGS_LABELS.keyword_default} error={errors.keyword_default} hint={keywordHint}>
               {(a) => <input {...a} value={draft.keyword_default} placeholder="ว่าง = ใช้ข้อความเริ่มต้นของ template (Empty = template default)" onChange={(e) => set({ keyword_default: e.target.value })} />}
             </Field>
+          </section>
+
+          <section className="section">
+            <h3>{SETTINGS_LABELS.theme}</h3>
+            <ColorPair value={draft.theme} onChange={(theme) => set({ theme })} disabled={saving} />
           </section>
 
           <section className="section">

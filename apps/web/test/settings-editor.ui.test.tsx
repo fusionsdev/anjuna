@@ -36,6 +36,12 @@ describe("SettingsEditor", () => {
     expect(onReview).toHaveBeenCalledTimes(1);
   });
 
+  it("settings shows the stored theme", () => {
+    render(<Harness b={brand({ theme: { primary: "#0f766e", secondary: "#1e293b" } })} />);
+    expect(valueOf("รหัสสีหลัก (Primary hex)")).toBe("#0f766e");
+    expect(valueOf("รหัสสีรอง (Secondary hex)")).toBe("#1e293b");
+  });
+
   it("an invalid drain key shows its error, sets aria-invalid and disables Review and save", () => {
     render(<Harness b={brand()} />);
     type("Drain key", "bad key!");

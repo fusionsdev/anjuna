@@ -2,6 +2,7 @@
 import {
   AbConfig,
   AmountBuckets,
+  BrandTheme,
   DrainKey,
   ExperimentId,
   FlowGateMode,
@@ -14,7 +15,7 @@ import {
 } from "@anjuna/contracts";
 import { flowGateLabel } from "./labels";
 
-export const SETTINGS_FIELDS = ["aid", "ab_config", "flow_gate_mode", "amount_buckets", "keyword_default", "prepop_base", "drain_key"] as const;
+export const SETTINGS_FIELDS = ["aid", "ab_config", "flow_gate_mode", "amount_buckets", "keyword_default", "prepop_base", "drain_key", "theme"] as const;
 export type SettingsField = (typeof SETTINGS_FIELDS)[number];
 
 export const SETTINGS_LABELS: Record<SettingsField, string> = {
@@ -25,6 +26,7 @@ export const SETTINGS_LABELS: Record<SettingsField, string> = {
   keyword_default: "คีย์เวิร์ด (Keyword default)",
   prepop_base: "Prepop base",
   drain_key: "Drain key",
+  theme: "สีแบรนด์ (Brand colors)",
 };
 
 // The stored arm id is the form selector in the brand runtime; the label names the V1 form the owner knows.
@@ -48,6 +50,7 @@ export type SettingsDraft = {
   keyword_default: string;
   prepop_base: string;
   drain_key: string;
+  theme: BrandTheme | null;
 };
 export type SettingsValues = Pick<BrandConfig, SettingsField>;
 export type SettingsPatch = Partial<Pick<BrandPatchRequest, SettingsField>>;
@@ -65,6 +68,7 @@ export function draftFromBrand(brand: BrandConfig): SettingsDraft {
     keyword_default: brand.keyword_default ?? "",
     prepop_base: brand.prepop_base,
     drain_key: brand.drain_key,
+    theme: brand.theme,
   };
 }
 
@@ -89,6 +93,7 @@ const FIELD_MESSAGES: Record<SettingsField, string> = {
   keyword_default: "คีย์เวิร์ดไม่ถูกต้อง (Invalid keyword)",
   prepop_base: "Prepop base ต้องเป็น URL แบบ https หรือพาธที่ขึ้นต้นด้วย / และไม่มี ? หรือ # (Prepop base must be an https URL or a path starting with /, with no ? or #)",
   drain_key: "Drain key ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Invalid drain key)",
+  theme: "สีแบรนด์ต้องเป็นรูปแบบ #rrggbb (Brand colors must be #rrggbb hex)",
 };
 const bucketTokens = (text: string) => text.split(",").map((s) => s.trim());
 
@@ -110,6 +115,7 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
   const keyword_default = cleaned === null ? null : check("keyword_default", Keyword.safeParse(cleaned));
   const prepop_base = check("prepop_base", PrepopBase.safeParse(d.prepop_base.trim()));
   const drain_key = check("drain_key", DrainKey.safeParse(d.drain_key.trim()));
+  const theme = check("theme", BrandTheme.nullable().safeParse(d.theme));
 
   let ab_config: AbConfig | null | undefined = null;
   if (d.ab_on) {
@@ -147,6 +153,7 @@ export function parseDraft(d: SettingsDraft): { ok: true; values: SettingsValues
       keyword_default: keyword_default!,
       prepop_base: prepop_base!,
       drain_key: drain_key!,
+      theme: theme!,
     },
   };
 }
@@ -162,6 +169,7 @@ function normaliseFields(d: SettingsDraft) {
     keyword: cleanKeyword(d.keyword_default) ?? "",
     prepop: d.prepop_base.trim(),
     drain: d.drain_key.trim(),
+    theme: d.theme === null ? null : [d.theme.primary, d.theme.secondary],
   };
 }
 
@@ -190,6 +198,7 @@ export function rebaseDraft(oldBase: BrandConfig, newBase: BrandConfig, draft: S
     keyword_default: untouched("keyword") ? newDraft.keyword_default : draft.keyword_default,
     prepop_base: untouched("prepop") ? newDraft.prepop_base : draft.prepop_base,
     drain_key: untouched("drain") ? newDraft.drain_key : draft.drain_key,
+    theme: untouched("theme") ? newDraft.theme : draft.theme,
   };
 }
 
@@ -218,6 +227,10 @@ export function formatSetting(field: SettingsField, value: SettingsValues[Settin
       return (value as number[]).join(", ");
     case "keyword_default":
       return value === null ? "—" : String(value);
+    case "theme": {
+      const theme = value as BrandTheme | null;
+      return theme === null ? "สีของเทมเพลต (Template colors)" : `${theme.primary} / ${theme.secondary}`;
+    }
     default:
       return String(value);
   }
