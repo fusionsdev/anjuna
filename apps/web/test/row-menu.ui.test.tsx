@@ -12,7 +12,7 @@ const setup = (calls: string[], items?: RowMenuItem[]) => render(
 const openMenu = () => fireEvent.click(screen.getByRole("button", { name: "จัดการ (Actions)" }));
 const menu = () => screen.getByRole("menu");
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("RowMenu", () => {
   it("opens on click and closes on Escape and outside click", () => {
@@ -78,5 +78,61 @@ describe("RowMenu", () => {
     openMenu();
     fireEvent.blur(within(menu()).getByRole("menuitem"), { relatedTarget: screen.getByRole("button", { name: "จัดการ (Actions)" }) });
     expect(screen.getByRole("menu")).toBeTruthy();
+  });
+
+  // jsdom has no layout: stub the button rect, the viewport and the list size.
+  const stubLayout = (rect: { top: number; bottom: number }, innerHeight: number, listHeight: number) => {
+    vi.stubGlobal("innerHeight", innerHeight);
+    vi.spyOn(HTMLButtonElement.prototype, "getBoundingClientRect").mockReturnValue(
+      { ...rect, left: 100, right: 160, width: 60, height: rect.bottom - rect.top, x: 100, y: rect.top, toJSON: () => ({}) } as DOMRect);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("role") === "menu" ? listHeight : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("role") === "menu" ? 120 : 0;
+    });
+  };
+
+  it("places the fixed list below the button when it fits", () => {
+    stubLayout({ top: 100, bottom: 130 }, 800, 150);
+    setup([]);
+    openMenu();
+    expect(menu().style.position).toBe("fixed");
+    expect(menu().style.top).toBe("134px");
+  });
+
+  it("flips above the button when it does not fit below but fits above", () => {
+    stubLayout({ top: 600, bottom: 630 }, 700, 150);
+    setup([]);
+    openMenu();
+    expect(menu().style.position).toBe("fixed");
+    expect(menu().style.top).toBe("446px");
+  });
+
+  it("clamps to the viewport and scrolls inside when neither side fits, and stays open on a scroll inside the list", () => {
+    stubLayout({ top: 150, bottom: 180 }, 300, 400);
+    setup([]);
+    openMenu();
+    const top = parseFloat(menu().style.top);
+    expect(top).toBeGreaterThanOrEqual(8);
+    const maxHeight = parseFloat(menu().style.maxHeight);
+    expect(maxHeight).toBeGreaterThan(0);
+    expect(top + maxHeight).toBeLessThanOrEqual(300 - 8);
+    expect(menu().style.overflowY).toBe("auto");
+    fireEvent.scroll(menu());
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.scroll(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("closes on a window scroll and on resize", () => {
+    stubLayout({ top: 100, bottom: 130 }, 800, 150);
+    setup([]);
+    openMenu();
+    fireEvent.scroll(window);
+    expect(screen.queryByRole("menu")).toBeNull();
+    openMenu();
+    fireEvent.resize(window);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });

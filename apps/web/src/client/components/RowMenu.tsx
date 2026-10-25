@@ -10,7 +10,7 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
   const listRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   // The list is placed with position: fixed from the button rect, so the scrolling table wrapper (.tw) cannot clip it.
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
 
   const close = (refocus: boolean) => {
     setOpen(false);
@@ -28,7 +28,8 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     };
     // A fixed list does not follow its button, so scrolling or resizing closes it.
-    const onMove = () => setOpen(false);
+    // Scrolling inside the list itself (long list, clamped height) keeps it open.
+    const onMove = (e: Event) => { if (!(e.target instanceof Node && listRef.current?.contains(e.target))) setOpen(false); };
     document.addEventListener("mousedown", onDown);
     window.addEventListener("scroll", onMove, true);
     window.addEventListener("resize", onMove);
@@ -38,17 +39,28 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
       window.removeEventListener("resize", onMove);
     };
   }, [open ]);
-  // Opens below the button, or above it when the list would run off the viewport bottom and fits above.
+  // Opens below the button, or above it when the list does not fit below but fits above. When neither side fits,
+  // the list takes the larger side, clamped to the viewport (8 px margin) and scrolls inside.
   useLayoutEffect(() => {
     const button = buttonRef.current;
     const list = listRef.current;
     if (!open || !button || !list) { setPos(null); return; }
+    const margin = 8;
     const rect = button.getBoundingClientRect();
-    const below = rect.bottom + 4;
-    const above = rect.top - 4 - list.offsetHeight;
-    const top = below + list.offsetHeight > window.innerHeight && above >= 0 ? above : below;
+    const height = list.offsetHeight;
+    const spaceBelow = window.innerHeight - rect.bottom - 4 - margin;
+    const spaceAbove = rect.top - 4 - margin;
+    let top: number;
+    let maxHeight: number;
+    if (height <= spaceBelow || (height > spaceAbove && spaceBelow >= spaceAbove)) {
+      top = rect.bottom + 4;
+      maxHeight = Math.max(0, spaceBelow);
+    } else {
+      maxHeight = Math.max(0, spaceAbove);
+      top = height <= spaceAbove ? rect.top - 4 - height : margin;
+    }
     const left = Math.max(4, Math.min(rect.right - list.offsetWidth, window.innerWidth - list.offsetWidth - 4));
-    setPos({ top, left });
+    setPos({ top, left, maxHeight });
   }, [open]);
   // Opening moves focus to the first item so arrow keys work right away.
   useEffect(() => {
@@ -79,7 +91,7 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
       {label}
     </button>
     {open && <div className="row-menu-list" role="menu" aria-label={label} onKeyDown={onMenuKeyDown} ref={listRef}
-      style={pos ? { position: "fixed", top: pos.top, left: pos.left, right: "auto" } : undefined}>
+      style={pos ? { position: "fixed", top: pos.top, left: pos.left, right: "auto", maxHeight: pos.maxHeight, overflowY: "auto" } : undefined}>
       {items.map((item, index) => {
         const divider = item.group !== undefined && lastGroup !== undefined && item.group !== lastGroup;
         lastGroup = item.group;
