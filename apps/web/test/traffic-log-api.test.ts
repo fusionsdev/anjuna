@@ -124,10 +124,22 @@ describe("GET /api/client-errors (FUS-379)", () => {
     expect(byType.counts).toEqual(clientErrorsFixture.counts);
   });
 
-  it("rejects a bad cursor, a bad period and an extra key with 422", async () => {
+  it("pages by cursor through the mock: older rows only, counts unchanged", async () => {
+    const page = ClientErrorsResponse.parse(await (await call("/api/client-errors?cursor=42", { cookie: owner })).json());
+    expect(page.rows.map((r) => r.id)).toEqual([41, 40]);
+    expect(page.counts).toEqual(clientErrorsFixture.counts);
+    expect(page.next_cursor).toBeNull();
+  });
+
+  it("rejects a bad cursor, a bad period and an extra key with 422 before core is called", async () => {
+    const fetch = vi.fn(async () => Response.json(clientErrorsFixture));
+    const env = makeEnv({ MOCK_CORE: "0", CORE: { fetch } as unknown as Fetcher });
     for (const query of ["cursor=0", "period=today", "foo=1"]) {
-      expect((await call(`/api/client-errors?${query}`, { cookie: employee })).status).toBe(422);
+      const res = await call(`/api/client-errors?${query}`, { cookie: employee, env });
+      expect(res.status, query).toBe(422);
+      expect(AdminError.parse(await res.json())).toMatchObject({ error: "invalid" });
     }
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("forwards period, brand_id, error_type and cursor to core", async () => {
