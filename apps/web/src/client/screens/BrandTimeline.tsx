@@ -229,13 +229,16 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
   // Nothing to ask for: no type is checked, or the range can match nothing.
   const noRequest = filters.types.length === 0 || rangeInverted;
   const [loadingMore, setLoadingMore] = useState(false);
-  // The key ties the grown limit to the filters that grew it: a filter change reads as the start limit again.
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  // The key ties the grown limit to the brand and filters that grew it: a brand or filter change reads as the start limit again.
   const filtersKey = timelineSearch(filters);
   const limitKey = `${brandId}\n${filtersKey}`;
   const [more, setMore] = useState({ key: limitKey, limit: LIMIT_START });
   const limit = more.key === limitKey ? more.limit : LIMIT_START;
   // Re-key during render on every brand or filter change, so returning to an earlier one never revives its grown limit.
   if (more.key !== limitKey) setMore({ key: limitKey, limit: LIMIT_START });
+  // The limit of the rows on screen. atMax reads it, and a failed Load more falls back to it so a retry works.
+  const loadedLimit = useRef(LIMIT_START);
   // A limit-only change keeps the rows on screen; anything else falls back to the spinner.
   const baseKey = `${brandId}\n${filtersKey}\n${noRequest}\n${reloadKey}`;
   const lastBaseKey = useRef<string | null>(null);
@@ -246,20 +249,33 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
     let active = true;
     if (lastBaseKey.current !== baseKey) {
       lastBaseKey.current = baseKey;
+      loadedLimit.current = LIMIT_START;
       setLoad({ state: "loading" });
+      setLoadMoreError(null);
+    } else if (limit === loadedLimit.current) {
+      // A failed Load more fell back to the loaded limit: the rows already shown are the answer.
+      return () => { active = false; };
     }
+    const growing = limit !== loadedLimit.current;
     api.brandTimeline(brandId, { ...filtersToQuery(filters, new Date()), limit }).then(
       (data) => {
         if (!active) return;
+        loadedLimit.current = limit;
         setLoad({ state: "ready", data });
         setLoadingMore(false);
+        setLoadMoreError(null);
       },
       (e: unknown) => {
         if (!active) return;
         setLoadingMore(false);
+        const message = e instanceof ApiError ? e.thai : "โหลดไทม์ไลน์ไม่สำเร็จ (Could not load the timeline.)";
+        if (growing) {
+          // A failed Load more keeps the rows, shows the error by the button and falls back so a retry works.
+          setLoadMoreError(message);
+          setMore({ key: limitKey, limit: loadedLimit.current });
         // A malformed id never names a brand, so it reads like an unknown one.
-        if (e instanceof ApiError && (e.status === 404 || (e.status === 400 && e.body?.error === "invalid_brand_id"))) setLoad({ state: "missing" });
-        else setLoad({ state: "error", message: e instanceof ApiError ? e.thai : "โหลดไทม์ไลน์ไม่สำเร็จ (Could not load the timeline.)" });
+        } else if (e instanceof ApiError && (e.status === 404 || (e.status === 400 && e.body?.error === "invalid_brand_id"))) setLoad({ state: "missing" });
+        else setLoad({ state: "error", message });
       },
     );
     return () => { active = false; };
@@ -382,7 +398,8 @@ export function BrandTimelineScreen({ me, brandId }: { me: Me; brandId: string }
     <section className="panel tl-list" aria-label="รายการ (Timeline)">{body}</section>
     {load.state === "ready" && !noRequest && <div className="tl-notes">
       {load.data.unavailable.length > 0 && <p className="note">{load.data.unavailable.map((id) => UNAVAILABLE_NOTE[id]).join(" ")}</p>}
-      <LoadMore shown={items.length} hasMore={load.data.has_more} atMax={limit >= LIMIT_MAX} loading={loadingMore} onMore={loadMore} narrowHint="กรุณาเลือกช่วงวันที่ให้แคบลง (Narrow the date range)" />
+      {loadMoreError && <p className="note neg" role="alert">{loadMoreError}</p>}
+      <LoadMore shown={items.length} hasMore={load.data.has_more} atMax={loadedLimit.current >= LIMIT_MAX} loading={loadingMore} onMore={loadMore} narrowHint="กรุณาเลือกช่วงวันที่ให้แคบลง (Narrow the date range)" />
       {load.data.actor_scope === "own" && <p className="hint">{OWN_SCOPE_HINT}</p>}
     </div>}
     {confirmDialog}

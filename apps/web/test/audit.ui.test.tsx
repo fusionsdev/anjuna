@@ -55,6 +55,20 @@ describe("Audit screen", () => {
     expect(table.querySelector(".brand-id")).toBeNull();
   });
 
+  it("the first load shows the spinner, not the empty state", async () => {
+    mockLabels();
+    mockUsers();
+    let release: ((value: { entries: AuditEntry[]; next_cursor: string | null }) => void) | undefined;
+    vi.spyOn(api, "audit").mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    render(<AuditScreen me={me} />);
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(screen.queryByText("ยังไม่มีรายการ")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    await act(async () => { release!({ entries: [], next_cursor: null }); });
+    expect(await screen.findByText("ยังไม่มีรายการ")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("shows the empty state for an empty list", async () => {
     mockLabels();
     mockUsers();
@@ -168,20 +182,22 @@ describe("Audit screen", () => {
       return Promise.resolve({ entries: [entry({ id: 2 })], next_cursor: "cur2" });
     });
     render(<AuditScreen me={me} />);
-    const table = await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+    await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
     await screen.findByRole("option", { name: "Alice A (alice@example.test)" });
     fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
     await waitFor(() => expect(auditSpy).toHaveBeenCalledWith(expect.objectContaining({ cursor: "cur2" })));
     fireEvent.change(screen.getByLabelText(/ผู้ใช้ \(Actor\)/), { target: { value: "u2" } });
-    await waitFor(() => expect(within(table).getAllByRole("row").slice(1)).toHaveLength(1));
-    expect(within(table).getByText("brand.resume")).toBeTruthy();
+    // The reload blanks the list to the spinner, so the fresh table carries the new rows.
+    const fresh = await screen.findByRole("table", { name: "ประวัติการแก้ไข" });
+    await waitFor(() => expect(within(fresh).getAllByRole("row").slice(1)).toHaveLength(1));
+    expect(within(fresh).getByText("brand.resume")).toBeTruthy();
     await act(async () => {
       release!({ entries: [entry({ id: 1, action: "brand.pause" })], next_cursor: null });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(1);
-    expect(within(table).getByText("brand.resume")).toBeTruthy();
-    expect(within(table).queryByText("brand.pause")).toBeNull();
+    expect(within(fresh).getAllByRole("row").slice(1)).toHaveLength(1);
+    expect(within(fresh).getByText("brand.resume")).toBeTruthy();
+    expect(within(fresh).queryByText("brand.pause")).toBeNull();
   });
 
   it("Load more during a filter reload sends no stale cursor", async () => {
@@ -197,8 +213,8 @@ describe("Audit screen", () => {
     await screen.findByRole("option", { name: "Alice A (alice@example.test)" });
     auditSpy.mockClear();
     fireEvent.change(screen.getByLabelText(/ผู้ใช้ \(Actor\)/), { target: { value: "u2" } });
-    const btn = screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" });
-    if (btn) fireEvent.click(btn);
+    // The reload blanks the list to the spinner, so LoadMore (inside `entries &&`) stays hidden: no stale cursor can send.
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
     expect(auditSpy).not.toHaveBeenCalledWith(expect.objectContaining({ cursor: "cur2" }));
     expect(auditSpy.mock.calls.filter(([q]) => q?.cursor)).toHaveLength(0);
     await act(async () => {

@@ -93,12 +93,17 @@ export function DeploysScreen({ me }: { me: Me }) {
   const [details, setDetails] = useState<Record<string, InstallWithReceipts>>({});
   const [detailError, setDetailError] = useState<Record<string, string>>({});
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   // The key ties the grown limit to the filters that grew it: a filter change reads as the start limit again.
   const filterKey = `${brand}\n${source}\n${status}`;
   const [more, setMore] = useState({ key: filterKey, limit: LIMIT_START });
   const limit = more.key === filterKey ? more.limit : LIMIT_START;
   // Re-key during render on every filter change, so returning to an earlier filter never revives its grown limit.
   if (more.key !== filterKey) setMore({ key: filterKey, limit: LIMIT_START });
+  // The limit of the events on screen. atMax reads it, and a failed Load more falls back to it so a retry works.
+  const loadedLimit = useRef(LIMIT_START);
+  // A limit-only change keeps the table on screen; anything else refetches over the shown rows.
+  const lastBaseKey = useRef<string | null>(null);
   // Guards a double click before the first receipts answer lands; the state cache covers every later expand.
   const loading = useRef(new Set<string>());
   const brandSelectRef = useRef<HTMLSelectElement>(null);
@@ -118,6 +123,15 @@ export function DeploysScreen({ me }: { me: Me }) {
 
   useEffect(() => {
     let active = true;
+    if (lastBaseKey.current !== filterKey) {
+      lastBaseKey.current = filterKey;
+      loadedLimit.current = LIMIT_START;
+      setLoadMoreError(null);
+    } else if (limit === loadedLimit.current) {
+      // A failed Load more fell back to the loaded limit: the rows already shown are the answer.
+      return () => { active = false; };
+    }
+    const growing = limit !== loadedLimit.current;
     const query: DeployHistoryQuery = { limit };
     if (brand) query.brand = brand;
     if (source) query.source = source as DeploySource;
@@ -125,21 +139,30 @@ export function DeploysScreen({ me }: { me: Me }) {
     const fromFilters = brand !== "" || source !== "" || status !== "";
     api.deploys(query).then((r) => {
       if (!active) return;
+      loadedLimit.current = limit;
       setEvents(r.events);
       setHasMore(r.has_more);
       setUnavailable(r.unavailable);
       setShownFiltered(fromFilters);
       setLoadingMore(false);
+      setLoadMoreError(null);
       setError(null);
     }, (e: unknown) => {
-      // A failed feed is an error line, never a blank timeline that reads as "nothing happened".
       if (!active) return;
-      setEvents([]);
-      setHasMore(false);
-      setUnavailable([]);
-      setShownFiltered(fromFilters);
+      const message = e instanceof ApiError ? e.thai : "โหลดประวัติการติดตั้งไม่สำเร็จ (Could not load the deploy history.)";
       setLoadingMore(false);
-      setError(e instanceof ApiError ? e.thai : "โหลดประวัติการติดตั้งไม่สำเร็จ (Could not load the deploy history.)");
+      if (growing) {
+        // A failed Load more keeps the rows, shows the error by the button and falls back so a retry works.
+        setLoadMoreError(message);
+        setMore({ key: filterKey, limit: loadedLimit.current });
+      } else {
+        // A failed feed is an error line, never a blank timeline that reads as "nothing happened".
+        setEvents([]);
+        setHasMore(false);
+        setUnavailable([]);
+        setShownFiltered(fromFilters);
+        setError(message);
+      }
     });
     return () => { active = false; };
   }, [brand, source, status, limit]);
@@ -276,7 +299,8 @@ export function DeploysScreen({ me }: { me: Me }) {
           </div>}
         </section>
         <div className="deploys-foot">
-          <LoadMore shown={events.length} hasMore={hasMore} atMax={limit >= LIMIT_MAX} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
+          {loadMoreError && <p className="error" role="alert">{loadMoreError}</p>}
+          <LoadMore shown={events.length} hasMore={hasMore} atMax={loadedLimit.current >= LIMIT_MAX} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
           {unavailable.length > 0 && <p className="note">{unavailable.map((id) => UNAVAILABLE_NOTE[id]).join(" ")}</p>}
           <p className="hint"><a href="/audit" onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate("/audit"); }}>ดูประวัติการแก้ไขทั้งหมด (Full audit log)</a></p>
         </div>

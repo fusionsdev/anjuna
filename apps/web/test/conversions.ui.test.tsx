@@ -322,25 +322,95 @@ describe("Conversions page: load more", () => {
     expect(lastCall().searchParams.get("limit")).toBe("200");
   });
 
+  it("Load more keeps the table and shows กำลังโหลด… while the next page loads", async () => {
+    let release: ((response: Response) => void) | undefined;
+    respond = (url) => url.searchParams.get("limit") === "400"
+      ? new Promise<Response>((resolve) => { release = resolve; })
+      : json({ ...report, truncated: true });
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    const rows = screen.getAllByRole("row").length;
+    fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("400"));
+    const loading = await screen.findByRole("button", { name: "กำลังโหลด…" });
+    expect((loading as HTMLButtonElement).disabled).toBe(true);
+    // The table stays on screen while the next page loads.
+    expect(screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" })).toBeTruthy();
+    expect(screen.getAllByRole("row")).toHaveLength(rows);
+    await act(async () => { release!(json({ ...report, truncated: false })); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "กำลังโหลด…" })).toBeNull());
+    expect(screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" })).toBeTruthy();
+    expect(screen.getAllByRole("row")).toHaveLength(rows);
+  });
+
+  it("the max note waits for the max page to load", async () => {
+    let release: ((response: Response) => void) | undefined;
+    respond = (url) => url.searchParams.get("limit") === "1000"
+      ? new Promise<Response>((resolve) => { release = resolve; })
+      : json({ ...report, truncated: true });
+    render(<ConversionsScreen me={owner} />);
+    for (const limit of ["400", "600", "800"]) {
+      fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+      await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe(limit));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("1000"));
+    expect(await screen.findByRole("button", { name: "กำลังโหลด…" })).toBeTruthy();
+    // The max note waits for the max page: no max note while it loads.
+    expect(screen.queryByText(/ซึ่งเป็นจำนวนสูงสุด/)).toBeNull();
+    expect(screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" })).toBeTruthy();
+    await act(async () => { release!(json({ ...report, truncated: true })); });
+    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง (Narrow the filters)`)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
+  }, 20000);
+
+  it("a failed Load more keeps the rows, shows the error and a retry works", async () => {
+    let fail = true;
+    respond = (url) => url.searchParams.get("limit") === "400" && fail
+      ? json({ error: "internal" }, 500)
+      : json({ ...report, truncated: true });
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    const rows = screen.getAllByRole("row").length;
+    fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("เกิดข้อผิดพลาด (500)");
+    // The rows stay, the button stays, and the limit falls back with no extra request so a retry works.
+    expect(screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" })).toBeTruthy();
+    expect(screen.getAllByRole("row")).toHaveLength(rows);
+    expect(conversionCalls().map((url) => url.searchParams.get("limit"))).toEqual(["200", "400"]);
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("400"));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(conversionCalls().map((url) => url.searchParams.get("limit"))).toEqual(["200", "400", "400"]);
+  });
+
   it("drops a late Load more response after a filter change", async () => {
     const waiting: Array<(response: Response) => void> = [];
-    respond = (url) => url.searchParams.get("limit") === "400"
-      ? new Promise<Response>((resolve) => { waiting.push(resolve); })
-      : json({ ...report, truncated: true });
+    respond = (url) => {
+      if (url.searchParams.get("limit") === "400") return new Promise<Response>((resolve) => { waiting.push(resolve); });
+      const status = url.searchParams.get("status");
+      return json({ ...report, rows: status ? report.rows.filter((row) => row.status === status) : report.rows, truncated: true });
+    };
     render(<ConversionsScreen me={owner} />);
     await table();
     fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
     await waitFor(() => expect(waiting).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "ส่งไม่ได้ (dead)" }));
     await waitFor(() => expect(lastCall().searchParams.get("status")).toBe("dead"));
-    respond = () => json({ ...report, rows: report.rows.filter((row) => row.status === "dead"), truncated: false });
     fireEvent.click(screen.getByRole("button", { name: "ค้างส่ง (pending)" }));
     await waitFor(() => expect(lastCall().searchParams.get("status")).toBe("pending"));
     await table();
 
     waiting[0]!(json(report));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(screen.getAllByRole("row")).toHaveLength(1 + 4);
+    // The late full-window answer is dropped: the pending rows stay.
+    const grid = screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" });
+    expect(within(grid).getAllByRole("row")).toHaveLength(1 + 3);
+    expect(within(grid).getAllByText("ค้างส่ง")).toHaveLength(3);
+    expect(within(grid).getByText("ไม่มี route (No route)")).toBeTruthy();
+    expect(screen.queryByText("ลองครบแล้ว (Attempts exhausted)")).toBeNull();
     expect(lastCall().searchParams.get("limit")).toBe("200");
   });
 

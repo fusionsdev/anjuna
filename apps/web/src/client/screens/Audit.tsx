@@ -65,7 +65,9 @@ export function AuditScreen({ me }: { me: Me }) {
   useEffect(() => {
     const mine = ++generation.current;
     setLoadingMore(false);
-    setEntries([]);
+    // Null reads as loading: the spinner shows and LoadMore stays hidden (it renders only inside `entries &&`).
+    // The empty state shows only after an empty response lands.
+    setEntries(null);
     setNextCursor(null);
     setLoadMoreError(null);
     api.audit(query).then(

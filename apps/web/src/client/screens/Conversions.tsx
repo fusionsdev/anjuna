@@ -77,6 +77,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
   const { period, status, brand } = readConversionFilters(useSearch());
   const domains = useBrandDomains();
   const [load, setLoad] = useState<Load>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   // The key ties the grown limit to the filters that grew it: a filter change reads as the start limit again.
   const filterKey = `${period}\n${status}\n${brand ?? ""}`;
@@ -84,20 +85,45 @@ export function ConversionsScreen({ me }: { me: Me }) {
   const limit = more.key === filterKey ? more.limit : LIMIT_START;
   // Re-key during render on every filter change, so returning to an earlier filter never revives its grown limit.
   if (more.key !== filterKey) setMore({ key: filterKey, limit: LIMIT_START });
-  // Set by Load more so the effect keeps the table on screen while the next page loads.
-  const growing = useRef(false);
+  // The limit of the report on screen. atMax reads it, and a failed Load more falls back to it so a retry works.
+  const loadedLimit = useRef(LIMIT_START);
+  // A limit-only change keeps the table on screen; anything else falls back to the spinner.
+  const lastBaseKey = useRef<string | null>(null);
 
   // A late answer for old filters or an old limit is dropped.
   useEffect(() => {
     let current = true;
-    if (growing.current) growing.current = false;
-    else setLoad(null);
+    if (lastBaseKey.current !== filterKey) {
+      lastBaseKey.current = filterKey;
+      loadedLimit.current = LIMIT_START;
+      setLoad(null);
+      setLoadMoreError(null);
+    } else if (limit === loadedLimit.current) {
+      // A failed Load more fell back to the loaded limit: the rows already shown are the answer.
+      return () => { current = false; };
+    }
+    const growing = limit !== loadedLimit.current;
     api.conversions({ period, status: status === "all" ? undefined : status, brand: brand ?? undefined, limit }).then(
-      (report) => current && setLoad({ report, limit }),
-      (e: unknown) => current && setLoad({ error: e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ" }),
+      (report) => {
+        if (!current) return;
+        loadedLimit.current = limit;
+        setLoad({ report, limit });
+        setLoadMoreError(null);
+      },
+      (e: unknown) => {
+        if (!current) return;
+        const message = e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ";
+        if (growing) {
+          // A failed Load more keeps the rows, shows the error by the button and falls back so a retry works.
+          setLoadMoreError(message);
+          setMore({ key: filterKey, limit: loadedLimit.current });
+        } else {
+          setLoad({ error: message });
+        }
+      },
     );
     return () => { current = false; };
-  }, [period, status, brand, limit]);
+  }, [period, status, brand, limit, filterKey]);
 
   // replace: a filter click edits the open page and adds no history entry.
   const change = (patch: Partial<ConversionFilters>) => navigate(conversionsPath({ period, status, brand, ...patch }), { replace: true });
@@ -117,9 +143,9 @@ export function ConversionsScreen({ me }: { me: Me }) {
   ];
   const report = load && "report" in load ? load.report : null;
   const loadingMore = load !== null && "report" in load && load.limit !== limit;
+  const shownLimit = load && "report" in load ? load.limit : LIMIT_START;
   const loadMore = () => {
     if (loadingMore || !report?.truncated || limit >= CONVERSIONS_MAX_LIMIT) return;
-    growing.current = true;
     setMore({ key: filterKey, limit: Math.min(CONVERSIONS_MAX_LIMIT, limit + LIMIT_STEP) });
   };
 
@@ -174,7 +200,8 @@ export function ConversionsScreen({ me }: { me: Me }) {
               rowKey={(row) => row.lead_id}
               empty={<EmptyState title="ยังไม่มีคอนเวอร์ชันในช่วงนี้" />}
             />
-            <LoadMore shown={report.rows.length} hasMore={report.truncated} atMax={limit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
+            {loadMoreError && <p role="alert">{loadMoreError}</p>}
+            <LoadMore shown={report.rows.length} hasMore={report.truncated} atMax={shownLimit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
           </section>
         </div>
       )}

@@ -314,6 +314,27 @@ describe("brand timeline screen", () => {
     expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
   });
 
+  it("a failed Load more keeps the rows, shows the error and a retry works", async () => {
+    let fail = true;
+    respond = (url) => url.searchParams.get("limit") === "200" && fail
+      ? json({ error: "bad_gateway" }, 502)
+      : json(response({ has_more: true }));
+    await open();
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("เกิดข้อผิดพลาด (502)");
+    // The rows stay and the limit falls back with no extra request, so the button stays for the retry.
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    expect(timelineCalls().map((url) => url.searchParams.get("limit"))).toEqual(["100", "200"]);
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe("200"));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(rowIds()).toEqual(["tl-ads-e1", "tl-inst-2", "tl-ads-e2", "tl-cfg-1"]);
+    expect(timelineCalls().map((url) => url.searchParams.get("limit"))).toEqual(["100", "200", "200"]);
+  });
+
   it("a date range change resets the timeline limit to 100", async () => {
     respond = () => json(response({ has_more: true }));
     await open();

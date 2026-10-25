@@ -442,19 +442,49 @@ describe("deploy history screen", () => {
     expect(rows()).toHaveLength(1);
   });
 
+  it("a failed Load more keeps the rows, shows the error and a retry works", async () => {
+    let fail = true;
+    feed = (params) => params.get("limit") === "100" && fail
+      ? json({ error: "internal" }, 500)
+      : json({ events: FEED, has_more: true, unavailable: [] });
+    render(<DeploysScreen me={owner} />);
+    await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
+    expect(rows()).toHaveLength(6);
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("เกิดข้อผิดพลาด (500)");
+    // The rows stay on screen and the limit falls back with no extra request, so the button stays for the retry.
+    expect(screen.getByRole("table", { name: "ประวัติการติดตั้ง" })).toBeTruthy();
+    expect(rows()).toHaveLength(6);
+    expect(deploysPaths()).toEqual(["/api/deploys?limit=50", "/api/deploys?limit=100"]);
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
+    await waitFor(() => expect(deploysPaths()).toEqual(["/api/deploys?limit=50", "/api/deploys?limit=100", "/api/deploys?limit=100"]));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(rows()).toHaveLength(6);
+  });
+
   it("returning to an earlier deploys filter still resets the limit to 50", async () => {
-    feed = () => json({ events: FEED, has_more: true, unavailable: [] });
+    feed = (params) => json({
+      events: FEED.filter((e) => !params.get("status") || e.status === params.get("status")),
+      has_more: true,
+      unavailable: [],
+    });
     render(<DeploysScreen me={owner} />);
     await screen.findByRole("table", { name: "ประวัติการติดตั้ง" });
     fireEvent.click(screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
     await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?limit=100"));
     await waitFor(() => expect((screen.getByRole("button", { name: "โหลดเพิ่ม (Load more)" }) as HTMLButtonElement).disabled).toBe(false));
 
-    fireEvent.change(screen.getByLabelText(/แบรนด์ \(Brand\)/), { target: { value: "brand-b" } });
-    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?limit=50&brand=brand-b"));
+    // A filter with no rows: the return step is the Clear button, not the select.
+    fireEvent.change(screen.getByLabelText(/สถานะ \(Status\)/), { target: { value: "rolled_back" } });
+    await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?limit=50&status=rolled_back"));
+    expect(await screen.findByText("ไม่พบรายการที่ตรงกับตัวกรอง (No deploys match the filters)")).toBeTruthy();
+
     // Back to the unfiltered key that grew to 100: the window starts over.
-    fireEvent.change(screen.getByLabelText(/แบรนด์ \(Brand\)/), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "ล้างตัวกรอง (Clear filters)" }));
     await waitFor(() => expect(deploysPaths().at(-1)).toBe("/api/deploys?limit=50"));
+    expect(rows()).toHaveLength(6);
     expect(deploysPaths().filter((p) => p === "/api/deploys?limit=100")).toHaveLength(1);
   });
 
