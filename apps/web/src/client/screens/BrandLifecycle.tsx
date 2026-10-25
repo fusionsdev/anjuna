@@ -57,11 +57,12 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
 /**
  * One gating for the detail panel and the brand row menu, so they cannot drift.
  * The selected row uses the detail inputs (install detail, pendingOperation, recovery_required).
- * Any other row uses brand.status, brand.latest_install?.status, its own pendingOperation and
- * recoveryRequired false, so Retry and Recover need the install detail only the selected row has.
+ * Any other row uses brand.status, brand.latest_install?.status, its own rowPending lock and
+ * recoveryRequired false. Retry and Recover need the install detail only the selected row has;
+ * a brand without a form artifact keeps a disabled Install the menu hides and the handler refuses.
  */
 export type BrandActionKey = "install" | "rollback" | "redeploy" | "redeployLatest" | "recover" | "resumeWizard" | "duplicate" | "retry" | "timeline" | "openSite" | "copyFinalUrl" | "runtimeConfig";
-export interface BrandActionItem { key: BrandActionKey; label: string; group: "deploy" | "other"; tone?: "danger" }
+export interface BrandActionItem { key: BrandActionKey; label: string; group: "deploy" | "other"; tone?: "danger"; disabled?: boolean }
 export interface BrandActionGating {
   brand: LifecycleBrandSummary;
   installStatus?: InstallWithReceipts["status"];
@@ -82,7 +83,8 @@ export function brandActionItems(g: BrandActionGating): BrandActionItem[] {
   const owner = g.role === "owner";
   const managed = brand.status !== "unmanaged";
   const items: BrandActionItem[] = [];
-  if (managed && actions.install) items.push({ key: "install", label: "ติดตั้ง (Install)", group: "deploy" });
+  const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
+  if (managed && actions.install) items.push({ key: "install", label: "ติดตั้ง (Install)", group: "deploy", ...(missingArtifact ? { disabled: true } : {}) });
   if (managed && owner && actions.rollback) items.push({ key: "rollback", label: "ย้อนกลับ (Rollback)", group: "deploy" });
   if (managed && owner && brand.status === "live" && actions.rollback) {
     items.push({ key: "redeploy", label: "ติดตั้งใหม่ (Redeploy)", group: "deploy" });
@@ -132,6 +134,11 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [recovering, setRecovering] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [pendingOperation, setPendingOperation] = useState<{ brandId: string; generation: number; installId: string } | null>(null);
+  // Row-menu commands on non-selected brands lock per brandId, set synchronously before the
+  // request is sent, so a second menu open cannot send a second request and one brand's
+  // command cannot overwrite or clear another brand's tracking.
+  const [rowPending, setRowPending] = useState<ReadonlySet<string>>(new Set());
+  const rowPendingRef = useRef<Set<string>>(new Set());
   const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
   const [leadId, setLeadId] = useState("");
   // undefined while loading, null when the request failed (a core-only brand has no factory revisions).
@@ -397,26 +404,28 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       if (canCommit(token, selected.brand_id)) setRecovering(false);
     }
   }
-  /** A row menu acts on its own row's brand; the selected brand keeps its tracking (generation, recovering, install detail). */
+  /** A row menu acts on its own row's brand; the selected brand keeps its tracking (generation, recovering, install detail). Any other brand locks only its own rowPending entry, never the shared pendingOperation. */
   async function dispatchOperationFor(brand: LifecycleBrandSummary, action: () => Promise<{ install_id: string }>, retryOf?: string) {
     if (selected && brand.brand_id === selected.brand_id) {
       await dispatchOperation(action, retryOf);
       return;
     }
+    if (rowPendingRef.current.has(brand.brand_id)) return;
+    rowPendingRef.current.add(brand.brand_id);
+    setRowPending(new Set(rowPendingRef.current));
     const token = operationToken();
     try {
       const result = await action();
-      setPendingOperation({ brandId: brand.brand_id, generation: token.generation, installId: result.install_id });
       try {
         await api.installDetail(result.install_id);
       } catch { /* The brand history recovery picks the install up once the brand is selected. */ }
-      // Selecting the brand mid-flight keeps the pending install so its poll starts; otherwise clear it.
-      if (selectedIdRef.current !== brand.brand_id) setPendingOperation(null);
       await load(token);
     } catch (e) {
-      setPendingOperation(null);
       setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ");
       await load(token);
+    } finally {
+      rowPendingRef.current.delete(brand.brand_id);
+      setRowPending(new Set(rowPendingRef.current));
     }
   }
   /** Asks first. False when declined, or when the brand changed while the dialog was open (the generation moved on). */
@@ -501,6 +510,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
   async function startInstall(target: LifecycleBrandSummary | undefined = selected) {
     if (!target) return;
+    // The detail button is disabled and the menu hides Install for this; refuse here too so no path sends the POST.
+    if (target.bundle_form_version == null || target.payload_version == null) return;
     await dispatchOperationFor(target, () => api.install(target.brand_id, target.current_revision_id ?? undefined));
   }
   async function retry() {
@@ -571,7 +582,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     }
   }
 
-  /** The row menu gating equals the detail panel: the selected row uses the detail inputs, any other row brand.status, latest_install and its own pendingOperation. */
+  /** The row menu gating equals the detail panel: the selected row uses the detail inputs, any other row brand.status, latest_install and its own rowPending lock. Retry and Recover stay on the selected row with install detail loaded; a disabled Install (missing form artifact) is hidden. */
   function rowMenuItems(brand: LifecycleBrandSummary): RowMenuItem[] {
     const isSelected = brand.brand_id === selectedId;
     const gating = isSelected
@@ -582,7 +593,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       }
       : {
         installStatus: brand.latest_install?.status,
-        pending: pendingOperation?.brandId === brand.brand_id && pendingOperation.generation === operationGeneration.current,
+        pending: rowPending.has(brand.brand_id),
         recoveryRequired: false,
       };
     const site = siteUrl(brand.hostnames);
@@ -590,9 +601,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       brand, installStatus: gating.installStatus, pendingOperation: gating.pending, recoveryRequired: gating.recoveryRequired,
       role: me.role, hasSite: site !== null, hasRuntime: runtimeBrands.some((runtime) => runtime.brand_id === brand.brand_id),
       hasRedeployLatest: true, hasResumeWizard: true, hasDuplicate: true,
-      hasRetryTarget: isSelected ? install !== undefined : brand.latest_install != null,
+      hasRetryTarget: isSelected && install !== undefined,
       hasCopy: true,
-    }).map((item): RowMenuItem => ({
+    }).filter((item) => !item.disabled).map((item): RowMenuItem => ({
       key: item.key, label: item.label, group: item.group, tone: item.tone,
       onSelect: () => rowAction(item.key, brand),
     }));

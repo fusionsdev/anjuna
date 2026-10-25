@@ -134,6 +134,112 @@ describe("brand row actions menu", () => {
     await waitFor(() => expect(requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-a/redeploy")).toHaveLength(1));
   });
 
+  it("a non-selected failed row shows no Retry or Recover while the selected recovery detail gates the full install", async () => {
+    const latestFailed = {
+      install_id: "ins-brand-b", operation: "install", status: "failed",
+      started_at: "2026-10-06T00:00:00Z", finished_at: "2026-10-06T00:01:00Z", started_by: "owner",
+    };
+    for (const me of [owner, employee]) {
+      const a = base("brand-a", "failed");
+      const b = base("brand-b", "failed", { latest_install: latestFailed });
+      routes.set("GET /api/lifecycle/brands", () => json({ brands: [a, b] }));
+      routes.set("GET /api/brands", () => json({ brands: [a, b].map((row) => ({
+        brand_id: row.brand_id, hostnames: row.hostnames, status: "live", flow_gate_mode: "param", ab_config: null,
+        form_version: "form@abcdef1", stats_7d: { leads: 0, sold: 0, pending: 0 },
+      })), generated_at: "2026-10-06T00:00:00Z" }));
+      for (const row of [a, b]) {
+        const id = row.brand_id;
+        routes.set(`GET /api/brands/${id}/checklist`, () => json({ brand_id: id, checklist: [] }));
+        routes.set(`GET /api/brands/${id}/installs`, () => json({
+          brand_id: id, installs: id === "brand-a" ? [{ install_id: "ins-f", status: "failed", error: "boom" }] : [],
+        }));
+        routes.set(`GET /api/brands/${id}/revisions`, () => json({ brand_id: id, current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
+      }
+      routes.set("GET /api/installs/ins-f", () => json(failedInstall("brand-a", true)));
+      render(<BrandLifecycle me={me} />);
+      // The selected brand's recovery detail must have landed first.
+      await screen.findByText("ins-f", { selector: "code" });
+      const pickB = await screen.findByRole("button", { name: /brand-b\.test/ });
+      fireEvent.click(within(pickB.closest("tr")!).getByRole("button", { name: "จัดการ (Actions)" }));
+      const menuB = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((el) => el.textContent ?? "");
+      expect(menuB).not.toContain("ลองใหม่ (Retry)");
+      expect(menuB).not.toContain("กู้คืน (Recover, Owner)");
+      fireEvent.click(document.body);
+      const aside = detailLabels();
+      if (me.role === "owner") {
+        expect(aside).toContain("กู้คืน (Recover, Owner)");
+        expect(aside).not.toContain("ลองใหม่ (Retry)");
+      } else {
+        expect(aside).not.toContain("กู้คืน (Recover, Owner)");
+        expect(aside).not.toContain("ลองใหม่ (Retry)");
+      }
+      cleanup();
+    }
+  });
+
+  it("a hanging row install locks its brand and survives another brand's command", async () => {
+    const a = base("brand-a", "draft");
+    const b = base("brand-b", "draft");
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [a, b] }));
+    routes.set("GET /api/brands", () => json({ brands: [a, b].map((row) => ({
+      brand_id: row.brand_id, hostnames: row.hostnames, status: "live", flow_gate_mode: "param", ab_config: null,
+      form_version: "form@abcdef1", stats_7d: { leads: 0, sold: 0, pending: 0 },
+    })), generated_at: "2026-10-06T00:00:00Z" }));
+    for (const row of [a, b]) {
+      const id = row.brand_id;
+      routes.set(`GET /api/brands/${id}/checklist`, () => json({ brand_id: id, checklist: [] }));
+      routes.set(`GET /api/brands/${id}/installs`, () => json({ brand_id: id, installs: [] }));
+      routes.set(`GET /api/brands/${id}/revisions`, () => json({ brand_id: id, current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
+    }
+    let releaseB!: (value: Response) => void;
+    routes.set("POST /api/brands/brand-b/install", () => new Promise<Response>((resolve) => { releaseB = resolve; }));
+    routes.set("POST /api/brands/brand-a/install", () => json({ install_id: "op-a", brand_id: "brand-a", status: "running" }, 201));
+    for (const [id, op] of [["op-a", "op-a"], ["op-b", "op-b"]] as const) {
+      const brandId = id === "op-a" ? "brand-a" : "brand-b";
+      routes.set(`GET /api/installs/${op}`, () => json({
+        install_id: id, brand_id: brandId, revision_id: "rev-1", status: "running",
+        runtime_sync_status: "running", receipts: [],
+      } satisfies InstallWithReceipts));
+    }
+    const closeMenu = () => fireEvent.mouseDown(document.body);
+    const menuOf = async (domain: string) => {
+      closeMenu();
+      const pick = await screen.findByRole("button", { name: new RegExp(domain.replace(".", "\\.")) });
+      fireEvent.click(within(pick.closest("tr")!).getByRole("button", { name: "จัดการ (Actions)" }));
+      const items = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((el) => el.textContent ?? "");
+      closeMenu();
+      return items;
+    };
+    const chooseInstall = async (domain: string) => {
+      closeMenu();
+      const pick = await screen.findByRole("button", { name: new RegExp(domain.replace(".", "\\.")) });
+      fireEvent.click(within(pick.closest("tr")!).getByRole("button", { name: "จัดการ (Actions)" }));
+      fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "ติดตั้ง (Install)" }));
+    };
+    render(<BrandLifecycle me={owner} />);
+    await screen.findAllByRole("button", { name: "จัดการ (Actions)" });
+    // Brand B is not selected; its Install hangs in flight.
+    await chooseInstall("brand-b.test");
+    await waitFor(() => expect(requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-b/install")).toHaveLength(1));
+    expect(await menuOf("brand-b.test")).not.toContain("ติดตั้ง (Install)");
+    // Brand A's own command completes while B hangs; B stays locked.
+    await chooseInstall("brand-a.test");
+    await waitFor(() => expect(requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-a/install")).toHaveLength(1));
+    expect(await menuOf("brand-b.test")).not.toContain("ติดตั้ง (Install)");
+    releaseB(json({ install_id: "op-b", brand_id: "brand-b", status: "running" }, 201));
+    await waitFor(async () => expect(await menuOf("brand-b.test")).toContain("ติดตั้ง (Install)"));
+    expect(requests.filter((r) => r.method === "POST" && r.path === "/api/brands/brand-b/install")).toHaveLength(1);
+  });
+
+  it("a brand without a form artifact has no menu Install and sends no POST", async () => {
+    serveBrand(base("brand-c", "draft", { bundle_form_version: null, payload_version: null }));
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("button", { name: "จัดการ (Actions)" });
+    expect(await openRowMenu()).not.toContain("ติดตั้ง (Install)");
+    expect((within(document.querySelector(".brands-aside")!).getByRole("button", { name: "ติดตั้ง (Install)" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
+  });
+
   it("Copy Final URL from the row copies the same URL as the detail button", async () => {
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
