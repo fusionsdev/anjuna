@@ -50,6 +50,15 @@ export interface PanelUser {
   banned: boolean;
 }
 
+/** A better-auth session row minus the token, as GET /api/users/:id/sessions returns it (spec polish D1.1). */
+export interface UserSession {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  ip_address: string | null;
+  user_agent: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -166,6 +175,14 @@ export const api = {
   users: () => request<{ users: PanelUser[] }>("GET", "/api/users").then((r) => r.users),
   createUser: (u: { email: string; name: string; password: string; role: AdminRole }) => request<unknown>("POST", "/api/users", u),
   setRole: (id: string, role: AdminRole) => request<unknown>("PATCH", `/api/users/${encodeURIComponent(id)}`, { role }),
+  // spec polish D1.1: owner-only user admin, same paths and bodies as server/users-admin.ts.
+  banUser: (id: string, reason?: string) => request<{ user: { id: string; banned: boolean } }>("POST", `/api/users/${encodeURIComponent(id)}/ban`, reason ? { reason } : {}),
+  unbanUser: (id: string) => request<{ user: { id: string; banned: boolean } }>("POST", `/api/users/${encodeURIComponent(id)}/unban`, {}),
+  resetUserPassword: (id: string, password: string) => request<{ user: { id: string } }>("POST", `/api/users/${encodeURIComponent(id)}/password`, { password }),
+  deleteUser: (id: string) => request<{ removed: boolean }>("DELETE", `/api/users/${encodeURIComponent(id)}`),
+  userSessions: (id: string) => request<{ sessions: UserSession[] }>("GET", `/api/users/${encodeURIComponent(id)}/sessions`),
+  revokeUserSessions: (id: string) => request<{ revoked: boolean }>("DELETE", `/api/users/${encodeURIComponent(id)}/sessions`),
+  revokeUserSession: (id: string, sessionId: string) => request<{ revoked: boolean }>("DELETE", `/api/users/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}`),
   lifecycleBrands: () => request<{ brands: LifecycleBrandSummary[]; core_error?: CoreListError | null }>("GET", "/api/lifecycle/brands"),
   lifecycleBrand: (id: string) => request<{ brand: LifecycleBrandSummary }>("GET", `/api/lifecycle/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   createDraft: (body: Omit<CreateBrandDraftRequest, "brand_id" | "account" | "hostname"> & { domain: string; keyword_default: string; template_version_id: string; name?: string; profile?: BrandProfile }) =>
