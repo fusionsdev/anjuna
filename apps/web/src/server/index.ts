@@ -40,6 +40,7 @@ import { handleTemplateRoute } from "./templates.js";
 import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleTrafficLogRoute } from "./traffic-log.js"; // spec traffic
 import { handleWizardRoute } from "./wizard.js";
+import { handleUsersAdminRoute } from "./users-admin.js"; // spec polish
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -211,6 +212,10 @@ async function route(
   // --- audit: core's rows (brand/config) plus the panel's own (sign-in, users) ---
   const auditList = await handleAuditRoute(request, env, url, path, ctx); // spec polish
   if (auditList) return auditList;
+
+  // spec polish
+  const usersAdmin = await handleUsersAdminRoute(request, env, path, ctx, auth);
+  if (usersAdmin) return usersAdmin;
 
   // --- users (panel-only, owner only) ---
   if (path === "/api/users" && method === "GET") {

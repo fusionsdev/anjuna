@@ -9,6 +9,14 @@ export const PANEL_ROLE_TABLE = {
   listUsers: "owner",
   createUser: "owner",
   setUserRole: "owner",
+  /** Ban or unban a user (unban shares the ban gate). */
+  banUser: "owner",
+  /** Delete a user and their sessions. */
+  deleteUser: "owner",
+  /** Set a user's password (revokes their sessions too). */
+  resetUserPassword: "owner",
+  /** List and revoke a user's sessions. */
+  manageUserSessions: "owner",
   /** Rollback and deletion are Owner-only. */
   rollbackBrand: "owner",
   /** Pause is Owner-only in the panel; core still allows employee, so this gate is the enforcement. Resume stays employee. */
