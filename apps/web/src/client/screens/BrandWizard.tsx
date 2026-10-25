@@ -3,7 +3,7 @@
  * saves it with PATCH /api/brands/:id/draft, and Generate starts the install. A saved draft resumes at its
  * first incomplete step.
  */
-import { roleAtLeast, type BrandTheme, type TemplateTextDefaults, type TemplateThemeVars, type TemplateVersionSummary, type UpdateBrandDraftRequest } from "@anjuna/contracts";
+import { EMPTY_THEME_VARS, roleAtLeast, type BrandTheme, type TemplateTextDefaults, type TemplateThemeVars, type TemplateVersionSummary, type UpdateBrandDraftRequest } from "@anjuna/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WizardDefaultsResponse, WizardDraft } from "../../shared/wizard";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
@@ -84,7 +84,8 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
     void api.template(templateId).then((detail) => {
       if (!active) return;
       setTemplateText(detail.template.text_defaults);
-      setThemeVars(detail.template.theme_vars);
+      // A version imported before the color map existed answers null: no variables, not "still loading".
+      setThemeVars(detail.template.theme_vars ?? EMPTY_THEME_VARS);
     }, () => { if (active) { setTemplateText(null); setThemeVars(null); } });
     return () => { active = false; };
   }, [templateId, stepId]);

@@ -476,6 +476,8 @@ describe("template step brand colors", () => {
   });
 
   it("reset saves the draft without theme", async () => {
+    const mapped = detail("tv-1");
+    routes.set("GET /api/templates/tv-1", () => json({ ...mapped, template: { ...mapped.template, theme_vars: { primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: [] } } }));
     hold({ contact: CONTACT, theme: THEME });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต (Template)");
@@ -501,6 +503,16 @@ describe("template step brand colors", () => {
   it("template step disables colors for a template without color variables", async () => {
     const empty = detail("tv-1");
     routes.set("GET /api/templates/tv-1", () => json({ ...empty, template: { ...empty.template, theme_vars: { primary: [], primary_dark: [], secondary: [] } } }));
+    hold({ contact: CONTACT, copy: {} });
+    setup(employee, { brandId: "brand_new", initialStep: 1 });
+    await heading("เทมเพลต (Template)");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true));
+    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)");
+  });
+
+  it("template step disables colors when the template has no stored color map", async () => {
+    // detail() answers theme_vars: null, the shape of a version imported before the color map existed.
     hold({ contact: CONTACT, copy: {} });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต (Template)");
