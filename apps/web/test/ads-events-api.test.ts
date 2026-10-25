@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { writeFactoryAudit } from "../src/server/audit";
 import { AdsAccountEvent } from "../src/shared/timeline";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
@@ -53,7 +54,7 @@ describe("POST /api/brands/:id/ads-events", () => {
     expect(rows[0]).toMatchObject({ event_id: stored.event_id, brand_id: "brand-b", created_by: employeeId });
     const audit = await adsAuditRows();
     expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ actor_id: employeeId, actor_role: "employee", action: "ads_event.create", entity_type: "brand", entity_id: "brand-b", before_json: null });
+    expect(audit[0]).toMatchObject({ actor_id: employeeId, actor_role: "employee", action: "ads_event.create", entity_type: "ads_event", entity_id: stored.event_id, before_json: null });
     expect(JSON.parse(audit[0]!.after_json!)).toEqual(stored);
   });
 
@@ -61,8 +62,10 @@ describe("POST /api/brands/:id/ads-events", () => {
     expect((await env.FACTORY.prepare("SELECT 1 FROM brands WHERE brand_id = 'brand-a'").first())).toBeNull();
     const response = await post("brand-a", goodBody());
     expect(response.status).toBe(201);
-    expect(await eventRows()).toHaveLength(1);
-    expect((await adsAuditRows())[0]).toMatchObject({ entity_id: "brand-a" });
+    const rows = await eventRows();
+    expect(rows).toHaveLength(1);
+    expect((await adsAuditRows())[0]).toMatchObject({ entity_type: "ads_event", entity_id: rows[0]!.event_id });
+    expect(JSON.parse((await adsAuditRows())[0]!.after_json!)).toMatchObject({ brand_id: "brand-a" });
   });
 
   it("an unknown brand gives 404 not_found brand and writes nothing", async () => {
@@ -142,6 +145,16 @@ describe("POST /api/brands/:id/ads-events", () => {
   });
 });
 
+describe("factory audit allowlist", () => {
+  it("writeFactoryAudit throws for an action outside FACTORY_AUDIT_PREFIXES and writes nothing", async () => {
+    await expect(writeFactoryAudit(env.FACTORY, {
+      actor_id: "u1", actor_role: "owner", action: "lead.delete", entity_type: "lead", entity_id: "l1",
+    })).rejects.toThrow(/Not a factory audit action: lead\.delete/);
+    const row = await env.FACTORY.prepare("SELECT 1 FROM audit_log WHERE action = 'lead.delete' AND id > ?1").bind(auditFloor).first();
+    expect(row).toBeNull();
+  });
+});
+
 describe("DELETE /api/brands/:id/ads-events/:eventId", () => {
   const seed = async (): Promise<AdsAccountEvent> => {
     const { event } = (await (await post("brand-b", goodBody())).json()) as { event: AdsAccountEvent };
@@ -166,7 +179,7 @@ describe("DELETE /api/brands/:id/ads-events/:eventId", () => {
     expect(await eventRows()).toHaveLength(0);
     const audit = (await adsAuditRows()).filter((r) => r.action === "ads_event.delete");
     expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ actor_id: ownerId, actor_role: "owner", entity_type: "brand", entity_id: "brand-b", after_json: null });
+    expect(audit[0]).toMatchObject({ actor_id: ownerId, actor_role: "owner", entity_type: "ads_event", entity_id: event.event_id, after_json: null });
     expect(JSON.parse(audit[0]!.before_json!)).toEqual(event);
   });
 
@@ -182,5 +195,44 @@ describe("DELETE /api/brands/:id/ads-events/:eventId", () => {
   it("DELETE of a missing event answers 404 and 400 for a malformed brand id", async () => {
     expect((await del("brand-b", "missing")).status).toBe(404);
     expect((await del("Bad%20Brand", "missing")).status).toBe(400);
+  });
+
+  it("two DELETEs of the same event write exactly one ads_event.delete audit row and the second answers 404", async () => {
+    const event = await seed();
+    expect((await del("brand-b", event.event_id)).status).toBe(200);
+    const second = await del("brand-b", event.event_id);
+    expect(second.status).toBe(404);
+    expect(await second.json()).toEqual({ error: "not_found", resource: "ads_event" });
+    expect((await adsAuditRows()).filter((r) => r.action === "ads_event.delete")).toHaveLength(1);
+  });
+
+  it("two concurrent DELETEs of the same event answer one 200 and one 404 and write one audit row", async () => {
+    const event = await seed();
+    const statuses = (await Promise.all([del("brand-b", event.event_id), del("brand-b", event.event_id)])).map((r) => r.status).sort();
+    expect(statuses).toEqual([200, 404]);
+    expect((await adsAuditRows()).filter((r) => r.action === "ads_event.delete")).toHaveLength(1);
+    expect(await eventRows()).toHaveLength(0);
+  });
+
+  const insertRaw = (eventId: string, occurredAt: string) => env.FACTORY.prepare(
+    "INSERT INTO ads_account_events (event_id,brand_id,type,occurred_at,note,created_by,created_role,created_at) VALUES (?1,'brand-b','other',?2,'raw','u1','owner','2026-10-21T06:00:00.000Z')",
+  ).bind(eventId, occurredAt).run();
+
+  it("DELETE of a stored row with a +07:00 occurred_at answers 200 with the normalized time", async () => {
+    await insertRaw("ev-offset", "2026-10-21T07:00:00+07:00");
+    const response = await del("brand-b", "ev-offset");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ deleted: { event_id: "ev-offset", occurred_at: "2026-10-21T00:00:00.000Z" } });
+    expect(await eventRows()).toHaveLength(0);
+    expect((await adsAuditRows()).filter((r) => r.action === "ads_event.delete")).toMatchObject([{ entity_type: "ads_event", entity_id: "ev-offset" }]);
+  });
+
+  it("DELETE of a stored row that fails the schema answers 500 internal, not 404, and keeps the row", async () => {
+    await insertRaw("ev-garbled", "not-a-date");
+    const response = await del("brand-b", "ev-garbled");
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "internal", request_id: expect.stringMatching(/^req_/) });
+    expect(await eventRows()).toHaveLength(1);
+    expect(await adsAuditRows()).toHaveLength(0);
   });
 });

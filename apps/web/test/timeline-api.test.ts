@@ -43,7 +43,7 @@ beforeEach(async () => {
   await env.FACTORY.batch([rev("brand-f_rev_1", 1, "tv-1", "fa-1"), rev("brand-f_rev_2", 2, "tv-2", "fa-2")]);
   await env.FACTORY.batch([
     install("inst-f1", "install", null, "brand-f_rev_1", "2026-10-21T01:00:00.000Z"),
-    // 07:00+07:00 is 00:00Z: the same instant as ads-ev-3, later than it as text.
+    // 07:00+07:00 is 00:00Z: the same instant as ads-ev-3, which is stored with the same +07:00 text.
     install("inst-f-off", "upgrade", "brand-f_rev_1", "brand-f_rev_2", "2026-10-21T07:00:00+07:00"),
   ]);
   await env.FACTORY.batch([
@@ -96,7 +96,7 @@ describe("GET /api/brands/:id/timeline", () => {
 
   it("an owner gets every source merged newest first by instant", async () => {
     const body = await timeline("brand-f", "", owner);
-    // inst-f-off (07:00+07:00) and ads-ev-3 are the same instant, so the larger item_id comes first.
+    // inst-f-off (07:00+07:00) and ads-ev-3 are the same instant, so the install row comes before the Ads event.
     expect(ids(body)).toEqual(EVERYTHING);
     expect(body).toMatchObject({ brand_id: "brand-f", has_more: false, unavailable: [], actor_scope: "all" });
     expect(body.items.find((i) => i.item_id === "inst-f-off")!.at).toBe("2026-10-21T00:00:00.000Z");
@@ -220,6 +220,40 @@ describe("GET /api/brands/:id/timeline", () => {
     const body = await timeline("brand-a", "", owner, coreEnv(entries));
     expect(ids(body)).toEqual(["core-audit-401"]);
     expect(body.items[0]).toMatchObject({ kind: "change", category: "pause_resume", from_revision: null, to_revision: null });
+  });
+
+  it("an event an employee POSTs shows up on the timeline with the same fields", async () => {
+    const occurredAt = new Date(Date.now() - 3600_000).toISOString();
+    const posted = await call("/api/brands/brand-f/ads-events", {
+      method: "POST", cookie: employee, body: { type: "account_suspended", occurred_at: occurredAt, note: "Suspended for billing" },
+    });
+    expect(posted.status).toBe(201);
+    const { event } = (await posted.json()) as { event: { event_id: string } };
+    const body = await timeline("brand-f", "?types=account_suspended", employee);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      kind: "ads_event",
+      item_id: `ads-${event.event_id}`,
+      at: occurredAt,
+      event: { event_id: event.event_id, type: "account_suspended", occurred_at: occurredAt, note: "Suspended for billing", created_by: employeeId, created_role: "employee" },
+    });
+  });
+
+  it("breaks an equal-instant tie between factory audit rows by numeric id, not by text", async () => {
+    const at = "2026-10-22T00:00:00.000Z";
+    // audit_log is append-only, so the rows use their own brand and ids that cannot collide with ids other tests allocate.
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("INSERT OR IGNORE INTO brands (brand_id,name,account,domain,status,current_revision_id,created_by,created_at,updated_at) VALUES ('brand-tie','Brand Tie','test-account','tie.test','live',NULL,'owner','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z')"),
+      ...[99998, 99999, 100000].map((id) => env.FACTORY.prepare(
+        "INSERT OR IGNORE INTO audit_log (id,actor_id,actor_role,action,entity_type,entity_id,created_at) VALUES (?1,?2,'owner','brand.profile.update','brand','brand-tie',?3)",
+      ).bind(id, ownerId, at)),
+    ]);
+    const window = `?types=factory_edit&from=${at}&to=${at}`;
+    expect(ids(await timeline("brand-tie", `${window}&limit=3`, owner))).toEqual(["audit-100000", "audit-99999", "audit-99998"]);
+    // SQL cuts audit rows by numeric id DESC, so with limit=1 the page holds audit-100000 and audit-99999; the merge must keep audit-100000.
+    const one = await timeline("brand-tie", `${window}&limit=1`, owner);
+    expect(ids(one)).toEqual(["audit-100000"]);
+    expect(one.has_more).toBe(true);
   });
 
   it("an unknown brand gives 404", async () => {

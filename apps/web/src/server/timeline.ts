@@ -87,7 +87,7 @@ async function createAdsEvent(request: Request, env: Env, ctx: AdminRequestConte
       ).bind(event.event_id, event.brand_id, event.type, event.occurred_at, event.note, event.created_by, event.created_role, event.created_at),
       factoryAuditStatement(env.FACTORY, {
         actor_id: ctx.actor_id, actor_role: ctx.actor_role, action: "ads_event.create",
-        entity_type: "brand", entity_id: brandId, after: event,
+        entity_type: "ads_event", entity_id: event.event_id, after: event,
       }),
     ]);
   } catch {
@@ -106,17 +106,23 @@ async function deleteAdsEvent(env: Env, ctx: AdminRequestContext, rawBrandId: st
 
   const row = await env.FACTORY.prepare("SELECT * FROM ads_account_events WHERE event_id = ?1 AND brand_id = ?2")
     .bind(eventId, brandId).first();
-  const stored = AdsAccountEvent.safeParse(row);
-  if (!stored.success) return json(404, { error: "not_found", resource: "ads_event" });
+  if (row === null) return json(404, { error: "not_found", resource: "ads_event" });
+  // A row written with an offset (+07:00) is still a real event: read it the way the timeline does.
+  const occurredAt = typeof row.occurred_at === "string" ? asTimestamp(row.occurred_at) : null;
+  const stored = AdsAccountEvent.safeParse({ ...row, occurred_at: occurredAt });
+  if (!stored.success) return json(500, { error: "internal", request_id: ctx.request_id });
   const event = stored.data;
   try {
-    await env.FACTORY.batch([
+    // The audit row goes first and only while the event still exists, so a concurrent delete that won leaves no second audit row.
+    const results = await env.FACTORY.batch([
+      env.FACTORY.prepare(
+        `INSERT INTO audit_log (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+         SELECT ?1, ?2, 'ads_event.delete', 'ads_event', ?3, ?4, NULL, ?5
+          WHERE EXISTS (SELECT 1 FROM ads_account_events WHERE event_id = ?3 AND brand_id = ?6)`,
+      ).bind(ctx.actor_id, ctx.actor_role, event.event_id, JSON.stringify(event), new Date().toISOString(), brandId),
       env.FACTORY.prepare("DELETE FROM ads_account_events WHERE event_id = ?1 AND brand_id = ?2").bind(eventId, brandId),
-      factoryAuditStatement(env.FACTORY, {
-        actor_id: ctx.actor_id, actor_role: ctx.actor_role, action: "ads_event.delete",
-        entity_type: "brand", entity_id: brandId, before: event, after: null,
-      }),
     ]);
+    if (results[1]!.meta.changes === 0) return json(404, { error: "not_found", resource: "ads_event" });
   } catch {
     return json(500, { error: "internal", request_id: ctx.request_id });
   }
@@ -154,9 +160,24 @@ async function revisionRefs(db: D1Database, brandId: string): Promise<Map<string
   return refs;
 }
 
-// Newest instant first; the text of the timestamp is no guide because offsets differ between rows.
+// Sources in descending text order of their id prefixes: installs, core audit, factory audit, Ads events.
+const sourceRank = (item: TimelineItem): number => {
+  if (item.kind === "ads_event") return 0;
+  if (item.item_id.startsWith("core-audit-")) return 2;
+  return item.change.source === "audit" ? 1 : 3;
+};
+const AUDIT_ID = /^(?:core-)?audit-(\d+)$/;
+const text = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+// Within one source, the order its SQL cuts by: audit rows by numeric id (`audit-10` is newer than `audit-9`), the others by id text.
+const sameSourceOrder = (a: TimelineItem, b: TimelineItem): number => {
+  const na = AUDIT_ID.exec(a.item_id), nb = AUDIT_ID.exec(b.item_id);
+  return na && nb ? Number(na[1]) - Number(nb[1]) : text(a.item_id, b.item_id);
+};
+
+// Newest instant first; the text of the timestamp is no guide because offsets differ between rows. Equal instants: newer source row first.
 const itemsNewestFirst = (a: TimelineItem, b: TimelineItem): number =>
-  Date.parse(b.at) - Date.parse(a.at) || (a.item_id < b.item_id ? 1 : a.item_id > b.item_id ? -1 : 0);
+  Date.parse(b.at) - Date.parse(a.at) || sourceRank(b) - sourceRank(a) || sameSourceOrder(b, a);
 
 async function brandTimeline(url: URL, env: Env, ctx: AdminRequestContext, rawBrandId: string): Promise<Response> {
   const gate = authorizePanel("viewBrandTimeline", ctx.actor_role);

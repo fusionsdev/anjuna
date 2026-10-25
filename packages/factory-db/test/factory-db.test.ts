@@ -126,10 +126,15 @@ describe("factory-db constraints", () => {
       `ev-check-${++n}`, type, NOW, note, role,
     );
     await insert("ad_disapproved", "employee", "");
-    await expect(insert("bogus", "employee", "")).rejects.toThrow(/CHECK/);
-    await expect(insert("other", "system", "")).rejects.toThrow(/CHECK/);
-    await expect(insert("other", "owner", "x".repeat(501))).rejects.toThrow(/CHECK/);
+    await expect(insert("bogus", "employee", "")).rejects.toThrow(/CHECK constraint failed: type IN/);
+    await expect(insert("other", "system", "")).rejects.toThrow(/CHECK constraint failed: created_role IN/);
+    await expect(insert("other", "owner", "x".repeat(501))).rejects.toThrow(/CHECK constraint failed: length\(note\) <= 500/);
     await insert("other", "owner", "x".repeat(500));
+  });
+
+  it("indexes ads account events by brand and time", async () => {
+    const row = await env.DB.prepare("SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = 'idx_ads_account_events_brand'").first<{ tbl_name: string }>();
+    expect(row?.tbl_name).toBe("ads_account_events");
   });
 
   it("has no foreign key on ads account event brand ids", async () => {

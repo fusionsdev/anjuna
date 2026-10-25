@@ -5,8 +5,10 @@ import {
   CHANGE_CATEGORIES,
   AdsAccountEvent,
   CreateAdsEventRequest,
+  RevisionRef,
   TimelineItem,
   TimelineQuery,
+  TimelineResponse,
   changeCategory,
 } from "../src/shared/timeline";
 
@@ -62,13 +64,38 @@ describe("timeline schemas", () => {
   });
 
   it("TimelineQuery rejects an unknown type, limit 201 and from after to", () => {
-    expect(TimelineQuery.safeParse({ types: "config,bogus" }).success).toBe(false);
-    expect(TimelineQuery.safeParse({ limit: "201" }).success).toBe(false);
-    expect(TimelineQuery.safeParse({ limit: "0" }).success).toBe(false);
-    const r = TimelineQuery.safeParse({ from: "2026-10-02T00:00:00.000Z", to: "2026-10-01T00:00:00.000Z" });
+    const issues = (input: unknown) => {
+      const r = TimelineQuery.safeParse(input);
+      expect(r.success).toBe(false);
+      return r.success ? [] : r.error.issues;
+    };
+    expect(issues({ types: "config,bogus" }).map((i) => i.path)).toEqual([["types"]]);
+    expect(issues({ limit: "201" }).map((i) => i.path)).toEqual([["limit"]]);
+    expect(issues({ limit: "0" }).map((i) => i.path)).toEqual([["limit"]]);
+    expect(issues({ from: "2026-10-02T00:00:00.000Z", to: "2026-10-01T00:00:00.000Z" }).map((i) => i.path)).toEqual([["from"]]);
+    const unknownKey = issues({ extra: "x" });
+    expect(unknownKey.map((i) => i.code)).toEqual(["unrecognized_keys"]);
+    expect(unknownKey[0]).toMatchObject({ keys: ["extra"] });
+  });
+
+  it("RevisionRef rejects revision 0", () => {
+    const ref = { revision: 1, template_version_id: "tv-1", bundle_form_version: null };
+    expect(RevisionRef.safeParse(ref).success).toBe(true);
+    const r = RevisionRef.safeParse({ ...ref, revision: 0 });
     expect(r.success).toBe(false);
-    if (!r.success) expect(r.error.issues.some((i) => i.path[0] === "from")).toBe(true);
-    expect(TimelineQuery.safeParse({ extra: "x" }).success).toBe(false);
+    if (!r.success) expect(r.error.issues.map((i) => i.path)).toEqual([["revision"]]);
+  });
+
+  it("TimelineResponse parses a full response and rejects an unknown actor_scope", () => {
+    const response = {
+      brand_id: "b1",
+      items: [{ kind: "ads_event", item_id: "ads-e1", at: adsEvent.occurred_at, event: adsEvent }],
+      has_more: false,
+      unavailable: ["core_audit"],
+      actor_scope: "own",
+    };
+    expect(TimelineResponse.parse(response)).toEqual(response);
+    expect(TimelineResponse.safeParse({ ...response, actor_scope: "team" }).success).toBe(false);
   });
 
   it("TimelineItem accepts a change item and an ads_event item and rejects an extra key", () => {
