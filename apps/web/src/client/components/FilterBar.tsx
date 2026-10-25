@@ -1,7 +1,8 @@
 // spec polish
-import { type ReactNode, useEffect, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 const NARROW_QUERY = "(max-width: 767px)";
+const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 /** True while the viewport is under 768 px. jsdom has no matchMedia, so it reads false there. */
 export function useNarrow(): boolean {
@@ -21,10 +22,41 @@ export function useNarrow(): boolean {
 export function FilterBar({ label, activeCount, children }: { label: string; activeCount: number; children: ReactNode }) {
   const narrow = useNarrow();
   const [open, setOpen] = useState(false);
+  const openButtonRef = useRef<HTMLButtonElement | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  const close = () => {
+    setOpen(false);
+    (openButtonRef.current ?? returnFocus.current)?.focus?.();
+  };
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      close();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const stops = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (!stops.includes(active as HTMLElement)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+    else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  };
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    // Focus starts inside the modal: first control, or the dialog itself when there is none.
+    const wrap = wrapRef.current;
+    if (wrap) {
+      const stops = Array.from(wrap.querySelectorAll<HTMLElement>(FOCUSABLE));
+      (stops[0] ?? wrap).focus();
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open ]);
@@ -35,15 +67,15 @@ export function FilterBar({ label, activeCount, children }: { label: string; act
   if (!narrow) return <>{children}</>;
   return (
     <>
-      <button type="button" className="btn" onClick={() => setOpen(true)}>
+      <button type="button" className="btn" ref={openButtonRef} onClick={() => { returnFocus.current = document.activeElement as HTMLElement | null; setOpen(true); }}>
         ตัวกรอง (Filters){activeCount > 0 ? ` (${activeCount})` : ""}
       </button>
       {open && (
-        <div className="modal-wrap" role="dialog" aria-modal="true" aria-label={label} style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center", background: "rgba(0,0,0,0.45)", padding: 16 }}>
+        <div className="modal-wrap" ref={wrapRef} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown} style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center", background: "rgba(0,0,0,0.45)", padding: 16 }}>
           <div className="card modal" style={{ width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
             {children}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-              <button type="button" className="btn pri" onClick={() => setOpen(false)}>เสร็จ (Done)</button>
+              <button type="button" className="btn pri" onClick={close}>เสร็จ (Done)</button>
             </div>
           </div>
         </div>
