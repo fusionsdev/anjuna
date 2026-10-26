@@ -1,0 +1,10 @@
+{
+  "conversion_setup": {
+    "status": "created",
+    "error": null,
+    "name": "cv-0123456789abcdef",
+    "conversion_action_id": "7123456789",
+    "attempts": 1,
+    "updated_at": "2026-10-26T08:00:00.000Z"
+  }
+}

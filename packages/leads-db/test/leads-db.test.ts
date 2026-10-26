@@ -11,7 +11,7 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   traffic_events: ["risk_score", "risk_signals"], // 0015, FUS-372
   suppressions: ["added_by"], // 0017, FUS-382
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup"];
 
 interface ColumnInfo {
   cid: number;
@@ -122,6 +122,7 @@ describe("leads-db migrations", () => {
         "client_errors",
         "consent_evidence",
         "continuations",
+        "conversion_setup",
         "conversion_uploads",
         "leads",
         "mailing_outbox",
@@ -375,6 +376,42 @@ describe("Anjuna additions", () => {
       ["unknown source", "INSERT INTO ad_spend (brand_id, date, hour, cost, source, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'bing', 'x')"],
     ])("rejects %s", async (_name, sql) => {
       await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
+    });
+  });
+
+  describe("conversion_setup", () => {
+    const insert = (account: string, name: string, actionId: string | null = null, lastError: string | null = null) =>
+      env.DB
+        .prepare(
+          `INSERT INTO conversion_setup (brand_id, account, name, status, claim_id, claimed_at, last_error, conversion_action_id, updated_at)
+           VALUES ('brand-cs', ?1, ?2, 'claimed', 'c', 'x', ?3, ?4, 'x')`,
+        )
+        .bind(account, name, lastError, actionId);
+    const GOOD_NAME = "cv-0123456789abcdef";
+    const GOOD_ACCOUNT = "1234567890";
+
+    it("accepts a valid row", async () => {
+      await insert(GOOD_ACCOUNT, GOOD_NAME, "7123456789").run();
+      await env.DB.prepare("DELETE FROM conversion_setup WHERE brand_id = 'brand-cs'").run();
+    });
+
+    it("conversion_setup CHECKs reject a bad name, account and action id", async () => {
+      const bad = [
+        insert(GOOD_ACCOUNT, "cv-0123456789ABCDEF"),
+        insert(GOOD_ACCOUNT, "cv-0123456789abcde"),
+        insert(GOOD_ACCOUNT, "cv-0123456789abcdef0"),
+        insert(GOOD_ACCOUNT, "brand-a-lead-form"),
+        insert("123456789", GOOD_NAME),
+        insert("12345678901", GOOD_NAME),
+        insert("12345abcde", GOOD_NAME),
+        insert(GOOD_ACCOUNT, GOOD_NAME, ""),
+        insert(GOOD_ACCOUNT, GOOD_NAME, "12ab"),
+        insert(GOOD_ACCOUNT, GOOD_NAME, "1".repeat(21)),
+        insert(GOOD_ACCOUNT, GOOD_NAME, null, "e".repeat(501)),
+      ];
+      for (const stmt of bad) await expect(stmt.run()).rejects.toThrow(/CHECK constraint failed/);
+      await insert(GOOD_ACCOUNT, GOOD_NAME, "1".repeat(20), "e".repeat(500)).run();
+      await env.DB.prepare("DELETE FROM conversion_setup WHERE brand_id = 'brand-cs'").run();
     });
   });
 

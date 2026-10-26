@@ -44,6 +44,7 @@ import {
   MailingStatusResponse,
   matchAdminRoute,
   SpendReportResponse,
+  ConversionSetupStateResponse,
   SuppressionsResponse,
   RISK_SIGNALS,
   TrafficRiskExportQuery,
@@ -87,6 +88,7 @@ describe("golden fixtures validate", () => {
     ["alerts.response.json", AlertsReportResponse],
     ["mailing.response.json", MailingStatusResponse],
     ["spend.response.json", SpendReportResponse],
+    ["conversion-setup.response.json", ConversionSetupStateResponse],
     ["conversions.response.json", ConversionsReportResponse],
     ["traffic-risk.response.json", TrafficRiskResponse],
     ["traffic-risk.export.response.json", TrafficRiskExportResponse],
@@ -124,6 +126,7 @@ describe("golden fixtures validate", () => {
     expect(AdminApi.alertsReport.response.safeParse(fixture(A("alerts.response.json"))).success).toBe(true);
     expect(AdminApi.mailingStatus.response.safeParse(fixture(A("mailing.response.json"))).success).toBe(true);
     expect(AdminApi.spendReport.response.safeParse(fixture(A("spend.response.json"))).success).toBe(true);
+    expect(AdminApi.conversionSetup.response.safeParse(fixture(A("conversion-setup.response.json"))).success).toBe(true);
     expect(AdminApi.conversionsReport.response.safeParse(fixture(A("conversions.response.json"))).success).toBe(true);
     expect(AdminApi.trafficRisk.response.safeParse(fixture(A("traffic-risk.response.json"))).success).toBe(true);
     expect(AdminApi.trafficRiskExport.response.safeParse(fixture(A("traffic-risk.export.response.json"))).success).toBe(true);
@@ -247,6 +250,7 @@ describe("secrets never appear in GET fixtures", () => {
     "alerts.response.json",
     "mailing.response.json",
     "spend.response.json",
+    "conversion-setup.response.json",
   ];
   const SECRET_KEY = /(hash|secret|password|api_?key|credential|dsn)/i;
   const rotated = fixture<{ issued_postback_token: string }>(A("brand.patch.response.rotate.json")).issued_postback_token;
@@ -342,6 +346,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "Search the email suppression list; add and remove manually (FUS-382)", employee: "no", covered_by: ["listSuppressions", "addSuppression", "removeSuppression"] },
   { action: "View audit log", employee: "own", covered_by: ["listAudit"] },
   { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport"] },
+  { action: "View auto conversion setup status for a brand (FUS-384)", employee: "no", covered_by: ["conversionSetup"] },
   { action: "View conversion upload status, money hidden from employees (FUS-375)", employee: "yes", covered_by: ["conversionsReport"] },
 ];
 const PLAN_ROWS_OUT_OF_SCOPE = [
@@ -443,7 +448,7 @@ describe("routing", () => {
     expect(matchAdminRoute("POST", "/admin/suppressions/remove")).toEqual({ endpoint: "removeSuppression", params: {} });
     expect(matchAdminRoute("GET", "/admin/traffic/report")).toEqual({ endpoint: "trafficReport", params: {} }); // spec traffic
     expect(matchAdminRoute("GET", "/admin/client-errors")).toEqual({ endpoint: "clientErrors", params: {} }); // spec traffic
-    expect(ADMIN_ENDPOINTS).toHaveLength(23);
+    expect(ADMIN_ENDPOINTS).toHaveLength(24);
   });
 });
 
