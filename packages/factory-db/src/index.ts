@@ -15,6 +15,7 @@ export const FACTORY_DB_MIGRATIONS = [
   "0008_brand_assets.sql",
   "0009_ads_account_events.sql",
   "0010_template_theme_vars.sql",
+  "0011_template_theme_vars_backfill.sql",
 ] as const;
 
 export const TEMPLATE_FRAMEWORKS = ["astro", "next_export", "react_spa"] as const;
@@ -72,6 +73,12 @@ export function compensatedInstallSql(installIdExpr: string): string {
   return `(EXISTS (SELECT 1 FROM installs comp WHERE comp.install_id='compensate-' || ${installIdExpr})
     OR EXISTS (SELECT 1 FROM install_receipts rb WHERE rb.install_id=${installIdExpr} AND rb.step='rollback' AND rb.status='ok'
       AND CASE WHEN json_valid(rb.output_json) THEN json_extract(rb.output_json,'$.compensation_install_id') IS NOT NULL ELSE 0 END))`;
+}
+
+/** SQL for a version's effective theme map: the owner's backfill (template_theme_vars) over the import-time column. */
+export function effectiveThemeVarsSql(alias: string): string {
+  if (!/^[a-z_]+$/.test(alias) || alias === "template_theme_vars") throw new Error("invalid alias");
+  return `COALESCE((SELECT template_theme_vars.theme_vars_json FROM template_theme_vars WHERE template_theme_vars.template_version_id = ${alias}.template_version_id), ${alias}.theme_vars_json)`;
 }
 
 export { sealTemplateVersionRecord } from "./seal.js";

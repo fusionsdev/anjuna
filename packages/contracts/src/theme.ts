@@ -37,6 +37,27 @@ export type TemplateThemeVars = z.infer<typeof TemplateThemeVars>;
 
 export const EMPTY_THEME_VARS: TemplateThemeVars = { primary: [], primary_dark: [], secondary: [] };
 
+/** True when every role is empty. */
+export function isEmptyThemeVars(vars: TemplateThemeVars): boolean {
+  return vars.primary.length + vars.primary_dark.length + vars.secondary.length === 0;
+}
+
+/** Owner saves a corrected map on a sealed template version. */
+export const TemplateThemeVarsRequest = z.strictObject({ theme_vars: TemplateThemeVars });
+export type TemplateThemeVarsRequest = z.infer<typeof TemplateThemeVarsRequest>;
+
+/** A template version's detected or saved map. */
+export const TemplateThemeVarsResponse = z.strictObject({ template_version_id: z.string().min(1), theme_vars: TemplateThemeVars });
+export type TemplateThemeVarsResponse = z.infer<typeof TemplateThemeVarsResponse>;
+
+/** A brand's baked map (`deployed`) beside its template's effective map (`template`); null when absent. */
+export const BrandThemeVarsResponse = z.strictObject({
+  brand_id: z.string().min(1),
+  deployed: TemplateThemeVars.nullable(),
+  template: TemplateThemeVars.nullable(),
+});
+export type BrandThemeVarsResponse = z.infer<typeof BrandThemeVarsResponse>;
+
 /** Each RGB channel times 0.88, rounded. The hover/active shade derived from primary. */
 export function darkenHex(hex: string): string {
   const channel = (from: number) => Math.round(parseInt(hex.slice(from, from + 2), 16) * 0.88);

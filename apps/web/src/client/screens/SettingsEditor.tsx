@@ -1,6 +1,7 @@
 // spec settings: the controlled row drawer. Settings.tsx owns the draft so it can guard and reload it.
-import { cleanKeyword, type BrandConfig } from "@anjuna/contracts";
-import { useEffect, useRef, type ReactNode } from "react";
+import { cleanKeyword, type BrandConfig, type BrandThemeVarsResponse } from "@anjuna/contracts";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { api } from "../api";
 import { ColorPair } from "../components/ColorPair";
 import { flowGateLabel } from "../labels";
 import {
@@ -50,6 +51,16 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
   const parsed = parseDraft(draft);
   const errors: DraftErrors = parsed.ok ? {} : parsed.errors;
   const canReview = isDirty(brand, draft) && buildPatch(brand, draft) !== null && !saving;
+  // Loaded once per open brand; while loading or on error it stays null and the theme section renders as before.
+  const [themeVars, setThemeVars] = useState<BrandThemeVarsResponse | null>(null);
+  useEffect(() => {
+    let live = true;
+    setThemeVars(null);
+    Promise.resolve().then(() => api.brandThemeVars(brand.brand_id)).then((r) => { if (live) setThemeVars(r); }, () => {});
+    return () => { live = false; };
+  }, [brand.brand_id]);
+  const noColorMap = themeVars !== null && themeVars.template === null;
+  const needsRedeploy = themeVars !== null && themeVars.template !== null && JSON.stringify(themeVars.deployed) !== JSON.stringify(themeVars.template);
   const set = (patch: Partial<SettingsDraft>) => onDraft({ ...draft, ...patch });
   const setArm = (i: number, patch: Partial<ArmDraft>) => set({ arms: draft.arms.map((a, j) => (j === i ? { ...a, ...patch } : a)) });
 
@@ -121,7 +132,20 @@ export function SettingsEditor({ brand, draft, onDraft, onReview, onClose, banne
 
           <section className="section">
             <h3>{SETTINGS_LABELS.theme}</h3>
-            <ColorPair value={draft.theme} onChange={(theme) => set({ theme })} disabled={saving} />
+            {noColorMap ? (
+              <>
+                <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">
+                  <p>เทมเพลตของแบรนด์นี้ยังไม่มีแผนที่สี สีที่เลือกจะไม่แสดงบนเว็บ (This brand's template has no color map. Colors will not show on the site.)</p>
+                  <p className="hint">Owner: ตรวจหาสีในหน้าเทมเพลต แล้ว Redeploy (Detect colors on the Templates page, then redeploy)</p>
+                </div>
+                {draft.theme && <p className="hint">{`${draft.theme.primary} / ${draft.theme.secondary} (ยังไม่มีผล / not applied)`}</p>}
+              </>
+            ) : (
+              <>
+                <ColorPair value={draft.theme} onChange={(theme) => set({ theme })} disabled={saving} />
+                {needsRedeploy && <p className="note" role="note">สีจะแสดงบนเว็บหลัง Redeploy (Colors show on the site after a redeploy)</p>}
+              </>
+            )}
           </section>
 
           <section className="section">

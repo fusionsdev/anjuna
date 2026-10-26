@@ -1,4 +1,5 @@
 import { withTextDefaults, withThemeVars } from "@anjuna/contracts";
+import { effectiveThemeVarsSql } from "@anjuna/factory-db";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
@@ -183,7 +184,7 @@ export class UpgradeAllWorkflow extends WorkflowEntrypoint<Env, UpgradeAllParams
     });
 
     const { revision_map } = await step.do("create_revisions", async () => {
-      const target = await db.prepare("SELECT text_defaults_json, theme_vars_json FROM template_versions WHERE template_version_id = ?")
+      const target = await db.prepare(`SELECT text_defaults_json, ${effectiveThemeVarsSql("template_versions")} AS theme_vars_json FROM template_versions WHERE template_version_id = ?`)
         .bind(params.to_template_version_id).first<{ text_defaults_json: string | null; theme_vars_json: string | null }>();
       const entries: Array<{ brand_id: string; revision_id: string }> = [];
       for (const brand_id of brand_ids) {

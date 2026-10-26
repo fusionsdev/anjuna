@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TemplateDetailResponse, TemplateListResponse } from "@anjuna/contracts";
 import worker from "../src/server/index";
 import { ORIGIN, call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
@@ -33,6 +33,15 @@ beforeEach(async () => {
 // audit_log is append-only, so tests compare counts before and after instead of clearing it.
 const themeAuditCount = async () => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-bolt-1'").first<{ n: number }>())!.n;
 
+const sealedAuditCount = async () => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-sealed-t'").first<{ n: number }>())!.n;
+const sealedRow = () => env.FACTORY.prepare("SELECT * FROM template_versions WHERE template_version_id = 'tv-sealed-t'").first<Record<string, unknown>>();
+const backfillRow = () => env.FACTORY.prepare("SELECT * FROM template_theme_vars WHERE template_version_id = 'tv-sealed-t'").first<{ theme_vars_json: string; updated_by: string }>();
+/** A sealed version (immutable, TP-3) with an optional import-time map; the afterEach removes it. */
+const insertSealed = (columnMap: unknown = null) => env.FACTORY.prepare(`INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, theme_vars_json)
+  VALUES ('tv-sealed-t', 'tpl-bolt', 7, ?1, 'templates/tpl-bolt/s.zip', 'sealed', 'owner', ?2, 'bk_1', ?2, ?3)`)
+  .bind("c".repeat(64), NOW, columnMap === null ? null : JSON.stringify(columnMap)).run();
+const putThemeVars = (cookie: string, body: unknown, id = "tv-sealed-t") => call(`/api/templates/${id}/theme-vars`, { cookie, method: "PUT", body });
+
 const me = async (cookie: string) => ((await (await call("/api/me", { cookie })).json()) as { user: { id: string } }).user.id;
 
 describe("templates API", () => {
@@ -44,6 +53,8 @@ describe("templates API", () => {
       env.FACTORY.prepare("DELETE FROM form_artifacts WHERE form_artifact_id = 'fa-count'"),
       env.FACTORY.prepare("DELETE FROM template_versions WHERE template_version_id IN ('tv-bolt-2', 'tv-unrelated')"),
       env.FACTORY.prepare("DELETE FROM templates WHERE template_id = 'unrelated'"),
+      env.FACTORY.prepare("DELETE FROM template_theme_vars WHERE template_version_id = 'tv-sealed-t'"),
+      env.FACTORY.prepare("DELETE FROM template_versions WHERE template_version_id = 'tv-sealed-t'"),
     ]);
   });
 
@@ -319,5 +330,178 @@ describe("templates API", () => {
     const err = { error: "bad_url", message: "Only public hostnames are accepted." };
     const second = await call("/api/templates/import", { cookie: employee, method: "POST", body, env: withMcp(Response.json(err, { status: 422 })) });
     expect([second.status, await second.json()]).toEqual([422, err]);
+  });
+
+  it("detect-theme-vars forwards to the template MCP for an Owner and refuses an Employee", async () => {
+    const detected = { template_version_id: "tv-sealed-t", theme_vars: { primary: ["--color-royal"], primary_dark: [], secondary: [] } };
+    const forwarded: Array<{ url: string; method: string; body: unknown }> = [];
+    const TEMPLATE_MCP = { fetch: async (req: Request) => {
+      forwarded.push({ url: req.url, method: req.method, body: await req.json() });
+      return Response.json(detected);
+    } } as unknown as Fetcher;
+    const testEnv = makeEnv({ TEMPLATE_MCP });
+    const denied = await call("/api/templates/tv-sealed-t/detect-theme-vars", { cookie: employee, method: "POST", body: {}, env: testEnv });
+    expect([denied.status, await denied.json()]).toEqual([403, { error: "forbidden_role", required_role: "owner" }]);
+    expect(forwarded).toHaveLength(0);
+    const ok = await call("/api/templates/tv-sealed-t/detect-theme-vars", { cookie: owner, method: "POST", env: testEnv });
+    expect([ok.status, await ok.json()]).toEqual([200, detected]);
+    expect(forwarded).toEqual([{ url: "https://template-mcp/detect-theme-vars", method: "POST", body: { template_version_id: "tv-sealed-t" } }]);
+  });
+
+  it("detect-theme-vars answers 502 on transport failure or a bad body", async () => {
+    const detect = (testEnv = makeEnv()) => call("/api/templates/tv-sealed-t/detect-theme-vars", { cookie: owner, method: "POST", env: testEnv });
+    const withMcp = (fetch: () => Promise<Response>) => makeEnv({ TEMPLATE_MCP: { fetch } as unknown as Fetcher });
+    expect((await detect(makeEnv({ MOCK_CORE: "0" }))).status).toBe(502);
+    expect((await detect(withMcp(async () => { throw new Error("offline"); }))).status).toBe(502);
+    expect((await detect(withMcp(async () => Response.json({ ok: true })))).status).toBe(502);
+    expect((await detect(withMcp(async () => Response.json({ template_version_id: "tv-sealed-t", theme_vars: { primary: ["--a"], primary_dark: [], secondary: [], extra: 1 } })))).status).toBe(502);
+    expect((await detect(withMcp(async () => Response.json({ error: "internal" }, { status: 500 })))).status).toBe(502);
+    expect((await detect(withMcp(async () => Response.json({ template_version_id: "tv-sealed-t", theme_vars: { primary: ["--a"], primary_dark: [], secondary: [] } }, { status: 201 })))).status).toBe(502);
+    const missing = await detect(withMcp(async () => Response.json({ error: "not_found" }, { status: 404 })));
+    expect([missing.status, await missing.json()]).toEqual([404, { error: "not_found" }]);
+    const noZip = await detect(withMcp(async () => Response.json({ error: "template_zip_missing" }, { status: 422 })));
+    expect([noZip.status, await noZip.json()]).toEqual([422, { error: "template_zip_missing" }]);
+  });
+
+  it("saving theme vars on a sealed version writes the backfill row and one audit row, sealed row unchanged", async () => {
+    const before = { primary: ["--old"], primary_dark: [], secondary: [] };
+    const next = { primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: [] };
+    await insertSealed(before);
+    const sealedBefore = await sealedRow();
+    const auditBefore = await sealedAuditCount();
+    const denied = await putThemeVars(employee, { theme_vars: next });
+    expect([denied.status, await denied.json()]).toEqual([403, { error: "forbidden_role", required_role: "owner" }]);
+    expect(await backfillRow()).toBeNull();
+    const saved = await putThemeVars(owner, { theme_vars: next });
+    expect([saved.status, await saved.json()]).toEqual([200, { template_version_id: "tv-sealed-t", theme_vars: next }]);
+    const stored = await backfillRow();
+    expect(JSON.parse(stored!.theme_vars_json)).toEqual(next);
+    expect(stored!.updated_by).toBe(await me(owner));
+    expect(await sealedRow()).toEqual(sealedBefore);
+    expect(await sealedAuditCount()).toBe(auditBefore + 1);
+    const audit = await env.FACTORY.prepare("SELECT actor_id, actor_role, entity_type, before_json, after_json FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-sealed-t' ORDER BY id DESC LIMIT 1")
+      .first<{ actor_id: string; actor_role: string; entity_type: string; before_json: string; after_json: string }>();
+    expect(audit).toMatchObject({ actor_id: await me(owner), actor_role: "owner", entity_type: "template_version" });
+    expect([JSON.parse(audit!.before_json), JSON.parse(audit!.after_json)]).toEqual([before, next]);
+    const second = { primary: ["--again"], primary_dark: [], secondary: [] };
+    expect((await putThemeVars(owner, { theme_vars: second })).status).toBe(200);
+    const last = await env.FACTORY.prepare("SELECT before_json FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-sealed-t' ORDER BY id DESC LIMIT 1").first<{ before_json: string }>();
+    expect(JSON.parse(last!.before_json)).toEqual(next);
+    expect(await sealedRow()).toEqual(sealedBefore);
+  });
+
+  it("saving theme vars with an extra body key answers 422", async () => {
+    const next = { primary: ["--color-royal"], primary_dark: [], secondary: [] };
+    await insertSealed();
+    const refused = await putThemeVars(owner, { theme_vars: next, updated_by: "someone-else" });
+    expect([refused.status, await refused.json()]).toEqual([422, { error: "invalid_theme_vars" }]);
+    expect(await backfillRow()).toBeNull();
+  });
+
+  it("concurrent theme vars saves write one audit row with the right before_json", async () => {
+    const column = { primary: ["--column"], primary_dark: [], secondary: [] };
+    const rival = { primary: ["--rival"], primary_dark: [], secondary: [] };
+    const mine = { primary: ["--mine"], primary_dark: [], secondary: [] };
+    await insertSealed(column);
+    const auditBefore = await sealedAuditCount();
+    // The rival save lands between this request's read and its batch.
+    const racing = new Proxy(env.FACTORY, { get: (target, prop) => prop === "batch"
+      ? async (statements: D1PreparedStatement[]) => {
+        await target.batch([
+          target.prepare("INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('tv-sealed-t', ?1, 'rival', ?2)").bind(JSON.stringify(rival), NOW),
+          target.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,before_json,after_json,created_at)
+            VALUES ('rival','owner','template.theme_vars','template_version','tv-sealed-t',?1,?2,?3)`).bind(JSON.stringify(column), JSON.stringify(rival), NOW),
+        ]);
+        return target.batch(statements);
+      }
+      : Reflect.get(target, prop).bind(target) });
+    const lost = await call("/api/templates/tv-sealed-t/theme-vars", { cookie: owner, method: "PUT", body: { theme_vars: mine }, env: makeEnv({ FACTORY: racing as unknown as D1Database }) });
+    expect([lost.status, await lost.json()]).toEqual([409, { error: "conflict", message: "The color map changed; reload and try again" }]);
+    expect(JSON.parse((await backfillRow())!.theme_vars_json)).toEqual(rival);
+    expect(await sealedAuditCount()).toBe(auditBefore + 1);
+    // A retry on the fresh read succeeds and records the rival map as its before_json.
+    expect((await putThemeVars(owner, { theme_vars: mine })).status).toBe(200);
+    expect(await sealedAuditCount()).toBe(auditBefore + 2);
+    const last = await env.FACTORY.prepare("SELECT before_json, after_json FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-sealed-t' ORDER BY id DESC LIMIT 1").first<{ before_json: string; after_json: string }>();
+    expect([JSON.parse(last!.before_json), JSON.parse(last!.after_json)]).toEqual([rival, mine]);
+  });
+
+  it("concurrent saves of the same map at the same time write one audit row", async () => {
+    const column = { primary: ["--column"], primary_dark: [], secondary: [] };
+    const mine = { primary: ["--mine"], primary_dark: [], secondary: [] };
+    await insertSealed(column);
+    const auditBefore = await sealedAuditCount();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-26T10:00:00.000Z"));
+    try {
+      // The rival saves the same map with the same updated_at between this request's read and its batch.
+      let rivalStatus = 0;
+      const racing = new Proxy(env.FACTORY, { get: (target, prop) => prop === "batch"
+        ? async (statements: D1PreparedStatement[]) => {
+          rivalStatus = (await putThemeVars(owner, { theme_vars: mine })).status;
+          return target.batch(statements);
+        }
+        : Reflect.get(target, prop).bind(target) });
+      const lost = await call("/api/templates/tv-sealed-t/theme-vars", { cookie: owner, method: "PUT", body: { theme_vars: mine }, env: makeEnv({ FACTORY: racing as unknown as D1Database }) });
+      expect([rivalStatus, lost.status, await lost.json()]).toEqual([200, 409, { error: "conflict", message: "The color map changed; reload and try again" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(JSON.parse((await backfillRow())!.theme_vars_json)).toEqual(mine);
+    expect(await sealedAuditCount()).toBe(auditBefore + 1);
+  });
+
+  it("saving the same theme vars again writes no audit row", async () => {
+    const next = { primary: ["--color-royal"], primary_dark: [], secondary: [] };
+    await insertSealed();
+    expect((await putThemeVars(owner, { theme_vars: next })).status).toBe(200);
+    const auditAfterFirst = await sealedAuditCount();
+    const stored = await backfillRow();
+    const again = await putThemeVars(owner, { theme_vars: next });
+    expect([again.status, await again.json()]).toEqual([200, { template_version_id: "tv-sealed-t", theme_vars: next }]);
+    expect(await sealedAuditCount()).toBe(auditAfterFirst);
+    expect(await backfillRow()).toEqual(stored);
+  });
+
+  it("saving theme vars equal in content but stored with other key order writes nothing", async () => {
+    await env.FACTORY.prepare(`INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, theme_vars_json)
+      VALUES ('tv-sealed-t', 'tpl-bolt', 7, ?1, 'templates/tpl-bolt/s.zip', 'sealed', 'owner', ?2, 'bk_1', ?2, ?3)`)
+      .bind("c".repeat(64), NOW, '{ "secondary": [], "primary_dark": [], "primary": ["--x"] }').run();
+    const auditBefore = await sealedAuditCount();
+    const same = { primary: ["--x"], primary_dark: [], secondary: [] };
+    const res = await putThemeVars(owner, { theme_vars: same });
+    expect([res.status, await res.json()]).toEqual([200, { template_version_id: "tv-sealed-t", theme_vars: same }]);
+    expect(await backfillRow()).toBeNull();
+    expect(await sealedAuditCount()).toBe(auditBefore);
+  });
+
+  it("saving theme vars refuses a certified version with 409 and an invalid map with 422", async () => {
+    const next = { primary: ["--color-royal"], primary_dark: [], secondary: [] };
+    const auditBefore = await themeAuditCount();
+    const certified = await putThemeVars(owner, { theme_vars: next }, "tv-bolt-1");
+    expect([certified.status, await certified.json()]).toEqual([409, { error: "not_sealed" }]);
+    expect((await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM template_theme_vars WHERE template_version_id = 'tv-bolt-1'").first<{ n: number }>())!.n).toBe(0);
+    expect(await themeAuditCount()).toBe(auditBefore);
+    await insertSealed();
+    for (const body of [{ theme_vars: { primary: ["red; }"], primary_dark: [], secondary: [] } }, { theme_vars: { primary: ["--ok"] } }, {}, { theme_vars: { ...next, extra: ["--x"] } }]) {
+      const refused = await putThemeVars(owner, body);
+      expect([refused.status, await refused.json()], JSON.stringify(body)).toEqual([422, { error: "invalid_theme_vars" }]);
+    }
+    const badJson = await worker.fetch(new Request(`${ORIGIN}/api/templates/tv-sealed-t/theme-vars`, {
+      method: "PUT", headers: { cookie: owner, origin: ORIGIN, "content-type": "application/json" }, body: "{not json",
+    }), makeEnv());
+    expect([badJson.status, await badJson.json()]).toEqual([400, { error: "invalid_json" }]);
+    expect((await putThemeVars(owner, { theme_vars: next }, "tv-missing")).status).toBe(404);
+    expect(await backfillRow()).toBeNull();
+  });
+
+  it("detail shows the backfilled map over the column", async () => {
+    const column = { primary: ["--column"], primary_dark: [], secondary: [] };
+    const backfilled = { primary: ["--backfilled"], primary_dark: ["--backfilled-dark"], secondary: [] };
+    await insertSealed(column);
+    const read = async () => TemplateDetailResponse.parse(await (await call("/api/templates/tv-sealed-t", { cookie: employee })).json()).template.theme_vars;
+    expect(await read()).toEqual(column);
+    expect((await putThemeVars(owner, { theme_vars: backfilled })).status).toBe(200);
+    expect(await read()).toEqual(backfilled);
   });
 });
