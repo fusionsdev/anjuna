@@ -96,7 +96,7 @@ function escapeAttribute(value: string): string {
 
 const TEMPLATE_PAGE = /^\/([a-z0-9][a-z0-9-]{0,62})\/?$/;
 /** One-segment paths the Worker owns; a template page may never take them. */
-const RESERVED_PAGES = new Set(["go", "apply", "api", "assets", "index"]);
+const RESERVED_PAGES = new Set(["go", "apply", "api", "assets", "index", "admin", "rpc"]);
 
 async function serveHtml(url: URL, config: BrandWorkerConfig, assetPath: string, keyword: string | null,
   extra: { cfg?: RuntimeConfig; cta?: ClickParams; site?: { text: EffectiveSiteText; page: "index" | "other" }; theme?: string } = {}): Promise<Response> {
