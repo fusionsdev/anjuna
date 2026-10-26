@@ -349,4 +349,49 @@ describe("App deep link", () => {
     expect(window.location.pathname).toBe("/templates/tv-bolt-1");
     expect(screen.queryByRole("heading", { name: "Lifecycle แบรนด์" })).toBeNull();
   });
+
+  describe("theme vars", () => {
+    const sealedSummary = { ...summary, status: "approved", sealed_at: STAMP };
+    const sealedDetail = (themeVars: unknown) => ({ ...detail, template: { ...detail.template, status: "approved", sealed_at: STAMP, sealed_by: "owner", theme_vars: themeVars } });
+    const empty = { primary: [], primary_dark: [], secondary: [] };
+    const found = { primary: ["--color-royal"], primary_dark: [], secondary: ["--color-sand"] };
+    const open = async (me: typeof owner | typeof employee) => {
+      render(<TemplatesScreen me={me} />);
+      fireEvent.click(await screen.findByText("Bolt Harbor"));
+      await screen.findByText("Harbor | Funding");
+    };
+
+    it("owner detects colors on a sealed version and saves the map", async () => {
+      let saved: unknown = null;
+      routes.set("GET /api/templates", () => json({ templates: [sealedSummary] }));
+      routes.set("GET /api/templates/tv-bolt-1", () => json(sealedDetail(saved)));
+      routes.set("POST /api/templates/tv-bolt-1/detect-theme-vars", () => json({ template_version_id: "tv-bolt-1", theme_vars: found }));
+      routes.set("PUT /api/templates/tv-bolt-1/theme-vars", (init) => { saved = JSON.parse(String(init?.body)).theme_vars; return json({ template_version_id: "tv-bolt-1", theme_vars: saved }); });
+      await open(owner);
+      fireEvent.click(screen.getByRole("button", { name: "ตรวจหาสี (Detect colors)" }));
+      await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("--color-royal"));
+      expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).value).toBe("--color-sand");
+      fireEvent.click(screen.getByRole("button", { name: "บันทึกแผนที่สี (Save color map)" }));
+      expect(await screen.findByText("บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)")).toBeTruthy();
+      expect(requests.find((r) => r.method === "PUT")?.body).toEqual({ theme_vars: found });
+      expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("--color-royal");
+      expect(screen.queryByRole("button", { name: "อนุมัติ (Approve)" })).toBeNull();
+    });
+
+    it("detect with no variables shows the empty note", async () => {
+      routes.set("POST /api/templates/tv-bolt-1/detect-theme-vars", () => json({ template_version_id: "tv-bolt-1", theme_vars: empty }));
+      await open(owner);
+      fireEvent.click(screen.getByRole("button", { name: "ตรวจหาสี (Detect colors)" }));
+      expect(await screen.findByText("ไม่พบตัวแปรสี (No color variables found)")).toBeTruthy();
+      expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("");
+      expect(screen.queryByRole("button", { name: "บันทึกแผนที่สี (Save color map)" })).toBeNull();
+    });
+
+    it("employee sees no detect button", async () => {
+      routes.set("GET /api/templates/tv-bolt-1", () => json(sealedDetail(found)));
+      await open(employee);
+      expect(screen.queryByRole("button", { name: "ตรวจหาสี (Detect colors)" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "บันทึกแผนที่สี (Save color map)" })).toBeNull();
+    });
+  });
 });

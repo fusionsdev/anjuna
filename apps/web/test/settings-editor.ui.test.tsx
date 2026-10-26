@@ -1,6 +1,6 @@
 import { BrandConfig } from "@anjuna/contracts";
 import brandFixture from "@anjuna/contracts/fixtures/admin/brand.get.response.json";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsEditor } from "../src/client/screens/SettingsEditor";
@@ -17,7 +17,7 @@ const Harness = ({ b, onClose = () => {}, onReview = () => {}, banner = null, sa
   return <SettingsEditor brand={b} draft={draft} onDraft={setDraft} onReview={onReview} onClose={onClose} banner={banner} saving={saving} />;
 };
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const review = () => screen.getByRole("button", { name: "ตรวจและบันทึก (Review and save)" }) as HTMLButtonElement;
 // Selects and inputs both expose .value; the select typing from this DOM lib does not satisfy HTMLElement.
@@ -237,5 +237,38 @@ describe("SettingsEditor", () => {
   it("Review and save stays disabled while saving", () => {
     render(<Harness b={brand()} saving seed={(d) => ({ ...d, drain_key: "dk_changed" })} />);
     expect(review().disabled).toBe(true);
+  });
+
+  describe("color map", () => {
+    const vars = (name: string) => ({ primary: [name], primary_dark: [], secondary: [] });
+    const stubThemeVars = (deployed: unknown, template: unknown) => vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ brand_id: brandFixture.brand.brand_id, deployed, template }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    it("warns and hides the color pickers when the template has no color map", async () => {
+      stubThemeVars(null, null);
+      render(<Harness b={brand({ theme: { primary: "#0f766e", secondary: "#1e293b" } })} />);
+      expect(await screen.findByText(/เทมเพลตของแบรนด์นี้ยังไม่มีแผนที่สี/)).toBeTruthy();
+      expect(screen.getByText("Owner: ตรวจหาสีในหน้าเทมเพลต แล้ว Redeploy (Detect colors on the Templates page, then redeploy)")).toBeTruthy();
+      expect(screen.getByText("#0f766e / #1e293b (ยังไม่มีผล / not applied)")).toBeTruthy();
+      expect(screen.queryByLabelText("รหัสสีหลัก (Primary hex)")).toBeNull();
+    });
+
+    it("shows the redeploy note when the deployed map differs", async () => {
+      stubThemeVars(null, vars("--color-royal"));
+      render(<Harness b={brand()} />);
+      expect(await screen.findByText("สีจะแสดงบนเว็บหลัง Redeploy (Colors show on the site after a redeploy)")).toBeTruthy();
+      expect(screen.getByLabelText("รหัสสีหลัก (Primary hex)")).toBeTruthy();
+    });
+
+    it("shows the color pickers alone when maps match", async () => {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ brand_id: brandFixture.brand.brand_id, deployed: vars("--color-royal"), template: vars("--color-royal") }), { status: 200, headers: { "content-type": "application/json" } }));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<Harness b={brand()} />);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(screen.getByLabelText("รหัสสีหลัก (Primary hex)")).toBeTruthy();
+      expect(screen.queryByText(/Redeploy/)).toBeNull();
+      expect(screen.queryByText(/เทมเพลตของแบรนด์นี้ยังไม่มีแผนที่สี/)).toBeNull();
+    });
   });
 });

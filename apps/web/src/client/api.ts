@@ -1,4 +1,5 @@
 import { TrafficBreakdownResponse, type TemplateThemeVars, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
+import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contracts";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
@@ -153,6 +154,8 @@ export const api = {
   templates: () => request<unknown>("GET", "/api/templates").then((body) => TemplateListResponse.parse(body)),
   template: (id: string) => request<unknown>("GET", `/api/templates/${encodeURIComponent(id)}`).then((body) => TemplateDetailResponse.parse(body)),
   approveTemplate: (id: string, themeVars?: TemplateThemeVars) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, themeVars ? { theme_vars: themeVars } : {}).then((body) => TemplateApproveResponse.parse(body)),
+  detectTemplateThemeVars: (id: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/detect-theme-vars`, {}).then((body) => TemplateThemeVarsResponse.parse(body)),
+  saveTemplateThemeVars: (id: string, themeVars: TemplateThemeVars) => request<unknown>("PUT", `/api/templates/${encodeURIComponent(id)}/theme-vars`, { theme_vars: themeVars }).then((body) => TemplateThemeVarsResponse.parse(body)),
   importTemplate: (body: TemplateImportRequest) => request<unknown>("POST", "/api/templates/import", body).then((result) => TemplateSubmitResult.parse(result)),
   importTemplateZip: (fields: TemplateZipImportRequest, file: File) => {
     const body = new FormData();
@@ -169,6 +172,7 @@ export const api = {
   settingsBrands: () => request<unknown>("GET", "/api/settings/brands").then((body) => SettingsBrandsResponse.parse(body)), // spec settings
   brand: (id: string) => request<{ brand: BrandConfig }>("GET", `/api/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   siteTextDefaults: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/site-text`).then((body) => SiteTextDefaultsResponse.parse(body)),
+  brandThemeVars: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/theme-vars`).then((body) => BrandThemeVarsResponse.parse(body)),
   patchBrand: (id: string, body: BrandPatchRequest) => request<BrandPatchResponse>("PATCH", `/api/brands/${encodeURIComponent(id)}`, body),
   setStatus: (id: string, action: "pause" | "resume") =>
     request<BrandStatusChangeResponse>("POST", `/api/brands/${encodeURIComponent(id)}/${action}`, {}),

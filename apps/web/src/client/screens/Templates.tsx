@@ -1,4 +1,4 @@
-import { TemplateSubmitIssue, TemplateThemeVars } from "@anjuna/contracts";
+import { TemplateSubmitIssue, TemplateThemeVars, isEmptyThemeVars } from "@anjuna/contracts";
 import { ruleDisposition } from "@anjuna/template-cert/policy";
 import type { TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
@@ -138,7 +138,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       </div>
       {templates?.length === 0 && <p className="hint">ยังไม่มีเทมเพลต (No templates yet)</p>}
       {templates && templates.length > 0 && visibleTemplates.length === 0 && <p className="hint">ไม่มีเทมเพลตในสถานะนี้</p>}
-      {detail && <TemplateDetail me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} />}
+      {detail && <TemplateDetail me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} onSaved={async () => setDetail(await api.template(detail.template.template_version_id))} />}
     </>
   );
 }
@@ -164,23 +164,63 @@ const THEME_ROLES = [
 ] as const;
 const joinNames = (names: readonly string[] | undefined) => (names ?? []).join(", ");
 
-function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: TemplateDetailResponse; busy: boolean; onApprove: (themeVars: TemplateThemeVars) => void }) {
+function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; detail: TemplateDetailResponse; busy: boolean; onApprove: (themeVars: TemplateThemeVars) => void; onSaved: () => Promise<void> }) {
   const t = detail.template;
   const [themeText, setThemeText] = useState(() => ({
     primary: joinNames(t.theme_vars?.primary), primary_dark: joinNames(t.theme_vars?.primary_dark), secondary: joinNames(t.theme_vars?.secondary),
   }));
   const [themeError, setThemeError] = useState<string | null>(null);
-  const editable = me.role === "owner" && t.status === "awaiting_approval";
+  const [themeNote, setThemeNote] = useState<{ kind: "ok" | "info"; text: string } | null>(null);
+  const [themeBusy, setThemeBusy] = useState(false);
+  const sealed = t.status === "approved";
+  const owner = me.role === "owner";
+  const editable = owner && (t.status === "awaiting_approval" || sealed);
   const detected = t.theme_vars && t.theme_vars.primary.length + t.theme_vars.primary_dark.length + t.theme_vars.secondary.length > 0 ? t.theme_vars : null;
-  function submitApprove() {
+  function readTheme() {
     const names = (text: string) => text.split(",").map((s) => s.trim()).filter(Boolean);
     const parsed = TemplateThemeVars.safeParse({ primary: names(themeText.primary), primary_dark: names(themeText.primary_dark), secondary: names(themeText.secondary) });
     if (!parsed.success) {
       setThemeError("ชื่อตัวแปรไม่ถูกต้อง ใช้รูปแบบ --ชื่อ คั่นด้วยจุลภาค สูงสุด 8 ชื่อ (Invalid variable name: use --name, comma separated, at most 8)");
-      return;
+      return null;
     }
     setThemeError(null);
-    onApprove(parsed.data);
+    return parsed.data;
+  }
+  function submitApprove() {
+    const vars = readTheme();
+    if (vars) onApprove(vars);
+  }
+  async function detectColors() {
+    setThemeNote(null);
+    setThemeError(null);
+    setThemeBusy(true);
+    try {
+      const r = await api.detectTemplateThemeVars(t.template_version_id);
+      if (isEmptyThemeVars(r.theme_vars)) {
+        setThemeNote({ kind: "info", text: "ไม่พบตัวแปรสี (No color variables found)" });
+        return;
+      }
+      setThemeText({ primary: joinNames(r.theme_vars.primary), primary_dark: joinNames(r.theme_vars.primary_dark), secondary: joinNames(r.theme_vars.secondary) });
+    } catch (e) {
+      setThemeError(errorText(e));
+    } finally {
+      setThemeBusy(false);
+    }
+  }
+  async function saveColors() {
+    const vars = readTheme();
+    if (!vars) return;
+    setThemeNote(null);
+    setThemeBusy(true);
+    try {
+      await api.saveTemplateThemeVars(t.template_version_id, vars);
+      await onSaved();
+      setThemeNote({ kind: "ok", text: "บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)" });
+    } catch (e) {
+      setThemeError(errorText(e));
+    } finally {
+      setThemeBusy(false);
+    }
   }
   const identity = detail.checks.find((c) => c.check_name === "identity_scan");
   const similarity = (identity?.details as { similarity?: { summary?: string } } | null | undefined)?.similarity?.summary ?? null;
@@ -231,8 +271,14 @@ function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: Templ
           {THEME_ROLES.map(([role, label]) => <div key={role} className="cell"><span className="k" style={{ display: "block" }}>{label}</span><b>{joinNames(detected[role]) || "-"}</b></div>)}
         </div>
       ) : <p className="hint">ไม่พบตัวแปรสี (No color variables found)</p>}
+      {themeNote && <p className={themeNote.kind === "ok" ? "note pos" : "hint"} role="status">{themeNote.text}</p>}
       {editable && (
-        <button className="btn pri" disabled={busy} onClick={submitApprove}>อนุมัติ (Approve)</button>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="btn" disabled={busy || themeBusy} onClick={() => void detectColors()}>ตรวจหาสี (Detect colors)</button>
+          {sealed
+            ? <button type="button" className="btn pri" disabled={busy || themeBusy} onClick={() => void saveColors()}>บันทึกแผนที่สี (Save color map)</button>
+            : <button className="btn pri" disabled={busy} onClick={submitApprove}>อนุมัติ (Approve)</button>}
+        </div>
       )}
     </section>
   );
