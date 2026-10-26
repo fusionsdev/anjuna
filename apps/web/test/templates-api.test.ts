@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TemplateDetailResponse, TemplateListResponse } from "@anjuna/contracts";
 import worker from "../src/server/index";
 import { ORIGIN, call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
@@ -424,6 +424,31 @@ describe("templates API", () => {
     expect(await sealedAuditCount()).toBe(auditBefore + 2);
     const last = await env.FACTORY.prepare("SELECT before_json, after_json FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-sealed-t' ORDER BY id DESC LIMIT 1").first<{ before_json: string; after_json: string }>();
     expect([JSON.parse(last!.before_json), JSON.parse(last!.after_json)]).toEqual([rival, mine]);
+  });
+
+  it("concurrent saves of the same map at the same time write one audit row", async () => {
+    const column = { primary: ["--column"], primary_dark: [], secondary: [] };
+    const mine = { primary: ["--mine"], primary_dark: [], secondary: [] };
+    await insertSealed(column);
+    const auditBefore = await sealedAuditCount();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-26T10:00:00.000Z"));
+    try {
+      // The rival saves the same map with the same updated_at between this request's read and its batch.
+      let rivalStatus = 0;
+      const racing = new Proxy(env.FACTORY, { get: (target, prop) => prop === "batch"
+        ? async (statements: D1PreparedStatement[]) => {
+          rivalStatus = (await putThemeVars(owner, { theme_vars: mine })).status;
+          return target.batch(statements);
+        }
+        : Reflect.get(target, prop).bind(target) });
+      const lost = await call("/api/templates/tv-sealed-t/theme-vars", { cookie: owner, method: "PUT", body: { theme_vars: mine }, env: makeEnv({ FACTORY: racing as unknown as D1Database }) });
+      expect([rivalStatus, lost.status, await lost.json()]).toEqual([200, 409, { error: "conflict", message: "The color map changed; reload and try again" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(JSON.parse((await backfillRow())!.theme_vars_json)).toEqual(mine);
+    expect(await sealedAuditCount()).toBe(auditBefore + 1);
   });
 
   it("saving the same theme vars again writes no audit row", async () => {

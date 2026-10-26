@@ -289,7 +289,7 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
           .bind(id, nextJson, ctx.actor_id, now, row.theme_vars_json),
         env.FACTORY.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,before_json,after_json,created_at)
           SELECT ?3,?4,'template.theme_vars','template_version',?1,?5,?2,?6
-          WHERE EXISTS (SELECT 1 FROM template_theme_vars WHERE template_version_id = ?1 AND theme_vars_json = ?2 AND updated_at = ?6)`)
+          WHERE changes() = 1 AND EXISTS (SELECT 1 FROM template_theme_vars WHERE template_version_id = ?1 AND theme_vars_json = ?2 AND updated_at = ?6)`)
           .bind(id, nextJson, ctx.actor_id, ctx.actor_role, row.theme_vars_json, now),
       ]);
       if (upsert!.meta.changes !== 1) return json(409, { error: "conflict", message: "The color map changed; reload and try again" });
