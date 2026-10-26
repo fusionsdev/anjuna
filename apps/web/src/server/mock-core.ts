@@ -55,6 +55,7 @@ import conversionsReport from "@anjuna/contracts/fixtures/admin/conversions.resp
 import funnelReport from "@anjuna/contracts/fixtures/admin/funnel.response.json";
 import mailingStatus from "@anjuna/contracts/fixtures/admin/mailing.response.json";
 import spendReport from "@anjuna/contracts/fixtures/admin/spend.response.json";
+import conversionSetup from "@anjuna/contracts/fixtures/admin/conversion-setup.response.json";
 import trafficRisk from "@anjuna/contracts/fixtures/admin/traffic-risk.response.json";
 import trafficRiskExport from "@anjuna/contracts/fixtures/admin/traffic-risk.export.response.json";
 import trafficReport from "@anjuna/contracts/fixtures/admin/traffic-report.response.json"; // spec traffic
@@ -404,6 +405,8 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, mailingStatus);
     case "spendReport":
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
+    case "conversionSetup":
+      return json(200, conversionSetup);
     case "conversionsReport": {
       const q = conversionsQuery!;
       const owner = ctx.actor_role === "owner";
