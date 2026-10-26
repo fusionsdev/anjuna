@@ -12,7 +12,7 @@ export function setup(overrides: Partial<BrandWorkerConfig> = {}) {
     const path = new URL(request.url).pathname;
     if (path === "/index.html") return new Response(LANDING, { headers: { "content-type": "text/html", etag: "unchanged" } });
     if (path === "/_f/index.html") return new Response(FORM, { headers: { "content-type": "text/html" } });
-    if (/^\/(privacy|terms|disclosures|do-not-sell)\/index.html$/.test(path)) return new Response(`<h1>${path.split("/")[1]}</h1>`);
+    if (/^\/(privacy|terms|disclosures|do-not-sell|contact|e-sign-consent|admin|rpc)\/index.html$/.test(path)) return new Response(`<h1>${path.split("/")[1]}</h1>`);
     if (path.endsWith("/app.js")) return new Response('console.log("ready")', { headers: { "content-type": "text/javascript" } });
     if (path === "/favicon.svg") return new Response("<svg/>");
     return new Response("asset-store-private-error", { status: 404 });
