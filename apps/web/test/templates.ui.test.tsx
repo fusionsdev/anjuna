@@ -381,6 +381,19 @@ describe("App deep link", () => {
       expect(screen.queryByRole("button", { name: "อนุมัติ (Approve)" })).toBeNull();
     });
 
+    it("save note shows even when the reload fails", async () => {
+      let saved = false;
+      routes.set("GET /api/templates", () => json({ templates: [sealedSummary] }));
+      routes.set("GET /api/templates/tv-bolt-1", () => (saved ? json({ error: "reload_failed" }, 500) : json(sealedDetail(null))));
+      routes.set("PUT /api/templates/tv-bolt-1/theme-vars", () => { saved = true; return json({ template_version_id: "tv-bolt-1", theme_vars: found }); });
+      await open(owner);
+      fireEvent.change(screen.getByLabelText("สีหลัก (Primary)"), { target: { value: "--color-royal" } });
+      fireEvent.click(screen.getByRole("button", { name: "บันทึกแผนที่สี (Save color map)" }));
+      expect(await screen.findByText("บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)")).toBeTruthy();
+      expect((await screen.findByRole("alert")).textContent).toBeTruthy();
+      expect(screen.getByText("บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)")).toBeTruthy();
+    });
+
     it("detect with no variables clears filled inputs", async () => {
       routes.set("GET /api/templates", () => json({ templates: [sealedSummary] }));
       routes.set("GET /api/templates/tv-bolt-1", () => json(sealedDetail(found)));

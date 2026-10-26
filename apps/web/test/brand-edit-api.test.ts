@@ -101,7 +101,7 @@ describe("change the template version of a live brand (redeploy)", () => {
       }
       : Reflect.get(target, prop).bind(target) });
     const response = await call(`/api/brands/${brandId}/redeploy`, { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER: factory, FACTORY: racing as unknown as D1Database }) });
-    expect([response.status, await response.json()]).toEqual([409, expect.objectContaining({ error: "conflict" })]);
+    expect([response.status, await response.json()]).toEqual([409, { error: "conflict", message: "The brand changed during the redeploy; reload and try again" }]);
     expect((await env.FACTORY.prepare("SELECT count(*) AS n FROM brand_revisions WHERE brand_id=?").bind(brandId).first<{ n: number }>())!.n).toBe(1);
     expect(dispatches).toHaveLength(0);
   });

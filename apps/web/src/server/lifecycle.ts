@@ -402,7 +402,7 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
   if (revisionClaim!.meta.changes !== 1 || installClaim!.meta.changes !== 1) {
     const active = await activeLifecycleOperation(env.FACTORY, brandId);
     if (active) return json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
-    if (readConfig !== null) return json(409, { error: "conflict", message: "The brand changed while the template was being chosen; reload and try again" });
+    if (readConfig !== null) return json(409, { error: "conflict", message: templateVersionId ? "The brand changed while the template was being chosen; reload and try again" : "The brand changed during the redeploy; reload and try again" });
     return json(409, { error: "lifecycle_operation_active", message: "Lifecycle operation claim was not admitted" });
   }
   await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId, ...(formArtifactId ? { form_artifact_id: formArtifactId } : {}), ...(templateVersionId ? { template_version_id: templateVersionId } : {}) });

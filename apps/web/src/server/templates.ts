@@ -261,14 +261,14 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     if (!authorizePanel("approveTemplate", ctx.actor_role).ok) return forbidden("owner");
     const id = decodePathSegment(m[1]!);
     if (id === null) return notFound("template");
-    // Only theme_vars is read; the actor comes from the session.
-    let raw: Record<string, unknown> | null;
+    // The body is strict: the actor comes from the session, so an extra key is refused.
+    let raw: unknown;
     try {
-      raw = JSON.parse(await request.text()) as Record<string, unknown> | null;
+      raw = JSON.parse(await request.text());
     } catch {
       return json(400, { error: "invalid_json" });
     }
-    const saveRequest = TemplateThemeVarsRequest.safeParse({ theme_vars: raw?.theme_vars });
+    const saveRequest = TemplateThemeVarsRequest.safeParse(raw);
     if (!saveRequest.success) return json(422, { error: "invalid_theme_vars" });
     const row = await env.FACTORY.prepare(`SELECT v.status, ${effectiveThemeVarsSql("v")} AS theme_vars_json FROM template_versions v WHERE v.template_version_id = ?1`)
       .bind(id).first<{ status: TemplateVersionStatusName; theme_vars_json: string | null }>();
@@ -280,14 +280,19 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     const storedMap = TemplateThemeVars.safeParse(parseJson(row.theme_vars_json));
     if (!storedMap.success || JSON.stringify(storedMap.data) !== nextJson) {
       const now = new Date().toISOString();
-      await env.FACTORY.batch([
-        env.FACTORY.prepare(`INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES (?1,?2,?3,?4)
+      // Both statements are gated on the map that was read: a save that lands in between changes the effective map,
+      // so this one writes nothing and no audit row carries a before_json that was never the stored map.
+      const [upsert] = await env.FACTORY.batch([
+        env.FACTORY.prepare(`INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at)
+          SELECT ?1,?2,?3,?4 WHERE (SELECT ${effectiveThemeVarsSql("v")} FROM template_versions v WHERE v.template_version_id = ?1) IS ?5
           ON CONFLICT(template_version_id) DO UPDATE SET theme_vars_json = excluded.theme_vars_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
-          .bind(id, nextJson, ctx.actor_id, now),
+          .bind(id, nextJson, ctx.actor_id, now, row.theme_vars_json),
         env.FACTORY.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,before_json,after_json,created_at)
-          VALUES (?3,?4,'template.theme_vars','template_version',?1,?5,?2,?6)`)
+          SELECT ?3,?4,'template.theme_vars','template_version',?1,?5,?2,?6
+          WHERE EXISTS (SELECT 1 FROM template_theme_vars WHERE template_version_id = ?1 AND theme_vars_json = ?2 AND updated_at = ?6)`)
           .bind(id, nextJson, ctx.actor_id, ctx.actor_role, row.theme_vars_json, now),
       ]);
+      if (upsert!.meta.changes !== 1) return json(409, { error: "conflict", message: "The color map changed; reload and try again" });
     }
     return json(200, TemplateThemeVarsResponse.parse({ template_version_id: id, theme_vars: saveRequest.data.theme_vars }));
   }

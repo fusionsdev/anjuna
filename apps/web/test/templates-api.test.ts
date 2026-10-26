@@ -372,7 +372,7 @@ describe("templates API", () => {
     const denied = await putThemeVars(employee, { theme_vars: next });
     expect([denied.status, await denied.json()]).toEqual([403, { error: "forbidden_role", required_role: "owner" }]);
     expect(await backfillRow()).toBeNull();
-    const saved = await putThemeVars(owner, { theme_vars: next, updated_by: "someone-else" });
+    const saved = await putThemeVars(owner, { theme_vars: next });
     expect([saved.status, await saved.json()]).toEqual([200, { template_version_id: "tv-sealed-t", theme_vars: next }]);
     const stored = await backfillRow();
     expect(JSON.parse(stored!.theme_vars_json)).toEqual(next);
@@ -388,6 +388,42 @@ describe("templates API", () => {
     const last = await env.FACTORY.prepare("SELECT before_json FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-sealed-t' ORDER BY id DESC LIMIT 1").first<{ before_json: string }>();
     expect(JSON.parse(last!.before_json)).toEqual(next);
     expect(await sealedRow()).toEqual(sealedBefore);
+  });
+
+  it("saving theme vars with an extra body key answers 422", async () => {
+    const next = { primary: ["--color-royal"], primary_dark: [], secondary: [] };
+    await insertSealed();
+    const refused = await putThemeVars(owner, { theme_vars: next, updated_by: "someone-else" });
+    expect([refused.status, await refused.json()]).toEqual([422, { error: "invalid_theme_vars" }]);
+    expect(await backfillRow()).toBeNull();
+  });
+
+  it("concurrent theme vars saves write one audit row with the right before_json", async () => {
+    const column = { primary: ["--column"], primary_dark: [], secondary: [] };
+    const rival = { primary: ["--rival"], primary_dark: [], secondary: [] };
+    const mine = { primary: ["--mine"], primary_dark: [], secondary: [] };
+    await insertSealed(column);
+    const auditBefore = await sealedAuditCount();
+    // The rival save lands between this request's read and its batch.
+    const racing = new Proxy(env.FACTORY, { get: (target, prop) => prop === "batch"
+      ? async (statements: D1PreparedStatement[]) => {
+        await target.batch([
+          target.prepare("INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('tv-sealed-t', ?1, 'rival', ?2)").bind(JSON.stringify(rival), NOW),
+          target.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,before_json,after_json,created_at)
+            VALUES ('rival','owner','template.theme_vars','template_version','tv-sealed-t',?1,?2,?3)`).bind(JSON.stringify(column), JSON.stringify(rival), NOW),
+        ]);
+        return target.batch(statements);
+      }
+      : Reflect.get(target, prop).bind(target) });
+    const lost = await call("/api/templates/tv-sealed-t/theme-vars", { cookie: owner, method: "PUT", body: { theme_vars: mine }, env: makeEnv({ FACTORY: racing as unknown as D1Database }) });
+    expect([lost.status, await lost.json()]).toEqual([409, { error: "conflict", message: "The color map changed; reload and try again" }]);
+    expect(JSON.parse((await backfillRow())!.theme_vars_json)).toEqual(rival);
+    expect(await sealedAuditCount()).toBe(auditBefore + 1);
+    // A retry on the fresh read succeeds and records the rival map as its before_json.
+    expect((await putThemeVars(owner, { theme_vars: mine })).status).toBe(200);
+    expect(await sealedAuditCount()).toBe(auditBefore + 2);
+    const last = await env.FACTORY.prepare("SELECT before_json, after_json FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-sealed-t' ORDER BY id DESC LIMIT 1").first<{ before_json: string; after_json: string }>();
+    expect([JSON.parse(last!.before_json), JSON.parse(last!.after_json)]).toEqual([rival, mine]);
   });
 
   it("saving the same theme vars again writes no audit row", async () => {

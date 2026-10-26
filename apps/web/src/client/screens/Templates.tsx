@@ -138,7 +138,12 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       </div>
       {templates?.length === 0 && <p className="hint">ยังไม่มีเทมเพลต (No templates yet)</p>}
       {templates && templates.length > 0 && visibleTemplates.length === 0 && <p className="hint">ไม่มีเทมเพลตในสถานะนี้</p>}
-      {detail && <TemplateDetail key={detail.template.template_version_id} me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} onSaved={async () => setDetail(await api.template(detail.template.template_version_id))} />}
+      {detail && <TemplateDetail key={detail.template.template_version_id} me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} onSaved={async () => {
+        const id = detail.template.template_version_id;
+        const fresh = await api.template(id);
+        // The owner may have opened another template while the reload ran.
+        setDetail((cur) => (cur?.template.template_version_id === id ? fresh : cur));
+      }} />}
     </>
   );
 }
@@ -215,8 +220,15 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
     setThemeBusy(true);
     try {
       await api.saveTemplateThemeVars(t.template_version_id, vars);
+    } catch (e) {
+      setThemeError(errorText(e));
+      setThemeBusy(false);
+      return;
+    }
+    // The save is done; a failed reload shows its own error and leaves the note.
+    setThemeNote({ kind: "ok", text: "บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)" });
+    try {
       await onSaved();
-      setThemeNote({ kind: "ok", text: "บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)" });
     } catch (e) {
       setThemeError(errorText(e));
     } finally {
