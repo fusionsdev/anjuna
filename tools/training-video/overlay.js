@@ -4,6 +4,7 @@
 // 3. Draws a ring where the script clicks or points.
 (() => {
   const MASK = __MASK_SELECTORS__;
+  const MASK_TEXT = __MASK_TEXT__;
   const css = `
 ${MASK.join(",\n")} { filter: blur(7px) !important; }
 #tv-cursor { position: fixed; z-index: 2147483647; width: 22px; height: 22px; margin: -11px 0 0 -11px;
@@ -36,6 +37,28 @@ html { scroll-behavior: smooth; }
     document.documentElement.appendChild(ring);
     setTimeout(() => ring.remove(), 1200);
   };
+  // Text rules CSS cannot express. A MutationObserver callback runs before the next paint, so no frame shows them clear.
+  // 1. <code> that looks like a key or token: 24+ characters, no spaces, letters and digits.
+  // 2. Short lines that start with a masked prefix (a person's name follows).
+  // 3. data-tv-path on <html>, so CSS can target one SPA route; history calls update it at once.
+  const setPath = () => { if (document.documentElement) document.documentElement.dataset.tvPath = location.pathname; };
+  for (const name of ["pushState", "replaceState"]) {
+    const original = history[name];
+    history[name] = function (...args) { const r = original.apply(this, args); setPath(); return r; };
+  }
+  addEventListener("popstate", setPath);
+  const scan = () => {
+    setPath();
+    for (const el of document.querySelectorAll("code")) {
+      const t = (el.textContent || "").trim();
+      if (t.length >= 24 && !/\s/.test(t) && /\d/.test(t) && /[a-z]/i.test(t)) el.style.filter = "blur(7px)";
+    }
+    for (const el of document.querySelectorAll(".hint, p, span")) {
+      const t = (el.textContent || "").trim();
+      if (t.length < 200 && MASK_TEXT.some((p) => t.startsWith(p))) el.style.filter = "blur(7px)";
+    }
+  };
+  new MutationObserver(scan).observe(document, { childList: true, subtree: true, characterData: true });
   if (document.documentElement) install();
   document.addEventListener("DOMContentLoaded", install);
 })();

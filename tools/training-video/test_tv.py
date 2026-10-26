@@ -12,10 +12,12 @@ SCENE_IDS = [m.name for m in pkgutil.iter_modules(scenes.__path__)]
 KNOWN = {"goto", "card", "click", "point", "type", "scroll", "select", "wait", "signed_out", "signed_in"}
 # Labels of buttons that deploy, save, approve or delete. Scenes may point at them, never click.
 EFFECT = re.compile(r"ติดตั้ง \(Install\)|สร้างเว็บไซต์|ลองใหม่|Rollback|Redeploy|Recover|Pause|Resume|หมุน|Revoke|ลบ|บันทึก|อนุมัติ|นำเข้า|สร้างคีย์|Approve|Delete|Save|Import|Upgrade")
+# Filter chips whose label contains an effect word but only filter the list.
+SAFE_LABELS = ("รออนุมัติ",)
 
 
 def test_scene_ids_found():
-    assert {"ep01_home", "ep03_install"} <= set(SCENE_IDS)
+    assert {"ep01_home", "ep02_wizard", "ep03_install", "ep04_edit", "ep05_templates", "ep06_reports", "ep07_leads"} <= set(SCENE_IDS)
 
 
 @pytest.mark.parametrize("sid", SCENE_IDS)
@@ -33,7 +35,10 @@ def test_scenes_never_click_effect_buttons(sid):
     for step in tv.load_scene(sid)["steps"]:
         for action in step.get("do", []):
             if action[0] in ("click", "type", "select"):
-                assert not EFFECT.search(json.dumps(action[1], ensure_ascii=False)), action
+                target = json.dumps(action[1], ensure_ascii=False)
+                for safe in SAFE_LABELS:
+                    target = target.replace(safe, "")
+                assert not EFFECT.search(target), action
 
 
 @pytest.mark.parametrize("sid", SCENE_IDS)
@@ -63,7 +68,8 @@ def test_guard_blocks_writes(method, result):
 
 def test_mask_covers_secrets_and_pii():
     must = ["code.token", ".user-menu > .btn", 'td[data-label="Drain key"]', "#settings-drain",
-            'table[aria-label="ผู้สมัคร (Applicant)"] td', 'input[aria-label="lead_id"]', ".toast", "form.signin input"]
+            'table[aria-label="ผู้สมัคร (Applicant)"] td', 'input[aria-label="lead_id"]', ".toast", "form.signin input",
+            'html[data-tv-path="/builder-keys"] main table td:nth-child(-n+2)']
     for sel in must:
         assert sel in tv.MASK_SELECTORS
 

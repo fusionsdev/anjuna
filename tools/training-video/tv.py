@@ -32,6 +32,8 @@ LEAD_IN = 0.3  # seconds between a step's first frame and its narration
 TAIL = 0.6  # silence after each narration clip before the next step starts
 CHANNEL = "msedge"  # installed Edge; Playwright 1.62 bundled Chromium is not downloaded on this machine
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# POST endpoints that only read. wizard.ts documents zone-check as a read-only Cloudflare pre-check.
+SAFE_POSTS = ("/api/wizard/zone-check",)
 
 # Every element that can show PII or a secret (H:/w/anjuna-wt/_briefs/training-video-panel-map.md).
 MASK_SELECTORS = [
@@ -50,7 +52,12 @@ MASK_SELECTORS = [
     ".lifecycle-detail .section > p:first-of-type code", ".revision-list .muted.small",
     'input[aria-label="คีย์ drain (Drain key)"]', 'input[aria-label="รหัส LeadsGate (LeadsGate aid)"]',
     'input[aria-label="URL ฐาน prepop (Prepop base)"]',
+    # BuilderKeys uses a plain table (no data-label): blur the label and key columns on that page.
+    'html[data-tv-path="/builder-keys"] main table td:nth-child(-n+2)',
+    'td[data-label="คีย์"]', 'td[data-label="ผู้เริ่ม"]', 'td[data-label="เพิ่มโดย (Added by)"]',
 ]
+# Hint lines that start with these words name a person (template submitter); overlay.js blurs them.
+MASK_TEXT_PREFIXES = ["ส่งโดย"]
 
 
 def load_scene(scene_id: str):
@@ -165,9 +172,9 @@ class Runner:
         return loc
 
     def settle(self) -> None:
-        """Wait until the panel's loading marks ("…") are gone, up to 10 s."""
+        """Wait until <main> has rendered and its loading marks ("…") are gone, up to 10 s."""
         try:
-            self.page.wait_for_function("() => !(document.querySelector('main')?.innerText || '').includes('…')", timeout=10_000)
+            self.page.wait_for_function("() => { const m = document.querySelector('main'); return !!m && m.innerText.trim().length > 0 && !m.innerText.includes('…'); }", timeout=10_000)
         except Exception:
             print("  still loading after 10 s")
         time.sleep(0.4)
@@ -198,7 +205,9 @@ class Runner:
             time.sleep(0.9)
         elif kind == "select":
             self.point(args[0], ring=True)
-            locate(page, args[0]).select_option(args[1])
+            option = args[1]
+            loc = locate(page, args[0])
+            loc.select_option(**option) if isinstance(option, dict) else loc.select_option(option)
             page.wait_for_load_state("networkidle")
         elif kind == "wait":
             time.sleep(args[0])
@@ -213,7 +222,7 @@ class Runner:
 
 
 def guard(route) -> None:
-    if route.request.method in SAFE_METHODS:
+    if route.request.method in SAFE_METHODS or (route.request.method == "POST" and route.request.url.split("?")[0].endswith(SAFE_POSTS)):
         route.continue_()
     else:
         print(f"  blocked {route.request.method} {route.request.url}")
@@ -230,7 +239,7 @@ def cmd_record(scene_id: str, base: str, headed: bool, allow_owner: bool = False
     voice = json.loads((d / "voice.json").read_text())["lengths"]
     if len(voice) != len(scene["steps"]):
         sys.exit("voice.json is stale: run `python tv.py voice` again")
-    overlay = (ROOT / "overlay.js").read_text(encoding="utf-8").replace("__MASK_SELECTORS__", json.dumps(MASK_SELECTORS, ensure_ascii=False))
+    overlay = (ROOT / "overlay.js").read_text(encoding="utf-8").replace("__MASK_SELECTORS__", json.dumps(MASK_SELECTORS, ensure_ascii=False)).replace("__MASK_TEXT__", json.dumps(MASK_TEXT_PREFIXES, ensure_ascii=False))
     raw = d / "raw"
     for old in raw.glob("*.webm"):
         old.unlink()
@@ -247,8 +256,18 @@ def cmd_record(scene_id: str, base: str, headed: bool, allow_owner: bool = False
             sys.exit(f"signed in as {role!r}: ops videos need an employee account. Run `python tv.py login` again, or pass --allow-owner.")
         ctx.add_init_script(overlay)
         ctx.route("**/*", guard)
+        if "draft_stub" in scene:
+            got = ctx.request.get(f"{base}/api/wizard/drafts/{scene['draft_stub']}")
+            if not got.ok:
+                sys.exit(f"draft {scene['draft_stub']} not readable ({got.status})")
+            stub = DraftStub(got.json())
+            ctx.route("**/api/brands/drafts", stub.handle)
+            ctx.route("**/api/brands/*/draft", stub.handle)
         page = ctx.new_page()
         t0 = time.monotonic()
+        # The screencast starts small and grows to the viewport; compose trims this warm-up away.
+        page.set_content("<body style='margin:0;background:#11161c'></body>")
+        time.sleep(1.2)
         runner = Runner(page, ctx, base)
         for i, step in enumerate(scene["steps"]):
             start = time.monotonic() - t0
@@ -267,6 +286,36 @@ def cmd_record(scene_id: str, base: str, headed: bool, allow_owner: bool = False
     video.replace(d / "screen.webm")
     (d / "timeline.json").write_text(json.dumps(timeline, indent=2))
     print(f"recorded {timeline[-1]['end']:.1f}s -> {d / 'screen.webm'}")
+
+
+class DraftStub:
+    """Answers the wizard's draft saves in the browser, so the wizard advances and nothing reaches the server.
+
+    Starts from a real draft (GET /api/wizard/drafts/<id>), so the Review preview iframe has a real draft to render.
+    POST /api/brands/drafts and PATCH /api/brands/<id>/draft get WizardDraft / UpdateBrandDraftResponse shapes.
+    """
+
+    def __init__(self, draft: dict):
+        self.draft = draft
+
+    def handle(self, route) -> None:
+        req = route.request
+        if req.method not in ("POST", "PATCH"):
+            return route.fallback()
+        body = req.post_data_json or {}
+        d = self.draft
+        changed = []
+        if "name" in body:
+            d["brand"]["name"] = body["name"]; changed.append("name")
+        if "keyword_default" in body:
+            d["brand"]["keyword_default"] = body["keyword_default"]; changed.append("keyword_default")
+        if "template_version_id" in body:
+            d["revision"]["template_version_id"] = body["template_version_id"]; changed.append("template_version_id")
+        if "profile" in body:
+            d["profile"] = body["profile"]; changed += [f"profile.{k}" for k in body["profile"]]
+        payload = dict(d) if req.method == "POST" else {**d, "changed": changed}
+        print(f"  stubbed {req.method} {req.url.split('/api/')[1]}")
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(payload, ensure_ascii=False))
 
 
 # ---------- compose ----------
