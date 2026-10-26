@@ -1,0 +1,181 @@
+/*
+  REDESIGN: this is the only stylesheet. Start with the custom properties below,
+  then restyle each section. Keep the HTML structure, data attributes and form fields.
+  No remote fonts, no CDN, no url() to other hosts: ship every asset inside the site folder.
+*/
+:root {
+  /* REDESIGN: colors */
+  --color-bg: #f2f2f2;
+  --color-surface: #ffffff;
+  --color-text: #222222;
+  --color-muted: #666666;
+  --color-border: #d0d0d0;
+  --color-accent: #555555;
+  --color-accent-hover: #3a3a3a;
+  --color-accent-text: #ffffff;
+
+  /* REDESIGN: type */
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-size-base: 1rem;
+  --line-height: 1.6;
+
+  /* REDESIGN: shape and spacing */
+  --radius: 6px;
+  --space-1: 0.5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 3rem;
+  --max-width: 960px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+}
+
+a { color: var(--color-accent); }
+
+h1, h2, h3 { line-height: 1.25; margin: 0 0 var(--space-2); }
+h1 { font-size: 2rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.125rem; }
+p { margin: 0 0 var(--space-2); }
+
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 var(--space-2);
+}
+
+/* REDESIGN: header and brand link */
+.site-header {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.site-header .container {
+  display: flex;
+  align-items: center;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text);
+  font-weight: 700;
+  text-decoration: none;
+}
+.brand-link img { width: 32px; height: 32px; }
+
+section { padding: var(--space-4) 0; }
+.section-alt { background: var(--color-surface); }
+
+/* REDESIGN: hero and CTA form */
+.hero { background: var(--color-surface); }
+.hero p { color: var(--color-muted); max-width: 40rem; }
+
+.cta-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--space-2);
+  align-items: end;
+  max-width: 40rem;
+  margin-top: var(--space-3);
+}
+.cta-form label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+.cta-form select,
+.cta-form input {
+  font: inherit;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.cta-form button,
+.button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.65rem 1.25rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  text-decoration: none;
+  text-align: center;
+  cursor: pointer;
+}
+.cta-form button:hover,
+.button:hover { background: var(--color-accent-hover); }
+
+/* REDESIGN: how it works and why compare */
+.steps,
+.points {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.steps li,
+.points li {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+.section-alt .steps li,
+.section-alt .points li { background: var(--color-bg); }
+
+/* REDESIGN: FAQ */
+.faq details {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.faq summary { cursor: pointer; font-weight: 600; }
+.faq details p { margin: var(--space-1) 0 0; color: var(--color-muted); }
+
+/* REDESIGN: closing CTA block */
+.closing-cta { text-align: center; }
+.closing-cta p { color: var(--color-muted); }
+
+/* REDESIGN: legal pages */
+.legal { background: var(--color-surface); }
+.legal .container { max-width: 720px; }
+
+/* REDESIGN: footer */
+.site-footer {
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-3) 0;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.site-footer p { margin: 0 0 var(--space-1); }
+
+@media (max-width: 720px) {
+  .cta-form,
+  .steps,
+  .points { grid-template-columns: 1fr; }
+  h1 { font-size: 1.625rem; }
+}

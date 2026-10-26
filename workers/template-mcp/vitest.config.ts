@@ -27,6 +27,8 @@ export default defineConfig(async () => {
             exclude: ["test/**/*.node.test.ts"],
             fileParallelism: false,
             testTimeout: 30_000,
+            // `?raw` on a .css file returns "" unless vitest processes it. Only the Open Design starter site CSS is read this way.
+            css: { include: [/integrations\/open-design\/.*\.css/] },
           },
         },
         {

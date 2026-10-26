@@ -70,6 +70,19 @@ The site you build must not contain the strings "anjuna" or "aurum", or another 
 
 Give this brand its own design: layout, visual identity, copy and imagery. Never reuse a layout, copy or images from another brand's template, because identical sites risk ad-account bans. Use the active Open Design design system.
 
+## Starter skeleton
+
+If the project folder has no `site/` yet, copy `starter/site/` from this plugin (the folder that holds this file) into the project's `site/` and redesign from there. The skeleton is plain HTML and CSS with no JavaScript. It already passes the contract and is visually neutral on purpose.
+
+Change layout, colors, type, imagery and copy. Keep every structural element:
+
+- the `<span data-kw>` inside the single `<h1>` on `index.html`
+- the CTA form, its two fields (`requested_amount`, `zip`) and the amount options
+- the four footer links, the disclosure line and the footer on every page
+- the `data-brand` spans, holding only the brand name
+
+Each section carries a `<!-- REDESIGN: ... -->` comment that says what to restyle or rewrite. Remove each comment when its section is done. Start the visual design in the custom properties at the top of `assets/site.css`. Replace "Brand Name" in the title, the `data-brand` spans and the logo with the given template name, and replace the `[Placeholder]` paragraphs on the legal pages with reviewed legal copy or tell the user that the owner still has to supply it.
+
 ## 5. Build
 
 Write plain static HTML and CSS into `site/` in the project folder. No framework build is needed. If you do use a framework, submit its built output folder.

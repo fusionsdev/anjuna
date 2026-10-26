@@ -15,7 +15,21 @@
     "mode": "prototype",
     "scenario": "marketing",
     "surface": "web",
-    "context": { "skills": [{ "path": "./SKILL.md" }], "designSystem": { "primary": true }, "craft": ["typography", "color", "anti-ai-slop"] },
+    "context": {
+      "skills": [{ "path": "./SKILL.md" }],
+      "designSystem": { "primary": true },
+      "craft": ["typography", "color", "anti-ai-slop"],
+      "assets": [
+        "./starter/site/index.html",
+        "./starter/site/privacy/index.html",
+        "./starter/site/terms/index.html",
+        "./starter/site/do-not-sell/index.html",
+        "./starter/site/disclosures/index.html",
+        "./starter/site/assets/site.css",
+        "./starter/site/assets/logo.svg"
+      ]
+    },
+    "preview": { "type": "html", "entry": "./starter/site/index.html" },
     "pipeline": { "stages": [{ "id": "generate", "atoms": ["file-write", "live-artifact"] }] },
     "capabilities": ["prompt:inject", "fs:write"],
     "useCase": { "query": { "en": "Build an Anjuna landing template for {{brandName}} ({{templateId}}) in its own design, check it against the template contract and submit it." } },
