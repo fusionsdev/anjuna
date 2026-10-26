@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brand Name | Check Your Funding Options</title>
+  <meta name="description" content="Compare funding options from lending partners. Answer two quick questions to see what may be available. Not all applicants qualify.">
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+
+<header class="site-header">
+  <!-- REDESIGN: header. Restyle or rebuild it. Keep the link to "/" and keep the brand name alone inside a data-brand span. -->
+  <div class="container">
+    <a class="brand-link" href="/"><img src="/assets/logo.svg" alt=""><span data-brand>Brand Name</span></a>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero" id="top">
+    <!-- REDESIGN: hero. Rewrite the subline, change the layout, add imagery. Keep exactly one h1 with exactly one data-kw span inside it.
+         The words around the keyword slot must read well with any short title-cased phrase in the slot. -->
+    <div class="container">
+      <h1><span data-kw>Funding Options</span> | Check Your Options in Minutes</h1>
+      <p>Tell us roughly how much you need and where you live. A lending partner may be able to show you options to compare.</p>
+
+      <!-- REDESIGN: CTA form. Restyle it, relabel it, move it. Keep method="get", action="/go", the data-cta attribute, the two named
+           fields (requested_amount, zip) and the amount values. No hidden inputs, no other fields, no other forms, no JavaScript. -->
+      <form class="cta-form" method="get" action="/go" data-cta>
+        <label>Amount <select name="requested_amount" required>
+          <option value="350">$350</option>
+          <option value="500">$500</option>
+          <option value="750">$750</option>
+          <option value="1000">$1,000</option>
+          <option value="1500">$1,500</option>
+          <option value="1750">$1,750</option>
+          <option value="2000">$2,000</option>
+          <option value="3000">$3,000</option>
+          <option value="3250">$3,250</option>
+          <option value="4500">$4,500</option>
+          <option value="5000">$5,000</option>
+        </select></label>
+        <label>ZIP code <input name="zip" inputmode="numeric" autocomplete="postal-code" pattern="[0-9]{5}" minlength="5" maxlength="5" required></label>
+        <button type="submit">Check My Options</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="how-it-works">
+    <!-- REDESIGN: how it works. Rewrite the three steps, add icons or numbers, change the layout. -->
+    <div class="container">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li>
+          <h3>1. Pick an amount</h3>
+          <p>Choose the amount you would like to look at. You can change your mind later.</p>
+        </li>
+        <li>
+          <h3>2. Enter your ZIP code</h3>
+          <p>Your ZIP code helps match you with lenders that serve your area.</p>
+        </li>
+        <li>
+          <h3>3. Review your options</h3>
+          <p>If a lending partner is a fit, you may see options to compare. Terms vary by lender and state.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="why-compare section-alt">
+    <!-- REDESIGN: why compare options. Rewrite the three points, restyle the cards, add proof elements you can support. -->
+    <div class="container">
+      <h2>Why compare options</h2>
+      <ul class="points">
+        <li>
+          <h3>See more than one offer</h3>
+          <p>Different lenders may offer different rates and terms for the same amount.</p>
+        </li>
+        <li>
+          <h3>Take your time</h3>
+          <p>Checking your options is a first step. You decide whether to continue.</p>
+        </li>
+        <li>
+          <h3>Know the terms first</h3>
+          <p>Read the full terms from any lender before you accept anything.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="faq">
+    <!-- REDESIGN: FAQ. Rewrite the questions and answers. Keep the details and summary elements so it works without JavaScript. -->
+    <div class="container">
+      <h2>FAQ</h2>
+      <details>
+        <summary>What does it cost to check my options?</summary>
+        <p>Checking your options through this site is free. Any lender you choose to work with sets its own fees and terms.</p>
+      </details>
+      <details>
+        <summary>Will every applicant get an offer?</summary>
+        <p>No. Not all applicants qualify, and what is offered depends on the lender, your state and the information you provide.</p>
+      </details>
+      <details>
+        <summary>How much can I look at?</summary>
+        <p>The amount menu lists the amounts you can choose from. Lenders may offer less or more than the amount you pick.</p>
+      </details>
+      <details>
+        <summary>Is my information shared?</summary>
+        <p>See the privacy policy and the notice on selling or sharing personal information linked in the footer for details.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="closing-cta section-alt">
+    <!-- REDESIGN: closing call to action. Restyle it or rewrite it. Keep it a plain link to #top. It must not be a second form. -->
+    <div class="container">
+      <h2>Ready to see your options?</h2>
+      <p>It takes a minute to get started.</p>
+      <a class="button" href="#top">Check My Options</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <!-- REDESIGN: footer. Restyle it. Keep the same footer on every page: the four legal links, the brand name in a data-brand span and the disclosure line. -->
+  <div class="container">
+    <nav aria-label="Legal">
+      <a href="/privacy/">Privacy Policy</a>
+      <a href="/terms/">Terms of Use</a>
+      <a href="/do-not-sell/">Do Not Sell or Share My Personal Information</a>
+      <a href="/disclosures/">Disclosures</a>
+    </nav>
+    <p>&copy; <span data-brand>Brand Name</span>. All rights reserved.</p>
+    <p><span data-brand>Brand Name</span> is not a lender. Rates and terms vary by lender and state. Not all applicants qualify.</p>
+  </div>
+</footer>
+
+</body>
+</html>

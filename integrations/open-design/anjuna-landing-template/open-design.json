@@ -1,0 +1,41 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "anjuna-landing-template",
+  "title": "Anjuna landing template",
+  "version": "0.1.0",
+  "description": "Builds a static multi-page lead-gen landing template that passes the Anjuna template contract and submits it as a ZIP.",
+  "license": "UNLICENSED",
+  "author": { "name": "fusionsdev" },
+  "tags": ["landing-page", "lead-gen", "static-html", "template"],
+  "compat": { "agentSkills": [{ "path": "./SKILL.md" }] },
+  "od": {
+    "kind": "scenario",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "scenario": "marketing",
+    "surface": "web",
+    "context": {
+      "skills": [{ "path": "./SKILL.md" }],
+      "designSystem": { "primary": true },
+      "craft": ["typography", "color", "anti-ai-slop"],
+      "assets": [
+        "./starter/site/index.html",
+        "./starter/site/privacy/index.html",
+        "./starter/site/terms/index.html",
+        "./starter/site/do-not-sell/index.html",
+        "./starter/site/disclosures/index.html",
+        "./starter/site/assets/site.css",
+        "./starter/site/assets/logo.svg"
+      ]
+    },
+    "preview": { "type": "html", "entry": "./starter/site/index.html" },
+    "pipeline": { "stages": [{ "id": "generate", "atoms": ["file-write", "live-artifact"] }] },
+    "capabilities": ["prompt:inject", "fs:write"],
+    "useCase": { "query": { "en": "Build an Anjuna landing template for {{brandName}} ({{templateId}}) in its own design, check it against the template contract and submit it." } },
+    "inputs": [
+      { "name": "brandName", "type": "string", "required": true, "label": "Template name", "placeholder": "Harbor Funding" },
+      { "name": "templateId", "type": "string", "required": true, "label": "Template id (lowercase slug)", "placeholder": "harbor-funding" }
+    ]
+  }
+}
