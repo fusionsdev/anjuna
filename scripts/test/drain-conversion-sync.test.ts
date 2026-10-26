@@ -89,6 +89,10 @@ describe("scripts/drain/conversion-sync.mjs helpers", () => {
     expect(c.createdConversionId({ id: "rec_abc", conversion: { platformId: "123" } })).toBe("123");
     expect(c.createdConversionId({ id: "9", data: { conversionActionId: "77" } })).toBe("77");
     expect(c.createdConversionId({ id: "9", resourceName: "customers/1/conversionActions/55" })).toBe("9");
+    expect(c.createdConversionId({ id: "rec_abc", resourceName: "customers/1/conversionActions/55" })).toBe("55");
+    expect(() => c.createdConversionId({ id: "rec_abc", resourceName: "customers/1/conversionActions/x" })).toThrow(
+      /invalid conversion id: rec_abc/,
+    );
   });
 
   it("createdConversionId reads platformId, nested id and a resource name, and rejects non-digits", () => {

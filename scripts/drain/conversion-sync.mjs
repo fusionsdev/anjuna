@@ -103,16 +103,18 @@ export function conversionsByName(out) {
  */
 export function createdConversionId(out) {
   const holders = [out, out?.conversion, out?.result, out?.data].filter((h) => h && typeof h === "object");
+  let invalid;
   for (const key of ["platformId", "conversionActionId", "id", "resourceName"]) {
     for (const holder of holders) {
       const value = holder[key];
       if (value === undefined || value === null || value === "") continue;
       const text = String(value);
       const id = /conversionActions\/(\d+)$/.exec(text)?.[1] ?? text;
-      if (!ID.test(id)) throw new Error(`create returned an invalid conversion id: ${text.slice(0, 60)}`);
-      return id;
+      if (ID.test(id)) return id;
+      invalid ??= text;
     }
   }
+  if (invalid !== undefined) throw new Error(`create returned an invalid conversion id: ${invalid.slice(0, 60)}`);
   throw new Error("create returned no conversion id");
 }
 

@@ -299,6 +299,7 @@ describe("POST /api/conversions/setup/result", () => {
   it("id result retries when the brand updated_at changed between read and write", async () => {
     const claimId = await claimed();
     let panelSaves = 0;
+    const panelAt = hoursFromNow(1);
     const response = await callResult(
       { brand_id: "brand-a", claim_id: claimId, conversion_action_id: "7754587837" },
       {
@@ -306,7 +307,7 @@ describe("POST /api/conversions/setup/result", () => {
           // A panel save lands after the handler read updated_at, once. The retry must see the new value.
           if (panelSaves++ > 0) return;
           await h.db.prepare("UPDATE brand_runtime SET adkit_project = 'proj_x', updated_at = ?1 WHERE brand_id = 'brand-a'")
-            .bind(hoursFromNow(1)).run();
+            .bind(panelAt).run();
         },
       },
     );
@@ -316,7 +317,7 @@ describe("POST /api/conversions/setup/result", () => {
     const brand = (await brandRow("brand-a"))!;
     expect(brand.google_conversion_action).toBe("7754587837");
     // The write moves forward from the panel's value, never back or equal.
-    expect(Date.parse(brand.updated_at)).toBeGreaterThan(Date.parse(hoursFromNow(0)) + 3_000_000);
+    expect(Date.parse(brand.updated_at)).toBeGreaterThan(Date.parse(panelAt));
     expect(await setupRow("brand-a")).toMatchObject({ status: "created", conversion_action_id: "7754587837" });
     expect(await audit()).toHaveLength(1);
   });
