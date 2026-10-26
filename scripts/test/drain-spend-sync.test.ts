@@ -9,13 +9,14 @@ const fixture = (name: string) => readFileSync(fileURLToPath(new URL(`./fixtures
 interface Row { brand_id: string; date: string; hour: number | null; cost: number; clicks: number; impressions: number }
 interface Route { account: string; conversionAction: string; project?: string }
 interface SpendSync {
-  adkitArgsFor(route: Route, breakdown: string, fallbackProject?: string): string[];
+  adkitArgsFor(route: Route, breakdown: string, fallbackProject: string | undefined, date: string): string[];
+  syncDates(now?: Date): string[];
   parseAdkitJson(stdout: string): unknown;
-  spendRowsFromAdkit(out: unknown, brandId: string, breakdown: string): { rows: Row[]; skipped: number };
+  spendRowsFromAdkit(out: unknown, brandId: string, breakdown: string, defaultDate?: string): { rows: Row[]; skipped: number };
   syncSpend(options: {
     baseUrl: string; token: string; breakdown?: string; fallbackProject?: string; dryRun?: boolean;
     runAdkit: (args: string[]) => Promise<string>; fetchImpl: typeof fetch;
-    log?: (line: string) => void; error?: (line: string) => void;
+    log?: (line: string) => void; error?: (line: string) => void; now?: Date;
   }): Promise<number>;
 }
 
@@ -47,12 +48,31 @@ describe("scripts/drain/spend-sync.mjs mapping", () => {
     expect(s.spendRowsFromAdkit({ ok: true }, "brand-a", "hour")).toEqual({ rows: [], skipped: 0 });
   });
 
-  it("builds the account-level results command with the brand project, else the fallback", () => {
-    const base = ["manage", "google", "results", "list", "--account", "4811219623", "--level", "account", "--breakdown", "hour", "--json"];
-    expect(s.adkitArgsFor({ account: "4811219623", conversionAction: "1", project: "proj_a" }, "hour", "global"))
+  it("stamps the call date on live 1.13.54 hour rows that carry no date", () => {
+    const out = s.parseAdkitJson(fixture("adkit-results-hour-live.txt"));
+    expect(s.spendRowsFromAdkit(out, "brand-a", "hour", "2026-10-26")).toEqual({
+      rows: [
+        { brand_id: "brand-a", date: "2026-10-26", hour: 2, cost: 133.72, clicks: 2, impressions: 2 },
+        { brand_id: "brand-a", date: "2026-10-26", hour: 3, cost: 40.5, clicks: 1, impressions: 5 },
+        { brand_id: "brand-a", date: "2026-10-26", hour: 14, cost: 0, clicks: 4, impressions: 9 },
+      ],
+      skipped: 0,
+    });
+    expect(s.spendRowsFromAdkit(out, "brand-a", "hour").skipped).toBe(3);
+  });
+
+  it("builds the 1.13.54 results command for one date with the brand project, else the fallback", () => {
+    const base = ["manage", "google", "results", "--account", "4811219623", "--breakdown", "hour", "--from", "2026-10-26", "--to", "2026-10-26", "--json"];
+    expect(s.adkitArgsFor({ account: "4811219623", conversionAction: "1", project: "proj_a" }, "hour", "global", "2026-10-26"))
       .toEqual([...base, "--project", "proj_a"]);
-    expect(s.adkitArgsFor({ account: "4811219623", conversionAction: "1" }, "hour", "global")).toEqual([...base, "--project", "global"]);
-    expect(s.adkitArgsFor({ account: "4811219623", conversionAction: "1" }, "hour")).toEqual(base);
+    expect(s.adkitArgsFor({ account: "4811219623", conversionAction: "1" }, "hour", "global", "2026-10-26")).toEqual([...base, "--project", "global"]);
+    expect(s.adkitArgsFor({ account: "4811219623", conversionAction: "1" }, "day", undefined, "2026-10-26"))
+      .toEqual(["manage", "google", "results", "--account", "4811219623", "--breakdown", "day", "--from", "2026-10-26", "--to", "2026-10-26", "--json"]);
+  });
+
+  it("syncs yesterday and today in UTC", () => {
+    expect(s.syncDates(new Date("2026-10-26T00:30:00Z"))).toEqual(["2026-10-25", "2026-10-26"]);
+    expect(s.syncDates(new Date("2026-03-01T23:59:00Z"))).toEqual(["2026-02-28", "2026-03-01"]);
   });
 });
 
@@ -82,14 +102,19 @@ describe("scripts/drain/spend-sync.mjs job", () => {
     const calls: string[][] = [];
     const runAdkit = async (args: string[]) => {
       calls.push(args);
-      return args.includes("4811219623") ? fixture("adkit-results-hour.txt") : '{"results":[]}';
+      return args.includes("4811219623") ? fixture("adkit-results-hour-live.txt") : '{"results":[]}';
     };
-    const failures = await s.syncSpend({ baseUrl: "https://core.test/", token: "tok", runAdkit, fetchImpl, log: () => {}, error: () => {} });
+    const now = new Date("2026-10-26T10:00:00Z");
+    const failures = await s.syncSpend({ baseUrl: "https://core.test/", token: "tok", runAdkit, fetchImpl, log: () => {}, error: () => {}, now });
     expect(failures).toBe(0);
-    expect(calls.map((a) => a[a.indexOf("--account") + 1])).toEqual(["4811219623", "1234567890"]);
+    expect(calls.map((a) => [a[a.indexOf("--account") + 1], a[a.indexOf("--from") + 1], a[a.indexOf("--to") + 1]])).toEqual([
+      ["4811219623", "2026-10-25", "2026-10-25"], ["4811219623", "2026-10-26", "2026-10-26"],
+      ["1234567890", "2026-10-25", "2026-10-25"], ["1234567890", "2026-10-26", "2026-10-26"],
+    ]);
     expect(posts).toHaveLength(1);
-    expect((posts[0] as { rows: Row[] }).rows.map((r) => [r.brand_id, r.hour, r.cost])).toEqual([
-      ["brand-a", 0, 1.25], ["brand-a", 1, 0], ["brand-a", 13, 5],
+    expect((posts[0] as { rows: Row[] }).rows.map((r) => [r.brand_id, r.date, r.hour, r.cost])).toEqual([
+      ["brand-a", "2026-10-25", 2, 133.72], ["brand-a", "2026-10-25", 3, 40.5], ["brand-a", "2026-10-25", 14, 0],
+      ["brand-a", "2026-10-26", 2, 133.72], ["brand-a", "2026-10-26", 3, 40.5], ["brand-a", "2026-10-26", 14, 0],
     ]);
   });
 
@@ -98,7 +123,7 @@ describe("scripts/drain/spend-sync.mjs job", () => {
     const errors: string[] = [];
     const runAdkit = async (args: string[]) => {
       if (args.includes("1234567890")) throw new Error("spawn adkit ENOENT");
-      return fixture("adkit-results-hour.txt");
+      return fixture("adkit-results-hour-live.txt");
     };
     expect(await s.syncSpend({ baseUrl: "https://core.test", token: "tok", dryRun: true, runAdkit, fetchImpl: dry.fetchImpl, log: () => {}, error: (l) => errors.push(l) })).toBe(1);
     expect(dry.posts).toEqual([]);
