@@ -5,13 +5,13 @@ import { CoreError, createBrandWorker } from "../src/index.js";
 import { cfg, cookieHeader, cookies, HANDOFF, setup } from "./helpers.js";
 
 describe("route allowlist", () => {
-  it.each(["/admin", "/admin/brands", "/api/postback", "/api/conversions/pending", "/rpc/submitLead", "/index.html", "/_f/index.html", "/_f/", "/request/unknown", "/unknown", "/api/gate-interest", "/privacy/index.html", "/_f/assets/missing.js", "/assets/missing.js", "/thank-you.html"])("uniform 404 for %s", async (path) => {
+  it.each(["/admin", "/admin/brands", "/api/postback", "/api/conversions/pending", "/rpc/submitLead", "/index.html", "/_f/index.html", "/_f/", "/request/unknown", "/unknown", "/api/gate-interest", "/privacy/index.html", "/_f/assets/missing.js", "/assets/missing.js", "/thank-you.html", "/missing-page/", "/Contact", "/contact/extra"])("uniform 404 for %s", async (path) => {
     const response = await setup().get(path);
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("Not Found");
     expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
-  it.each(["/", "/privacy", "/privacy/", "/terms", "/disclosures", "/do-not-sell", "/_f/assets/app.js", "/assets/app.js", "/_astro/app.js", "/favicon.svg", "/api/health"])("serves allowed GET %s", async (path) => {
+  it.each(["/", "/privacy", "/privacy/", "/terms", "/disclosures", "/do-not-sell", "/_f/assets/app.js", "/assets/app.js", "/_astro/app.js", "/favicon.svg", "/api/health", "/contact", "/contact/", "/e-sign-consent/"])("serves allowed GET %s", async (path) => {
     expect((await setup().get(path)).status).toBe(200);
   });
   it.each([["POST", "/"], ["DELETE", "/go"], ["GET", "/api/leads"], ["GET", "/_e"], ["POST", "/_f/assets/app.js"]])("rejects %s %s uniformly", async (method, path) => {
@@ -350,6 +350,7 @@ describe("pause and visitor parity", () => {
     expect(core.calls.brandSettings).toEqual([{ brand_id: "brand-a", include_site_text: true, include_theme: true }]);
     expect(Object.entries(core.calls).filter(([method]) => method !== "brandSettings").flatMap(([, calls]) => calls as unknown[])).toHaveLength(0);
     expect((await get("/admin")).status).toBe(404);
+    expect((await get("/contact/")).status).toBe(503);
   });
   it("a config loader can change pause and gate settings without rebuilding the worker", async () => {
     const { config } = setup();

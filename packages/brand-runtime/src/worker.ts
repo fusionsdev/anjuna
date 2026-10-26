@@ -94,6 +94,10 @@ function escapeAttribute(value: string): string {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
+const TEMPLATE_PAGE = /^\/([a-z0-9][a-z0-9-]{0,62})\/?$/;
+/** One-segment paths the Worker owns; a template page may never take them. */
+const RESERVED_PAGES = new Set(["go", "apply", "api", "assets", "index"]);
+
 async function serveHtml(url: URL, config: BrandWorkerConfig, assetPath: string, keyword: string | null,
   extra: { cfg?: RuntimeConfig; cta?: ClickParams; site?: { text: EffectiveSiteText; page: "index" | "other" }; theme?: string } = {}): Promise<Response> {
   // Do not forward visitor headers or query strings to static assets (UA/IP/referrer parity).
@@ -175,6 +179,8 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   if (url.hostname !== settings.hostname) return notFound();
   const read = request.method === "GET" || request.method === "HEAD";
   const legal = LEGAL_PATHS.find((page) => path === page || path === `${page}/`);
+  // Any other one-segment page the sealed template ships as /<page>/index.html, e.g. /contact/. A missing file is a 404.
+  const templatePage = read && !legal && path !== "/go" ? TEMPLATE_PAGE.exec(path)?.[1] : undefined;
   const form = path === settings.formRoute || path === `${settings.formRoute}/`;
   const provider = path === `${settings.formRoute}/provider`;
   const complete = path === `${settings.formRoute}/complete`;
@@ -182,9 +188,16 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   const assetKind = Object.hasOwn(BRAND_ASSET_PATHS, path) ? BRAND_ASSET_PATHS[path as keyof typeof BRAND_ASSET_PATHS] : null;
   const staticAsset = assetKind !== null || STATIC_FILES.some((file) => path === file) || STATIC_PREFIXES.some((prefix) => path.startsWith(prefix) && path.length > prefix.length);
   const proxy = proxyRoute(path, settings);
-  const allowed = (read && (path === "/" || path === "/go" || legal || form || provider || complete || apply || staticAsset || path === "/api/zip" || path === "/api/health")) ||
+  const page = templatePage && !form && !apply && !RESERVED_PAGES.has(templatePage) ? templatePage : undefined;
+  const allowed = (read && (path === "/" || path === "/go" || legal || page || form || provider || complete || apply || staticAsset || path === "/api/zip" || path === "/api/health")) ||
     (request.method === "POST" && (path === "/api/leads" || proxy));
   if (!allowed) return notFound();
+  if (page && settings.paused) {
+    // Keep unknown paths a uniform 404 during pause: only a page the template ships gets the pause response.
+    const exists = await config.assets.fetch(new Request(new URL(`/${page}/index.html`, url.origin), { method: "HEAD" }));
+    await exists.body?.cancel();
+    if (!exists.ok) return notFound();
+  }
   if (settings.paused && !staticAsset) {
     return new Response(PAUSE_HTML, { status: 503, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "retry-after": "300" } });
   }
@@ -211,6 +224,7 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   const css = themeCss(settings.theme, settings.theme_vars);
   const theme = css === null ? undefined : themeStyleTag(css);
   if (legal) return serveHtml(url, config, `${legal}/index.html`, null, { site: { text: site, page: "other" }, theme });
+  if (page) return serveHtml(url, config, `/${page}/index.html`, null, { site: { text: site, page: "other" }, theme });
   if (path === "/api/health") return json({ ok: true });
   if (proxy) {
     try {
