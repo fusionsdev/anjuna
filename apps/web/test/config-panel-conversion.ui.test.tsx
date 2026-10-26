@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversionSetupState } from "@anjuna/contracts";
 import brandFixture from "@anjuna/contracts/fixtures/admin/brand.get.response.json";
@@ -16,6 +16,7 @@ beforeEach(() => {
     if (method === "GET" && input === "/api/brands/brand-a") return json({ brand: brandFixture.brand });
     if (method === "GET" && input === "/api/brands/brand-a/site-text") return json({ error: "not_found" }, 404);
     if (method === "GET" && input === "/api/brands/brand-a/conversion-setup") return setup();
+    if (method === "PATCH" && input === "/api/brands/brand-a") return json({ brand: brandFixture.brand, changed: true });
     throw new Error(`Unexpected test HTTP request: ${method} ${input}`);
   }));
 });
@@ -59,6 +60,14 @@ describe("Conversion action status in the money section", () => {
     await screen.findByText("เส้นทางเงิน (Money-path, Owner เท่านั้น)");
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([u]) => u === "/api/brands/brand-a/conversion-setup")).toBe(true));
     expect(screen.queryByText(/Pending|Created|Failed/)).toBeNull();
-    expect((screen.getAllByRole("button", { name: "บันทึก (Save)" })[0] as HTMLButtonElement).disabled).toBe(false);
+    const money = (await screen.findByText("เส้นทางเงิน (Money-path, Owner เท่านั้น)")).closest("section") as HTMLElement;
+    const save = within(money).getByRole("button", { name: "บันทึก (Save)" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+
+    fireEvent.change(within(money).getByLabelText(/รหัส LeadsGate/), { target: { value: "aid-changed" } });
+    fireEvent.click(save);
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([u, init]) => u === "/api/brands/brand-a" && init?.method === "PATCH")).toBe(true));
+    const patch = vi.mocked(fetch).mock.calls.find(([u, init]) => u === "/api/brands/brand-a" && init?.method === "PATCH")!;
+    expect(JSON.parse(String(patch[1]?.body))).toMatchObject({ aid: "aid-changed" });
   });
 });

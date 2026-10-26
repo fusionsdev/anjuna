@@ -83,11 +83,12 @@ export function parseAdkitJson(stdout) {
   return JSON.parse(starts.length ? stdout.slice(Math.min(...starts)) : stdout);
 }
 
-/** Map of conversion name -> platformId (string) from the list output; entries without both are skipped. */
+/** Map of conversion name -> platformId (string) from the list output; entries without both, and removed actions, are skipped. */
 export function conversionsByName(out) {
   const list = Array.isArray(out) ? out : Array.isArray(out?.conversions) ? out.conversions : [];
   const map = new Map();
   for (const item of list) {
+    if (String(item?.status ?? "").toLowerCase() === "removed") continue;
     const id = item?.platformId === undefined || item?.platformId === null ? "" : String(item.platformId);
     if (typeof item?.name === "string" && ID.test(id)) map.set(item.name, id);
   }
@@ -95,14 +96,15 @@ export function conversionsByName(out) {
 }
 
 /**
- * The new conversion id from the create output: `platformId`, `id`, `conversionActionId` or a
- * `customers/<c>/conversionActions/<id>` resource name, at the top level or under conversion / result /
- * data. Throws when no id is found or the value is not 1 to 20 digits.
+ * The new conversion id from the create output, at the top level or under conversion / result / data.
+ * Specific keys (`platformId`, `conversionActionId`) win at every level before the generic `id`, then
+ * a `customers/<c>/conversionActions/<id>` resource name. Throws when no id is found or the value is
+ * not 1 to 20 digits.
  */
 export function createdConversionId(out) {
-  for (const holder of [out, out?.conversion, out?.result, out?.data]) {
-    if (!holder || typeof holder !== "object") continue;
-    for (const key of ["platformId", "id", "conversionActionId", "resourceName"]) {
+  const holders = [out, out?.conversion, out?.result, out?.data].filter((h) => h && typeof h === "object");
+  for (const key of ["platformId", "conversionActionId", "id", "resourceName"]) {
+    for (const holder of holders) {
       const value = holder[key];
       if (value === undefined || value === null || value === "") continue;
       const text = String(value);
@@ -119,7 +121,12 @@ async function runAdkitCli(args) {
   return stdout;
 }
 
-const errorText = (e) => String(e?.message || e || "unknown error").slice(0, ERROR_MAX) || "unknown error";
+// execFile puts the whole argv in e.message, so prefer what the CLI printed (stderr, stdout).
+const errorFull = (e) => {
+  const printed = [e?.stderr, e?.stdout].map((s) => String(s ?? "").trim()).filter(Boolean).join("\n");
+  return String(printed || e?.message || e || "unknown error") || "unknown error";
+};
+const errorText = (e) => errorFull(e).slice(0, ERROR_MAX);
 
 /**
  * The whole job. `runAdkit(args) -> stdout` and `fetchImpl` are injectable so tests never call
@@ -156,7 +163,7 @@ export async function syncConversions({
     try {
       let route = { account: brand.account, project: brand.project };
       let existing = await list(route);
-      let name = brand.name || pickUniqueName(existing, generate);
+      let name = brand.name ?? pickUniqueName(existing, generate);
       if (!NAME.test(String(name))) throw new Error(`invalid conversion name: ${String(name).slice(0, 40)}`);
       if (dryRun) {
         log(existing.has(name)
@@ -191,7 +198,7 @@ export async function syncConversions({
             how = "created";
           } catch (e) {
             failure = errorText(e);
-            if (DUPLICATE.test(failure)) {
+            if (DUPLICATE.test(errorFull(e))) {
               try {
                 existing = await list(route);
                 conversionId = existing.get(name);

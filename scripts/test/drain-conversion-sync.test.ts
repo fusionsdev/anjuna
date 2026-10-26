@@ -72,7 +72,23 @@ describe("scripts/drain/conversion-sync.mjs helpers", () => {
     expect([...map]).toEqual([
       ["Purchase (legacy)", "7300000001"], [NAME_STORED, "7300000002"], ["cv-fedcba9876543210", "7300000003"],
     ]);
+    expect(map.has("cv-1111111111111111")).toBe(false);
     expect(c.conversionsByName({})).toEqual(new Map());
+  });
+
+  it("conversionsByName skips removed actions case-insensitively", () => {
+    const map = c.conversionsByName([
+      { platformId: "1", name: "cv-aaaaaaaaaaaaaaaa", status: "removed" },
+      { platformId: "2", name: "cv-bbbbbbbbbbbbbbbb", status: "Removed" },
+      { platformId: "3", name: "cv-cccccccccccccccc", status: "ENABLED" },
+    ]);
+    expect([...map]).toEqual([["cv-cccccccccccccccc", "3"]]);
+  });
+
+  it("createdConversionId prefers a nested platformId over a generic top-level id", () => {
+    expect(c.createdConversionId({ id: "rec_abc", conversion: { platformId: "123" } })).toBe("123");
+    expect(c.createdConversionId({ id: "9", data: { conversionActionId: "77" } })).toBe("77");
+    expect(c.createdConversionId({ id: "9", resourceName: "customers/1/conversionActions/55" })).toBe("9");
   });
 
   it("createdConversionId reads platformId, nested id and a resource name, and rejects non-digits", () => {
@@ -288,6 +304,46 @@ describe("scripts/drain/conversion-sync.mjs job", () => {
     expect(posted.error).toContain("already exists");
     expect(posted.error).toContain("list exploded");
     expect(posted.error.length).toBeLessThanOrEqual(500);
+  });
+
+  it("syncConversions on a duplicate in e.stdout adopts, and the error text carries no argv", async () => {
+    const core = fakeCore();
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (isList(args)) {
+        lists++;
+        return lists === 1 ? '{"conversions":[]}' : `{"conversions":[{"platformId":"555","name":"${NAME_A}"}]}`;
+      }
+      throw Object.assign(new Error(`Command failed: adkit ${args.join(" ")} --data {"name":"${NAME_A}"}`), {
+        stdout: '{"error":"Duplicate name"}', stderr: "",
+      });
+    };
+    const { promise } = run(core, runAdkit);
+    expect(await promise).toBe(0);
+    expect(core.results).toEqual([{ brand_id: "brand-a", claim_id: "claim-brand-a", conversion_action_id: "555" }]);
+
+    const failing = fakeCore();
+    const second = run(failing, async (args) => {
+      if (isList(args)) return '{"conversions":[]}';
+      throw Object.assign(new Error(`Command failed: adkit ${args.join(" ")} --data {"name":"${NAME_A}"}`), {
+        stdout: '{"error":"quota exceeded"}', stderr: "",
+      });
+    });
+    expect(await second.promise).toBe(1);
+    const posted = failing.results[0] as { error: string };
+    expect(posted.error).toContain("quota exceeded");
+    expect(posted.error).not.toContain("--data");
+  });
+
+  it("syncConversions counts an empty pending name as a failure without claim, create or result", async () => {
+    const core = fakeCore({ pending: [{ brand_id: "brand-a", account: "4811219623", project: null, name: "" }] });
+    const calls: string[][] = [];
+    const { promise, errors } = run(core, async (args) => { calls.push(args); return '{"conversions":[]}'; });
+    expect(await promise).toBe(1);
+    expect(core.claims).toEqual([]);
+    expect(core.results).toEqual([]);
+    expect(calls.some(isCreate)).toBe(false);
+    expect(errors.join("\n")).toContain("invalid conversion name");
   });
 
   it("syncConversions rejects a malformed name without claiming", async () => {
