@@ -19,7 +19,7 @@ const summary = (id: string, name: string, status: string, extra: object = {}) =
 });
 const TEMPLATES = [summary("tv-1", "Harbor", "approved"), summary("tv-2", "Copperline", "approved", { thumbnail_url: null, brands_using: 0 }), summary("tv-3", "Unapproved", "awaiting_approval")];
 const detail = (id: string) => ({
-  template: { ...summary(id, "Harbor", "approved"), sha256: "a".repeat(64), sealed_by: "owner", text_defaults: { brand_name: "Harbor", title: "Harbor | Funding Options", description: "Check your funding options." } },
+  template: { ...summary(id, "Harbor", "approved"), sha256: "a".repeat(64), sealed_by: "owner", text_defaults: { brand_name: "Harbor", title: "Harbor | Funding Options", description: "Check your funding options." }, theme_vars: null },
   checks: [], screenshots: { desktop: null, mobile: null },
 });
 const draftBody = (over: { profile?: object; template?: string; status?: string; name?: string } = {}) => ({
