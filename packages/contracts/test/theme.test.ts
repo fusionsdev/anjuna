@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BrandProfile, BrandTheme, EMPTY_THEME_VARS, HexColor, TemplateThemeVars, darkenHex, themeCss, themeStyleTag, withThemeVars } from "../src/index.js";
+import { BrandProfile, BrandTheme, BrandThemeVarsResponse, EMPTY_THEME_VARS, HexColor, TemplateThemeVars, TemplateThemeVarsRequest, TemplateThemeVarsResponse, darkenHex, isEmptyThemeVars, themeCss, themeStyleTag, withThemeVars } from "../src/index.js";
 
 describe("HexColor", () => {
   it("accepts #rrggbb in any case and lowercases", () => {
@@ -95,5 +95,30 @@ describe("BrandProfile theme", () => {
     expect(BrandProfile.safeParse({ theme: { primary: "#fff", secondary: "#1e293b" } }).success).toBe(false);
     expect(BrandProfile.safeParse({ theme: { primary: "#0f766e" } }).success).toBe(false);
     expect(BrandProfile.safeParse({ theme: null }).success).toBe(false);
+  });
+});
+
+describe("theme vars backfill contracts", () => {
+  const vars = { primary: ["--color-royal"], primary_dark: [], secondary: [] };
+
+  it("TemplateThemeVarsRequest rejects a non-clean name", () => {
+    expect(TemplateThemeVarsRequest.safeParse({ theme_vars: vars }).success).toBe(true);
+    expect(TemplateThemeVarsRequest.safeParse({ theme_vars: { ...vars, primary: ["--anjuna-blue"] } }).success).toBe(false);
+    expect(TemplateThemeVarsRequest.safeParse({ theme_vars: { ...vars, primary: ["color"] } }).success).toBe(false);
+    expect(TemplateThemeVarsRequest.safeParse({ theme_vars: vars, extra: 1 }).success).toBe(false);
+    expect(TemplateThemeVarsResponse.safeParse({ template_version_id: "tv1", theme_vars: vars }).success).toBe(true);
+    expect(TemplateThemeVarsResponse.safeParse({ template_version_id: "", theme_vars: vars }).success).toBe(false);
+  });
+
+  it("BrandThemeVarsResponse accepts nulls", () => {
+    expect(BrandThemeVarsResponse.safeParse({ brand_id: "b1", deployed: null, template: null }).success).toBe(true);
+    expect(BrandThemeVarsResponse.safeParse({ brand_id: "b1", deployed: vars, template: vars }).success).toBe(true);
+    expect(BrandThemeVarsResponse.safeParse({ brand_id: "b1", deployed: vars }).success).toBe(false);
+  });
+
+  it("isEmptyThemeVars", () => {
+    expect(isEmptyThemeVars(EMPTY_THEME_VARS)).toBe(true);
+    expect(isEmptyThemeVars(vars)).toBe(false);
+    expect(isEmptyThemeVars({ primary: [], primary_dark: [], secondary: ["--ink"] })).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { CHECKLIST_ITEMS, FACTORY_DB_MIGRATIONS, INSTALL_STEPS } from "../src/index";
+import { CHECKLIST_ITEMS, FACTORY_DB_MIGRATIONS, INSTALL_STEPS, effectiveThemeVarsSql } from "../src/index";
 
 const NOW = "2026-10-02T00:00:00.000Z";
 
@@ -73,6 +73,7 @@ describe("factory-db migrations", () => {
         "form_artifacts",
         "install_receipts",
         "installs",
+        "template_theme_vars",
         "template_versions",
         "template_fingerprints",
         "templates",
@@ -279,6 +280,64 @@ describe("factory-db constraints", () => {
     ).first()).toEqual({ primary_var: "--brand" });
     await expect(run("UPDATE template_versions SET theme_vars_json = 'not json' WHERE template_version_id = 'tv-theme'"))
       .rejects.toThrow(/CHECK constraint failed/);
+  });
+
+  it("migration 0011 adds template_theme_vars", async () => {
+    await run("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('t-bf', 'Backfilled', 'react_spa', 'bk_1', ?1)", NOW);
+    await run(
+      `INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at)
+       VALUES ('tv-bf', 't-bf', 1, ?1, 'k', 'sealed', 'owner1', ?2, 'bk_1', ?2)`,
+      "1".repeat(64), NOW,
+    );
+    const vars = JSON.stringify({ primary: ["--brand"], primary_dark: [], secondary: [] });
+    await run(
+      "INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('tv-bf', ?1, 'owner1', ?2)",
+      vars, NOW,
+    );
+    expect(await env.DB.prepare(
+      "SELECT json_extract(theme_vars_json, '$.primary[0]') AS primary_var FROM template_theme_vars WHERE template_version_id = 'tv-bf'",
+    ).first()).toEqual({ primary_var: "--brand" });
+    await expect(run("UPDATE template_theme_vars SET theme_vars_json = 'not json' WHERE template_version_id = 'tv-bf'"))
+      .rejects.toThrow(/CHECK constraint failed/);
+    await expect(run(
+      "INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('missing', ?1, 'owner1', ?2)",
+      vars, NOW,
+    )).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("effectiveThemeVarsSql prefers the backfill row", async () => {
+    await run("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('t-eff', 'Effective', 'react_spa', 'bk_1', ?1)", NOW);
+    for (const [id, version, column] of [["tv-eff-null", 1, null], ["tv-eff-col", 2, '{"primary":["--col"],"primary_dark":[],"secondary":[]}']] as const) {
+      await run(
+        `INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, theme_vars_json)
+         VALUES (?1, 't-eff', ?2, ?3, 'k', 'sealed', 'owner1', ?4, 'bk_1', ?4, ?5)`,
+        id, version, String(version + 4).repeat(64), NOW, column,
+      );
+    }
+    const read = (id: string) => env.DB.prepare(
+      `SELECT ${effectiveThemeVarsSql("v")} AS theme_vars_json FROM template_versions v WHERE v.template_version_id = ?1`,
+    ).bind(id).first<{ theme_vars_json: string | null }>();
+
+    expect(await read("tv-eff-null")).toEqual({ theme_vars_json: null });
+    expect(await read("tv-eff-col")).toEqual({ theme_vars_json: '{"primary":["--col"],"primary_dark":[],"secondary":[]}' });
+
+    const backfill = '{"primary":["--back"],"primary_dark":[],"secondary":[]}';
+    for (const id of ["tv-eff-null", "tv-eff-col"]) {
+      await run(
+        "INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES (?1, ?2, 'owner1', ?3)",
+        id, backfill, NOW,
+      );
+      expect(await read(id)).toEqual({ theme_vars_json: backfill });
+    }
+    await expect(run("UPDATE template_versions SET theme_vars_json = '{}' WHERE template_version_id = 'tv-eff-null'"))
+      .rejects.toThrow(/sealed template versions are immutable/);
+  });
+
+  it("effectiveThemeVarsSql rejects a bad alias", () => {
+    expect(() => effectiveThemeVarsSql("v; DROP TABLE x")).toThrow("invalid alias");
+    expect(() => effectiveThemeVarsSql("V")).toThrow("invalid alias");
+    expect(() => effectiveThemeVarsSql("")).toThrow("invalid alias");
+    expect(effectiveThemeVarsSql("template_versions")).toContain("template_versions.template_version_id");
   });
 
   it("allows one brand per domain", async () => {
