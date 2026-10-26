@@ -706,3 +706,69 @@ describe("lifecycle detail header", () => {
     expect(screen.getAllByText(/Solo Draft/)).toHaveLength(1);
   });
 });
+
+describe("checklist auto-refresh (FUS-385)", () => {
+  const evidence = (item: string) => ({ brand_id: "brand-a", item, actor_id: "system", verified_at: "2026-10-26T00:00:00Z" });
+  const allComputed = () => ["drain_route", "leadsgate_postbacks", "final_url"].map((item) => ({ item, evidence: evidence(item) }));
+  const checklistReads = (brandId = "brand-a") => requests.filter((r) => r.path === `/api/brands/${brandId}/checklist`).length;
+  const setVisibility = (state: "visible" | "hidden") => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  beforeEach(() => vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] }));
+  afterEach(() => { Reflect.deleteProperty(document, "visibilityState"); });
+
+  it("refetches after 60 s while drain_route is open and checks the box from the second response", async () => {
+    const responses = [[], [{ item: "drain_route", evidence: evidence("drain_route") }]];
+    routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: responses[Math.min(checklistReads() - 1, 1)] }));
+    render(<BrandLifecycle me={owner} />);
+    const box = await screen.findByRole("checkbox", { name: /drain_route/ });
+    await waitFor(() => expect(checklistReads()).toBe(1));
+    expect((box as HTMLInputElement).checked).toBe(false);
+    await tick(59_000);
+    expect(checklistReads()).toBe(1);
+    await tick(1_000);
+    await waitFor(() => expect((screen.getByRole("checkbox", { name: /drain_route/ }) as HTMLInputElement).checked).toBe(true));
+    expect(checklistReads()).toBe(2);
+  });
+
+  it("does not poll once every computed item is present", async () => {
+    routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: allComputed() }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect((screen.getByRole("checkbox", { name: /final_url/ }) as HTMLInputElement).checked).toBe(true));
+    const before = checklistReads();
+    await tick(180_000);
+    expect(checklistReads()).toBe(before);
+  });
+
+  it("stops polling the old brand after switching brand and after unmount", async () => {
+    lifecycleRows = [structuredClone(brand), LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] })];
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: allComputed() }));
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand-a" />);
+    await screen.findByRole("heading", { name: "renderable.test" });
+    await waitFor(() => expect(checklistReads()).toBe(1));
+    view.rerender(<BrandLifecycle me={owner} routeBrandId="brand-b" />);
+    await screen.findByRole("heading", { name: "second.test" });
+    await waitFor(() => expect(checklistReads("brand-b")).toBe(1));
+    await tick(180_000);
+    expect(checklistReads("brand-a")).toBe(1);
+    expect(checklistReads("brand-b")).toBe(1);
+    view.rerender(<BrandLifecycle me={owner} routeBrandId="brand-a" />);
+    await screen.findByRole("heading", { name: "renderable.test" });
+    await waitFor(() => expect(checklistReads("brand-a")).toBe(2));
+    view.unmount();
+    await tick(180_000);
+    expect(checklistReads("brand-a")).toBe(2);
+  });
+
+  it("does not refetch while the tab is hidden and resumes when it is visible", async () => {
+    setVisibility("hidden");
+    render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("checkbox", { name: /drain_route/ });
+    await waitFor(() => expect(checklistReads()).toBe(1));
+    await tick(180_000);
+    expect(checklistReads()).toBe(1);
+    setVisibility("visible");
+    await tick(60_000);
+    await waitFor(() => expect(checklistReads()).toBe(2));
+  });
+});

@@ -31,6 +31,8 @@ async function installHistory(brandId: string): Promise<InstallHistoryRow[]> {
 
 // Only Test sold is a manual action (a verified lead_id). The other rows are computed by the server:
 // drain_route from the Core route, leadsgate_postbacks from the tenant token, final_url from the install smoke step.
+const computedChecklistItems: ChecklistItemName[] = ["drain_route", "leadsgate_postbacks", "final_url"];
+const checklistRefreshMs = 60_000;
 const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: string }> = [
   { item: "drain_route", label: "Drain route", pending: "อัตโนมัติเมื่อ Owner ตั้ง Google Ads account และ conversion action (Automatic once the Owner sets the Google Ads account and conversion action)" },
   { item: "leadsgate_postbacks", label: "LeadsGate postbacks", pending: "อัตโนมัติเมื่อ Core ใช้ postback token ของ tenant (Automatic when Core uses the tenant postback token)" },
@@ -276,6 +278,26 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     setState((previous) => previous && previous.brand?.brand_id === selected.brand_id ? reduceLifecycleState(previous, { type: "brand_refresh", brand: selected }) : previous);
   }, [selected]);
   useEffect(() => { void load(); }, [load, refresh]);
+  // Computed rows (drain_route, leadsgate_postbacks, final_url) turn true server-side after the page loaded (the VPS drain creates the
+  // conversion action within ~10 minutes). While one is open and the tab is visible, re-read the checklist every 60 s.
+  // test_sold is manual and never polled. The lead_id input has its own state, so a refresh does not reset it.
+  const computedOpen = Boolean(selected) && computedChecklistItems.some((item) => !checklist[item]);
+  useEffect(() => {
+    if (!selected || !computedOpen) return;
+    const brandId = selected.brand_id;
+    let active = true;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      const token = operationToken();
+      void api.checklist(brandId).then((result) => {
+        if (!active || !canCommit(token, brandId)) return;
+        const next = {} as Record<ChecklistItemName, ChecklistEvidence | undefined>;
+        for (const row of result.checklist) next[row.item] = row.evidence as ChecklistEvidence;
+        setChecklist(next);
+      }, () => undefined);
+    }, checklistRefreshMs);
+    return () => { active = false; clearInterval(timer); };
+  }, [selected?.brand_id, computedOpen]);
   // A rollback, redeploy or install moves the brand's current revision without changing the selection: reload so the
   // rollback target named in the confirm is the one the server would pick now.
   // It compares with the value the latest fetch was issued for, not with the loaded data, so a move that lands while the
