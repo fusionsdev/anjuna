@@ -61,7 +61,7 @@ export function conversionCreateArgs(route, name, fallbackProject) {
   return withProject([
     "manage", "google", "conversions", "create",
     "--account", route.account,
-    "--data", JSON.stringify(data),
+    "--data", JSON.stringify({ conversions: [data] }),
     "--publish",
     "--json",
   ], route, fallbackProject);
@@ -96,13 +96,18 @@ export function conversionsByName(out) {
 }
 
 /**
- * The new conversion id from the create output, at the top level or under conversion / result / data.
+ * The new conversion id from the create output, at the top level, under conversion / result / data, or as the first item of an array result
+ * (`conversions`, `results`, `data.conversions`, `data`, or the output itself).
  * Specific keys (`platformId`, `conversionActionId`) win at every level before the generic `id`, then
  * a `customers/<c>/conversionActions/<id>` resource name. Throws when no id is found or the value is
  * not 1 to 20 digits.
  */
 export function createdConversionId(out) {
-  const holders = [out, out?.conversion, out?.result, out?.data].filter((h) => h && typeof h === "object");
+  const first = (v) => (Array.isArray(v) ? v[0] : undefined);
+  const holders = [
+    out, out?.conversion, out?.result, out?.data,
+    first(out?.conversions), first(out?.results), first(out?.data?.conversions), first(out?.data), first(out),
+  ].filter((h) => h && typeof h === "object" && !Array.isArray(h));
   let invalid;
   for (const key of ["platformId", "conversionActionId", "id", "resourceName"]) {
     for (const holder of holders) {
