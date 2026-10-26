@@ -53,7 +53,7 @@ describe("POST /detect-theme-vars", () => {
       env.FACTORY.prepare("INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at) VALUES ('tv_detect', 't_detect', 1, ?1, ?2, 'sealed', 'u', ?3, 'u', ?3)").bind("d".repeat(64), r2Key, NOW),
     ]);
   };
-  const versionRows = () => env.FACTORY.prepare("SELECT * FROM template_versions").all();
+  const versionRows = async () => (await env.FACTORY.prepare("SELECT * FROM template_versions").all()).results;
 
   it("detect-theme-vars returns the detector map for a stored zip", async () => {
     await seed(":root{--brand:#1f7a4d}.btn{background:var(--brand)}");
