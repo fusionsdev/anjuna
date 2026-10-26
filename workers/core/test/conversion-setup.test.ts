@@ -288,14 +288,35 @@ describe("POST /api/conversions/setup/result", () => {
     expect(await audit()).toEqual([]);
   });
 
+  it("failed result after the account changed answers 409 stale, keeps attempts and writes no audit row", async () => {
+    const claimId = await claimed();
+    await setRoute("brand-a", OTHER_ACCOUNT);
+    const response = await result({ brand_id: "brand-a", claim_id: claimId, error: "boom" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ status: "stale" });
+    expect(await setupRow("brand-a")).toMatchObject({ status: "claimed", attempts: 0, last_error: null });
+    expect(await audit()).toEqual([]);
+  });
+
+  it("created audit row carries the name and account of the recorded claim", async () => {
+    await setRoute("brand-a", ACCOUNT);
+    const claimId = (await (await claim("brand-a", NAME_B)).json() as { claim_id: string }).claim_id;
+    expect((await result({ brand_id: "brand-a", claim_id: claimId, conversion_action_id: "7754587837" })).status).toBe(200);
+    const rows = await audit();
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.after_json as string)).toEqual({ google_conversion_action: "7754587837", name: NAME_B, account: ACCOUNT });
+  });
+
   it("failed result increments attempts, sets backoff and an audit row; the 5th failure stops further claims", async () => {
     await setRoute("brand-a", ACCOUNT);
     const expectedHours = [1, 2, 4, 8, 16];
+    let lastClaimId = "";
     for (let attempt = 1; attempt <= 5; attempt++) {
       if (attempt > 1) await h.db.prepare("UPDATE conversion_setup SET next_attempt_at = ?1 WHERE brand_id = 'brand-a'").bind(minutesAgo(1)).run();
       const claimResponse = await claim("brand-a");
       expect(claimResponse.status).toBe(200);
       const { claim_id } = await claimResponse.json() as { claim_id: string };
+      lastClaimId = claim_id;
       const start = Date.now();
       const response = await result({ brand_id: "brand-a", claim_id, error: `boom ${attempt}` });
       expect(response.status).toBe(200);
@@ -314,8 +335,12 @@ describe("POST /api/conversions/setup/result", () => {
     await h.db.prepare("UPDATE conversion_setup SET next_attempt_at = ?1 WHERE brand_id = 'brand-a'").bind(minutesAgo(1)).run();
     expect((await claim("brand-a")).status).toBe(409);
     expect(await (await pending()).json()).toEqual({ brands: [] });
-    // A repeat of the last failure is stale: the row is no longer claimed.
-    expect((await result({ brand_id: "brand-a", claim_id: "11111111-1111-4111-8111-111111111111", error: "x" })).status).toBe(409);
+    // A repeat of the last failure with the real claim id is stale: the row is no longer claimed.
+    const repeat = await result({ brand_id: "brand-a", claim_id: lastClaimId, error: "boom 5" });
+    expect(repeat.status).toBe(409);
+    expect(await repeat.json()).toEqual({ status: "stale" });
+    expect(await setupRow("brand-a")).toMatchObject({ status: "failed", attempts: 5 });
+    expect(await audit()).toHaveLength(5);
   });
 
   it("routing includes the brand after a created result", async () => {

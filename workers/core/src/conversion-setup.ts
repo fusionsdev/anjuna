@@ -1,6 +1,6 @@
 /**
  * Auto-created Google Ads conversion action (FUS-384). The VPS conversion-sync job lists brands that
- * need an action (`pending`), claims one (`claim`), creates it through AdKit and reports the id or
+ * need an action (`pending`), claims one (`claim`), creates it in Google Ads and reports the id or
  * an error (`result`). The panel reads one brand's state through GET /admin/brands/:id/conversion-setup.
  */
 import {
@@ -190,7 +190,8 @@ export async function handleSetupResult(request: Request, env: Env): Promise<Res
       env.LEADS.prepare(`
         UPDATE conversion_setup
         SET status = 'created', conversion_action_id = ?3, last_error = NULL, next_attempt_at = NULL, updated_at = ?4
-        WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed'`)
+        WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed'
+        RETURNING name, account`)
         .bind(data.brand_id, data.claim_id, id, at),
     ]);
     if (!setupWrite!.meta.changes) {
@@ -202,10 +203,10 @@ export async function handleSetupResult(request: Request, env: Env): Promise<Res
     }
     // The row is 'created' either way so the name is not reused; a hand-set action or a changed account stays untouched.
     if (!brandWrite!.meta.changes) return stale();
-    const row = (await loadSetupRow(env, data.brand_id))!;
+    const recorded = setupWrite!.results[0] as { name: string; account: string };
     await writeDrainAudit(env, "brand.conversion_create", data.brand_id,
       { google_conversion_action: null },
-      { google_conversion_action: id, name: row.name, account: row.account }, at);
+      { google_conversion_action: id, name: recorded.name, account: recorded.account }, at);
     return json({ status: "created" });
   }
 
@@ -218,7 +219,8 @@ export async function handleSetupResult(request: Request, env: Env): Promise<Res
   const update = await env.LEADS.prepare(`
     UPDATE conversion_setup
     SET status = 'failed', attempts = ?3, last_error = ?4, next_attempt_at = ?5, updated_at = ?6
-    WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed' AND attempts = ?7`)
+    WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed' AND attempts = ?7
+      AND account = (SELECT google_ads_account FROM brand_runtime WHERE brand_id = ?1)`)
     .bind(data.brand_id, data.claim_id, attempts, data.error, nextAttemptAt, at, row.attempts).run();
   if (!update.meta.changes) return stale();
   await writeDrainAudit(env, "brand.conversion_create_failed", data.brand_id, null,
