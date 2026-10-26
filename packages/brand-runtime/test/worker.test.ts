@@ -5,7 +5,7 @@ import { CoreError, createBrandWorker } from "../src/index.js";
 import { cfg, cookieHeader, cookies, HANDOFF, setup } from "./helpers.js";
 
 describe("route allowlist", () => {
-  it.each(["/admin", "/admin/brands", "/api/postback", "/api/conversions/pending", "/rpc/submitLead", "/index.html", "/_f/index.html", "/_f/", "/request/unknown", "/unknown", "/api/gate-interest", "/privacy/index.html", "/_f/assets/missing.js", "/assets/missing.js", "/thank-you.html", "/missing-page/", "/Contact", "/contact/extra"])("uniform 404 for %s", async (path) => {
+  it.each(["/admin", "/admin/brands", "/api/postback", "/api/conversions/pending", "/rpc/submitLead", "/index.html", "/_f/index.html", "/_f/", "/request/unknown", "/unknown", "/api/gate-interest", "/privacy/index.html", "/_f/assets/missing.js", "/assets/missing.js", "/thank-you.html", "/missing-page/", "/Contact", "/contact/extra", "/go/", "/api/", "/assets/", "/index/"])("uniform 404 for %s", async (path) => {
     const response = await setup().get(path);
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("Not Found");
@@ -18,6 +18,11 @@ describe("route allowlist", () => {
     const response = await setup().get(path!, { method });
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("Not Found");
+  });
+  it("HEAD on a template page has GET status and no body", async () => {
+    const response = await setup().get("/contact/", { method: "HEAD" });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
   });
   it("HEAD has GET headers/status and no body", async () => {
     const response = await setup().get("/", { method: "HEAD" });
@@ -351,6 +356,7 @@ describe("pause and visitor parity", () => {
     expect(Object.entries(core.calls).filter(([method]) => method !== "brandSettings").flatMap(([, calls]) => calls as unknown[])).toHaveLength(0);
     expect((await get("/admin")).status).toBe(404);
     expect((await get("/contact/")).status).toBe(503);
+    expect((await get("/missing-page/")).status).toBe(404);
   });
   it("a config loader can change pause and gate settings without rebuilding the worker", async () => {
     const { config } = setup();
