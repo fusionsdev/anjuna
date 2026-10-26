@@ -4,6 +4,7 @@ import { analyticsRoutes } from "./analytics.js";
 import { authenticateAccount } from "./auth.js";
 import { handleScheduled } from "./cron.js";
 import { handleConversionsAck, handleConversionsPending, handleConversionsRouting } from "./conversions.js";
+import { handleSetupClaim, handleSetupPending, handleSetupResult } from "./conversion-setup.js";
 import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 import { handlePostback } from "./postback.js";
@@ -35,6 +36,9 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       if (pathname === "/api/conversions/routing" && request.method === "GET") {
         return handleConversionsRouting(request, env);
       }
+      if (pathname === "/api/conversions/setup/pending" && request.method === "GET") return handleSetupPending(request, env);
+      if (pathname === "/api/conversions/setup/claim" && request.method === "POST") return handleSetupClaim(request, env);
+      if (pathname === "/api/conversions/setup/result" && request.method === "POST") return handleSetupResult(request, env);
       if (pathname === "/api/spend/ingest" && request.method === "POST") {
         return handleSpendIngest(request, env);
       }

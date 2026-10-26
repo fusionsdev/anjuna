@@ -58,6 +58,7 @@ import { globalPostbackDigest } from "../postback-token.js";
 import { parseStoredTheme } from "../rpc/runtime.js";
 import { loadConversions } from "./conversions-report.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
+import { loadConversionSetupState } from "../conversion-setup.js";
 import { loadSpendReport } from "../spend.js";
 import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
 
@@ -1237,6 +1238,10 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     if (route.endpoint === "patchBrand") return patchBrand(request, env, context, brandId);
     if (route.endpoint === "pauseBrand") return changeBrandStatus(request, env, context, brandId, "paused");
     if (route.endpoint === "resumeBrand") return changeBrandStatus(request, env, context, brandId, "live");
+    if (route.endpoint === "conversionSetup") {
+      const state = await loadConversionSetupState(env, brandId);
+      return state ? json(state) : adminError(context, { error: "not_found", resource: "brand" });
+    }
   }
 
   // spec leads
