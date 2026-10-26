@@ -50,8 +50,10 @@ describe("scripts/drain/conversion-sync.mjs helpers", () => {
     const args = c.conversionCreateArgs({ account: "4811219623", project: "proj_a" }, NAME_A, "global");
     expect(args.slice(0, 6)).toEqual(["manage", "google", "conversions", "create", "--account", "4811219623"]);
     expect(JSON.parse(args[args.indexOf("--data") + 1])).toEqual({
-      name: NAME_A, type: "upload_clicks", category: "purchase", status: "enabled", countingType: "one",
-      defaultValue: 0, currency: "USD", alwaysUseDefaultValue: false, isPrimary: true,
+      conversions: [{
+        name: NAME_A, type: "upload_clicks", category: "purchase", status: "enabled", countingType: "one",
+        defaultValue: 0, currency: "USD", alwaysUseDefaultValue: false, isPrimary: true,
+      }],
     });
     expect(args).toContain("--publish");
     expect(args).toContain("--json");
@@ -101,6 +103,11 @@ describe("scripts/drain/conversion-sync.mjs helpers", () => {
     expect(c.createdConversionId({ result: { id: "456" } })).toBe("456");
     expect(c.createdConversionId({ data: { conversionActionId: "789" } })).toBe("789");
     expect(c.createdConversionId({ resourceName: "customers/4811219623/conversionActions/321" })).toBe("321");
+    expect(c.createdConversionId({ conversions: [{ platformId: "123" }] })).toBe("123");
+    expect(c.createdConversionId([{ id: "456" }])).toBe("456");
+    expect(c.createdConversionId({ data: { conversions: [{ resourceName: "customers/1/conversionActions/789" }] } })).toBe("789");
+    expect(c.createdConversionId({ results: [{ id: "11" }] })).toBe("11");
+    expect(c.createdConversionId({ data: [{ id: "22" }] })).toBe("22");
     expect(() => c.createdConversionId({ platformId: "abc" })).toThrow();
     expect(() => c.createdConversionId({ platformId: "1".repeat(21) })).toThrow();
     expect(() => c.createdConversionId({ ok: true })).toThrow();
