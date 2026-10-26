@@ -16,6 +16,21 @@ fi
 NODE="${NODE:-node}"
 "$NODE" refresh-routing.mjs routing.json || echo "[run] routing refresh failed; keeping the previous routing.json" >&2
 
+# conversion-sync.mjs (FUS-384) creates missing conversion actions; refresh again so routing sees them.
+if [ -f conversion-sync.mjs ]; then
+  # timeout bounds the cron tick (540 s < the 10-minute cron interval); skipped when the host has no timeout.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 540 "$NODE" conversion-sync.mjs
+  else
+    "$NODE" conversion-sync.mjs
+  fi
+  if [ $? -eq 0 ]; then
+    "$NODE" refresh-routing.mjs routing.json || echo "[run] routing refresh failed; keeping the previous routing.json" >&2
+  else
+    echo "[run] conversion sync failed" >&2
+  fi
+fi
+
 # Export only a map with at least 1 key: an empty map would make drain.mjs skip every row.
 if ROUTING="$("$NODE" routing-env.mjs routing.json)"; then
   BRAND_ROUTING_JSON="$ROUTING"

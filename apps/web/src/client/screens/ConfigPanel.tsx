@@ -1,9 +1,9 @@
 import {
   AdkitProject, BRAND_PATCH_FIELD_GROUPS, GoogleAdsAccount, GoogleConversionAction, MicrosoftAdsAccount, SITE_TEXT_LIMITS,
   SiteBrandName, SiteDescription, SiteTitle, roleAtLeast,
-  type BrandConfig, type BrandPatchRequest, type FlowGateMode, type TemplateTextDefaults,
+  CONVERSION_SETUP_MAX_ATTEMPTS, type BrandConfig, type BrandPatchRequest, type ConversionSetupState, type FlowGateMode, type TemplateTextDefaults,
 } from "@anjuna/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import type { BrandEditState } from "../../shared/brand-edit";
 import { replaceTemplateBrand } from "../../shared/site-text-preview";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
@@ -255,6 +255,16 @@ const ROUTE_FIELDS: { field: RouteField; label: string; schema: typeof GoogleAds
   { field: "adkit_project", label: "โปรเจกต์ AdKit (AdKit project)", schema: AdkitProject },
 ];
 
+/** Status of the auto-created conversion action. A failed load shows nothing and never blocks saving. */
+function ConversionSetupLine({ setup }: { setup: ConversionSetupState | null }) {
+  if (!setup || setup.status === "none") return null;
+  const text =
+    setup.status === "pending" ? "รอสร้างอัตโนมัติ (Pending)"
+    : setup.status === "created" ? `สร้างแล้ว (Created)${setup.name ? ` ${setup.name}` : ""}`
+    : `สร้างไม่สำเร็จ (Failed)${setup.error ? ` ${setup.error}` : ""} ครั้งที่ ${setup.attempts}/${CONVERSION_SETUP_MAX_ATTEMPTS}`;
+  return <div role="status" className={`small ${setup.status === "failed" ? "error" : "muted"}`}>{text}</div>;
+}
+
 /** microsoft: undefined while it loads or when it could not be read; null = not set. It lives in the brand profile, not in core, so the drain never reads it. */
 function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: { brand: BrandConfig; microsoft: string | null | undefined; onSave: (m: BrandPatchRequest) => void; onSaveMicrosoft: (account: string | null) => void; onRotate: () => void }) {
   const [ms, setMs] = useState(microsoft ?? "");
@@ -268,6 +278,9 @@ function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: {
     google_conversion_action: brand.google_conversion_action ?? "",
     adkit_project: brand.adkit_project ?? "",
   });
+  // MoneySection remounts after every save (keyed by updated_at), so this one load also covers a reload after a save.
+  const [setup, setSetup] = useState<ConversionSetupState | null>(null);
+  useEffect(() => { void api.conversionSetup(brand.brand_id).then(setSetup, () => setSetup(null)); }, [brand.brand_id]);
   const routeValue = (field: RouteField) => route[field].trim() || null;
   const routeInvalid = ROUTE_FIELDS.filter(({ field, schema }) => routeValue(field) !== null && !schema.safeParse(routeValue(field)).success);
   return (
@@ -276,14 +289,17 @@ function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: {
       <label>URL ฐาน prepop (Prepop base)<input value={prepop} onChange={(e) => setPrepop(e.target.value)} /></label>
       <label>คีย์ drain (Drain key)<input value={drain} onChange={(e) => setDrain(e.target.value)} /></label>
       {ROUTE_FIELDS.map(({ field, label }) => (
-        <label key={field}>
-          {label}
-          <input
-            value={route[field]}
-            aria-invalid={routeInvalid.some((f) => f.field === field) || undefined}
-            onChange={(e) => setRoute({ ...route, [field]: e.target.value })}
-          />
-        </label>
+        <Fragment key={field}>
+          <label>
+            {label}
+            <input
+              value={route[field]}
+              aria-invalid={routeInvalid.some((f) => f.field === field) || undefined}
+              onChange={(e) => setRoute({ ...route, [field]: e.target.value })}
+            />
+          </label>
+          {field === "google_conversion_action" && <ConversionSetupLine setup={setup} />}
+        </Fragment>
       ))}
       {routeInvalid.length > 0 && (
         <div className="error small">บัญชี 10 หลักไม่มีขีด, conversion action เป็นตัวเลข, โปรเจกต์ใช้ A-Z 0-9 _ - (Account 10 digits, action digits, project A-Z 0-9 _ -)</div>

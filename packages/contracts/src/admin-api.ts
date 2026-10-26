@@ -25,7 +25,8 @@
  */
 import { TrafficBreakdownQuery, TrafficBreakdownResponse } from "./traffic.js";
 import { z } from "zod";
-import { BrandId, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
+import { AdkitProject, BrandId, GoogleAdsAccount, GoogleConversionAction, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
+import { ConversionSetupStateResponse } from "./conversion-setup.js";
 import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { BrandTheme } from "./theme.js";
@@ -146,12 +147,9 @@ export const PrepopBase = z
 /** Key in the drain's BRAND_ROUTING_JSON. An identifier, not a credential. */
 export const DrainKey = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid drain_key");
 
-/** Google Ads customer id the drain uploads this brand's gclid conversions to: 10 digits, no dashes. */
-export const GoogleAdsAccount = z.string().regex(/^\d{10}$/, "Invalid google_ads_account");
-/** Google Ads conversion action id (type upload_clicks). */
-export const GoogleConversionAction = z.string().regex(/^\d{1,20}$/, "Invalid google_conversion_action");
-/** AdKit project that owns the Google Ads account (the drain's `--project`). */
-export const AdkitProject = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid adkit_project");
+// GoogleAdsAccount, GoogleConversionAction and AdkitProject live in common.ts (conversion-setup.ts needs them
+// without importing this file); re-exported here so existing imports keep working.
+export { AdkitProject, GoogleAdsAccount, GoogleConversionAction };
 
 const Day = z.iso.date();
 const Timestamp = z.iso.datetime();
@@ -1023,6 +1021,13 @@ export const AdminApi = {
     min_role: "owner",
     query: SpendQuery,
     response: SpendReportResponse,
+  },
+  /** FUS-384 auto-created conversion action status for one brand. */
+  conversionSetup: {
+    method: "GET",
+    path: "/admin/brands/:id/conversion-setup",
+    min_role: "owner",
+    response: ConversionSetupStateResponse,
   },
   conversionsReport: {
     method: "GET",

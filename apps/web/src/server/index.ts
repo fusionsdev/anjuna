@@ -313,6 +313,16 @@ async function route(
     return fromCore(await callCore(env, ctx, { endpoint: "spendReport", query: url.searchParams }));
   }
 
+  // Conversion action status (FUS-384): owner only, shown in the money section.
+  if ((m = path.match(/^\/api\/brands\/([^/]+)\/conversion-setup$/)) && method === "GET") {
+    const rawBrand = decodePathSegment(m[1]!);
+    const id = rawBrand === null ? null : BrandId.safeParse(rawBrand);
+    if (!id?.success) return notFound("brand", rid);
+    const g = authorize("conversionSetup", ctx.actor_role);
+    if (!g.ok) return forbidden(g.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "conversionSetup", params: { id: id.data } }));
+  }
+
   // Conversion uploads (FUS-375): read-only, employee allowed. Core nulls value and raw error text for a non-owner.
   if (path === "/api/conversions" && method === "GET") {
     const g = authorize("conversionsReport", ctx.actor_role);

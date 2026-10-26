@@ -26,6 +26,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0015_traffic_risk.sql",
   "0016_brand_theme.sql",
   "0017_suppressions_added_by.sql",
+  "0018_conversion_setup.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */

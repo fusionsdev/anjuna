@@ -7,6 +7,7 @@ Core serves the per-brand Google Ads route at `GET /api/conversions/routing` (dr
 - `scheduler.mjs` is the 10-minute loop for the hstgr Docker container.
 - `routing-env.mjs <routing.json>` prints the map only when it has at least 1 brand; `run.sh` and `scheduler.mjs` use it.
 
+- `conversion-sync.mjs [--dry-run]` creates the missing Google Ads conversion action per brand (FUS-384). It reads `GET /api/conversions/setup/pending`, lists the account's conversions with `adkit manage google conversions list --account <account> --limit 500 --json`, picks the stored name or a random `cv-` plus 16 hex name, claims it in core (`POST /api/conversions/setup/claim`), then adopts the listed conversion or runs `adkit manage google conversions create ... --publish --json`, and posts the id or error to `POST /api/conversions/setup/result` (drain token). `--dry-run` prints one `plan` line per brand and sends nothing. `run.sh` and `scheduler.mjs` run it every tick after the routing refresh, then refresh routing again.
 - `spend-sync.mjs [--dry-run]` copies each routed brand's Google Ads spend into core (FUS-368). It reads the same routing, runs `adkit manage google results list --account <account> --level account --breakdown hour --json [--project <project>]` per brand, and POSTs the rows to `POST /api/spend/ingest` (drain token). Core upserts by brand, date, hour and source, so a rerun replaces values. `SPEND_BREAKDOWN=day` stores one whole-day row per day instead. `--dry-run` prints the mapped rows and sends nothing. `run.sh` and `scheduler.mjs` run it once an hour after the drain.
 
 All of them need Node 20 or later and no npm packages. `drain.mjs` stays byte-for-byte the vendored V1 file (`packages/contracts/test/v1/drain.mjs`).
@@ -15,7 +16,7 @@ A brand appears in the map only when both account and conversion action are set.
 
 ## maimax VPS (`/opt/drain`, cron)
 
-1. Copy `refresh-routing.mjs`, `routing-env.mjs`, `spend-sync.mjs` and `run.sh` next to `drain.mjs` and `.env` in `/opt/drain`.
+1. Copy `refresh-routing.mjs`, `routing-env.mjs`, `conversion-sync.mjs`, `spend-sync.mjs` and `run.sh` next to `drain.mjs` and `.env` in `/opt/drain`.
 2. `chmod +x /opt/drain/run.sh`.
 3. `.env` keeps `FORM_BASE_URL` and `DRAIN_TOKEN`. Keep the old hand-edited `BRAND_ROUTING_JSON` until the first refresh succeeds; after that `routing.json` overrides it.
 4. Replace the crontab line that ran `node drain.mjs` with:
@@ -26,7 +27,7 @@ Set `NODE=/path/to/node` in the crontab line when cron's `PATH` has no `node`.
 
 ## hstgr Docker (`/app`, `/data`)
 
-1. Copy `refresh-routing.mjs`, `routing-env.mjs`, `spend-sync.mjs` and `scheduler.mjs` into `/app` beside `drain.mjs`.
+1. Copy `refresh-routing.mjs`, `routing-env.mjs`, `conversion-sync.mjs`, `spend-sync.mjs` and `scheduler.mjs` into `/app` beside `drain.mjs`.
 2. Mount a volume at `/data` so `routing.json` survives restarts.
 3. Container command: `node /app/scheduler.mjs`. Health check: `/tmp/heartbeat` younger than 15 minutes.
 4. Pass `FORM_BASE_URL` and `DRAIN_TOKEN` as container env, never baked into the image.

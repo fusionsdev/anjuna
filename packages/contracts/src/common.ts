@@ -45,3 +45,10 @@ export function isBrandClean(s: string): boolean {
   const lower = s.toLowerCase();
   return !FORBIDDEN_BRAND_STRINGS.some((w) => lower.includes(w));
 }
+
+/** Google Ads customer id the drain uploads this brand's gclid conversions to: 10 digits, no dashes. */
+export const GoogleAdsAccount = z.string().regex(/^\d{10}$/, "Invalid google_ads_account");
+/** Google Ads conversion action id (type upload_clicks). */
+export const GoogleConversionAction = z.string().regex(/^\d{1,20}$/, "Invalid google_conversion_action");
+/** AdKit project that owns the Google Ads account (the drain's `--project`). */
+export const AdkitProject = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Invalid adkit_project");
