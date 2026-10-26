@@ -25,6 +25,7 @@ beforeEach(async () => {
   employee = await sessions.employee();
   await env.FACTORY.batch([
     env.FACTORY.prepare("DELETE FROM brand_assets"),
+    env.FACTORY.prepare("DELETE FROM template_theme_vars"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-2','Harbor','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
@@ -62,6 +63,47 @@ describe("change the template version of a live brand (redeploy)", () => {
     expect((await redeployWith(owner, brandId, { template_version_id: "tv-themed" })).status).toBe(201);
     const next = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id=? AND revision=2").bind(brandId).first<{ config_json: string }>();
     expect(JSON.parse(next!.config_json).theme_vars).toEqual(themeVars);
+  });
+
+  const backfill = (versionId: string, vars: unknown) => env.FACTORY.prepare("INSERT INTO template_theme_vars (template_version_id,theme_vars_json,updated_by,updated_at) VALUES (?1,?2,'owner','2026-10-02T00:00:00Z')").bind(versionId, JSON.stringify(vars)).run();
+  const BACKFILLED = { primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: ["--color-ink"] };
+
+  it("plain redeploy bakes a backfilled map", async () => {
+    await backfill("tv-1", BACKFILLED);
+    const { brandId } = await liveBrand();
+    expect((await redeployWith(owner, brandId, {})).status).toBe(201);
+    const next = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id=? AND revision=2").bind(brandId).first<{ config_json: string }>();
+    expect(JSON.parse(next!.config_json)).toEqual({ ...CONFIG, theme_vars: BACKFILLED });
+    const viaArtifact = await liveBrand();
+    expect((await redeployWith(owner, viaArtifact.brandId, { form_artifact_id: "fa-1" })).status).toBe(201);
+    const artifactNext = await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id=? AND revision=2").bind(viaArtifact.brandId).first<{ config_json: string }>();
+    expect(JSON.parse(artifactNext!.config_json).theme_vars).toEqual(BACKFILLED);
+  });
+
+  it("plain redeploy with an unchanged map copies config_json byte for byte", async () => {
+    // Same map, different key order and spacing: the parsed values match, so the stored text must not be rewritten.
+    const raw = `{"theme_vars":{"secondary":["--color-ink"],"primary_dark":["--color-royal-dark"],"primary":["--color-royal"]},  "keyword_default":"Quick Loan"}`;
+    await backfill("tv-1", BACKFILLED);
+    const { brandId, revisionId } = await liveBrand("live", JSON.parse(raw));
+    await env.FACTORY.prepare("UPDATE brand_revisions SET config_json=?1 WHERE revision_id=?2").bind(raw, revisionId).run();
+    expect((await redeployWith(owner, brandId, {})).status).toBe(201);
+    expect(await env.FACTORY.prepare("SELECT config_json FROM brand_revisions WHERE brand_id=? AND revision=2").bind(brandId).first()).toEqual({ config_json: raw });
+  });
+
+  it("plain redeploy refuses with 409 when the profile changed after the map was read", async () => {
+    await backfill("tv-1", BACKFILLED);
+    const { brandId, revisionId } = await liveBrand();
+    // The profile edit lands between the redeploy's read and its batch.
+    const racing = new Proxy(env.FACTORY, { get: (target, prop) => prop === "batch"
+      ? async (statements: D1PreparedStatement[]) => {
+        await target.prepare("UPDATE brand_revisions SET config_json=?1 WHERE revision_id=?2").bind(JSON.stringify({ ...CONFIG, keyword_default: "Edited" }), revisionId).run();
+        return target.batch(statements);
+      }
+      : Reflect.get(target, prop).bind(target) });
+    const response = await call(`/api/brands/${brandId}/redeploy`, { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER: factory, FACTORY: racing as unknown as D1Database }) });
+    expect([response.status, await response.json()]).toEqual([409, expect.objectContaining({ error: "conflict" })]);
+    expect((await env.FACTORY.prepare("SELECT count(*) AS n FROM brand_revisions WHERE brand_id=?").bind(brandId).first<{ n: number }>())!.n).toBe(1);
+    expect(dispatches).toHaveLength(0);
   });
 
   it("creates revision N+1 on the chosen sealed template with its text defaults, keeps the profile and starts the upgrade install", async () => {

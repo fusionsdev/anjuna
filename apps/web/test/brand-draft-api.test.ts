@@ -64,6 +64,21 @@ describe("POST /api/brands/drafts with a profile", () => {
     expect(await configOf(brandId)).toEqual({ keyword_default: "Quick Loan", text_defaults: TEXT_A });
   });
 
+  it("draft config carries the backfilled theme_vars", async () => {
+    const column = { primary: ["--old"], primary_dark: [], secondary: [] };
+    const backfilled = { primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: ["--color-ink"] };
+    await env.FACTORY.batch([
+      env.FACTORY.prepare(`INSERT OR IGNORE INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, text_defaults_json, theme_vars_json)
+        VALUES ('tv-draft-backfill', 'tpl-draft', 6, ?1, 'templates/tv-draft-backfill', 'sealed', 'owner', ?2, 'owner', ?2, NULL, ?3)`).bind("6".repeat(64), NOW, JSON.stringify(column)),
+      env.FACTORY.prepare("INSERT OR REPLACE INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('tv-draft-backfill', ?1, 'owner', ?2)").bind(JSON.stringify(backfilled), NOW),
+    ]);
+    const brandId = await draftId({ template_version_id: "tv-draft-backfill" });
+    expect(await configOf(brandId)).toEqual({ keyword_default: "Quick Loan", theme_vars: backfilled });
+    expect((await patch(brandId, { template_version_id: "tv-draft-a" })).status).toBe(200);
+    expect((await patch(brandId, { template_version_id: "tv-draft-backfill" })).status).toBe(200);
+    expect(await configOf(brandId)).toEqual({ keyword_default: "Quick Loan", theme_vars: backfilled });
+  });
+
   it("keeps the old config shape when no profile is sent", async () => {
     const brandId = await draftId();
     expect(await configOf(brandId)).toEqual({ keyword_default: "Quick Loan", text_defaults: TEXT_A });

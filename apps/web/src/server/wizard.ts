@@ -8,6 +8,7 @@
  *   POST /api/brands/:id/duplicate   a new draft from a brand's template, keyword, profile and site text
  */
 import { TEMPLATE_ZIP_LIMITS, TemplateTextDefaults, themeCss, themeStyleTag, type AdminRequestContext } from "@anjuna/contracts";
+import { effectiveThemeVarsSql } from "@anjuna/factory-db";
 import { unzipSync } from "fflate";
 import { DuplicateBrandRequest, WizardDefaultsResponse, WizardDraft, ZoneCheckRequest, ZoneCheckResponse } from "../shared/wizard.js";
 import { PageCopyError, renderPageText, templateBrandName, type PageTextData } from "@anjuna/brand-runtime/page-text";
@@ -178,7 +179,7 @@ async function preview(env: Env, brandId: string): Promise<Response> {
   const row = await readDraft(env, brandId);
   if (!row) return missingBrand();
   if (!editable(row)) return notEditable();
-  const template = await env.FACTORY.prepare(`SELECT tv.r2_key, tv.text_defaults_json, tv.theme_vars_json, t.name AS template_name
+  const template = await env.FACTORY.prepare(`SELECT tv.r2_key, tv.text_defaults_json, ${effectiveThemeVarsSql("tv")} AS theme_vars_json, t.name AS template_name
     FROM template_versions tv LEFT JOIN templates t ON t.template_id = tv.template_id WHERE tv.template_version_id = ?1 AND tv.status = 'sealed'`)
     .bind(row.template_version_id).first<{ r2_key: string; text_defaults_json: string | null; theme_vars_json: string | null; template_name: string | null }>();
   if (!template) return json(422, { error: "template_not_sealed" });

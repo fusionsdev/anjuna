@@ -15,6 +15,7 @@ import {
   withThemeVars,
   LifecycleBrandSummary,
   SealedTemplatesResponse,
+  TemplateThemeVars,
   adminContextToHeaders,
   type AdminRequestContext,
   type CoreListError,
@@ -25,6 +26,7 @@ import {
   type BrandConfig,
   type GetBrandResponse,
 } from "@anjuna/contracts";
+import { effectiveThemeVarsSql } from "@anjuna/factory-db";
 import { z } from "zod";
 import { DraftDomain } from "../shared/wizard.js";
 import type { Env } from "./env.js";
@@ -147,7 +149,7 @@ export async function createDraft(request: Request, env: Env, ctx: AdminRequestC
   }
   const defaults = tenantDefaults(env);
   if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
-  const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json, theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+  const template = await env.FACTORY.prepare(`SELECT template_version_id, text_defaults_json, ${effectiveThemeVarsSql("template_versions")} AS theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'`)
     .bind(template_version_id).first<{ template_version_id: string; text_defaults_json: string | null; theme_vars_json: string | null }>();
   if (!template) return json(422, { error: "template_not_sealed" });
   const artifact = await env.FACTORY.prepare(`SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE ${COMPATIBLE_FORM} ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1`).bind(defaults.payload_version).first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
@@ -208,7 +210,7 @@ async function updateDraft(request: Request, env: Env, ctx: AdminRequestContext,
   let templateVersionId = revision.template_version_id;
   const templateChanged = body.template_version_id !== undefined && body.template_version_id !== revision.template_version_id;
   if (templateChanged) {
-    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json, theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+    const template = await env.FACTORY.prepare(`SELECT template_version_id, text_defaults_json, ${effectiveThemeVarsSql("template_versions")} AS theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'`)
       .bind(body.template_version_id).first<{ template_version_id: string; text_defaults_json: string | null; theme_vars_json: string | null }>();
     if (!template) return json(422, { error: "template_not_sealed" });
     templateVersionId = template.template_version_id;
@@ -325,6 +327,9 @@ export function installOperation(kind: string, brandId: string, toRevisionId: st
 // the install Workflow stays the authority on it (validateInstallInputs) and a rollback returns to the old revision.
 // With template_version_id the copy carries that sealed template version and its text defaults (withTextDefaults, as upgrade-all does),
 // so the owner moves one live brand to another template through the same install Workflow, rollback included.
+// Every redeploy bakes the effective theme map (the owner's backfill over the import-time column) of the revision's template version.
+// A redeploy without template_version_id (bare, or with form_artifact_id) rewrites config_json only when that map differs from the stored one,
+// under the same readConfig gate; an unchanged map copies config_json byte for byte.
 async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const brand = await env.FACTORY.prepare("SELECT status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId).first<{ status: string; current_revision_id: string | null }>();
   if (!brand) return json(404, { error: "not_found", resource: "brand" });
@@ -345,7 +350,7 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
   let newConfig: string | null = null;
   let readConfig: string | null = null;
   if (templateVersionId) {
-    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json, theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+    const template = await env.FACTORY.prepare(`SELECT template_version_id, text_defaults_json, ${effectiveThemeVarsSql("template_versions")} AS theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'`)
       .bind(templateVersionId).first<{ template_version_id: string; text_defaults_json: string | null; theme_vars_json: string | null }>();
     if (!template) return json(422, { error: "template_not_sealed" });
     const current = await env.FACTORY.prepare("SELECT r.template_version_id, r.config_json FROM brand_revisions r WHERE r.revision_id = ?1")
@@ -354,6 +359,24 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
     if (current.template_version_id === templateVersionId) return json(422, { error: "template_unchanged", message: "The brand already runs this template version" });
     readConfig = current.config_json;
     newConfig = withThemeVars(withTextDefaults(current.config_json, template.text_defaults_json), template.theme_vars_json);
+  } else {
+    // Any other redeploy re-reads the effective map of the current template version, so a map the owner backfilled
+    // since the last install reaches the brand. Parsed values are compared, not text: an unchanged map leaves both null
+    // and the insert copies config_json byte for byte.
+    const current = await env.FACTORY.prepare(`SELECT r.config_json, ${effectiveThemeVarsSql("v")} AS theme_vars_json FROM brand_revisions r JOIN template_versions v ON v.template_version_id = r.template_version_id WHERE r.revision_id = ?1`)
+      .bind(brand.current_revision_id).first<{ config_json: string; theme_vars_json: string | null }>();
+    if (!current) return json(422, { error: "revision_missing" });
+    const next = withThemeVars(current.config_json, current.theme_vars_json);
+    // Parsing through TemplateThemeVars fixes the key order, so two equal maps compare equal whatever order they were stored in.
+    const mapOf = (config: string) => {
+      const stored = (JSON.parse(config) as { theme_vars?: unknown }).theme_vars ?? null;
+      const map = TemplateThemeVars.safeParse(stored);
+      return JSON.stringify(map.success ? map.data : stored);
+    };
+    if (mapOf(next) !== mapOf(current.config_json)) {
+      readConfig = current.config_json;
+      newConfig = next;
+    }
   }
   const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const revisionId = `${brandId}_redeploy_${installId}`;
