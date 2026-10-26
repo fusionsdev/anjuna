@@ -138,7 +138,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       </div>
       {templates?.length === 0 && <p className="hint">ยังไม่มีเทมเพลต (No templates yet)</p>}
       {templates && templates.length > 0 && visibleTemplates.length === 0 && <p className="hint">ไม่มีเทมเพลตในสถานะนี้</p>}
-      {detail && <TemplateDetail me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} onSaved={async () => setDetail(await api.template(detail.template.template_version_id))} />}
+      {detail && <TemplateDetail key={detail.template.template_version_id} me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} onSaved={async () => setDetail(await api.template(detail.template.template_version_id))} />}
     </>
   );
 }
@@ -197,6 +197,7 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
     try {
       const r = await api.detectTemplateThemeVars(t.template_version_id);
       if (isEmptyThemeVars(r.theme_vars)) {
+        setThemeText({ primary: "", primary_dark: "", secondary: "" });
         setThemeNote({ kind: "info", text: "ไม่พบตัวแปรสี (No color variables found)" });
         return;
       }
@@ -222,6 +223,11 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
       setThemeBusy(false);
     }
   }
+  const savedLedger = detected && (
+    <div className="ledger" style={{ marginBlock: 12 }}>
+      {THEME_ROLES.map(([role, label]) => <div key={role} className="cell"><span className="k" style={{ display: "block" }}>{label}</span><b>{joinNames(detected[role]) || "-"}</b></div>)}
+    </div>
+  );
   const identity = detail.checks.find((c) => c.check_name === "identity_scan");
   const similarity = (identity?.details as { similarity?: { summary?: string } } | null | undefined)?.similarity?.summary ?? null;
   const defaults = t.text_defaults;
@@ -257,6 +263,7 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
         <div className="cell"><span className="k" style={{ display: "block" }}>คำอธิบาย (Meta description)</span><b>{defaults?.description ?? "-"}</b></div>
       </div>
       <h3>ตัวแปรสี (Color variables)</h3>
+      {editable && sealed && savedLedger}
       {editable ? (
         <div style={{ display: "grid", gap: 8, marginBlock: 12 }}>
           {THEME_ROLES.map(([role, label]) => (
@@ -266,18 +273,14 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
           ))}
           {themeError && <p className="note neg" role="alert">{themeError}</p>}
         </div>
-      ) : detected ? (
-        <div className="ledger" style={{ marginBlock: 12 }}>
-          {THEME_ROLES.map(([role, label]) => <div key={role} className="cell"><span className="k" style={{ display: "block" }}>{label}</span><b>{joinNames(detected[role]) || "-"}</b></div>)}
-        </div>
-      ) : <p className="hint">ไม่พบตัวแปรสี (No color variables found)</p>}
+      ) : detected ? savedLedger : <p className="hint">ไม่พบตัวแปรสี (No color variables found)</p>}
       {themeNote && <p className={themeNote.kind === "ok" ? "note pos" : "hint"} role="status">{themeNote.text}</p>}
       {editable && (
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <button type="button" className="btn" disabled={busy || themeBusy} onClick={() => void detectColors()}>ตรวจหาสี (Detect colors)</button>
           {sealed
             ? <button type="button" className="btn pri" disabled={busy || themeBusy} onClick={() => void saveColors()}>บันทึกแผนที่สี (Save color map)</button>
-            : <button className="btn pri" disabled={busy} onClick={submitApprove}>อนุมัติ (Approve)</button>}
+            : <button className="btn pri" disabled={busy || themeBusy} onClick={submitApprove}>อนุมัติ (Approve)</button>}
         </div>
       )}
     </section>
