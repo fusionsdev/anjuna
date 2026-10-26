@@ -248,7 +248,7 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
       return json(502, { error: "template_detect_unavailable", message: "Template MCP transport failed" });
     }
     const body = await response.json().catch(() => null);
-    if (response.ok) {
+    if (response.status === 200) {
       const result = TemplateThemeVarsResponse.safeParse(body);
       return result.success ? json(200, result.data) : json(502, { error: "bad_gateway" });
     }
@@ -276,7 +276,9 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     // A certified version saves its map through Approve; a sealed row is immutable, so its map goes to template_theme_vars.
     if (row.status !== "sealed") return json(409, { error: "not_sealed" });
     const nextJson = JSON.stringify(saveRequest.data.theme_vars);
-    if (row.theme_vars_json !== nextJson) {
+    // Compare content, not text: the stored column may hold the same map in another key order or spacing.
+    const storedMap = TemplateThemeVars.safeParse(parseJson(row.theme_vars_json));
+    if (!storedMap.success || JSON.stringify(storedMap.data) !== nextJson) {
       const now = new Date().toISOString();
       await env.FACTORY.batch([
         env.FACTORY.prepare(`INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES (?1,?2,?3,?4)

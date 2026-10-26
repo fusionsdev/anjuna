@@ -356,6 +356,7 @@ describe("templates API", () => {
     expect((await detect(withMcp(async () => Response.json({ ok: true })))).status).toBe(502);
     expect((await detect(withMcp(async () => Response.json({ template_version_id: "tv-sealed-t", theme_vars: { primary: ["--a"], primary_dark: [], secondary: [], extra: 1 } })))).status).toBe(502);
     expect((await detect(withMcp(async () => Response.json({ error: "internal" }, { status: 500 })))).status).toBe(502);
+    expect((await detect(withMcp(async () => Response.json({ template_version_id: "tv-sealed-t", theme_vars: { primary: ["--a"], primary_dark: [], secondary: [] } }, { status: 201 })))).status).toBe(502);
     const missing = await detect(withMcp(async () => Response.json({ error: "not_found" }, { status: 404 })));
     expect([missing.status, await missing.json()]).toEqual([404, { error: "not_found" }]);
     const noZip = await detect(withMcp(async () => Response.json({ error: "template_zip_missing" }, { status: 422 })));
@@ -399,6 +400,18 @@ describe("templates API", () => {
     expect([again.status, await again.json()]).toEqual([200, { template_version_id: "tv-sealed-t", theme_vars: next }]);
     expect(await sealedAuditCount()).toBe(auditAfterFirst);
     expect(await backfillRow()).toEqual(stored);
+  });
+
+  it("saving theme vars equal in content but stored with other key order writes nothing", async () => {
+    await env.FACTORY.prepare(`INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, theme_vars_json)
+      VALUES ('tv-sealed-t', 'tpl-bolt', 7, ?1, 'templates/tpl-bolt/s.zip', 'sealed', 'owner', ?2, 'bk_1', ?2, ?3)`)
+      .bind("c".repeat(64), NOW, '{ "secondary": [], "primary_dark": [], "primary": ["--x"] }').run();
+    const auditBefore = await sealedAuditCount();
+    const same = { primary: ["--x"], primary_dark: [], secondary: [] };
+    const res = await putThemeVars(owner, { theme_vars: same });
+    expect([res.status, await res.json()]).toEqual([200, { template_version_id: "tv-sealed-t", theme_vars: same }]);
+    expect(await backfillRow()).toBeNull();
+    expect(await sealedAuditCount()).toBe(auditBefore);
   });
 
   it("saving theme vars refuses a certified version with 409 and an invalid map with 422", async () => {
