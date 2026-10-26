@@ -44,6 +44,15 @@ describe("contract constants match docs/template-contract.md", () => {
     expect(doc).toContain("## 9. How to submit (bolt.new)");
   });
 
+  it("tells local agents to zip the site and submit it with curl", () => {
+    const steps = contractForBuilders().local_agent_submit.join(" ");
+    expect(steps).toContain("/submit-zip");
+    expect(steps).toContain("ANJUNA_BUILDER_KEY");
+    expect(steps).toContain("Compress-Archive");
+    expect(steps).not.toMatch(/aduplift/i);
+    expect(doc).toContain("## 10. Local agents (Open Design)");
+  });
+
   it("serves the upload batch size in the steps and the doc", () => {
     const steps = contractForBuilders().how_to_submit.join(" ");
     expect(steps).toContain("begin_upload");

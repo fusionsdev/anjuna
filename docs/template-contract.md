@@ -244,3 +244,24 @@ A bolt.new chat cannot pass a built site as one tool argument (on 2026-10-17 a 1
 Hosting badges that the platform injects at publish time (today: the bolt.host `https://bolt.new/badge.js` script) are removed during URL import and reported as a `host-badge` warning. They never reach the sealed template.
 
 The owner and employees can paste the same published URL into "Import from URL" on the dashboard's Templates screen. It runs the same pipeline.
+
+## 10. Local agents (Open Design)
+
+Builders that run on the user's machine with a shell (Open Design, Claude Code, Codex, Cursor) upload the site as a ZIP with `curl`. The `get_template_contract` tool serves these steps as `local_agent_submit`. The Open Design plugin is in `integrations/open-design/anjuna-landing-template/`.
+
+1. Write the static site into one folder, for example `site/` or `dist/`. Every required page is real HTML with its text in the file.
+2. Zip the contents of that folder: `(cd site && zip -r ../site.zip .)` (PowerShell: `Compress-Archive -Path site/* -DestinationPath site.zip -Force`).
+3. Submit it:
+   ```sh
+   curl -sS -X POST https://<template MCP host>/submit-zip \
+     -H "Authorization: Bearer $ANJUNA_BUILDER_KEY" \
+     -F file=@site.zip -F template_id=<slug> -F template_name="<name>"
+   ```
+   The host is the same host as the MCP URL the builder was given. The key may also go in `X-API-Key` or `Api-Key`.
+4. Read the JSON result. It has the same statuses as `submit_template_url`:
+   - `awaiting_approval`: done. The owner approves it in the dashboard (Templates).
+   - `rejected`: fix every item in `issues`, zip again and submit again.
+   - `duplicate`: this exact build was already submitted. Nothing changed.
+5. Read the key from the `ANJUNA_BUILDER_KEY` environment variable. Never print the key, write it into a file or commit it.
+
+HTTP errors: `401` means the key is missing, unknown or revoked. `429` means the key passed its per-minute rate limit. `422` with `invalid` means a bad field or upload, and `422` with `needs_build` means the ZIP holds a source project in place of built HTML. Other form fields are ignored: the submitter is always the builder key.

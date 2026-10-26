@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { authenticate, type BuilderIdentity } from "./auth";
+import { handleBuilderZipSubmit } from "./builder-zip";
 import type { Env } from "./env";
 import { handleImportRequest } from "./import-service";
 import { registerTools } from "./tools";
@@ -38,6 +39,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (pathname === "/health") return json({ ok: true });
+    if (pathname === "/submit-zip") return handleBuilderZipSubmit(request, env);
     const handler = pathname === "/mcp" ? mcp : pathname === "/sse" || pathname === "/sse/message" ? sse : null;
     if (!handler) return json({ error: "not_found" }, 404);
     if (request.method === "OPTIONS") return handler.fetch(request, env, ctx);

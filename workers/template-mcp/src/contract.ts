@@ -170,6 +170,14 @@ export function contractForBuilders() {
       "6. \"reduce image sizes\" means the build is over 30 MB, 2000 files or 10 MB per file: compress or resize images and submit again.",
       `7. Only if you cannot publish: call begin_upload, then upload_files with every file in dist/ ({ path, content, encoding, part }) using at most ${UPLOAD_BATCH_CHARS} characters of content per call (cut larger files into parts 0, 1, 2 ...), then finish_upload. Never paste a zip.`,
     ],
+    // Builders that run on the user's machine with a shell (Open Design, Claude Code, Codex, Cursor) upload a ZIP with curl.
+    local_agent_submit: [
+      "1. Write the static site into one folder, for example site/ or dist/. Every required page is real HTML with its text in the file.",
+      "2. Zip the contents of that folder: (cd site && zip -r ../site.zip .) (PowerShell: Compress-Archive -Path site/* -DestinationPath site.zip -Force).",
+      "3. Submit it: curl -sS -X POST https://<template MCP host>/submit-zip -H \"Authorization: Bearer $ANJUNA_BUILDER_KEY\" -F file=@site.zip -F template_id=<slug> -F template_name=\"<name>\". The host is the same host as the MCP URL you were given.",
+      "4. Read the JSON result. It has the same statuses as submit_template_url: awaiting_approval (done; the owner approves it in the dashboard), rejected (fix every item in issues, zip again and submit again) or duplicate (this exact build was already submitted).",
+      "5. Read the key from the ANJUNA_BUILDER_KEY environment variable. Never print the key, write it into a file or commit it.",
+    ],
     required_pages: REQUIRED_PAGES,
     reserved_paths: RESERVED_PATHS.map((p) => `/${p}`),
     amount_buckets: AMOUNT_BUCKETS,

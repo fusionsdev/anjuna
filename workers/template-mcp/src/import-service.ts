@@ -1,6 +1,7 @@
 /**
  * Dashboard URL and ZIP imports: POST /submit-url and /submit-zip behind TemplateImportService. Only the
- * anjuna-web service binding reaches it; the public fetch handler never routes here.
+ * anjuna-web service binding reaches it; the public fetch handler never routes here. The public builder-key
+ * /submit-zip lives in builder-zip.ts.
  */
 import { z } from "zod";
 import type { TemplateThemeVarsResponse } from "@anjuna/contracts";
@@ -22,14 +23,17 @@ const ImportRequest = z.strictObject({
 
 const DetectRequest = z.strictObject({ template_version_id: z.string().min(1).max(128) });
 
-const json = (body: unknown, status = 200) =>
+export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+
+/** Zod issues as the 422 body lists them: dotted path and message. */
+export const issueList = (error: z.ZodError) => error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
 
 /** Read-only: re-runs the color detector on the archive stored for a version. The owner reviews the map before saving it. */
 async function detectThemeVars(request: Request, env: Env): Promise<Response> {
   const parsed = DetectRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return json({ error: "invalid", issues: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })) }, 422);
+    return json({ error: "invalid", issues: issueList(parsed.error) }, 422);
   }
   const { template_version_id } = parsed.data;
   const row = await env.FACTORY.prepare("SELECT r2_key FROM template_versions WHERE template_version_id = ?1").bind(template_version_id).first<{ r2_key: string }>();
@@ -63,7 +67,7 @@ export async function handleImportRequest(request: Request, env: Env): Promise<R
       submitted_by: ImportRequest.shape.submitted_by,
       created_by: ImportRequest.shape.created_by,
     }).safeParse({ template_id: form.get("template_id"), template_name: form.get("template_name"), submitted_by: submittedBy, created_by: form.get("created_by") });
-    if (!parsed.success) return json({ error: "invalid", issues: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })) }, 422);
+    if (!parsed.success) return json({ error: "invalid", issues: issueList(parsed.error) }, 422);
     try {
       const file = form.get("file") as File;
       return json(await submitTemplateZip(env, { ...parsed.data, zip: new Uint8Array(await file.arrayBuffer()) }));
@@ -75,7 +79,7 @@ export async function handleImportRequest(request: Request, env: Env): Promise<R
   }
   const parsed = ImportRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return json({ error: "invalid", issues: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })) }, 422);
+    return json({ error: "invalid", issues: issueList(parsed.error) }, 422);
   }
   try {
     // The URL pipeline reports unreachable sites as a rejected result; a malformed or non-public URL is a bad request here.
