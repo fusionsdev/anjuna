@@ -771,4 +771,83 @@ describe("checklist auto-refresh (FUS-385)", () => {
     await tick(60_000);
     await waitFor(() => expect(checklistReads()).toBe(2));
   });
+
+  const deferred = () => { let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); return { gate, release }; };
+  const boxChecked = (name: RegExp) => (screen.getByRole("checkbox", { name }) as HTMLInputElement).checked;
+
+  it("keeps a typed lead_id when a poll completes every computed item, then stops requesting", async () => {
+    let reads = 0;
+    routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: ++reads === 1 ? [] : allComputed() }));
+    render(<BrandLifecycle me={owner} />);
+    const input = await screen.findByLabelText("lead_id");
+    await waitFor(() => expect(checklistReads()).toBe(1));
+    fireEvent.change(input, { target: { value: "lead-typed" } });
+    await tick(60_000);
+    await waitFor(() => expect(boxChecked(/final_url/)).toBe(true));
+    expect((screen.getByLabelText("lead_id") as HTMLInputElement).value).toBe("lead-typed");
+    const before = checklistReads();
+    await tick(240_000);
+    expect(checklistReads()).toBe(before);
+  });
+
+  it("ignores a stale poll for brand A that resolves after brand B loaded", async () => {
+    lifecycleRows = [structuredClone(brand), LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] })];
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    const hold = deferred();
+    routes.set("GET /api/brands/brand-a/checklist", async () => {
+      if (checklistReads() < 2) return json({ brand_id: "brand-a", checklist: [] });
+      await hold.gate;
+      return json({ brand_id: "brand-a", checklist: allComputed() });
+    });
+    const view = render(<BrandLifecycle me={owner} routeBrandId="brand-a" />);
+    await screen.findByRole("heading", { name: "renderable.test" });
+    await waitFor(() => expect(checklistReads()).toBe(1));
+    await tick(60_000);
+    await waitFor(() => expect(checklistReads()).toBe(2));
+    view.rerender(<BrandLifecycle me={owner} routeBrandId="brand-b" />);
+    await screen.findByRole("heading", { name: "second.test" });
+    await waitFor(() => expect(checklistReads("brand-b")).toBe(1));
+    await act(async () => { hold.release(); });
+    expect(boxChecked(/drain_route/)).toBe(false);
+    expect(boxChecked(/final_url/)).toBe(false);
+  });
+
+  it("releases a poll response after unmount without error", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const hold = deferred();
+    routes.set("GET /api/brands/brand-a/checklist", async () => {
+      if (checklistReads() >= 2) await hold.gate;
+      return json({ brand_id: "brand-a", checklist: [] });
+    });
+    const view = render(<BrandLifecycle me={owner} />);
+    await screen.findByRole("checkbox", { name: /drain_route/ });
+    await waitFor(() => expect(checklistReads()).toBe(1));
+    await tick(60_000);
+    await waitFor(() => expect(checklistReads()).toBe(2));
+    view.unmount();
+    await act(async () => { hold.release(); });
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("keeps test_sold checked when a poll that began before the attest resolves after it", async () => {
+    const hold = deferred();
+    routes.set("GET /api/brands/brand-a/checklist", async () => {
+      if (checklistReads() >= 2) { await hold.gate; return json({ brand_id: "brand-a", checklist: allComputed() }); }
+      return json({ brand_id: "brand-a", checklist: [] });
+    });
+    routes.set("POST /api/brands/brand-a/checklist", () => json({ evidence: { ...evidence("test_sold"), event_id: "ev-1" } }));
+    render(<BrandLifecycle me={owner} />);
+    const input = await screen.findByLabelText("lead_id");
+    await waitFor(() => expect(checklistReads()).toBe(1));
+    await tick(60_000);
+    await waitFor(() => expect(checklistReads()).toBe(2));
+    fireEvent.change(input, { target: { value: "lead-1" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /test_sold/ }));
+    await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/brands/brand-a/checklist")).toBe(true));
+    await waitFor(() => expect(boxChecked(/test_sold/)).toBe(true));
+    await act(async () => { hold.release(); });
+    expect(boxChecked(/test_sold/)).toBe(true);
+  });
 });

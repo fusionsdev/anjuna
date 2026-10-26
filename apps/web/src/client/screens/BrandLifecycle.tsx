@@ -157,6 +157,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   // Brands whose pause or resume request is in flight; the row button stays off so one confirm sends one request.
   const [toggling, setToggling] = useState<ReadonlySet<string>>(new Set());
   const operationGeneration = useRef(0);
+  const checklistSeq = useRef(0);
   const selectedIdRef = useRef<string | null>(selectedId);
   selectedIdRef.current = selectedId;
   // The brand and current_revision_id the latest revisions fetch was issued for, and a sequence number so only the latest fetch commits.
@@ -286,15 +287,22 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     if (!selected || !computedOpen) return;
     const brandId = selected.brand_id;
     let active = true;
+    let inFlight = false;
     const timer = setInterval(() => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || inFlight) return;
       const token = operationToken();
+      const seq = ++checklistSeq.current;
+      inFlight = true;
       void api.checklist(brandId).then((result) => {
-        if (!active || !canCommit(token, brandId)) return;
-        const next = {} as Record<ChecklistItemName, ChecklistEvidence | undefined>;
-        for (const row of result.checklist) next[row.item] = row.evidence as ChecklistEvidence;
-        setChecklist(next);
-      }, () => undefined);
+        // An attest that started after this poll bumped the counter: this response is older than that write and is dropped.
+        if (!active || seq !== checklistSeq.current || !canCommit(token, brandId)) return;
+        // Merge computed rows only and never remove an entry, so test_sold and rows already shown stay.
+        setChecklist((previous) => {
+          const next = { ...previous };
+          for (const row of result.checklist) if (computedChecklistItems.includes(row.item)) next[row.item] = row.evidence as ChecklistEvidence;
+          return next;
+        });
+      }, () => undefined).finally(() => { inFlight = false; });
     }, checklistRefreshMs);
     return () => { active = false; clearInterval(timer); };
   }, [selected?.brand_id, computedOpen]);
@@ -741,7 +749,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       </section>
       <div className="brands-aside">
         {selected
-          ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} revisions={revisions} revisionsRetrying={revisionsRetrying} onRetryRevisions={retryRevisions} onCopyFinalUrl={() => void copyFinalUrl()} manualCopyUrl={manualCopyUrl} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) setChecklist((previous) => ({ ...previous, [item]: row })); await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
+          ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} revisions={revisions} revisionsRetrying={revisionsRetrying} onRetryRevisions={retryRevisions} onCopyFinalUrl={() => void copyFinalUrl()} manualCopyUrl={manualCopyUrl} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); checklistSeq.current += 1; try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) { checklistSeq.current += 1; setChecklist((previous) => ({ ...previous, [item]: row })); } await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
           // A failed Core list may hide a Core-only brand, so the id is not known to be missing.
           : listLoaded && !coreListError && routeBrandId
             ? <section className="panel brand-side"><p role="alert">ไม่พบแบรนด์ <code>{routeBrandId}</code> (Brand not found)</p></section>
