@@ -14,6 +14,14 @@ Open Design (open-design.ai, Apache-2.0 desktop app) runs a local coding agent i
    ```sh
    od plugin install ./integrations/open-design/anjuna-landing-template
    ```
+   The daemon resolves a local source against its own working directory and accepts only sources that start with `/`, `./` or `~`. On the Windows desktop app that directory is `%APPDATA%\Open Design\namespaces\release-stable-win\runtime`, and a drive path such as `H:/...` is read as a marketplace name. Copy the folder under the user profile and install it by a path relative to that directory (6 levels up is the profile):
+   ```powershell
+   Copy-Item .\integrations\open-design\anjuna-landing-template "$env:USERPROFILE\open-design-plugins\" -Recurse -Force
+   $env:ELECTRON_RUN_AS_NODE = '1'
+   $env:OD_DAEMON_URL = 'http://127.0.0.1:<daemon port>'
+   & 'F:\DEV\open-design\Open Design.exe' 'F:\DEV\open-design\resources\app\prebundled\daemon\daemon-cli.mjs' plugin install './../../../../../../open-design-plugins/anjuna-landing-template'
+   ```
+   Use the install folder of your copy in place of `F:\DEV\open-design`. The `od` on PATH in Git Bash is the coreutils octal dump tool. The daemon port changes on every app start: `Get-NetTCPConnection -State Listen -OwningProcess (Get-Process 'Open Design').Id`.
 6. Optional: connect the MCP server so the agent reads the live contract and can run `check_template`:
    ```sh
    claude mcp add --scope project --transport http anjuna-template https://mcp.aduplift.ai/mcp --header 'Authorization: Bearer ${ANJUNA_BUILDER_KEY}'

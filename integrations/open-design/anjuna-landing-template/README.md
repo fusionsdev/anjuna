@@ -8,6 +8,8 @@ This Open Design plugin makes the local coding agent build a static lead-gen lan
 od plugin install ./integrations/open-design/anjuna-landing-template
 ```
 
+On the Windows desktop app the daemon resolves `./` against its own runtime folder. See `docs/runbooks/open-design-templates.md` step 5 for the working command.
+
 ## Builder key
 
 The agent reads the key from the `ANJUNA_BUILDER_KEY` environment variable. Create a key in the dashboard on the Builder keys screen, then set the variable in the environment that starts Open Design and its agent:
