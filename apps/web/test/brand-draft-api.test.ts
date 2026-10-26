@@ -137,6 +137,22 @@ describe("PATCH /api/brands/:id/draft", () => {
     expect((await configOf(brandId)).profile).toEqual({ ads: PROFILE.ads });
   });
 
+  it("draft PATCH stores and clears profile.theme", async () => {
+    const brandId = await draftId({ profile: PROFILE });
+    const read = async () => LifecycleBrandSummary.parse(((await (await call(`/api/lifecycle/brands/${brandId}`, { cookie: employee })).json()) as { brand: unknown }).brand).profile;
+    const theme = { primary: "#112233", secondary: "#aabbcc" };
+    const set = await patch(brandId, { profile: { ...PROFILE, theme } });
+    expect(set.status).toBe(200);
+    expect(UpdateBrandDraftResponse.parse(await set.json()).changed).toEqual(["profile.theme"]);
+    expect((await read())?.theme).toEqual(theme);
+    const cleared = await patch(brandId, { profile: PROFILE });
+    expect(cleared.status).toBe(200);
+    expect(UpdateBrandDraftResponse.parse(await cleared.json()).changed).toEqual(["profile.theme"]);
+    expect((await read())?.theme).toBeUndefined();
+    const { results } = await env.FACTORY.prepare("SELECT after_json FROM audit_log WHERE action = 'brand.draft_update' AND entity_id = ?1 ORDER BY rowid").bind(brandId).all<{ after_json: string }>();
+    expect(results.map((row) => JSON.parse(row.after_json))).toEqual([{ changed: ["profile.theme"] }, { changed: ["profile.theme"] }]);
+  });
+
   it("leaves everything alone and writes no audit row when nothing changes", async () => {
     const brandId = await draftId({ profile: PROFILE });
     const before = await counts();

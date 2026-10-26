@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { zipSync } from "fflate";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { darkenHex } from "@anjuna/contracts";
 import { createBrandWorker } from "@anjuna/brand-runtime";
 import { renderPageText, templateBrandName } from "@anjuna/brand-runtime/page-text";
 import { MockCoreClient, WILLOW_LAKE_INDEX, WILLOW_LAKE_TERMS, WIZARD_DEMO_PAGE_TEXT } from "@anjuna/brand-runtime/testing";
@@ -23,7 +24,7 @@ const PROFILE = {
 const enc = (text: string) => new TextEncoder().encode(text);
 const INDEX = `<!doctype html><html><head><title>Harbor | Funding Options</title>
 <meta name="description" content="Check your funding options."><meta property="og:title" content="Harbor | Funding Options">
-<link rel="stylesheet" href="/assets/site.css"><link rel="icon" href="/favicon.ico"><script src="/assets/app.js"></script></head>
+<link rel="stylesheet" href="/assets/site.css"><link rel="icon" href="/favicon.ico"><script src="/assets/app.js"></script><style>.hero{color:red}</style></head>
 <body><header data-brand>Harbor</header><h1>Funding</h1><img src="/assets/logo.png" alt="logo"><img src="https://cdn.example/x.png"><script>alert(1)</script></body></html>`;
 const CSS = `body{background:url("../assets/bg.png")} .x{font-family:"X";src:url(/assets/font.woff2)} .y{background:url(https://cdn.example/y.png)}`;
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -264,6 +265,30 @@ describe("GET /api/wizard/preview/:id", () => {
     expect(html).toMatch(/<header data-brand>Maple Cash<\/header>/);
     expect(html).toContain("<h1><span data-kw>Quick Loan</span> When You Need It</h1>");
     expect(html).not.toContain("Harbor");
+  });
+
+  const addThemedVersion = () => env.FACTORY.prepare(`INSERT OR IGNORE INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, text_defaults_json, theme_vars_json)
+    VALUES ('tv-wiz-themed', 'tpl-wiz', 5, ?1, 'templates/tv-wiz-a.zip', 'sealed', 'owner', ?2, 'owner', ?2, ?3, ?4)`)
+    .bind("5".repeat(64), NOW, JSON.stringify(TEXT), JSON.stringify({ primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: [] })).run();
+
+  it("preview carries the draft theme block", async () => {
+    await addThemedVersion();
+    const html = await (await preview(await draftId({ template_version_id: "tv-wiz-themed", profile: { theme: { primary: "#112233", secondary: "#445566" } } }))).text();
+    const block = `<style id="brand-theme">:root{--color-royal:#112233;--color-royal-dark:${darkenHex("#112233")}}</style>`;
+    expect(html).toContain(`${block}</head>`);
+    expect(html.indexOf(".hero{color:red}")).toBeLessThan(html.indexOf(block));
+  });
+
+  it("preview without theme is unchanged", async () => {
+    await addThemedVersion();
+    // Same fixture and same profile: the template without a map is the baseline, the template with a map but no draft theme must match it byte for byte.
+    const plain = await preview(await draftId({ profile: PROFILE }));
+    const mapped = await preview(await draftId({ template_version_id: "tv-wiz-themed", profile: PROFILE }));
+    expect(plain.status).toBe(200);
+    expect(mapped.status).toBe(200);
+    const html = await plain.text();
+    expect(html).not.toContain("brand-theme");
+    expect(await mapped.text()).toBe(html);
   });
 
   it("answers 422 for saved copy the install would refuse", async () => {

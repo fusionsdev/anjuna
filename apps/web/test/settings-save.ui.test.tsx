@@ -17,6 +17,7 @@ const alpha = brand({
   brand_id: "brand-alpha", hostnames: ["alpha.example.test"], status: "live", aid: "111", prepop_base: "https://lg.example.test/alpha", drain_key: "dk_alpha",
   ab_config: { experiment_id: "exp-alpha", variants: [{ id: "lite_v1", weight: 60 }, { id: "full_v1", weight: 40 }] },
   flow_gate_mode: "signed_cookie", amount_buckets: [500, 1000], keyword_default: "Quick Cash", updated_at: T1,
+  theme: { primary: "#0f766e", secondary: "#1e293b" },
 });
 const beta = brand({
   brand_id: "brand-beta", hostnames: ["beta.example.test"], status: "paused", aid: "222", prepop_base: "https://lg.example.test/beta", drain_key: "dk_beta",
@@ -228,6 +229,41 @@ describe("Settings review and save", () => {
     expect(patches()[1]!.body).toEqual({ aid: "444", drain_key: "dk_new", expected_updated_at: T2 });
     expect(await screen.findByText("บันทึกแล้ว (Saved)")).toBeTruthy();
     expect(drawer()).toBeNull();
+  });
+
+  it("save sends theme with expected_updated_at", async () => {
+    onPatch = (body) => json(saved(patched(alpha, body), ["theme"]));
+    render(<SettingsScreen />);
+    await openEditor("alpha.example.test");
+    type("รหัสสีหลัก (Primary hex)", "#abcdef");
+    fireEvent.click(review());
+    await answerConfirm(true);
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0]!.body).toEqual({ theme: { primary: "#abcdef", secondary: "#1e293b" }, expected_updated_at: T1 });
+  });
+
+  it("reset sends theme null", async () => {
+    onPatch = (body) => json(saved(patched(alpha, body), ["theme"]));
+    render(<SettingsScreen />);
+    await openEditor("alpha.example.test");
+    fireEvent.click(screen.getByRole("button", { name: "ใช้สีของเทมเพลต (Use template colors)" }));
+    fireEvent.click(review());
+    await answerConfirm(true);
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    expect(patches()[0]!.body).toEqual({ theme: null, expected_updated_at: T1 });
+  });
+
+  it("409 keeps the edited colors", async () => {
+    onGetBrand = () => json({ brand: patched(alpha, { aid: "333" }) });
+    onPatch = () => json({ error: "conflict", current_updated_at: T2 }, 409);
+    render(<SettingsScreen />);
+    await openEditor("alpha.example.test");
+    type("รหัสสีหลัก (Primary hex)", "#abcdef");
+    fireEvent.click(review());
+    await answerConfirm(true);
+    await screen.findByText(CONFLICT);
+    await waitFor(() => expect((screen.getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("333"));
+    expect((screen.getByLabelText("รหัสสีหลัก (Primary hex)") as HTMLInputElement).value).toBe("#abcdef");
   });
 
   it("after a 409 a field the owner did not edit takes the reloaded value, so the next save does not revert it", async () => {

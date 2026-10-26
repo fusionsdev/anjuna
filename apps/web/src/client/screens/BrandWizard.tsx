@@ -3,7 +3,7 @@
  * saves it with PATCH /api/brands/:id/draft, and Generate starts the install. A saved draft resumes at its
  * first incomplete step.
  */
-import { roleAtLeast, type TemplateTextDefaults, type TemplateVersionSummary, type UpdateBrandDraftRequest } from "@anjuna/contracts";
+import { EMPTY_THEME_VARS, roleAtLeast, type BrandTheme, type TemplateTextDefaults, type TemplateThemeVars, type TemplateVersionSummary, type UpdateBrandDraftRequest } from "@anjuna/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WizardDefaultsResponse, WizardDraft } from "../../shared/wizard";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
@@ -35,12 +35,14 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
   const [defaults, setDefaults] = useState<WizardDefaultsResponse | null>(null);
   const [draft, setDraft] = useState<WizardDraft | null>(null);
   const [form, setForm] = useState<WizardForm>(emptyForm);
+  const [theme, setTheme] = useState<BrandTheme | null>(null);
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [zone, setZone] = useState<ZoneState>({ state: "idle" });
   const [templateText, setTemplateText] = useState<TemplateTextDefaults | null>(null);
+  const [themeVars, setThemeVars] = useState<TemplateThemeVars | null>(null);
   const [previewNonce, setPreviewNonce] = useState(0);
 
   useEffect(() => {
@@ -59,6 +61,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
       if (existing) {
         setDraft(existing);
         setForm(formFromDraft(existing));
+        setTheme(existing.profile?.theme ?? null);
         setStep(initialStep ?? firstIncompleteStep(existing.profile, { canEditTracking }));
       } else {
         setForm((previous) => ({ ...previous, template_version_id: previous.template_version_id || approved[0]?.template_version_id || "" }));
@@ -73,11 +76,20 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
   const stepId = STEPS[step]!;
   const templateId = form.template_version_id;
 
-  // The Copy step shows the template's own text as the default of each field.
+  // The Copy step shows the template's own text as the default of each field; the Template step reads its color map.
   useEffect(() => {
-    if (!templateId || (stepId !== "copy" && stepId !== "review")) return;
+    if (!templateId || (stepId !== "template" && stepId !== "copy" && stepId !== "review")) return;
     let active = true;
-    void api.template(templateId).then((detail) => { if (active) setTemplateText(detail.template.text_defaults); }, () => { if (active) setTemplateText(null); });
+    setThemeVars(null);
+    void api.template(templateId).then((detail) => {
+      if (!active) return;
+      setTemplateText(detail.template.text_defaults);
+      // A version imported before the color map existed answers null: no variables, not "still loading".
+      const vars = detail.template.theme_vars ?? EMPTY_THEME_VARS;
+      setThemeVars(vars);
+      // The pickers are disabled without variables, so a theme stored earlier is dropped here and the next save removes it.
+      if (vars.primary.length === 0 && vars.primary_dark.length === 0 && vars.secondary.length === 0) setTheme(null);
+    },() => { if (active) { setTemplateText(null); setThemeVars(null); } });
     return () => { active = false; };
   }, [templateId, stepId]);
 
@@ -127,9 +139,15 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
         }
         return;
       }
-      case "template":
+      case "template": {
         if (form.template_version_id !== draft!.revision.template_version_id) await patch({ template_version_id: form.template_version_id });
+        // A null theme means template colors: the key is left out of the profile.
+        if (JSON.stringify(theme) !== JSON.stringify(profile.theme ?? null)) {
+          const { theme: _stored, ...rest } = profile;
+          await patch({ profile: theme ? { ...rest, theme } : rest });
+        }
         return;
+      }
       case "copy":
         return patch({ profile: { ...profile, copy: copyOf(form) } });
       case "tracking":
@@ -196,7 +214,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
       {!loading && !loadError && <>
         <h2 aria-label={STEP_LABEL[stepId]}>{STEP_LABEL[stepId].split(" (")[0]}</h2>
         {stepId === "brand" && <BrandPanel form={form} errors={errors} set={set} hasDraft={draft !== null} zone={zone} onCheckZone={() => void checkZone()} />}
-        {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} />}
+        {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} theme={theme} onTheme={setTheme} themeVars={themeVars} />}
         {stepId === "copy" && <CopyPanel form={form} errors={errors} set={set} templateText={templateText} />}
         {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} />}
         {stepId === "review" && <ReviewPanel form={form} templateName={chosen ? `${chosen.name} v${chosen.version}` : templateId} defaults={defaults} zone={zone} onCheckZone={() => void checkZone()} previewSrc={draft ? `/api/wizard/preview/${encodeURIComponent(draft.brand.brand_id)}?r=${previewNonce}` : null} canEditTracking={canEditTracking} />}

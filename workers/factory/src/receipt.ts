@@ -1,5 +1,5 @@
 import type { InstallStep } from "@anjuna/factory-db";
-import { cleanKeyword, InitialRuntime } from "@anjuna/contracts";
+import { BrandTheme, cleanKeyword, InitialRuntime } from "@anjuna/contracts";
 
 export const INSTALL_MUTATION_STEPS = [
   "validate", "save_rollback", "render", "upload_assets", "upload_script", "deploy",
@@ -36,10 +36,14 @@ export function deriveAuthoritativeRuntime(
   brandId: string,
   tenant: TenantRuntimeDefaults,
   artifact: RegisteredFormArtifact,
+  theme?: unknown,
 ): InitialRuntime {
   const bundle = artifact.bundle_form_version;
   if (!bundle) throw new Error("Registered form artifact has no registered bundle form version");
+  // An invalid stored theme must not fail the install: the brand starts without one.
+  const parsedTheme = BrandTheme.safeParse(theme);
   return InitialRuntime.parse({
+    theme: parsedTheme.success ? parsedTheme.data : null,
     aid: tenant.aid, prepop_base: tenant.prepop_base,
     form_route: tenant.form_route, keyword_default: cleanKeyword(tenant.keyword_default),
     amount_buckets: [...tenant.amount_buckets],
