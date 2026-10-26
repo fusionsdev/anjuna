@@ -77,8 +77,8 @@ export function compensatedInstallSql(installIdExpr: string): string {
 
 /** SQL for a version's effective theme map: the owner's backfill (template_theme_vars) over the import-time column. */
 export function effectiveThemeVarsSql(alias: string): string {
-  if (!/^[a-z_]+$/.test(alias)) throw new Error("invalid alias");
-  return `COALESCE((SELECT o.theme_vars_json FROM template_theme_vars o WHERE o.template_version_id = ${alias}.template_version_id), ${alias}.theme_vars_json)`;
+  if (!/^[a-z_]+$/.test(alias) || alias === "template_theme_vars") throw new Error("invalid alias");
+  return `COALESCE((SELECT template_theme_vars.theme_vars_json FROM template_theme_vars WHERE template_theme_vars.template_version_id = ${alias}.template_version_id), ${alias}.theme_vars_json)`;
 }
 
 export { sealTemplateVersionRecord } from "./seal.js";

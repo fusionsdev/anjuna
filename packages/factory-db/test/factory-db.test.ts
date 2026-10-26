@@ -337,7 +337,32 @@ describe("factory-db constraints", () => {
     expect(() => effectiveThemeVarsSql("v; DROP TABLE x")).toThrow("invalid alias");
     expect(() => effectiveThemeVarsSql("V")).toThrow("invalid alias");
     expect(() => effectiveThemeVarsSql("")).toThrow("invalid alias");
+    expect(() => effectiveThemeVarsSql("template_theme_vars")).toThrow("invalid alias");
     expect(effectiveThemeVarsSql("template_versions")).toContain("template_versions.template_version_id");
+  });
+
+  it("effectiveThemeVarsSql reads each version's own map under any alias", async () => {
+    await run("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('t-alias', 'Alias', 'react_spa', 'bk_1', ?1)", NOW);
+    const colB = '{"primary":["--colb"],"primary_dark":[],"secondary":[]}';
+    for (const [id, version, column] of [["tv-alias-a", 1, null], ["tv-alias-b", 2, colB]] as const) {
+      await run(
+        `INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, theme_vars_json)
+         VALUES (?1, 't-alias', ?2, ?3, 'k', 'sealed', 'owner1', ?4, 'bk_1', ?4, ?5)`,
+        id, version, String(version + 6).repeat(64), NOW, column,
+      );
+    }
+    const backfillA = '{"primary":["--backa"],"primary_dark":[],"secondary":[]}';
+    await run(
+      "INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('tv-alias-a', ?1, 'owner1', ?2)",
+      backfillA, NOW,
+    );
+    for (const alias of ["o", "template_versions"]) {
+      const read = (id: string) => env.DB.prepare(
+        `SELECT ${effectiveThemeVarsSql(alias)} AS theme_vars_json FROM template_versions ${alias} WHERE ${alias}.template_version_id = ?1`,
+      ).bind(id).first<{ theme_vars_json: string | null }>();
+      expect(await read("tv-alias-a")).toEqual({ theme_vars_json: backfillA });
+      expect(await read("tv-alias-b")).toEqual({ theme_vars_json: colB });
+    }
   });
 
   it("allows one brand per domain", async () => {
