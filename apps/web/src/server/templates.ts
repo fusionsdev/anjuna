@@ -14,11 +14,16 @@ import {
   SiteTextDefaultsResponse,
   TemplateTextDefaults,
   TemplateThemeVars,
+  TemplateThemeVarsRequest,
+  TemplateThemeVarsResponse,
+  BrandThemeVarsResponse,
+  isEmptyThemeVars,
   authorize,
   templateSlug,
   type AdminRequestContext,
   type TemplateVersionStatusName,
 } from "@anjuna/contracts";
+import { effectiveThemeVarsSql } from "@anjuna/factory-db";
 import type { Env } from "./env.js";
 import { decodePathSegment } from "./lifecycle.js";
 import { readZipForm } from "./zip-form.js";
@@ -225,13 +230,73 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     return json(response.status >= 500 ? 502 : response.status, body ?? { error: "factory_dispatch_failed" });
   }
 
+  m = path.match(/^\/api\/templates\/([^/]+)\/detect-theme-vars$/);
+  if (m && method === "POST") {
+    if (!authorizePanel("approveTemplate", ctx.actor_role).ok) return forbidden("owner");
+    const id = decodePathSegment(m[1]!);
+    if (id === null) return notFound("template");
+    if (!env.TEMPLATE_MCP) return json(502, { error: "template_detect_unavailable", message: "Template MCP binding is missing" });
+    // Detection reads the stored zip and writes nothing; the owner reviews the proposed map before saving it.
+    let response: Response;
+    try {
+      response = await env.TEMPLATE_MCP.fetch(new Request("https://template-mcp/detect-theme-vars", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ template_version_id: id }),
+      }));
+    } catch {
+      return json(502, { error: "template_detect_unavailable", message: "Template MCP transport failed" });
+    }
+    const body = await response.json().catch(() => null);
+    if (response.ok) {
+      const result = TemplateThemeVarsResponse.safeParse(body);
+      return result.success ? json(200, result.data) : json(502, { error: "bad_gateway" });
+    }
+    if (response.status === 404 || response.status === 422) return json(response.status, body ?? { error: "template_detect_unavailable" });
+    return json(502, { error: "template_detect_unavailable" });
+  }
+
+  m = path.match(/^\/api\/templates\/([^/]+)\/theme-vars$/);
+  if (m && method === "PUT") {
+    if (!authorizePanel("approveTemplate", ctx.actor_role).ok) return forbidden("owner");
+    const id = decodePathSegment(m[1]!);
+    if (id === null) return notFound("template");
+    // Only theme_vars is read; the actor comes from the session.
+    let raw: Record<string, unknown> | null;
+    try {
+      raw = JSON.parse(await request.text()) as Record<string, unknown> | null;
+    } catch {
+      return json(400, { error: "invalid_json" });
+    }
+    const saveRequest = TemplateThemeVarsRequest.safeParse({ theme_vars: raw?.theme_vars });
+    if (!saveRequest.success) return json(422, { error: "invalid_theme_vars" });
+    const row = await env.FACTORY.prepare(`SELECT v.status, ${effectiveThemeVarsSql("v")} AS theme_vars_json FROM template_versions v WHERE v.template_version_id = ?1`)
+      .bind(id).first<{ status: TemplateVersionStatusName; theme_vars_json: string | null }>();
+    if (!row) return notFound("template");
+    // A certified version saves its map through Approve; a sealed row is immutable, so its map goes to template_theme_vars.
+    if (row.status !== "sealed") return json(409, { error: "not_sealed" });
+    const nextJson = JSON.stringify(saveRequest.data.theme_vars);
+    if (row.theme_vars_json !== nextJson) {
+      const now = new Date().toISOString();
+      await env.FACTORY.batch([
+        env.FACTORY.prepare(`INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES (?1,?2,?3,?4)
+          ON CONFLICT(template_version_id) DO UPDATE SET theme_vars_json = excluded.theme_vars_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+          .bind(id, nextJson, ctx.actor_id, now),
+        env.FACTORY.prepare(`INSERT INTO audit_log (actor_id,actor_role,action,entity_type,entity_id,before_json,after_json,created_at)
+          VALUES (?3,?4,'template.theme_vars','template_version',?1,?5,?2,?6)`)
+          .bind(id, nextJson, ctx.actor_id, ctx.actor_role, row.theme_vars_json, now),
+      ]);
+    }
+    return json(200, TemplateThemeVarsResponse.parse({ template_version_id: id, theme_vars: saveRequest.data.theme_vars }));
+  }
+
   m = path.match(/^\/api\/templates\/([^/]+)$/);
   if (m && method === "GET") {
     if (!authorizePanel("listTemplates", ctx.actor_role).ok) return forbidden("employee");
     const id = decodePathSegment(m[1]!);
     if (id === null) return notFound("template");
     const row = await env.FACTORY.prepare(
-      `SELECT ${SUMMARY_COLUMNS}, v.sha256, v.sealed_by, v.text_defaults_json, v.theme_vars_json
+      `SELECT ${SUMMARY_COLUMNS}, v.sha256, v.sealed_by, v.text_defaults_json, ${effectiveThemeVarsSql("v")} AS theme_vars_json
        FROM template_versions v JOIN templates t ON t.template_id = v.template_id WHERE v.template_version_id = ?1`,
     ).bind(id).first<VersionRow & { sha256: string; sealed_by: string | null; text_defaults_json: string | null; theme_vars_json: string | null }>();
     if (!row) return notFound("template");
@@ -266,6 +331,29 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     const stored = row ? (parseJson(row.config_json) as { text_defaults?: unknown } | null)?.text_defaults ?? null : null;
     const defaults = TemplateTextDefaults.safeParse(stored);
     return json(200, SiteTextDefaultsResponse.parse({ brand_id: brandId, defaults: defaults.success ? defaults.data : null }));
+  }
+
+  m = path.match(/^\/api\/brands\/([^/]+)\/theme-vars$/);
+  if (m && method === "GET") {
+    const access = authorize("getBrand", ctx.actor_role);
+    if (!access.ok) return json(access.status, access.error);
+    const brandId = decodePathSegment(m[1]!);
+    if (brandId === null) return notFound("brand");
+    // Same revision as /site-text: the deployed one; before the first install, the latest.
+    const row = await env.FACTORY.prepare(
+      `SELECT r.config_json, ${effectiveThemeVarsSql("tv")} AS theme_vars_json
+       FROM brands b JOIN brand_revisions r ON r.revision_id = COALESCE(b.current_revision_id,
+         (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1))
+       LEFT JOIN template_versions tv ON tv.template_version_id = r.template_version_id
+       WHERE b.brand_id = ?1`,
+    ).bind(brandId).first<{ config_json: string; theme_vars_json: string | null }>();
+    const baked = row ? TemplateThemeVars.safeParse((parseJson(row.config_json) as { theme_vars?: unknown } | null)?.theme_vars) : null;
+    const template = row ? themeVars(row.theme_vars_json) : null;
+    return json(200, BrandThemeVarsResponse.parse({
+      brand_id: brandId,
+      deployed: baked?.success ? baked.data : null,
+      template: template && !isEmptyThemeVars(template) ? template : null,
+    }));
   }
   return undefined;
 }
