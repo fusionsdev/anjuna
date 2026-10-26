@@ -1,0 +1,9 @@
+Notice: a newer AdKit CLI is available.
+{
+  "conversion": {
+    "platformId": "7300000099",
+    "name": "cv-aaaaaaaaaaaaaaaa",
+    "status": "ENABLED",
+    "published": true
+  }
+}

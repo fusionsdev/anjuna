@@ -1,0 +1,10 @@
+Notice: a newer AdKit CLI is available.
+{
+  "conversions": [
+    { "platformId": "7300000001", "name": "Purchase (legacy)", "status": "ENABLED" },
+    { "platformId": 7300000002, "name": "cv-0123456789abcdef", "status": "ENABLED" },
+    { "platformId": "7300000003", "name": "cv-fedcba9876543210", "status": "ENABLED" },
+    { "name": "no id here" }
+  ],
+  "total": 4
+}
