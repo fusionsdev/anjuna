@@ -12,6 +12,7 @@ import {
   type UpdateBrandDraftResponse,
   isBrandClean,
   withTextDefaults,
+  withThemeVars,
   LifecycleBrandSummary,
   SealedTemplatesResponse,
   adminContextToHeaders,
@@ -146,8 +147,8 @@ export async function createDraft(request: Request, env: Env, ctx: AdminRequestC
   }
   const defaults = tenantDefaults(env);
   if (!defaults) return json(503, { error: "tenant_configuration_missing", message: "Tenant runtime defaults are not configured" });
-  const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
-    .bind(template_version_id).first<{ template_version_id: string; text_defaults_json: string | null }>();
+  const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json, theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+    .bind(template_version_id).first<{ template_version_id: string; text_defaults_json: string | null; theme_vars_json: string | null }>();
   if (!template) return json(422, { error: "template_not_sealed" });
   const artifact = await env.FACTORY.prepare(`SELECT form_artifact_id, bundle_form_version, payload_version FROM form_artifacts WHERE ${COMPATIBLE_FORM} ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1`).bind(defaults.payload_version).first<{ form_artifact_id: string; bundle_form_version: string; payload_version: string }>();
   if (!artifact) return json(422, { error: "compatible_form_artifact_missing" });
@@ -156,7 +157,7 @@ export async function createDraft(request: Request, env: Env, ctx: AdminRequestC
   const brandId = `brand_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
   const revisionId = `${brandId}_rev_1`;
   const now = new Date().toISOString();
-  const config = withTextDefaults(JSON.stringify({ keyword_default, ...(profile ? { profile } : {}) }), template.text_defaults_json);
+  const config = withThemeVars(withTextDefaults(JSON.stringify({ keyword_default, ...(profile ? { profile } : {}) }), template.text_defaults_json), template.theme_vars_json);
   try { await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT INTO brands (brand_id,name,account,domain,keyword_default,status,created_by,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'draft',?6,?7,?7)").bind(brandId, name, defaults.account, domain, keyword_default, ctx.actor_id, now),
     env.FACTORY.prepare("INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at) VALUES (?1,?2,1,?3,?4,?5,?6,?7)").bind(revisionId, brandId, template_version_id, artifact.form_artifact_id, config, ctx.actor_id, now),
@@ -207,11 +208,11 @@ async function updateDraft(request: Request, env: Env, ctx: AdminRequestContext,
   let templateVersionId = revision.template_version_id;
   const templateChanged = body.template_version_id !== undefined && body.template_version_id !== revision.template_version_id;
   if (templateChanged) {
-    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
-      .bind(body.template_version_id).first<{ template_version_id: string; text_defaults_json: string | null }>();
+    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json, theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+      .bind(body.template_version_id).first<{ template_version_id: string; text_defaults_json: string | null; theme_vars_json: string | null }>();
     if (!template) return json(422, { error: "template_not_sealed" });
     templateVersionId = template.template_version_id;
-    config = JSON.parse(withTextDefaults(JSON.stringify(config), template.text_defaults_json)) as Record<string, unknown>;
+    config = JSON.parse(withThemeVars(withTextDefaults(JSON.stringify(config), template.text_defaults_json), template.theme_vars_json)) as Record<string, unknown>;
   }
   if (body.keyword_default !== undefined) config.keyword_default = body.keyword_default;
   const before = storedProfile(revision.config_json);
@@ -344,15 +345,15 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
   let newConfig: string | null = null;
   let readConfig: string | null = null;
   if (templateVersionId) {
-    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
-      .bind(templateVersionId).first<{ template_version_id: string; text_defaults_json: string | null }>();
+    const template = await env.FACTORY.prepare("SELECT template_version_id, text_defaults_json, theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'")
+      .bind(templateVersionId).first<{ template_version_id: string; text_defaults_json: string | null; theme_vars_json: string | null }>();
     if (!template) return json(422, { error: "template_not_sealed" });
     const current = await env.FACTORY.prepare("SELECT r.template_version_id, r.config_json FROM brand_revisions r WHERE r.revision_id = ?1")
       .bind(brand.current_revision_id).first<{ template_version_id: string; config_json: string }>();
     if (!current) return json(422, { error: "revision_missing" });
     if (current.template_version_id === templateVersionId) return json(422, { error: "template_unchanged", message: "The brand already runs this template version" });
     readConfig = current.config_json;
-    newConfig = withTextDefaults(current.config_json, template.text_defaults_json);
+    newConfig = withThemeVars(withTextDefaults(current.config_json, template.text_defaults_json), template.theme_vars_json);
   }
   const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const revisionId = `${brandId}_redeploy_${installId}`;

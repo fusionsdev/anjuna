@@ -62,6 +62,24 @@ export function themeCss(theme: unknown, vars: unknown): string | null {
   return `:root{${parts.join(";")}}`;
 }
 
+/**
+ * A brand revision's config_json with the template version's theme variable map: what the brand Worker
+ * reads to write the brand's colors. Missing, invalid or all-empty maps remove the key.
+ */
+export function withThemeVars(configJson: string, themeVarsJson: string | null): string {
+  const config = JSON.parse(configJson) as Record<string, unknown>;
+  delete config.theme_vars;
+  if (themeVarsJson) {
+    try {
+      const parsed = TemplateThemeVars.safeParse(JSON.parse(themeVarsJson));
+      if (parsed.success && parsed.data.primary.length + parsed.data.primary_dark.length + parsed.data.secondary.length > 0) config.theme_vars = parsed.data;
+    } catch {
+      /* invalid JSON: no vars */
+    }
+  }
+  return JSON.stringify(config);
+}
+
 /** The block appended at the end of <head>: identical bytes for every visitor (AGENTS.md hard rule 3). */
 export function themeStyleTag(css: string): string {
   return `<style id="brand-theme">${css}</style>`;

@@ -1,4 +1,4 @@
-import { TemplateSubmitIssue } from "@anjuna/contracts";
+import { TemplateSubmitIssue, TemplateThemeVars } from "@anjuna/contracts";
 import { ruleDisposition } from "@anjuna/template-cert/policy";
 import type { TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
@@ -38,7 +38,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     if (selected) void api.template(selected).then(setDetail, (e) => setMsg({ kind: "err", text: errorText(e) }));
   }, [selected]);
 
-  async function approve(id: string) {
+  async function approve(id: string, themeVars?: TemplateThemeVars) {
     const target = templates?.find((t) => t.template_version_id === id) ?? (detail?.template.template_version_id === id ? detail.template : null);
     const ok = await confirm({
       title: "อนุมัติเทมเพลต (Approve template)?",
@@ -49,7 +49,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     setMsg(null);
     setBusy(true);
     try {
-      const r = await api.approveTemplate(id);
+      const r = await api.approveTemplate(id, themeVars);
       setMsg({ kind: "ok", text: r.already_sealed ? "อนุมัติไว้แล้ว (Already approved)" : "อนุมัติแล้ว (Approved)" });
       await load();
       setDetail(await api.template(id));
@@ -131,14 +131,14 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
                   <span className="hint">ส่งโดย {t.submitted_by_label ?? "-"} · {t.created_at}</span>
                 </span>
               </button>
-              {me.role === "owner" && status === "awaiting_approval" && <button type="button" className="btn pri" style={{ margin: "0 14px 12px", alignSelf: "start" }} aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => void approve(t.template_version_id)}>อนุมัติ</button>}
+              {me.role === "owner" && status === "awaiting_approval" && !currentDetail && <button type="button" className="btn pri" style={{ margin: "0 14px 12px", alignSelf: "start" }} aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => void approve(t.template_version_id)}>อนุมัติ</button>}
             </article>
           );
         })}
       </div>
       {templates?.length === 0 && <p className="hint">ยังไม่มีเทมเพลต (No templates yet)</p>}
       {templates && templates.length > 0 && visibleTemplates.length === 0 && <p className="hint">ไม่มีเทมเพลตในสถานะนี้</p>}
-      {detail && <TemplateDetail me={me} detail={detail} busy={busy} onApprove={() => void approve(detail.template.template_version_id)} />}
+      {detail && <TemplateDetail me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} />}
     </>
   );
 }
@@ -157,8 +157,31 @@ function Warnings({ issues }: { issues: TemplateSubmitIssue[] }) {
   </div>;
 }
 
-function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: TemplateDetailResponse; busy: boolean; onApprove: () => void }) {
+const THEME_ROLES = [
+  ["primary", "สีหลัก (Primary)"],
+  ["primary_dark", "สีหลักเข้ม (Primary dark)"],
+  ["secondary", "สีรอง (Secondary)"],
+] as const;
+const joinNames = (names: readonly string[] | undefined) => (names ?? []).join(", ");
+
+function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: TemplateDetailResponse; busy: boolean; onApprove: (themeVars: TemplateThemeVars) => void }) {
   const t = detail.template;
+  const [themeText, setThemeText] = useState(() => ({
+    primary: joinNames(t.theme_vars?.primary), primary_dark: joinNames(t.theme_vars?.primary_dark), secondary: joinNames(t.theme_vars?.secondary),
+  }));
+  const [themeError, setThemeError] = useState<string | null>(null);
+  const editable = me.role === "owner" && t.status === "awaiting_approval";
+  const detected = t.theme_vars && t.theme_vars.primary.length + t.theme_vars.primary_dark.length + t.theme_vars.secondary.length > 0 ? t.theme_vars : null;
+  function submitApprove() {
+    const names = (text: string) => text.split(",").map((s) => s.trim()).filter(Boolean);
+    const parsed = TemplateThemeVars.safeParse({ primary: names(themeText.primary), primary_dark: names(themeText.primary_dark), secondary: names(themeText.secondary) });
+    if (!parsed.success) {
+      setThemeError("ชื่อตัวแปรไม่ถูกต้อง ใช้รูปแบบ --ชื่อ คั่นด้วยจุลภาค สูงสุด 8 ชื่อ (Invalid variable name: use --name, comma separated, at most 8)");
+      return;
+    }
+    setThemeError(null);
+    onApprove(parsed.data);
+  }
   const identity = detail.checks.find((c) => c.check_name === "identity_scan");
   const similarity = (identity?.details as { similarity?: { summary?: string } } | null | undefined)?.similarity?.summary ?? null;
   const defaults = t.text_defaults;
@@ -193,8 +216,23 @@ function TemplateDetail({ me, detail, busy, onApprove }: { me: Me; detail: Templ
         <div className="cell"><span className="k" style={{ display: "block" }}>ชื่อหน้า (Page title)</span><b>{defaults?.title ?? "-"}</b></div>
         <div className="cell"><span className="k" style={{ display: "block" }}>คำอธิบาย (Meta description)</span><b>{defaults?.description ?? "-"}</b></div>
       </div>
-      {me.role === "owner" && t.status === "awaiting_approval" && (
-        <button className="btn pri" disabled={busy} onClick={onApprove}>อนุมัติ (Approve)</button>
+      <h3>ตัวแปรสี (Color variables)</h3>
+      {editable ? (
+        <div style={{ display: "grid", gap: 8, marginBlock: 12 }}>
+          {THEME_ROLES.map(([role, label]) => (
+            <label key={role}>{label}
+              <input aria-label={label} placeholder="--brand-color, --accent" value={themeText[role]} onChange={(e) => setThemeText({ ...themeText, [role]: e.target.value })} />
+            </label>
+          ))}
+          {themeError && <p className="note neg" role="alert">{themeError}</p>}
+        </div>
+      ) : detected ? (
+        <div className="ledger" style={{ marginBlock: 12 }}>
+          {THEME_ROLES.map(([role, label]) => <div key={role} className="cell"><span className="k" style={{ display: "block" }}>{label}</span><b>{joinNames(detected[role]) || "-"}</b></div>)}
+        </div>
+      ) : <p className="hint">ไม่พบตัวแปรสี (No color variables found)</p>}
+      {editable && (
+        <button className="btn pri" disabled={busy} onClick={submitApprove}>อนุมัติ (Approve)</button>
       )}
     </section>
   );

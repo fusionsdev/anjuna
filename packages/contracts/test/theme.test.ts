@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BrandProfile, BrandTheme, EMPTY_THEME_VARS, HexColor, TemplateThemeVars, darkenHex, themeCss, themeStyleTag } from "../src/index.js";
+import { BrandProfile, BrandTheme, EMPTY_THEME_VARS, HexColor, TemplateThemeVars, darkenHex, themeCss, themeStyleTag, withThemeVars } from "../src/index.js";
 
 describe("HexColor", () => {
   it("accepts #rrggbb in any case and lowercases", () => {
@@ -73,6 +73,18 @@ describe("BrandTheme and TemplateThemeVars", () => {
     expect(EMPTY_THEME_VARS).toEqual({ primary: [], primary_dark: [], secondary: [] });
     expect(TemplateThemeVars.safeParse(EMPTY_THEME_VARS).success).toBe(true);
     expect(TemplateThemeVars.safeParse({ primary: [], primary_dark: [], secondary: [], extra: [] }).success).toBe(false);
+  });
+});
+
+describe("withThemeVars", () => {
+  const vars = { primary: ["--color-royal"], primary_dark: [], secondary: ["--ink"] };
+  it("withThemeVars sets valid vars and removes invalid or empty ones", () => {
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', JSON.stringify(vars))))
+      .toEqual({ keyword_default: "Quick Loan", theme_vars: vars });
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', null))).toEqual({ keyword_default: "Quick Loan" });
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', JSON.stringify(EMPTY_THEME_VARS)))).toEqual({ keyword_default: "Quick Loan" });
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', '{"primary":["--anjuna-blue"],"primary_dark":[],"secondary":[]}'))).toEqual({ keyword_default: "Quick Loan" });
+    expect(JSON.parse(withThemeVars('{"keyword_default":"Quick Loan","theme_vars":{"primary":["--old"],"primary_dark":[],"secondary":[]}}', "not json"))).toEqual({ keyword_default: "Quick Loan" });
   });
 });
 

@@ -14,7 +14,7 @@ const summary = {
   thumbnail_url: "/api/templates/tv-bolt-1/screenshots/desktop", brands_using: 3,
 };
 const detail = {
-  template: { ...summary, sha256: "a".repeat(64), sealed_by: null, text_defaults: { brand_name: "Harbor", title: "Harbor | Funding", description: "Check options." } },
+  template: { ...summary, sha256: "a".repeat(64), sealed_by: null, text_defaults: { brand_name: "Harbor", title: "Harbor | Funding", description: "Check options." }, theme_vars: null },
   checks: [
     { check_name: "identity_scan", result: "pass", details: { similarity: { summary: "PASS: no sealed templates to compare against yet." } }, created_at: STAMP },
     { check_name: "lint", result: "pass", details: {}, created_at: STAMP },
@@ -202,6 +202,41 @@ describe("Templates screen", () => {
     expect(approveRequests()).toHaveLength(0);
     fireEvent.click(within(dialog).getByRole("button", { name: "อนุมัติ (Approve)" }));
     await waitFor(() => expect(approveRequests()).toHaveLength(1));
+  });
+
+  it("hides the card Approve while that version's detail is open", async () => {
+    render(<TemplatesScreen me={owner} />);
+    expect(await screen.findByRole("button", { name: "อนุมัติ Bolt Harbor v1" })).toBeTruthy();
+    fireEvent.click(screen.getByText("Bolt Harbor"));
+    await screen.findByText("Harbor | Funding");
+    expect(screen.queryByRole("button", { name: "อนุมัติ Bolt Harbor v1" })).toBeNull();
+    expect(screen.getByRole("button", { name: "อนุมัติ (Approve)" })).toBeTruthy();
+  });
+
+  it("screen shows the detected map", async () => {
+    const themeVars = { primary: ["--brand", "--accent"], primary_dark: ["--brand-dark"], secondary: [] };
+    routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, template: { ...detail.template, theme_vars: themeVars } }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    const primary = await screen.findByLabelText("สีหลัก (Primary)") as HTMLInputElement;
+    expect(primary.value).toBe("--brand, --accent");
+    expect((screen.getByLabelText("สีหลักเข้ม (Primary dark)") as HTMLInputElement).value).toBe("--brand-dark");
+    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).value).toBe("");
+    fireEvent.change(primary, { target: { value: "--brand, --hero" } });
+    fireEvent.click(screen.getByRole("button", { name: "อนุมัติ (Approve)" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "อนุมัติ (Approve)" }));
+    expect(await screen.findByText("อนุมัติแล้ว (Approved)")).toBeTruthy();
+    const post = requests.find((r) => r.method === "POST" && r.path === "/api/templates/tv-bolt-1/approve");
+    expect(post?.body).toEqual({ theme_vars: { primary: ["--brand", "--hero"], primary_dark: ["--brand-dark"], secondary: [] } });
+  });
+
+  it("blocks Approve on an invalid variable name", async () => {
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    fireEvent.change(await screen.findByLabelText("สีรอง (Secondary)"), { target: { value: "color: red" } });
+    fireEvent.click(screen.getByRole("button", { name: "อนุมัติ (Approve)" }));
+    expect(await screen.findByText(/ชื่อตัวแปรไม่ถูกต้อง/)).toBeTruthy();
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
   });
 
   it("opens the version named by the selected id", async () => {

@@ -63,7 +63,7 @@ The index page and the 4 legal pages (`/privacy`, `/terms`, `/disclosures`, `/do
 Input: every `.css` file in the dist zip plus `<style>` elements in `index.html`.
 
 1. Candidates: custom properties declared with a 3 or 6 digit hex value. Names that contain `gray`, `grey`, `slate`, `zinc`, `neutral`, `stone`, `white` or `black` are dropped.
-2. Primary: the candidate with the most `var(--name)` uses inside `background` or `background-color` declarations. Ties go to the first declared. No use means no primary.
+2. Primary: the candidate with the most `var(--name)` uses inside `background` or `background-color` declarations, among candidates whose WCAG contrast ratio against `#ffffff` is at least 3 (they must carry white button text). Ties go to the first declared. No use means no primary.
 3. Primary dark: a declared candidate named `<primary>-dark`, else `<primary>-hover`. None means an empty list.
 4. Secondary: among the rest, the candidate with the most `var(--name)` uses inside `color` declarations. None means an empty list.
 5. The result is a `TemplateThemeVars` with one name or none per role. The admin can add names on Approve.
@@ -79,7 +79,7 @@ Fixture: demo14's CSS. Expected: `primary: ["--color-royal"]`, `primary_dark: ["
 
 ## 5. Rollout
 
-Migrations ship as files only: core `packages/leads-db/migrations/0016_brand_theme.sql` and factory `packages/factory-db/migrations/0010_template_theme_vars.sql` (next free numbers on main 8d63efb). No deploy and no remote D1 in this lane. The owner deploys once after Spec 7: migrations, core, anjuna-web, then brand-runtime.
+Migrations ship as files only: core `packages/leads-db/migrations/0016_brand_theme.sql` and factory `packages/factory-db/migrations/0010_template_theme_vars.sql` (next free numbers on main 8d63efb). No deploy and no remote D1 in this lane. The owner deploys once after Spec 7: migrations, core, anjuna-web, then brand-runtime. Versions sealed before migration 0010 keep `theme_vars_json` NULL (sealed rows are immutable), so an existing brand gets colors only after a new template version is imported, sealed and applied by redeploy or upgrade-all.
 
 ## 6. PRs
 

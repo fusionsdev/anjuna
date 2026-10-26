@@ -12,9 +12,10 @@ import { runChecks } from "@anjuna/template-cert";
 import type { Source } from "@anjuna/template-cert";
 import { ruleDisposition } from "@anjuna/template-cert/policy";
 import { readStoredWarnings, storedIssues, uniqueIssues } from "./warnings.js";
-import type { TemplateSubmitIssue, TemplateTextDefaults } from "@anjuna/contracts";
+import type { TemplateSubmitIssue, TemplateTextDefaults, TemplateThemeVars } from "@anjuna/contracts";
 import { readZip, type FileMap } from "./archive.js";
 import { sha256Hex } from "./auth.js";
+import { extractThemeVars } from "./theme-vars.js";
 import { computeFingerprint } from "./fingerprint.js";
 import { otherBrands, similarityCheck } from "./tools.js";
 import type { Env } from "./env.js";
@@ -79,12 +80,25 @@ export async function importTemplateVersion(
     submitted_by?: { key_id: string | null; label: string } | null;
     /** Builder submit: brand name, title and description extracted from index.html. */
     text_defaults?: TemplateTextDefaults | null;
+    /** Builder submit: custom properties detected as the primary, primary dark and secondary colors. */
+    theme_vars?: TemplateThemeVars | null;
   },
 ): Promise<ImportResult> {
   // Validate before any D1 or R2 side effects, using the same limits as certification.
-  readZip(zipBytes);
+  const files = readZip(zipBytes);
   const sha256 = await sha256Hex(zipBytes);
   const now = iso();
+
+  // Spec 2.3: every imported version stores its detected map; a caller that passes
+  // an explicit null (or whose zip cannot be read) still gets NULL.
+  let theme_vars: TemplateThemeVars | null = params.theme_vars ?? null;
+  if (params.theme_vars === undefined) {
+    try {
+      theme_vars = extractThemeVars(files);
+    } catch {
+      theme_vars = null;
+    }
+  }
 
   // Ensure the parent template row exists.
   const parent = db
@@ -111,12 +125,13 @@ export async function importTemplateVersion(
     .prepare(
       `INSERT INTO template_versions
          (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at,
-          text_defaults_json, submitted_by_key_id, submitted_by_label)
-       VALUES (?1, ?2, ?3, ?4, ?5, 'draft', ?6, ?7, ?8, ?9, ?10)`,
+          text_defaults_json, submitted_by_key_id, submitted_by_label, theme_vars_json)
+       VALUES (?1, ?2, ?3, ?4, ?5, 'draft', ?6, ?7, ?8, ?9, ?10, ?11)`,
     )
     .bind(template_version_id, params.template_id, version, sha256, r2_key, params.created_by, now,
       params.text_defaults ? JSON.stringify(params.text_defaults) : null,
-      params.submitted_by?.key_id ?? null, params.submitted_by?.label ?? null),
+      params.submitted_by?.key_id ?? null, params.submitted_by?.label ?? null,
+      theme_vars ? JSON.stringify(theme_vars) : null),
     audit(db, "template.import", template_version_id, params.created_by, "system", null, { status: "draft", sha256, r2_key }, now),
   ]);
 

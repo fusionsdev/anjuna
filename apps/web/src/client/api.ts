@@ -1,4 +1,4 @@
-import { TrafficBreakdownResponse, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
+import { TrafficBreakdownResponse, type TemplateThemeVars, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
@@ -152,7 +152,7 @@ export const api = {
   revokeBuilderKey: (id: string) => request<{ key: unknown }>("POST", `/api/builder-keys/${encodeURIComponent(id)}/revoke`, {}).then((body) => BuilderKeySummary.parse(body.key)),
   templates: () => request<unknown>("GET", "/api/templates").then((body) => TemplateListResponse.parse(body)),
   template: (id: string) => request<unknown>("GET", `/api/templates/${encodeURIComponent(id)}`).then((body) => TemplateDetailResponse.parse(body)),
-  approveTemplate: (id: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, {}).then((body) => TemplateApproveResponse.parse(body)),
+  approveTemplate: (id: string, themeVars?: TemplateThemeVars) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, themeVars ? { theme_vars: themeVars } : {}).then((body) => TemplateApproveResponse.parse(body)),
   importTemplate: (body: TemplateImportRequest) => request<unknown>("POST", "/api/templates/import", body).then((result) => TemplateSubmitResult.parse(result)),
   importTemplateZip: (fields: TemplateZipImportRequest, file: File) => {
     const body = new FormData();

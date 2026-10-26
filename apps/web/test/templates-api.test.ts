@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { TemplateDetailResponse, TemplateListResponse } from "@anjuna/contracts";
-import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
+import worker from "../src/server/index";
+import { ORIGIN, call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 const NOW = "2026-10-17T00:00:00.000Z";
 const SHOT = "screenshots/tv-bolt-1/r/screenshot_desktop.png";
@@ -18,7 +19,7 @@ beforeEach(async () => {
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id, name, framework, created_by, created_at) VALUES ('tpl-bolt', 'Bolt Harbor', 'react_spa', 'bk_1', ?1)").bind(NOW),
     env.FACTORY.prepare(`INSERT OR IGNORE INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at, text_defaults_json, submitted_by_key_id, submitted_by_label)
       VALUES ('tv-bolt-1', 'tpl-bolt', 1, ?1, 'templates/tpl-bolt/a.zip', 'certified', 'bk_1', ?2, ?3, 'bk_1', 'Somchai (bolt.new)')`).bind("a".repeat(64), NOW, JSON.stringify(DEFAULTS)),
-    env.FACTORY.prepare(`INSERT INTO certifications (template_version_id, check_name, result, details_json, artifact_r2_key, created_at)
+    env.FACTORY.prepare("UPDATE template_versions SET theme_vars_json = NULL WHERE template_version_id = 'tv-bolt-1'"),    env.FACTORY.prepare(`INSERT INTO certifications (template_version_id, check_name, result, details_json, artifact_r2_key, created_at)
       SELECT * FROM (VALUES
         ('tv-bolt-1', 'lint', 'pass', '{}', NULL, ?1),
         ('tv-bolt-1', 'identity_scan', 'pass', '{"similarity":{"summary":"PASS: no sealed templates to compare against yet."}}', NULL, ?1),
@@ -28,6 +29,9 @@ beforeEach(async () => {
   ]);
   await env.ARTIFACTS.put(SHOT, new Uint8Array([137, 80, 78, 71]), { httpMetadata: { contentType: "image/png" } });
 });
+
+// audit_log is append-only, so tests compare counts before and after instead of clearing it.
+const themeAuditCount = async () => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-bolt-1'").first<{ n: number }>())!.n;
 
 const me = async (cookie: string) => ((await (await call("/api/me", { cookie })).json()) as { user: { id: string } }).user.id;
 
@@ -164,6 +168,92 @@ describe("templates API", () => {
     expect(dispatched[0]).toEqual({ url: "https://factory/seal-template", template_version_id: "tv-bolt-1", sealed_by: await me(owner), sealed_role: "owner" });
     const again = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {}, env: testEnv });
     expect(await again.json()).toMatchObject({ ok: true, already_sealed: true });
+  });
+
+  it("approve saves corrected theme vars", async () => {
+    const dispatched: unknown[] = [];
+    const FACTORY_WORKER = { fetch: async (req: Request) => {
+      const body = await req.json() as Record<string, string>;
+      dispatched.push(body);
+      return Response.json({ ok: true, template_version_id: body.template_version_id, sealed_by: body.sealed_by, sealed_at: NOW, already_sealed: false });
+    } } as unknown as Fetcher;
+    const themeVars = { primary: ["--brand", "--accent"], primary_dark: ["--brand-dark"], secondary: [] };
+    const approved = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: { theme_vars: themeVars }, env: makeEnv({ FACTORY_WORKER }) });
+    expect(approved.status).toBe(200);
+    expect(dispatched).toHaveLength(1);
+    const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string }>();
+    expect(JSON.parse(row!.theme_vars_json)).toEqual(themeVars);
+    const detail = TemplateDetailResponse.parse(await (await call("/api/templates/tv-bolt-1", { cookie: owner })).json());
+    expect(detail.template.theme_vars).toEqual(themeVars);
+  });
+
+  it("approve with {} keeps the detected map", async () => {
+    const detected = { primary: ["--brand"], primary_dark: ["--brand-dark"], secondary: [] };
+    await env.FACTORY.prepare("UPDATE template_versions SET theme_vars_json = ?1 WHERE template_version_id = 'tv-bolt-1'").bind(JSON.stringify(detected)).run();
+    const FACTORY_WORKER = { fetch: async (req: Request) => {
+      const body = await req.json() as Record<string, string>;
+      return Response.json({ ok: true, template_version_id: body.template_version_id, sealed_by: body.sealed_by, sealed_at: NOW, already_sealed: false });
+    } } as unknown as Fetcher;
+    const auditBefore = await themeAuditCount();
+    const approved = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER }) });
+    expect(approved.status).toBe(200);
+    const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string }>();
+    expect(JSON.parse(row!.theme_vars_json)).toEqual(detected);
+    expect(await themeAuditCount()).toBe(auditBefore);
+  });
+
+  it("approve does not store a map on a version that is not certified", async () => {
+    await env.FACTORY.prepare("UPDATE template_versions SET status = 'rejected' WHERE template_version_id = 'tv-bolt-1'").run();
+    try {
+      const FACTORY_WORKER = { fetch: async () => Response.json({ ok: false, error: "not_certified", message: "The version is rejected." }, { status: 409 }) } as unknown as Fetcher;
+      const themeVars = { primary: ["--brand"], primary_dark: [], secondary: [] };
+      const auditBefore = await themeAuditCount();
+      const refused = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: { theme_vars: themeVars }, env: makeEnv({ FACTORY_WORKER }) });
+      expect(refused.status).toBe(409);
+      const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string | null }>();
+      expect(row!.theme_vars_json).toBeNull();
+      expect(await themeAuditCount()).toBe(auditBefore);
+    } finally {
+      await env.FACTORY.prepare("UPDATE template_versions SET status = 'certified' WHERE template_version_id = 'tv-bolt-1'").run();
+    }
+  });
+
+  it("approve audits a changed theme map with before and after", async () => {
+    const before = { primary: ["--old"], primary_dark: [], secondary: [] };
+    const after = { primary: ["--brand"], primary_dark: [], secondary: [] };
+    await env.FACTORY.prepare("UPDATE template_versions SET theme_vars_json = ?1 WHERE template_version_id = 'tv-bolt-1'").bind(JSON.stringify(before)).run();
+    const FACTORY_WORKER = { fetch: async (req: Request) => {
+      const body = await req.json() as Record<string, string>;
+      return Response.json({ ok: true, template_version_id: body.template_version_id, sealed_by: body.sealed_by, sealed_at: NOW, already_sealed: false });
+    } } as unknown as Fetcher;
+    const auditBefore = await themeAuditCount();
+    await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: { theme_vars: after }, env: makeEnv({ FACTORY_WORKER }) });
+    expect(await themeAuditCount()).toBe(auditBefore + 1);
+    const audit = await env.FACTORY.prepare("SELECT before_json, after_json FROM audit_log WHERE action = 'template.theme_vars' AND entity_id = 'tv-bolt-1' ORDER BY id DESC LIMIT 1").first<{ before_json: string; after_json: string }>();
+    expect([JSON.parse(audit!.before_json), JSON.parse(audit!.after_json)]).toEqual([before, after]);
+  });
+
+  it("approve rejects an invalid variable name", async () => {
+    const dispatched: unknown[] = [];
+    const FACTORY_WORKER = { fetch: async (req: Request) => { dispatched.push(await req.json()); return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const bad = { primary: ["--ok", "color: red"], primary_dark: [], secondary: [] };
+    const refused = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: { theme_vars: bad }, env: makeEnv({ FACTORY_WORKER }) });
+    expect([refused.status, await refused.json()]).toEqual([422, { error: "invalid_theme_vars" }]);
+    expect(dispatched).toHaveLength(0);
+    const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string | null }>();
+    expect(row!.theme_vars_json).toBeNull();
+  });
+
+  it("approve rejects a malformed JSON body", async () => {
+    const dispatched: unknown[] = [];
+    const FACTORY_WORKER = { fetch: async (req: Request) => { dispatched.push(await req.json()); return Response.json({ ok: true }); } } as unknown as Fetcher;
+    const refused = await worker.fetch(new Request(`${ORIGIN}/api/templates/tv-bolt-1/approve`, {
+      method: "POST", headers: { cookie: owner, origin: ORIGIN, "content-type": "application/json" }, body: "{not json",
+    }), makeEnv({ FACTORY_WORKER }));
+    expect([refused.status, await refused.json()]).toEqual([400, { error: "invalid_json" }]);
+    expect(dispatched).toHaveLength(0);
+    const row = await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions WHERE template_version_id = 'tv-bolt-1'").first<{ theme_vars_json: string | null }>();
+    expect(row!.theme_vars_json).toBeNull();
   });
 
   it("passes a factory refusal through and reports a missing binding", async () => {

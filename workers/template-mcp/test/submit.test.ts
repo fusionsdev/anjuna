@@ -78,6 +78,23 @@ describe("submitTemplate", () => {
     expect(rows[0]).toMatchObject({ status: "certified", submitted_by_key_id: "bk_other" });
   });
 
+  const themed = () => withFile(goodSite(), "assets/site.css", ":root{--brand:#0b5fff}.btn{background:var(--brand)}");
+  const themeVars = async () =>
+    (await env.FACTORY.prepare("SELECT theme_vars_json FROM template_versions").first<{ theme_vars_json: string | null }>())!.theme_vars_json;
+
+  it("submit stores detected theme vars", async () => {
+    await submitTemplate(browserEnv, request(themed()));
+    expect(JSON.parse((await themeVars())!)).toEqual({ primary: ["--brand"], primary_dark: [], secondary: [] });
+  });
+
+  it("resubmit of a rejected version refreshes theme vars", async () => {
+    const first = await submitTemplate(browserEnv, request(themed()));
+    await env.FACTORY.prepare("UPDATE template_versions SET status = 'rejected', theme_vars_json = NULL WHERE template_version_id = ?1").bind(first.template_version_id).run();
+    const again = await submitTemplate(browserEnv, request(themed()));
+    expect(again).toMatchObject({ status: "awaiting_approval", template_version_id: first.template_version_id });
+    expect(JSON.parse((await themeVars())!)).toEqual({ primary: ["--brand"], primary_dark: [], secondary: [] });
+  });
+
   it("rejects contract failures with rule, file, message and fix, and stores nothing", async () => {
     const before = (await env.ARTIFACTS.list()).objects.map((o) => o.key);
     const result = await submitTemplate(browserEnv, request(withIndex(goodSite(), (h) => h.replace("<span data-kw>", "<span>"))));
