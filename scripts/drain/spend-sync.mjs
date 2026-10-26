@@ -9,8 +9,11 @@
  * SPEND_BREAKDOWN = hour (default, one row per day and hour) or day (one whole-day row per day).
  *
  *   1. GET ${FORM_BASE_URL}/api/conversions/routing: brand_id -> { account, project }.
- *   2. Per brand: adkit manage google results list --account <account> --level account
- *      --breakdown <hour|day> --json [--project <project>].
+ *   2. Per brand and per date (yesterday and today, UTC; AdKit 1.13.54 results has no list or
+ *      --level): adkit manage google results --account <account> --breakdown <hour|day>
+ *      --from <date> --to <date> --json [--project <project>]. One date per call, because an hour
+ *      breakdown over several days would sum by hour of day. Hour rows carry no date, so the
+ *      call's date is stamped on them.
  *   3. Map the output to { brand_id, date, hour, cost, clicks, impressions } rows (cost in USD).
  *   4. POST them to ${FORM_BASE_URL}/api/spend/ingest in chunks; core upserts, so re-sending a
  *      day replaces its values and every run can resend the whole window AdKit returns.
@@ -27,13 +30,20 @@ const exec = promisify(execFile);
 const CHUNK = 1000;
 const DATE = /^\d{4}-\d{2}-\d{2}/;
 
-/** The adkit argv for one brand's account-level results. */
-export function adkitArgsFor(route, breakdown, fallbackProject) {
+/** The dates synced each run: yesterday and today in UTC (no account timezone rule exists). */
+export function syncDates(now = new Date()) {
+  const day = (d) => d.toISOString().slice(0, 10);
+  return [day(new Date(now.getTime() - 86_400_000)), day(now)];
+}
+
+/** The adkit argv for one brand's account-level results on one date (AdKit CLI 1.13.54). */
+export function adkitArgsFor(route, breakdown, fallbackProject, date) {
   const args = [
-    "manage", "google", "results", "list",
+    "manage", "google", "results",
     "--account", route.account,
-    "--level", "account",
     "--breakdown", breakdown,
+    "--from", date,
+    "--to", date,
     "--json",
   ];
   const project = route.project || fallbackProject;
@@ -76,15 +86,16 @@ const pick = (sources, keys) => {
  * Map adkit results output to ingest rows for one brand. Reads date/hour from the row or its
  * `segments`, cost from `cost` (USD) or `costMicros` / `cost_micros` (micros), clicks and
  * impressions from the row or its `metrics`. Rows sharing a date and hour are summed. Returns the
- * rows plus how many input rows were skipped for a missing date, hour or cost.
+ * rows plus how many input rows were skipped for a missing date, hour or cost. `defaultDate`
+ * (YYYY-MM-DD) stamps rows that carry no date, as hour-breakdown rows do.
  */
-export function spendRowsFromAdkit(out, brandId, breakdown) {
+export function spendRowsFromAdkit(out, brandId, breakdown, defaultDate) {
   const merged = new Map();
   let skipped = 0;
   for (const item of resultRows(out)) {
     const sources = [item, item?.segments, item?.metrics];
     const rawDate = pick(sources, ["date", "day"]);
-    const date = typeof rawDate === "string" && DATE.test(rawDate) ? rawDate.slice(0, 10) : null;
+    const date = typeof rawDate === "string" && DATE.test(rawDate) ? rawDate.slice(0, 10) : defaultDate && DATE.test(defaultDate) ? defaultDate.slice(0, 10) : null;
     const rawHour = breakdown === "hour" ? num(pick(sources, ["hour", "hourOfDay", "hour_of_day"])) : null;
     const hour = rawHour === null ? null : Number.isInteger(rawHour) && rawHour >= 0 && rawHour <= 23 ? rawHour : undefined;
     const usd = num(pick(sources, ["cost", "spend"]));
@@ -119,8 +130,9 @@ async function runAdkitCli(args) {
  */
 export async function syncSpend({
   baseUrl, token, breakdown = "hour", fallbackProject, dryRun = false,
-  runAdkit = runAdkitCli, fetchImpl = fetch, log = console.log, error = console.error,
+  runAdkit = runAdkitCli, fetchImpl = fetch, log = console.log, error = console.error, now = new Date(),
 }) {
+  const dates = syncDates(now);
   const origin = baseUrl.replace(/\/+$/, "");
   const headers = { Authorization: `Bearer ${token}` };
   const res = await fetchImpl(`${origin}/api/conversions/routing`, { headers, signal: AbortSignal.timeout(30_000) });
@@ -139,12 +151,18 @@ export async function syncSpend({
     }
     accounts.set(route.account, brandId);
     try {
-      const out = parseAdkitJson(await runAdkit(adkitArgsFor(route, breakdown, fallbackProject)));
-      if (out && !Array.isArray(out) && out.error) throw new Error(String(out.error).slice(0, 200));
-      const mapped = spendRowsFromAdkit(out, brandId, breakdown);
-      log(`spend-sync: ${brandId} rows=${mapped.rows.length} skipped=${mapped.skipped}`);
-      if (dryRun) for (const row of mapped.rows) log(JSON.stringify(row));
-      rows.push(...mapped.rows);
+      const brandRows = [];
+      let skipped = 0;
+      for (const date of dates) {
+        const out = parseAdkitJson(await runAdkit(adkitArgsFor(route, breakdown, fallbackProject, date)));
+        if (out && !Array.isArray(out) && out.error) throw new Error(`${date}: ${String(out.error).slice(0, 200)}`);
+        const mapped = spendRowsFromAdkit(out, brandId, breakdown, date);
+        brandRows.push(...mapped.rows);
+        skipped += mapped.skipped;
+      }
+      log(`spend-sync: ${brandId} rows=${brandRows.length} skipped=${skipped}`);
+      if (dryRun) for (const row of brandRows) log(JSON.stringify(row));
+      rows.push(...brandRows);
     } catch (e) {
       error(`spend-sync: ${brandId} adkit failed: ${e?.message || e}`);
       failures++;
