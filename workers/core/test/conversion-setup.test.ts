@@ -1,5 +1,8 @@
+import { timingSafeEqual } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type AdminRequestContext } from "@anjuna/contracts";
+import { handleSetupResult, type ResultHooks } from "../src/conversion-setup.js";
+import type { Env } from "../src/env.js";
 import { createHarness, DRAIN_TOKEN, fixtureText, type Harness } from "./helpers.js";
 
 const owner: AdminRequestContext = { actor_id: "usr_owner_01", actor_role: "owner", request_id: "req_setup_owner" };
@@ -11,7 +14,12 @@ const ACCOUNT = "4811219623";
 const OTHER_ACCOUNT = "1234567890";
 
 let h: Harness;
-beforeAll(async () => { h = await createHarness(); });
+beforeAll(async () => {
+  h = await createHarness();
+  // Only Workers has subtle.timingSafeEqual; the in-process handler calls in this file run under Node.
+  const subtle = crypto.subtle as unknown as { timingSafeEqual?: (a: Uint8Array, b: Uint8Array) => boolean };
+  subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
+});
 // h.reset() would clear audit_log, which is append-only once written. Only the LEADS tables used here are
 // cleared, and audit assertions read the rows added after this test started.
 let auditBase = 0;
@@ -159,6 +167,20 @@ describe("POST /api/conversions/setup/claim", () => {
     expect(await setupRow("brand-a")).toMatchObject({ name: NAME_A, attempts: 2, status: "claimed" });
   });
 
+  it("claim of a created row whose action was cleared keeps the stored name and attempts, and pending offers that name", async () => {
+    await setRoute("brand-a", ACCOUNT);
+    await insertSetup("brand-a", { status: "created", conversion_action_id: "77", name: NAME_A, attempts: 2 });
+    expect(await (await pending()).json()).toEqual({
+      brands: [{ brand_id: "brand-a", account: ACCOUNT, project: null, name: NAME_A }],
+    });
+    const response = await claim("brand-a", NAME_B);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ name: NAME_A, account: ACCOUNT });
+    expect(await setupRow("brand-a")).toMatchObject({
+      status: "claimed", name: NAME_A, attempts: 2, conversion_action_id: null, last_error: null,
+    });
+  });
+
   it("claim of a claimed row at 29 minutes answers 409 busy", async () => {
     await setRoute("brand-a", ACCOUNT);
     await insertSetup("brand-a", { status: "claimed", claimed_at: minutesAgo(29) });
@@ -242,11 +264,98 @@ describe("POST /api/conversions/setup/result", () => {
     expect(await again.json()).toEqual({ status: "created", already: true });
     expect(await audit()).toHaveLength(1);
     expect(await brandRow("brand-a")).toEqual(stamp);
-    // A repeat after the owner cleared the action must not write it back.
+    // A repeat after the owner cleared the action must not write it back, and is no longer a success.
     await h.db.prepare("UPDATE brand_runtime SET google_conversion_action = NULL WHERE brand_id = 'brand-a'").run();
-    expect(await (await result(body)).json()).toEqual({ status: "created", already: true });
+    const cleared = await result(body);
+    expect(cleared.status).toBe(409);
+    expect(await cleared.json()).toEqual({ status: "stale" });
     expect((await brandRow("brand-a"))!.google_conversion_action).toBeNull();
     expect(await audit()).toHaveLength(1);
+  });
+
+  it("repeating a stale id result answers 409 stale again", async () => {
+    const claimId = await claimed();
+    await setRoute("brand-a", OTHER_ACCOUNT);
+    const body = { brand_id: "brand-a", claim_id: claimId, conversion_action_id: "7754587837" };
+    expect((await result(body)).status).toBe(409);
+    expect(await setupRow("brand-a")).toMatchObject({ status: "created", conversion_action_id: "7754587837" });
+    const again = await result(body);
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ status: "stale" });
+    expect((await brandRow("brand-a"))!.google_conversion_action).toBeNull();
+    expect(await audit()).toEqual([]);
+  });
+
+  // The handler runs in the test process against the Miniflare D1 bindings so a hook can act inside the race window.
+  const callResult = (body: Record<string, unknown>, hooks: ResultHooks) =>
+    handleSetupResult(
+      new Request("https://core.test/api/conversions/setup/result", {
+        method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }),
+      { LEADS: h.db, FACTORY: h.factory, DRAIN_TOKEN } as unknown as Env,
+      hooks,
+    );
+
+  it("id result retries when the brand updated_at changed between read and write", async () => {
+    const claimId = await claimed();
+    let panelSaves = 0;
+    const response = await callResult(
+      { brand_id: "brand-a", claim_id: claimId, conversion_action_id: "7754587837" },
+      {
+        beforeBatch: async () => {
+          // A panel save lands after the handler read updated_at, once. The retry must see the new value.
+          if (panelSaves++ > 0) return;
+          await h.db.prepare("UPDATE brand_runtime SET adkit_project = 'proj_x', updated_at = ?1 WHERE brand_id = 'brand-a'")
+            .bind(hoursFromNow(1)).run();
+        },
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "created" });
+    expect(panelSaves).toBe(2);
+    const brand = (await brandRow("brand-a"))!;
+    expect(brand.google_conversion_action).toBe("7754587837");
+    // The write moves forward from the panel's value, never back or equal.
+    expect(Date.parse(brand.updated_at)).toBeGreaterThan(Date.parse(hoursFromNow(0)) + 3_000_000);
+    expect(await setupRow("brand-a")).toMatchObject({ status: "created", conversion_action_id: "7754587837" });
+    expect(await audit()).toHaveLength(1);
+  });
+
+  it("id result that loses the version race 3 times answers 409 stale and leaves the row claimed", async () => {
+    const claimId = await claimed();
+    let saves = 0;
+    const response = await callResult(
+      { brand_id: "brand-a", claim_id: claimId, conversion_action_id: "7754587837" },
+      {
+        beforeBatch: async () => {
+          await h.db.prepare("UPDATE brand_runtime SET updated_at = ?1 WHERE brand_id = 'brand-a'")
+            .bind(hoursFromNow(++saves)).run();
+        },
+      },
+    );
+    expect(response.status).toBe(409);
+    expect(saves).toBe(3);
+    expect((await brandRow("brand-a"))!.google_conversion_action).toBeNull();
+    expect(await setupRow("brand-a")).toMatchObject({ status: "claimed", conversion_action_id: null });
+    expect(await audit()).toEqual([]);
+  });
+
+  it("created audit row keeps the recorded claim when a new claim lands before the audit", async () => {
+    const claimId = await claimed();
+    const response = await callResult(
+      { brand_id: "brand-a", claim_id: claimId, conversion_action_id: "7754587837" },
+      {
+        afterBatch: async () => {
+          await setRoute("brand-a", OTHER_ACCOUNT);
+          expect((await claim("brand-a", NAME_B)).status).toBe(200);
+        },
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await setupRow("brand-a")).toMatchObject({ status: "claimed", account: OTHER_ACCOUNT, name: NAME_B });
+    const rows = await audit();
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.after_json as string)).toEqual({ google_conversion_action: "7754587837", name: NAME_A, account: ACCOUNT });
   });
 
   it("result with a wrong claim_id answers 409 stale and writes nothing", async () => {

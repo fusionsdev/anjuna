@@ -165,8 +165,16 @@ async function writeDrainAudit(
   ).bind(action, brandId, before === null ? null : JSON.stringify(before), JSON.stringify(after), at).run();
 }
 
+const MAX_VERSION_TRIES = 3;
+
+/** Test seams around the id-result batch; the router passes none. */
+export interface ResultHooks {
+  beforeBatch?: () => Promise<void>;
+  afterBatch?: () => Promise<void>;
+}
+
 /** POST /api/conversions/setup/result: record the created id or the failure of a claim. */
-export async function handleSetupResult(request: Request, env: Env): Promise<Response> {
+export async function handleSetupResult(request: Request, env: Env, hooks: ResultHooks = {}): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
   const body = await readBody(request, ConversionSetupResultRequest);
   if (!body.ok) return body.response;
@@ -178,36 +186,59 @@ export async function handleSetupResult(request: Request, env: Env): Promise<Res
 
   if ("conversion_action_id" in data) {
     const id = data.conversion_action_id;
-    const at = nextTimestamp(brand.updated_at);
-    // The brand write runs first so its guard still sees the claim as 'claimed'. It needs the claim
-    // to match, the action to be NULL and the brand account to equal the claimed account.
-    const [brandWrite, setupWrite] = await env.LEADS.batch([
-      env.LEADS.prepare(`
-        UPDATE brand_runtime SET google_conversion_action = ?3, updated_at = ?4
-        WHERE brand_id = ?1 AND google_conversion_action IS NULL
-          AND google_ads_account = (SELECT account FROM conversion_setup WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed')`)
-        .bind(data.brand_id, data.claim_id, id, at),
-      env.LEADS.prepare(`
-        UPDATE conversion_setup
-        SET status = 'created', conversion_action_id = ?3, last_error = NULL, next_attempt_at = NULL, updated_at = ?4
-        WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed'
-        RETURNING name, account`)
-        .bind(data.brand_id, data.claim_id, id, at),
-    ]);
-    if (!setupWrite!.meta.changes) {
+    let updatedAt = brand.updated_at;
+    for (let attempt = 1; ; attempt++) {
+      const at = nextTimestamp(updatedAt);
+      await hooks.beforeBatch?.();
+      // The brand write runs first so its guard still sees the claim as 'claimed'. It needs the claim
+      // to match, the action to be NULL, the brand account to equal the claimed account and updated_at
+      // to still be the value read above (a panel save in between moves it).
+      // The setup write proceeds when the brand write landed or when the brand truly fails the NULL-action
+      // or account guard (stale, row 'created'). A version race alone leaves the row 'claimed' for a retry.
+      const [brandWrite, setupWrite] = await env.LEADS.batch([
+        env.LEADS.prepare(`
+          UPDATE brand_runtime SET google_conversion_action = ?3, updated_at = ?4
+          WHERE brand_id = ?1 AND google_conversion_action IS NULL AND updated_at = ?5
+            AND google_ads_account = (SELECT account FROM conversion_setup WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed')`)
+          .bind(data.brand_id, data.claim_id, id, at, updatedAt),
+        env.LEADS.prepare(`
+          UPDATE conversion_setup
+          SET status = 'created', conversion_action_id = ?3, last_error = NULL, next_attempt_at = NULL, updated_at = ?4
+          WHERE brand_id = ?1 AND claim_id = ?2 AND status = 'claimed'
+            AND (EXISTS (SELECT 1 FROM brand_runtime WHERE brand_id = ?1 AND google_conversion_action = ?3 AND updated_at = ?4)
+              OR NOT EXISTS (SELECT 1 FROM brand_runtime WHERE brand_id = ?1 AND google_conversion_action IS NULL
+                AND google_ads_account = conversion_setup.account))
+          RETURNING name, account`)
+          .bind(data.brand_id, data.claim_id, id, at),
+      ]);
+      await hooks.afterBatch?.();
+      if (setupWrite!.meta.changes) {
+        // The row is 'created' either way so the name is not reused; a hand-set action or a changed account stays untouched.
+        if (!brandWrite!.meta.changes) return stale();
+        const recorded = setupWrite!.results[0] as { name: string; account: string };
+        await writeDrainAudit(env, "brand.conversion_create", data.brand_id,
+          { google_conversion_action: null },
+          { google_conversion_action: id, name: recorded.name, account: recorded.account }, at);
+        return json({ status: "created" });
+      }
       const row = await loadSetupRow(env, data.brand_id);
+      if (row && row.claim_id === data.claim_id && row.status === "claimed" && attempt < MAX_VERSION_TRIES) {
+        const fresh = await env.LEADS.prepare("SELECT updated_at FROM brand_runtime WHERE brand_id = ?1")
+          .bind(data.brand_id).first<{ updated_at: string }>();
+        if (!fresh) return invalid("Unknown brand_id", {}, 404);
+        updatedAt = fresh.updated_at;
+        continue;
+      }
       if (row && row.claim_id === data.claim_id && row.status === "created" && row.conversion_action_id === id) {
-        return json({ status: "created", already: true });
+        // A repeat is only a success while the brand still holds that id on the claimed account.
+        const current = await env.LEADS.prepare("SELECT google_conversion_action, google_ads_account FROM brand_runtime WHERE brand_id = ?1")
+          .bind(data.brand_id).first<{ google_conversion_action: string | null; google_ads_account: string | null }>();
+        if (current?.google_conversion_action === id && current.google_ads_account === row.account) {
+          return json({ status: "created", already: true });
+        }
       }
       return stale();
     }
-    // The row is 'created' either way so the name is not reused; a hand-set action or a changed account stays untouched.
-    if (!brandWrite!.meta.changes) return stale();
-    const recorded = setupWrite!.results[0] as { name: string; account: string };
-    await writeDrainAudit(env, "brand.conversion_create", data.brand_id,
-      { google_conversion_action: null },
-      { google_conversion_action: id, name: recorded.name, account: recorded.account }, at);
-    return json({ status: "created" });
   }
 
   const row = await loadSetupRow(env, data.brand_id);
