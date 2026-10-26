@@ -29,7 +29,8 @@ const exec = promisify(execFile);
 const NAME_TRIES = 5;
 const ERROR_MAX = 500;
 const ID = /^\d{1,20}$/;
-const DUPLICATE = /duplicate|already[\s_-]?exist/i;
+const NAME = /^cv-[0-9a-f]{16}$/;
+const DUPLICATE =/duplicate|already[\s_-]?exist/i;
 
 /** The conversion name: opaque, never derived from a brand id, name or host. */
 export function generateName(bytes = randomBytes) {
@@ -156,9 +157,10 @@ export async function syncConversions({
       let route = { account: brand.account, project: brand.project };
       let existing = await list(route);
       let name = brand.name || pickUniqueName(existing, generate);
+      if (!NAME.test(String(name))) throw new Error(`invalid conversion name: ${String(name).slice(0, 40)}`);
       if (dryRun) {
         log(existing.has(name)
-          ? `conversion-sync: ${id} plan adopt ${existing.get(name)}`
+          ? `conversion-sync: ${id} plan adopt ${existing.get(name)} name=${name}`
           : `conversion-sync: ${id} plan create name=${name}`);
         continue;
       }
@@ -171,28 +173,41 @@ export async function syncConversions({
       if (!claimRes.ok) throw new Error(`claim: HTTP ${claimRes.status}: ${(await claimRes.text()).slice(0, 200)}`);
       const claim = await claimRes.json();
       name = claim.name;
-      route = { account: claim.account, project: claim.project || brand.project };
+      route = { account: claim.account, project: claim.project };
 
-      let conversionId = existing.get(name);
+      // After a successful claim every path posts exactly one result, so nothing below may escape this try.
+      let conversionId;
       let how = "adopted";
       let failure = "";
-      if (!conversionId) {
-        try {
-          const out = parseAdkitJson(await runAdkit(conversionCreateArgs(route, name, fallbackProject)));
-          if (out && !Array.isArray(out) && out.error) throw new Error(String(out.error));
-          conversionId = createdConversionId(out);
-          how = "created";
-        } catch (e) {
-          failure = errorText(e);
-          if (DUPLICATE.test(failure)) {
-            existing = await list(route);
-            conversionId = existing.get(name);
-            if (conversionId) {
-              how = "adopted";
-              failure = "";
+      try {
+        if (!NAME.test(String(name))) throw new Error(`claimed name is invalid: ${String(name).slice(0, 40)}`);
+        if (claim.account !== brand.account || (claim.project ?? null) !== (brand.project ?? null)) existing = await list(route);
+        conversionId = existing.get(name);
+        if (!conversionId) {
+          try {
+            const out = parseAdkitJson(await runAdkit(conversionCreateArgs(route, name, fallbackProject)));
+            if (out && !Array.isArray(out) && out.error) throw new Error(String(out.error));
+            conversionId = createdConversionId(out);
+            how = "created";
+          } catch (e) {
+            failure = errorText(e);
+            if (DUPLICATE.test(failure)) {
+              try {
+                existing = await list(route);
+                conversionId = existing.get(name);
+                if (conversionId) {
+                  how = "adopted";
+                  failure = "";
+                }
+              } catch (listError) {
+                failure = `${failure.slice(0, 300)}; list: ${errorText(listError)}`.slice(0, ERROR_MAX);
+              }
             }
           }
         }
+      } catch (e) {
+        conversionId = undefined;
+        failure = errorText(e);
       }
 
       const result = await post("/api/conversions/setup/result", conversionId

@@ -88,7 +88,7 @@ describe("scripts/drain/conversion-sync.mjs helpers", () => {
 });
 
 describe("scripts/drain/conversion-sync.mjs job", () => {
-  interface Setup { claimStatus?: number; resultStatus?: number; pending?: unknown[]; claimName?: string }
+  interface Setup { claimStatus?: number; resultStatus?: number; pending?: unknown[]; claimName?: string; claimAccount?: string }
 
   function fakeCore(setup: Setup = {}) {
     const pending = setup.pending ?? [{ brand_id: "brand-a", account: "4811219623", project: "proj_a", name: null }];
@@ -105,7 +105,7 @@ describe("scripts/drain/conversion-sync.mjs job", () => {
         const row = (pending as { brand_id: string; account: string; project: string | null }[]).find((b) => b.brand_id === body.brand_id);
         return Response.json({
           status: "claimed", claim_id: `claim-${body.brand_id}`, name: setup.claimName ?? body.name,
-          account: row?.account, project: row?.project ?? null,
+          account: setup.claimAccount ?? row?.account, project: row?.project ?? null,
         });
       }
       if (path === "/api/conversions/setup/result") {
@@ -249,7 +249,63 @@ describe("scripts/drain/conversion-sync.mjs job", () => {
     expect(core.claims).toEqual([]);
     expect(core.results).toEqual([]);
     expect(logs).toContain(`conversion-sync: brand-a plan create name=${NAME_A}`);
-    expect(logs).toContain("conversion-sync: brand-b plan adopt 7300000002");
+    expect(logs).toContain(`conversion-sync: brand-b plan adopt 7300000002 name=${NAME_STORED}`);
+  });
+
+  it("syncConversions lists the claimed account again when it differs from pending", async () => {
+    const core = fakeCore({
+      pending: [{ brand_id: "brand-a", account: "4811219623", project: null, name: NAME_STORED }],
+      claimAccount: "9999999999",
+    });
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => {
+      calls.push(args);
+      if (isList(args)) return args.includes("4811219623") ? fixture("adkit-conversions-list.txt") : '{"conversions":[]}';
+      return fixture("adkit-conversion-create.txt");
+    };
+    const { promise } = run(core, runAdkit);
+    expect(await promise).toBe(0);
+    expect(calls.map((a) => `${a[3]}:${a[5]}`)).toEqual(["list:4811219623", "list:9999999999", "create:9999999999"]);
+    expect(core.results).toEqual([{ brand_id: "brand-a", claim_id: "claim-brand-a", conversion_action_id: "7300000099" }]);
+  });
+
+  it("syncConversions posts an error result when the duplicate-path list fails", async () => {
+    const core = fakeCore();
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (isList(args)) {
+        lists++;
+        if (lists === 1) return '{"conversions":[]}';
+        throw new Error("list exploded");
+      }
+      throw new Error("Command failed: conversion name already exists");
+    };
+    const { promise } = run(core, runAdkit);
+    expect(await promise).toBe(1);
+    expect(core.results).toHaveLength(1);
+    const posted = core.results[0] as { claim_id: string; error: string };
+    expect(posted.claim_id).toBe("claim-brand-a");
+    expect(posted.error).toContain("already exists");
+    expect(posted.error).toContain("list exploded");
+    expect(posted.error.length).toBeLessThanOrEqual(500);
+  });
+
+  it("syncConversions rejects a malformed name without claiming", async () => {
+    const core = fakeCore({ pending: [{ brand_id: "brand-a", account: "4811219623", project: null, name: "Purchase (legacy)" }] });
+    const { promise, errors } = run(core, async () => '{"conversions":[]}');
+    expect(await promise).toBe(1);
+    expect(core.claims).toEqual([]);
+    expect(core.results).toEqual([]);
+    expect(errors.join("\n")).toContain("invalid conversion name");
+
+    const bad = fakeCore({ claimName: "not-a-name" });
+    const calls: string[][] = [];
+    const second = run(bad, async (args) => { calls.push(args); return '{"conversions":[]}'; });
+    expect(await second.promise).toBe(1);
+    expect(calls.some(isCreate)).toBe(false);
+    expect(bad.results).toHaveLength(1);
+    expect(bad.results[0]).toMatchObject({ claim_id: "claim-brand-a" });
+    expect(bad.results[0]).toHaveProperty("error");
   });
 
   it("no test spawns adkit: the default runner is never reached", async () => {
