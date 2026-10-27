@@ -785,6 +785,21 @@ describe("GET /admin/leads (FUS-376)", () => {
     expect([withTracking.keyword, withTracking.variant]).toEqual(["Fast Cash", "a"]);
   });
 
+  // Production 2026-10-27: one sold lite_v1 lead with state '' made the panel answer 502 on status=sold.
+  it("returns a sold lead whose state is empty, as the lite_v1 form stores it", async () => {
+    // Outside WINDOW and in brand-c, so the other tests in this block see the same rows.
+    await lh.seedLead("lead-0010-nostate", "clk-nostate-0010", "brand-c");
+    await lh.db.prepare("UPDATE leads SET created_at = '2026-11-05T00:00:00.000Z', status = 'soldLead', state = '' WHERE lead_id = 'lead-0010-nostate'").run();
+    await lh.seedConversion("lead-0010-nostate");
+    await lh.db.prepare("INSERT INTO postback_events (lead_id, event_type, payout, created_at) VALUES ('lead-0010-nostate', 'soldLead', 120, '2026-11-05T00:01:00.000Z')").run();
+    for (const context of [owner, employee]) {
+      const page = await leadsAt("/admin/leads?from=2026-11-01&to=2026-11-30&status=sold", context);
+      expect(page.rows).toEqual([expect.objectContaining({
+        lead_id: "lead-0010-nostate", state: "", outcome: "sold", has_conversion: true, postback_count: 1,
+      })]);
+    }
+  });
+
   it("answers 422 on a bad cursor, a reversed window and limit 201", async () => {
     const garbage = await lh.admin(`/admin/leads?${WINDOW}&cursor=abcd`, owner);
     expect(garbage.status).toBe(422);

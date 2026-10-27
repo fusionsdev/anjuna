@@ -614,6 +614,13 @@ describe("leads, export and suppressions (FUS-376)", () => {
     expect(row("listSuppressions").scope).toEqual({ employee: "none", owner: "all" });
   });
 
+  it("a list row accepts state '' (lite_v1 sold lead in production) and refuses one letter", () => {
+    const sold = (fixture(A("leads.list.response.json")) as LeadsResponse).rows[0]!;
+    expect(sold.outcome).toBe("sold");
+    expect(LeadsResponse.safeParse({ rows: [{ ...sold, state: "" }], next_cursor: null }).success).toBe(true);
+    expect(LeadsResponse.safeParse({ rows: [{ ...sold, state: "T" }], next_cursor: null }).success).toBe(false);
+  });
+
   it("authorize() refuses the suppression search to an employee", () => {
     const r = authorize("listSuppressions", "employee");
     expect(r.ok).toBe(false);
