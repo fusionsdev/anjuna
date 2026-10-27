@@ -506,7 +506,8 @@ export const LeadListRow = z.strictObject({
   outcome: LeadOutcome,
   requested_amount: z.number().int().positive(),
   loan_purpose: z.string(),
-  state: z.string().length(2),
+  /** Two letters, or "" when the form posted no state (V1 accepts an empty `state`). */
+  state: z.union([z.string().length(2), z.literal("")]),
   keyword: z.string().max(60).nullable(),
   variant: VariantId.nullable(),
   form_variant: z.string().max(64),
