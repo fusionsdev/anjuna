@@ -35,8 +35,6 @@ export function makeEnv(over: Partial<Env> = {}): Env {
     ARTIFACTS: env.ARTIFACTS,
     CORE: noCore,
     ASSETS: assetsFetcher,
-    ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.com",
-    ACCESS_AUD: "aud-test",
     BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret-0000",
     BETTER_AUTH_URL: ORIGIN,
     MOCK_CORE: "1",

@@ -25,8 +25,6 @@
   ],
   "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "anjuna-artifacts" }],
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "aduplift.cloudflareaccess.com",
-    "ACCESS_AUD": "644bf3613e70f100e38474630d140e3702243de4b9d730eac29262de429120b1",
     "BETTER_AUTH_URL": "https://app.aduplift.ai",
     "MOCK_CORE": "0",
     "DEFAULT_ACCOUNT": "aduplift",

@@ -17,10 +17,6 @@ export interface Env {
   /** Static assets (the SPA). */
   ASSETS: Fetcher;
 
-  /** `<team>.cloudflareaccess.com`. A placeholder in git; set by the owner. */
-  ACCESS_TEAM_DOMAIN: string;
-  /** Application Audience (AUD) tag of the Access application. A placeholder in git. */
-  ACCESS_AUD: string;
   /** Secret: better-auth signing secret (`wrangler secret put BETTER_AUTH_SECRET`). */
   BETTER_AUTH_SECRET: string;
   /** Public origin of the panel, e.g. `https://app.aduplift.ai`. */
@@ -28,7 +24,7 @@ export interface Env {
 
   /** `"1"` serves the admin API from the fixture-backed mock core instead of the CORE binding. */
   MOCK_CORE?: string;
-  /** Dev/test only. `"1"` skips Access JWT verification. Never set in wrangler.jsonc. */
+  /** Dev/test only. `"1"` relaxes better-auth origin and cookie checks on loopback. Never set in wrangler.jsonc. */
   DEV_ACCESS_BYPASS?: string;
   DEFAULT_ACCOUNT?: string;
   DEFAULT_AID?: string;
