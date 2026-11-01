@@ -2,7 +2,7 @@
 
 One Worker (`anjuna-web`, `app.aduplift.ai`) serving a React + Vite SPA (static assets, `run_worker_first`) and the panel API under `/api/*`.
 
-- **Access:** every `/api/*` call needs a valid `Cf-Access-Jwt-Assertion` (`ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`). Unset placeholders reject everything.
+- **Perimeter:** none. The panel has no Cloudflare Access app; better-auth sign-in is the only gate on `/api/*`.
 - **Auth:** better-auth on the `AUTH` D1, email + password, admin plugin (`defaultRole: employee`, `adminRoles: [owner]`). Sign-up is closed.
 - **Roles:** enforced in the Worker with `authorize()` / `ADMIN_ROLE_TABLE` (`@anjuna/contracts`) and `src/server/panel-roles.ts` for panel-only actions. The UI only hides.
 - **Core:** admin API over the `CORE` service binding; `MOCK_CORE=1` swaps in `src/server/mock-core.ts` (built from `contracts/fixtures/admin`).

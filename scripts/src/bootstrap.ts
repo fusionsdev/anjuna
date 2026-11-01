@@ -13,7 +13,7 @@
  * After running:
  *   1. Copy the printed D1 IDs into tenants/<name>.config.ts under the `d1` key.
  *   2. Update workers/core/wrangler.deploy.jsonc and apps/web/wrangler.jsonc with the new IDs.
- *   3. Commit and push — CI will deploy on the next release tag.
+ *   2. Commit and push — CI will deploy on the next release tag.
  */
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -228,8 +228,6 @@ const webDeployConfig = {
   ],
   services: [{ binding: "CORE", service: "anjuna-core", entrypoint: "AdminService" }],
   vars: {
-    ACCESS_TEAM_DOMAIN: `<FILL: ${cfg.name} Access team domain>`,
-    ACCESS_AUD: `<FILL: ${cfg.name} Access AUD tag>`,
     BETTER_AUTH_URL: `https://${cfg.appDomain}`,
     MOCK_CORE: "0",
   },
@@ -250,15 +248,13 @@ console.log(`
 ── Bootstrap complete for "${cfg.name}" ──────────────────────────
 
 Next steps:
-  1. Fill in ACCESS_TEAM_DOMAIN and ACCESS_AUD in:
-       ${webDeployPath}
-  2. Add these wrangler secret(s) for the tenant worker:
+  1. Add these wrangler secret(s) for the tenant worker:
        CLOUDFLARE_API_TOKEN env var already handles deploy auth.
        Set remaining secrets with: bun x wrangler secret put <SECRET_NAME>
          ${Object.values(cfg.secrets).join(", ")}
-  3. Commit ${coreDeployPath} and ${webDeployPath}.
-  4. Create a GitHub Environment named "${cfg.name}" with the secrets above.
-  5. Push a release tag (e.g. v1.0.0) to trigger the CI deploy.
+  2. Commit ${coreDeployPath} and ${webDeployPath}.
+  3. Create a GitHub Environment named "${cfg.name}" with the secrets above.
+  4. Push a release tag (e.g. v1.0.0) to trigger the CI deploy.
 
 D1 IDs (update tenants/${cfg.name}.config.ts and wrangler deploy configs):
   leads:   ${leadsId}

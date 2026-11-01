@@ -39,9 +39,7 @@ describe("wrangler.jsonc", () => {
     expect(wrangler.vars.DEV_ACCESS_BYPASS).toBeUndefined();
     expect(text).not.toMatch(/DEV_ACCESS_BYPASS\s*"/);
     for (const d of wrangler.d1_databases) expect(d.database_id).toMatch(/^<.+>$/);
-    // Access team domain and AUD are not secrets; they must be the real AdUplift values.
-    expect(wrangler.vars.ACCESS_TEAM_DOMAIN).toBe("aduplift.cloudflareaccess.com");
-    expect(wrangler.vars.ACCESS_AUD).toMatch(/^[0-9a-f]{64}$/);
+    expect(wrangler.vars.ACCESS_AUD).toBeUndefined();
   });
 });
 
