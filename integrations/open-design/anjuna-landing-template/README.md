@@ -45,6 +45,6 @@ Pick the plugin in Open Design and fill in:
 
 ## Starter skeleton
 
-`starter/site/` holds a plain HTML and CSS starter site (five pages, one stylesheet, a placeholder logo, no JavaScript) that already passes the template contract. The agent copies it into the project's `site/` when the project has none, then redesigns layout, colors, type, imagery and copy while keeping the structural elements the contract needs. `<!-- REDESIGN: ... -->` comments mark each section to restyle. The plugin manifest lists the files as context assets and previews `starter/site/index.html`. `workers/template-mcp/test/starter-skeleton.test.ts` runs the skeleton through the MCP checker and the submit pipeline, so a change to the skeleton or the contract that breaks one of them fails that test.
+`starter/site/` holds a plain HTML and CSS starter site (six pages, one stylesheet, a placeholder logo, no JavaScript) that already passes the template contract. The agent copies it into the project's `site/` when the project has none, then redesigns layout, colors, type, imagery and copy while keeping the structural elements the contract needs. `<!-- REDESIGN: ... -->` comments mark each section to restyle. The plugin manifest lists the files as context assets and previews `starter/site/index.html`. `workers/template-mcp/test/starter-skeleton.test.ts` runs the skeleton through the MCP checker and the submit pipeline, so a change to the skeleton or the contract that breaks one of them fails that test.
 
 The owner runbook is `docs/runbooks/open-design-templates.md`.

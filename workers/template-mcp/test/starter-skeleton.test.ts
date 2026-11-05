@@ -11,6 +11,7 @@ import privacyHtml from "../../../integrations/open-design/anjuna-landing-templa
 import termsHtml from "../../../integrations/open-design/anjuna-landing-template/starter/site/terms/index.html?raw";
 import doNotSellHtml from "../../../integrations/open-design/anjuna-landing-template/starter/site/do-not-sell/index.html?raw";
 import disclosuresHtml from "../../../integrations/open-design/anjuna-landing-template/starter/site/disclosures/index.html?raw";
+import ratesHtml from "../../../integrations/open-design/anjuna-landing-template/starter/site/rates-and-fees/index.html?raw";
 import siteCss from "../../../integrations/open-design/anjuna-landing-template/starter/site/assets/site.css?raw";
 import logoSvg from "../../../integrations/open-design/anjuna-landing-template/starter/site/assets/logo.svg?raw";
 
@@ -24,6 +25,7 @@ const SOURCES: Record<string, string> = {
   "terms/index.html": termsHtml,
   "do-not-sell/index.html": doNotSellHtml,
   "disclosures/index.html": disclosuresHtml,
+  "rates-and-fees/index.html": ratesHtml,
   "assets/site.css": siteCss,
   "assets/logo.svg": logoSvg,
 };
@@ -34,10 +36,10 @@ const browserEnv = { ...env, BROWSER: {} as Fetcher };
 const builder = { key_id: "bk_test", label: "Starter skeleton" };
 
 describe("starter skeleton site", () => {
-  it("loads all seven files with real content", () => {
+  it("loads all eight files with real content", () => {
     const files = starterSite();
     expect([...files.keys()].sort()).toEqual([
-      "assets/logo.svg", "assets/site.css", "disclosures/index.html", "do-not-sell/index.html", "index.html", "privacy/index.html", "terms/index.html",
+      "assets/logo.svg", "assets/site.css", "disclosures/index.html", "do-not-sell/index.html", "index.html", "privacy/index.html", "rates-and-fees/index.html", "terms/index.html",
     ]);
     for (const [path, bytes] of files) expect(bytes.byteLength, path).toBeGreaterThan(100);
   });
@@ -65,9 +67,9 @@ describe("starter skeleton site", () => {
     }
   });
 
-  it("puts the same footer with the four legal links and the disclosure on every page", () => {
+  it("puts the same footer with the five legal links and the disclosure on every page", () => {
     for (const [path, html] of pages) {
-      for (const href of ["/privacy/", "/terms/", "/do-not-sell/", "/disclosures/"]) expect(html, path).toContain(`<a href="${href}">`);
+      for (const href of ["/privacy/", "/terms/", "/do-not-sell/", "/disclosures/", "/rates-and-fees/"]) expect(html, path).toContain(`<a href="${href}">`);
       expect(html, path).toContain(">Do Not Sell or Share My Personal Information</a>");
       expect(html, path).toContain("<span data-brand>Brand Name</span> is not a lender. Rates and terms vary by lender and state. Not all applicants qualify.");
       expect(html, path).toContain('<a class="brand-link" href="/"><img src="/assets/logo.svg" alt=""><span data-brand>Brand Name</span></a>');
@@ -101,6 +103,14 @@ describe("starter skeleton site", () => {
     expect(disclosuresHtml).toContain("Not all applicants qualify.");
     expect(disclosuresHtml).toContain("Rates and terms vary by lender and state.");
     expect(disclosuresHtml).toContain("is not a lender.");
+  });
+
+  it("ships a rates and fees page with an APR range and a labeled example", () => {
+    expect(ratesHtml.match(/<h1>/g)).toHaveLength(1);
+    expect(ratesHtml).toContain("<h1>Rates and Fees</h1>");
+    expect(ratesHtml).toMatch(/APRs from [\d.]+% to [\d.]+%/);
+    expect(ratesHtml).toContain("Example only. This is not an offer and not a quote.");
+    expect(ratesHtml).toContain("About $200.91");
   });
 });
 

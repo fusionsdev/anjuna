@@ -28,7 +28,8 @@ If the `anjuna-template` MCP server is connected, call `get_template_contract` f
   - `/terms/` (`terms/index.html`): terms of use.
   - `/do-not-sell/` (`do-not-sell/index.html`): Do Not Sell or Share My Personal Information notice.
   - `/disclosures/` (`disclosures/index.html`): not a lender, rates and terms vary, not all applicants qualify.
-- Every page has a footer that links `/privacy/`, `/terms/`, `/do-not-sell/` and `/disclosures/` and shows a short disclosure.
+- Also ship `/rates-and-fees/` (`rates-and-fees/index.html`): APR range, repayment terms, amounts, a representative cost example labeled as an example, and the fees a lender may charge. The starter has it. Replace its figures with the network's real ranges.
+- Every page has a footer that links `/privacy/`, `/terms/`, `/do-not-sell/`, `/disclosures/` and `/rates-and-fees/` and shows a short disclosure.
 - Reserved paths: never create files or folders at `/go`, `/api` or `/_f`.
 - Keyword slot: exactly one `<span data-kw>` on the landing page, inside the `<h1>`, plain text of 1 to 60 characters. `data-kw` appears nowhere else. Example: `<h1><span data-kw>Funding Options</span> | Check Your Options in Minutes</h1>`. The rest of the H1 must read well with any short title-cased phrase in the slot.
 - CTA form: exactly one form on the landing page. It works without JavaScript, has no hidden inputs and only these two named fields:
@@ -78,7 +79,7 @@ Change layout, colors, type, imagery and copy. Keep every structural element:
 
 - the `<span data-kw>` inside the single `<h1>` on `index.html`
 - the CTA form, its two fields (`requested_amount`, `zip`) and the amount options
-- the four footer links, the disclosure line and the footer on every page
+- the five footer links, the disclosure line and the footer on every page
 - the `data-brand` spans, holding only the brand name
 
 Each section carries a `<!-- REDESIGN: ... -->` comment that says what to restyle or rewrite. Remove each comment when its section is done. Start the visual design in the custom properties at the top of `assets/site.css`. Replace "Brand Name" in the title, the `data-brand` spans and the logo with the given template name, and replace the `[Placeholder]` paragraphs on the legal pages with reviewed legal copy or tell the user that the owner still has to supply it.
