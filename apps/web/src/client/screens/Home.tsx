@@ -2,7 +2,8 @@ import { CONVERSION_STALLED_HOURS, spendPeriodRange, type AlertsReportResponse, 
 import { useEffect, useState, type MouseEvent } from "react";
 import { api, type Me } from "../api";
 import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars";
-import { delta, previousRange, spendTotals } from "../home-metrics";
+import { Sparkline } from "../components/Sparkline";
+import { delta, previousRange, spendSeries, spendTotals } from "../home-metrics";
 import { isPlainLeftClick, navigate } from "../router";
 import { conversionsPath } from "./Conversions";
 import "./Home.css";
@@ -163,6 +164,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [funnel, setFunnel] = useState<FunnelTotals | null | undefined>(undefined);
   const [previousFunnel, setPreviousFunnel] = useState<FunnelTotals | null | undefined>(undefined);
   const [spend, setSpend] = useState<{ thb: number; usd: number; clicks: number } | null | undefined>(undefined);
+  const [spendDays, setSpendDays] = useState<number[] | null>(null);
   const [alerts, setAlerts] = useState<AlertsReportResponse | null | undefined>(undefined);
   const [conversions, setConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
   const [daily, setDaily] = useState<DailyCount[] | null | undefined>(undefined);
@@ -176,6 +178,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     setFunnel(undefined);
     setPreviousFunnel(undefined);
     setSpend(owner ? undefined : null);
+    setSpendDays(null);
     setConversions(undefined);
     setDaily(undefined);
     api.conversions({ period }).then((report) => current && setConversions(report), () => current && setConversions(null));
@@ -186,7 +189,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     // The window before it feeds the deltas only. If it fails the deltas show a dash and the values stay.
     api.funnel(previousRange(periodRange(period))).then((report) => current && setPreviousFunnel(sumFunnel(report)), () => current && setPreviousFunnel(null));
     // The spend API answers 403 to an employee, so an employee never asks.
-    if (owner) api.spend(period).then((report) => current && setSpend(spendTotals(report)), () => current && setSpend(null));
+    if (owner) api.spend(period).then((report) => { if (current) { setSpend(spendTotals(report)); setSpendDays(spendSeries(report)); } }, () => current && setSpend(null));
     return () => { current = false; };
   }, [period, owner]);
 
@@ -270,7 +273,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
         <div className="ledger" role="group" aria-label="สรุปตัวเลข">
           {owner ? (
             <>
-              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{thb(spendThb)}</p>{typeof spendUsd === "number" && <p className="hint">{usd(spendUsd)}</p>}</div>
+              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{thb(spendThb)}</p>{typeof spendUsd === "number" && <p className="hint">{usd(spendUsd)}</p>}{spendDays && <Sparkline values={spendDays} label="ค่าโฆษณารายวัน" />}</div>
               <div className="cell"><p className="k">ต้นทุนต่อลีด</p><p className="v">{thb(costPerLead)}</p></div>
               <div className="cell"><p className="k">รายได้</p><p className="v">{usd(revenue)}</p><Delta now={revenue} before={before((f) => f.revenue)} /></div>
               <div className="cell"><p className="k">กำไร/ขาดทุน</p><p className={typeof profit === "number" ? (profit < 0 ? "v neg" : "v pos") : "v"}>{usd(profit)}</p></div>

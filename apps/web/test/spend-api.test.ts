@@ -35,6 +35,32 @@ describe("GET /api/spend (owner only)", () => {
     expect(body.fx).toEqual({ thbPerUsd: 35 });
   });
 
+  it("passes the daily series through in the account currency, without a USD conversion", async () => {
+    const body = PanelSpendReportResponse.parse(await (await call("/api/spend?period=7d", { cookie: owner })).json());
+    expect(body.daily).toEqual(spendFixture.daily);
+    const dates = (body.daily ?? []).map((d) => d.date);
+    expect(dates).toEqual([...dates].sort());
+  });
+
+  it("answers 200 with totals and USD when core is older and sends no daily", async () => {
+    const { daily: _daily, ...older } = spendFixture;
+    const fetch = vi.fn(async () => Response.json(older));
+    const response = await call("/api/spend?period=7d", { cookie: owner, env: makeEnv({ MOCK_CORE: "0", CORE: { fetch } as unknown as Fetcher }) });
+    expect(response.status).toBe(200);
+    const body = PanelSpendReportResponse.parse(await response.json());
+    expect(body.totals).toEqual(spendFixture.totals);
+    expect(body.total_cost_usd).toBe(355.66);
+    expect(body.daily).toBeUndefined();
+  });
+
+  it("accepts the yesterday period and forwards it to core", async () => {
+    const fetch = vi.fn(async () => Response.json({ ...spendFixture, period: "yesterday", from: "2026-10-01", to: "2026-10-01" }));
+    const response = await call("/api/spend?period=yesterday", { cookie: owner, env: makeEnv({ MOCK_CORE: "0", CORE: { fetch } as unknown as Fetcher }) });
+    expect(response.status).toBe(200);
+    expect(PanelSpendReportResponse.parse(await response.json()).period).toBe("yesterday");
+    expect(new URL((fetch.mock.calls[0] as unknown as [Request])[0].url).searchParams.get("period")).toBe("yesterday");
+  });
+
   it("converts with the stored fx_thb_per_usd rate", async () => {
     expect((await call("/api/settings/fx", { cookie: owner, method: "PUT", body: { thbPerUsd: 32 } })).status).toBe(200);
     const body = PanelSpendReportResponse.parse(await (await call("/api/spend?period=7d", { cookie: owner })).json());
@@ -51,7 +77,7 @@ describe("GET /api/spend (owner only)", () => {
     expect(response.status).toBe(403);
     const text = await response.text();
     expect(AdminError.parse(JSON.parse(text))).toMatchObject({ error: "forbidden_role", required_role: "owner" });
-    for (const key of ["cost_usd", "total_cost_usd", "profit", "cost", "fx"]) expect(text).not.toContain(`"${key}`);
+    for (const key of ["cost_usd", "total_cost_usd", "profit", "cost", "fx", "daily"]) expect(text).not.toContain(`"${key}`);
     expect(fetch).not.toHaveBeenCalled();
   });
 

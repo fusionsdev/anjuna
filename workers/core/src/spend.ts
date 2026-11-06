@@ -74,24 +74,40 @@ export async function handleSpendIngest(request: Request, env: Env): Promise<Res
 const cents = (value: number) => Math.round(value * 100) / 100;
 
 /**
- * Per-brand, per-currency totals for the period's UTC days. Totals keep one cost sum per currency. A day that has hourly rows counts only those; a
- * whole-day row (hour NULL) counts only for a brand and day with no hourly rows, so switching the
- * job between day and hour breakdowns never double-counts.
+ * Rows that count for a period (`?1` = first day, `?2` = last day). A day that has hourly rows counts
+ * only those; a whole-day row (hour NULL) counts only for a brand and day with no hourly rows, so
+ * switching the job between day and hour breakdowns never double-counts.
  */
-export async function loadSpendReport(env: Env, period: SpendPeriod, now = new Date()): Promise<SpendReportResponse> {
-  const { from, to } = spendPeriodRange(period, now);
-  const { results } = await env.LEADS.prepare(`
-    SELECT s.brand_id, s.currency, SUM(s.cost) AS cost, SUM(s.clicks) AS clicks, SUM(s.impressions) AS impressions,
-           MAX(s.updated_at) AS updated_at
+const COUNTED_ROWS_SQL = `
     FROM ad_spend s
     WHERE s.date BETWEEN ?1 AND ?2
       AND (s.hour IS NOT NULL OR NOT EXISTS (
         SELECT 1 FROM ad_spend h
-        WHERE h.brand_id = s.brand_id AND h.date = s.date AND h.source = s.source AND h.hour IS NOT NULL))
+        WHERE h.brand_id = s.brand_id AND h.date = s.date AND h.source = s.source AND h.hour IS NOT NULL))`;
+
+/**
+ * Per-brand, per-currency totals for the period's UTC days, plus one cost per day and currency in
+ * `daily` (ascending by date). Totals and `daily` keep one cost sum per currency, never baht plus dollars.
+ * Both queries run in one batch so they read the same state.
+ */
+export async function loadSpendReport(env: Env, period: SpendPeriod, now = new Date()): Promise<SpendReportResponse> {
+  const { from, to } = spendPeriodRange(period, now);
+  const [brandRows, dayRows] = await env.LEADS.batch([
+    env.LEADS.prepare(`
+    SELECT s.brand_id, s.currency, SUM(s.cost) AS cost, SUM(s.clicks) AS clicks, SUM(s.impressions) AS impressions,
+           MAX(s.updated_at) AS updated_at${COUNTED_ROWS_SQL}
     GROUP BY s.brand_id, s.currency
-    ORDER BY s.brand_id, s.currency`).bind(from, to).all<{
+    ORDER BY s.brand_id, s.currency`).bind(from, to),
+    env.LEADS.prepare(`
+    SELECT s.date, s.currency, SUM(s.cost) AS cost${COUNTED_ROWS_SQL}
+    GROUP BY s.date, s.currency
+    ORDER BY s.date, s.currency`).bind(from, to),
+  ]);
+  const results = (brandRows as D1Result<{
     brand_id: string; currency: SpendCurrency; cost: number; clicks: number; impressions: number; updated_at: string;
-  }>();
+  }>).results;
+  const daily = (dayRows as D1Result<{ date: string; currency: SpendCurrency; cost: number }>).results
+    .map((r) => ({ date: r.date, cost: cents(Number(r.cost)), currency: r.currency }));
   const brands = results.map((r) => ({
     brand_id: r.brand_id,
     currency: r.currency,
@@ -106,5 +122,5 @@ export async function loadSpendReport(env: Env, period: SpendPeriod, now = new D
     totals.clicks += b.clicks;
     totals.impressions += b.impressions;
   }
-  return SpendReportResponse.parse({ period, from, to, totals, brands });
+  return SpendReportResponse.parse({ period, from, to, totals, brands, daily });
 }

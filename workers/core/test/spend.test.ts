@@ -201,6 +201,58 @@ describe("GET /admin/spend", () => {
 
   it("returns zero totals and no brands when nothing was ingested", async () => {
     const response = await report("30d");
-    expect(await response.json()).toMatchObject({ totals: { cost_by_currency: { THB: 0, USD: 0 }, clicks: 0, impressions: 0 }, brands: [] });
+    expect(await response.json()).toMatchObject({ totals: { cost_by_currency: { THB: 0, USD: 0 }, clicks: 0, impressions: 0 }, brands: [], daily: [] });
+  });
+
+  it("yesterday covers the one UTC day before today and nothing else", async () => {
+    await ingest({ rows: [
+      { brand_id: "brand-a", date: today(), hour: 1, cost: 100, clicks: 1, impressions: 1 },
+      { brand_id: "brand-a", date: daysAgo(1), hour: 3, cost: 4, clicks: 2, impressions: 20 },
+      { brand_id: "brand-b", date: daysAgo(1), cost: 6, clicks: 3, impressions: 30 },
+      { brand_id: "brand-b", date: daysAgo(2), hour: 3, cost: 50, clicks: 5, impressions: 50 },
+    ] });
+    const response = await report("yesterday");
+    expect(response.status).toBe(200);
+    const body = SpendReportResponse.parse(await response.json());
+    expect(body).toMatchObject({ period: "yesterday", from: daysAgo(1), to: daysAgo(1) });
+    expect(spendPeriodRange("yesterday")).toEqual({ from: daysAgo(1), to: daysAgo(1) });
+    expect(body.totals).toEqual({ cost_by_currency: { THB: 10, USD: 0 }, clicks: 5, impressions: 50 });
+    expect(body.brands.map(({ brand_id, cost }) => [brand_id, cost])).toEqual([["brand-a", 4], ["brand-b", 6]]);
+    expect(body.daily).toEqual([{ date: daysAgo(1), cost: 10, currency: "THB" }]);
+  });
+
+  it("daily is ascending by date with one entry per date and currency, summing brands and keeping currencies apart", async () => {
+    await ingest({ rows: [
+      // Posted out of date order on purpose.
+      { brand_id: "brand-a", date: today(), hour: 0, cost: 1.1, clicks: 1, impressions: 1 },
+      { brand_id: "brand-a", date: today(), hour: 1, cost: 2.2, clicks: 1, impressions: 1 },
+      { brand_id: "brand-b", date: today(), hour: 1, cost: 5, currency: "USD", clicks: 1, impressions: 1 },
+      { brand_id: "brand-a", date: daysAgo(4), hour: 9, cost: 40, currency: "THB", clicks: 1, impressions: 1 },
+      { brand_id: "brand-b", date: daysAgo(4), hour: 9, cost: 60, currency: "THB", clicks: 1, impressions: 1 },
+      { brand_id: "brand-b", date: daysAgo(2), cost: 8, currency: "USD", clicks: 1, impressions: 1 },
+      // 8 days ago is outside 7d.
+      { brand_id: "brand-a", date: daysAgo(8), hour: 9, cost: 999, clicks: 1, impressions: 1 },
+    ] });
+    const body = SpendReportResponse.parse(await (await report("7d")).json());
+    expect(body.daily).toEqual([
+      { date: daysAgo(4), cost: 100, currency: "THB" },
+      { date: daysAgo(2), cost: 8, currency: "USD" },
+      { date: today(), cost: 3.3, currency: "THB" },
+      { date: today(), cost: 5, currency: "USD" },
+    ]);
+    // The daily series and the period totals add up per currency.
+    const sum = (currency: string) => (body.daily ?? []).filter((d) => d.currency === currency).reduce((a, d) => a + d.cost, 0);
+    expect(Math.round(sum("THB") * 100) / 100).toBe(body.totals.cost_by_currency.THB);
+    expect(sum("USD")).toBe(body.totals.cost_by_currency.USD);
+  });
+
+  it("daily counts hourly rows over a whole-day row for the same brand and day", async () => {
+    await ingest({ rows: [
+      { brand_id: "brand-a", date: daysAgo(1), cost: 999, clicks: 1, impressions: 1 },
+      { brand_id: "brand-a", date: daysAgo(1), hour: 12, cost: 10, clicks: 1, impressions: 1 },
+      { brand_id: "brand-b", date: daysAgo(1), cost: 7, clicks: 1, impressions: 1 },
+    ] });
+    const body = SpendReportResponse.parse(await (await report("7d")).json());
+    expect(body.daily).toEqual([{ date: daysAgo(1), cost: 17, currency: "THB" }]);
   });
 });
