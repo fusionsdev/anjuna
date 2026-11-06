@@ -21,7 +21,7 @@ export interface ConversionFilters { period: SpendPeriod; status: "all" | Conver
 const DEFAULT_PERIOD: SpendPeriod = "7d";
 const LIMIT_START = CONVERSIONS_ROW_LIMIT;
 const LIMIT_STEP = CONVERSIONS_ROW_LIMIT;
-const PERIOD_LABEL: Record<SpendPeriod, string> = { today: "วันนี้", "7d": "7 วัน", "30d": "30 วัน" };
+const PERIOD_LABEL: Record<SpendPeriod, string> = { today: "วันนี้", yesterday: "เมื่อวาน", "7d": "7 วัน", "30d": "30 วัน" };
 const STATUS_CHIPS: Array<[ConversionFilters["status"], string]> = [
   ["all", "ทั้งหมด"], ["pending", "ค้างส่ง (pending)"], ["processing", "กำลังส่ง (processing)"], ["uploaded", "ส่งแล้ว (uploaded)"], ["dead", "ส่งไม่ได้ (dead)"],
 ];

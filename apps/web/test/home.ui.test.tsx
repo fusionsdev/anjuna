@@ -25,6 +25,7 @@ const spendReport = (cost: number, clicks: number, thbPerUsd = 35) => ({
   period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost_by_currency: { THB: cost, USD: 0 }, clicks, impressions: 9000 },
   brands: [{ brand_id: "cg", currency: "THB", cost, cost_usd: Math.round((cost / thbPerUsd) * 100) / 100, clicks, impressions: 9000, updated_at: "2026-10-22T09:00:00.000Z" }],
   total_cost_usd: Math.round((cost / thbPerUsd) * 100) / 100, fx: { thbPerUsd },
+  daily: [{ date: "2026-10-21", cost: cost * 0.4, currency: "THB" }, { date: "2026-10-22", cost: cost * 0.6, currency: "THB" }],
 });
 const alertsReport = {
   generated_at: "2026-10-22T10:00:00.000Z",
@@ -166,6 +167,29 @@ describe("Home screen, owner", () => {
     expect(spendCell.querySelector(".hint")!.textContent).toBe("$1,780");
     // Revenue $410 minus $1,780, never $410 minus 62,300 baht.
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
+  });
+
+  it("draws a spend sparkline with one point per day of the window from the daily series", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    const spendCell = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText("ค่าโฆษณา").parentElement!;
+    const line = within(spendCell).getByRole("img", { name: "ค่าโฆษณารายวัน" }).querySelector("polyline")!;
+    // 16 to 22 October is 7 days; only the last two have spend, so the line rises from the floor at the end.
+    expect(line.getAttribute("points")!.split(" ")).toHaveLength(7);
+    expect(line.getAttribute("points")!.split(" ")[0]!.endsWith(",26")).toBe(true);
+    expect(line.getAttribute("points")!.split(" ")[6]!.endsWith(",2")).toBe(true);
+  });
+
+  it("draws no sparkline for a single day or when core sends no daily rows", async () => {
+    spend.mockResolvedValue({ ...spendReport(62300, 402), period: "today", from: "2026-10-22", to: "2026-10-22", daily: [{ date: "2026-10-22", cost: 62300, currency: "THB" }] });
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(screen.queryByRole("img", { name: "ค่าโฆษณารายวัน" })).toBeNull();
+    cleanup();
+    spend.mockResolvedValue({ ...spendReport(62300, 402), daily: [] });
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(screen.queryByRole("img", { name: "ค่าโฆษณารายวัน" })).toBeNull();
   });
 
   it("takes profit from the server's total_cost_usd at the owner's rate, not a client-side rate", async () => {

@@ -43,8 +43,8 @@ export const SpendIngestResponse = z.strictObject({
 });
 export type SpendIngestResponse = z.infer<typeof SpendIngestResponse>;
 
-/** today = the current UTC day; 7d and 30d end today and include it. */
-export const SPEND_PERIODS = ["today", "7d", "30d"] as const;
+/** today = the current UTC day; yesterday = the UTC day before it; 7d and 30d end today and include it. */
+export const SPEND_PERIODS = ["today", "yesterday", "7d", "30d"] as const;
 export const SpendPeriod = z.enum(SPEND_PERIODS);
 export type SpendPeriod = z.infer<typeof SpendPeriod>;
 
@@ -66,12 +66,21 @@ const SpendBrandRow = z.strictObject({
   updated_at: z.iso.datetime(),
 });
 
+/** One UTC day of cost in one currency, all brands together. A day with two currencies has two entries. */
+const SpendDailyRow = z.strictObject({
+  date: z.iso.date(),
+  cost: Money,
+  currency: SpendCurrency,
+});
+
 export const SpendReportResponse = z.strictObject({
   period: SpendPeriod,
   from: z.iso.date(),
   to: z.iso.date(),
   totals: z.strictObject({ cost_by_currency: SpendCostByCurrency, clicks: Count, impressions: Count }),
   brands: z.array(SpendBrandRow),
+  /** Cost per day and currency inside the period, ascending by date, then currency. A day with no rows has no entry. */
+  daily: z.array(SpendDailyRow),
 });
 export type SpendReportResponse = z.infer<typeof SpendReportResponse>;
 
@@ -86,10 +95,11 @@ export const PanelSpendReportResponse = SpendReportResponse.extend({
 });
 export type PanelSpendReportResponse = z.infer<typeof PanelSpendReportResponse>;
 
-/** Inclusive UTC day range for a period, ending on the day of `now`. */
+/** Inclusive UTC day range for a period. `yesterday` is the one day before `now`; the others end on the day of `now`. */
 export function spendPeriodRange(period: SpendPeriod, now: Date = new Date()): { from: string; to: string } {
-  const days = period === "today" ? 1 : period === "7d" ? 7 : 30;
-  const to = now.toISOString().slice(0, 10);
+  const days = period === "today" || period === "yesterday" ? 1 : period === "7d" ? 7 : 30;
+  const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const to = new Date(today - (period === "yesterday" ? 86_400_000 : 0)).toISOString().slice(0, 10);
   const from = new Date(Date.parse(`${to}T00:00:00.000Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
   return { from, to };
 }

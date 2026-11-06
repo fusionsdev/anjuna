@@ -6,5 +6,10 @@
   "brands": [
     { "brand_id": "brand-a", "currency": "THB", "cost": 10500, "clicks": 240, "impressions": 6400, "updated_at": "2026-10-02T09:05:00.000Z" },
     { "brand_id": "brand-b", "currency": "THB", "cost": 1948, "clicks": 78, "impressions": 2720, "updated_at": "2026-10-02T09:05:00.000Z" }
+  ],
+  "daily": [
+    { "date": "2026-09-30", "cost": 4000, "currency": "THB" },
+    { "date": "2026-10-01", "cost": 4200, "currency": "THB" },
+    { "date": "2026-10-02", "cost": 4248, "currency": "THB" }
   ]
 }

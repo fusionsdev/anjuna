@@ -227,7 +227,7 @@ describe("brandMoney, periodWindow and sortWorstProfitFirst", () => {
   const spendFixture: SpendReport = {
     period: "7d", from: "2026-10-01", to: "2026-10-07", totals: { cost_by_currency: { THB: 350, USD: 0 }, clicks: 0, impressions: 0 },
     brands: [{ brand_id: "b", currency: "THB", cost: 350, cost_usd: 10, clicks: 0, impressions: 0, updated_at: "2026-10-06T00:00:00.000Z" }],
-    total_cost_usd: 10, fx: { thbPerUsd: 35 },
+    total_cost_usd: 10, fx: { thbPerUsd: 35 }, daily: [],
   };
   const runtime = [runtimeRow("b"), runtimeRow("c")] as never;
   const funnel = { from: "", to: "", rows: [funnelRow("b", 10, 4, 120), funnelRow("b", 5, 1, 30)] };
