@@ -42,6 +42,8 @@ export const PANEL_ROLE_TABLE = {
   listTemplates: "employee",
   importTemplate: "employee",
   approveTemplate: "owner",
+  /** Template manager: create a category, set a template's category, archive, delete. Owner only. */
+  manageTemplates: "owner",
   /** The edit page of a live brand: template version and tracking ids, read-only for an employee. */
   viewBrandEdit: "employee",
   /** Logo and favicon of a brand: like site text, an employee may upload and remove them. */

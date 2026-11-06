@@ -143,7 +143,7 @@ describe("templates API", () => {
       expect(templates.find((t) => t.template_version_id === "tv-bolt-1")).toEqual({
         template_version_id: "tv-bolt-1", template_id: "tpl-bolt", name: "Bolt Harbor", version: 1, status: "awaiting_approval",
         submitted_by_label: "Somchai (bolt.new)", created_at: NOW, sealed_at: null,
-        thumbnail_url: "/api/templates/tv-bolt-1/screenshots/desktop", brands_using: 0,
+        thumbnail_url: "/api/templates/tv-bolt-1/screenshots/desktop", brands_using: 0, archived: false, category_id: null,
       });
     }
   });
