@@ -241,7 +241,7 @@ describe("GET /admin/spend", () => {
       { date: today(), cost: 5, currency: "USD" },
     ]);
     // The daily series and the period totals add up per currency.
-    const sum = (currency: string) => body.daily.filter((d) => d.currency === currency).reduce((a, d) => a + d.cost, 0);
+    const sum = (currency: string) => (body.daily ?? []).filter((d) => d.currency === currency).reduce((a, d) => a + d.cost, 0);
     expect(Math.round(sum("THB") * 100) / 100).toBe(body.totals.cost_by_currency.THB);
     expect(sum("USD")).toBe(body.totals.cost_by_currency.USD);
   });

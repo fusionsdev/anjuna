@@ -61,6 +61,20 @@ describe("GET /admin/conversions", () => {
     expect(body.truncated).toBe(false);
   });
 
+  it("period=yesterday includes yesterday 00:00Z and excludes today 00:00Z and the instant before yesterday", async () => {
+    // now is 2026-10-23T12:00Z, so yesterday is 2026-10-22 and the window is [10-22T00:00Z, 10-23T00:00Z).
+    await seed("before", "brand-a", { status: "uploaded", created_at: "2026-10-21T23:59:59.999Z", updated_at: "2026-10-21T23:59:59.999Z" });
+    await seed("start", "brand-a", { status: "uploaded", created_at: "2026-10-22T00:00:00.000Z", updated_at: "2026-10-22T00:00:00.000Z" });
+    await seed("late", "brand-a", { status: "pending", created_at: "2026-10-22T23:59:59.999Z", updated_at: null });
+    await seed("today", "brand-a", { status: "uploaded", created_at: "2026-10-23T00:00:00.000Z", updated_at: "2026-10-23T00:00:00.000Z" });
+    const response = await h.admin(`/admin/conversions?period=yesterday&now=${now}`, owner);
+    expect(response.status).toBe(200);
+    const body = ConversionsReportResponse.parse(await response.json());
+    expect(body).toMatchObject({ period: "yesterday", from: "2026-10-22T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z" });
+    expect(body.totals).toEqual({ pending: 1, processing: 0, uploaded: 1, dead: 0 });
+    expect(short(body.rows).sort()).toEqual(["late", "start"]);
+  });
+
   it("counts stalled pending rows older than 6 hours at any age", async () => {
     await seedMixed();
     // pend-old (2026-10-22) is stalled and in the window. pend-new (10:00Z, 2h old) is not.

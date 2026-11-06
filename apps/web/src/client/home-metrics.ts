@@ -32,7 +32,7 @@ export function spendTotals(report: PanelSpendReportResponse): { thb: number; us
  * (nothing synced), so the card shows no line instead of a flat one.
  */
 export function spendSeries(report: PanelSpendReportResponse): number[] | null {
-  // Tolerates an answer without `daily` (a stale mock or cached payload); the contract requires it.
+  // A core that predates `daily` sends none; the contract makes it optional, so that reads as an empty series.
   const daily = report.daily ?? [];
   if (daily.length === 0) return null;
   const byDay = new Map<string, number>();

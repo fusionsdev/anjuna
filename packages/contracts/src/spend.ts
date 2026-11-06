@@ -79,8 +79,12 @@ export const SpendReportResponse = z.strictObject({
   to: z.iso.date(),
   totals: z.strictObject({ cost_by_currency: SpendCostByCurrency, clicks: Count, impressions: Count }),
   brands: z.array(SpendBrandRow),
-  /** Cost per day and currency inside the period, ascending by date, then currency. A day with no rows has no entry. */
-  daily: z.array(SpendDailyRow),
+  /**
+   * Cost per day and currency inside the period, ascending by date, then currency. A day with no rows has no
+   * entry. Core always sends it. It is optional so a panel built with this contract still reads a core that
+   * predates it (panel deploys first, then core); a reader treats a missing `daily` as an empty series.
+   */
+  daily: z.array(SpendDailyRow).optional(),
 });
 export type SpendReportResponse = z.infer<typeof SpendReportResponse>;
 

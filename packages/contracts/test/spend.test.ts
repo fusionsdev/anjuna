@@ -69,8 +69,11 @@ describe("spend contract: daily series", () => {
     expect(SpendReportResponse.parse({ ...base, daily }).daily).toEqual(daily);
   });
 
+  it("accepts a report without daily, as an older core sends it", () => {
+    expect(SpendReportResponse.parse(base).daily).toBeUndefined();
+  });
+
   it.each([
-    ["a missing daily", undefined],
     ["a currency other than THB or USD", [{ date: "2026-10-21", cost: 1, currency: "EUR" }]],
     ["a missing currency", [{ date: "2026-10-21", cost: 1 }]],
     ["a negative cost", [{ date: "2026-10-21", cost: -1, currency: "THB" }]],
