@@ -392,14 +392,20 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
       .bind(id).first<{ category_id: string | null }>();
     if (!row) return notFound("template");
     if (categoryId !== null && !(await env.FACTORY.prepare("SELECT 1 AS ok FROM template_categories WHERE id = ?1").bind(categoryId).first())) return notFound("category");
-    if (row.category_id !== categoryId) {
-      await env.FACTORY.batch([
-        categoryId === null
-          ? env.FACTORY.prepare("DELETE FROM template_category_map WHERE template_id = ?1").bind(id)
-          : env.FACTORY.prepare(`INSERT INTO template_category_map (template_id, category_id) VALUES (?1, ?2)
-              ON CONFLICT(template_id) DO UPDATE SET category_id = excluded.category_id`).bind(id, categoryId),
-        auditRow(env, ctx, "template.category", "template", id, { category_id: row.category_id }, { category_id: categoryId }, new Date().toISOString(), "1 = 1"),
+    const prior = row.category_id;
+    if (prior !== categoryId) {
+      // The write is gated on the category that was read, so a change that lands in between writes nothing and no audit
+      // row carries a before value that was never stored. The caller reloads and tries again.
+      const write = categoryId === null
+        ? env.FACTORY.prepare("DELETE FROM template_category_map WHERE template_id = ?1 AND category_id = ?2").bind(id, prior)
+        : prior === null
+          ? env.FACTORY.prepare("INSERT INTO template_category_map (template_id, category_id) SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM template_category_map WHERE template_id = ?1)").bind(id, categoryId)
+          : env.FACTORY.prepare("UPDATE template_category_map SET category_id = ?2 WHERE template_id = ?1 AND category_id = ?3").bind(id, categoryId, prior);
+      const [written] = await env.FACTORY.batch([
+        write,
+        auditRow(env, ctx, "template.category", "template", id, { category_id: prior }, { category_id: categoryId }, new Date().toISOString(), "changes() = 1"),
       ]);
+      if (written!.meta.changes !== 1) return json(409, { error: "conflict" });
     }
     return json(200, TemplateCategoryAssignResponse.parse({ template_id: id, category_id: categoryId }));
   }
@@ -414,11 +420,14 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     if (row.archived_at !== null) return json(200, TemplateArchiveResponse.parse({ ok: true, template_id: id, archived_at: row.archived_at }));
     // Archive only sets templates.archived_at. Versions, brands and R2 objects stay, so brands on this template keep running.
     const now = new Date().toISOString();
-    await env.FACTORY.batch([
+    const [archived] = await env.FACTORY.batch([
       env.FACTORY.prepare("UPDATE templates SET archived_at = ?2 WHERE template_id = ?1 AND archived_at IS NULL").bind(id, now),
       auditRow(env, ctx, "template.archive", "template", id, { archived_at: null }, { archived_at: now }, now, "changes() = 1"),
     ]);
-    return json(200, TemplateArchiveResponse.parse({ ok: true, template_id: id, archived_at: now }));
+    // A concurrent archive that won keeps its stamp and its audit row; answer with the stored value.
+    if (archived!.meta.changes === 1) return json(200, TemplateArchiveResponse.parse({ ok: true, template_id: id, archived_at: now }));
+    const stored = await env.FACTORY.prepare("SELECT archived_at FROM templates WHERE template_id = ?1").bind(id).first<{ archived_at: string | null }>();
+    return stored?.archived_at ? json(200, TemplateArchiveResponse.parse({ ok: true, template_id: id, archived_at: stored.archived_at })) : notFound("template");
   }
 
   m = path.match(/^\/api\/templates\/([^/]+)$/);
@@ -438,11 +447,13 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
       auditRow(env, ctx, "template.delete", "template", id, { name: row.name, versions: row.versions }, null, new Date().toISOString(),
         `EXISTS (SELECT 1 FROM templates WHERE template_id = ?5) AND ${deletable("?5")}`),
       env.FACTORY.prepare(`DELETE FROM certifications WHERE template_version_id IN (SELECT template_version_id FROM template_versions WHERE template_id = ?1) AND ${gate}`).bind(id),
+      // The certifier writes one fingerprint per version, pass or fail, and it references the version row.
+      env.FACTORY.prepare(`DELETE FROM template_fingerprints WHERE template_version_id IN (SELECT template_version_id FROM template_versions WHERE template_id = ?1) AND ${gate}`).bind(id),
       env.FACTORY.prepare(`DELETE FROM template_category_map WHERE template_id = ?1 AND ${gate}`).bind(id),
       env.FACTORY.prepare(`DELETE FROM template_versions WHERE template_id = ?1 AND ${gate}`).bind(id),
       env.FACTORY.prepare(`DELETE FROM templates WHERE template_id = ?1 AND ${gate}`).bind(id),
     ]);
-    if (results[4]!.meta.changes !== 1) {
+    if (results[results.length - 1]!.meta.changes !== 1) {
       const blockNow = await deleteBlock(env, id);
       return blockNow ? json(409, TemplateDeleteRefusal.parse({ error: blockNow })) : notFound("template");
     }

@@ -1,10 +1,12 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { BrandThemeVarsResponse, SealedTemplatesResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateListResponse } from "@anjuna/contracts";
-import { call, resetState, sessions, setupDatabases } from "./helpers";
+import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 const NOW = "2026-11-01T00:00:00.000Z";
+const EARLIER = "2026-10-01T00:00:00.000Z";
 const THEME = JSON.stringify({ primary: ["--brand"], primary_dark: [], secondary: [] });
+type VersionStatus = "draft" | "certified" | "rejected" | "sealed";
 let owner: string;
 let employee: string;
 let seq = 0;
@@ -17,20 +19,28 @@ beforeEach(async () => {
   await env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id, git_sha, r2_key, manifest_sha256, created_at) VALUES ('fa-manage', 'git-manage', 'forms/manage', 'manifest', ?1)").bind(NOW).run();
 });
 
-/** A template with one version in the given status; a sealed one carries a color map so a brand can resolve it. */
-async function seedTemplate(status: "draft" | "certified" | "sealed", { certified = true } = {}): Promise<{ templateId: string; versionId: string }> {
+/**
+ * A template with one version per status, oldest first. Every version has a certification row and a fingerprint row, as the
+ * certifier writes them for a pass and for a fail. A sealed version carries a color map so a brand can resolve it.
+ */
+async function seedTemplate(statuses: VersionStatus | VersionStatus[]): Promise<{ templateId: string; versionId: string; versionIds: string[] }> {
   const n = ++seq;
+  const list = Array.isArray(statuses) ? statuses : [statuses];
   const templateId = `tpl-m${n}`;
-  const versionId = `tv-m${n}`;
-  const sealed = status === "sealed";
-  await env.FACTORY.batch([
-    env.FACTORY.prepare("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES (?1, ?2, 'react_spa', 'u', ?3)").bind(templateId, `Manage ${n}`, NOW),
-    env.FACTORY.prepare(`INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, theme_vars_json)
-      VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, 'u', ?8, ?9)`)
-      .bind(versionId, templateId, String(n).padStart(64, "0"), `templates/${templateId}.zip`, status, sealed ? "owner" : null, sealed ? NOW : null, NOW, sealed ? THEME : null),
-    ...(certified ? [env.FACTORY.prepare("INSERT INTO certifications (template_version_id, check_name, result, details_json, created_at) VALUES (?1, 'lint', 'pass', '{}', ?2)").bind(versionId, NOW)] : []),
-  ]);
-  return { templateId, versionId };
+  const versionIds = list.map((_, i) => `tv-m${n}-${i + 1}`);
+  await env.FACTORY.prepare("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES (?1, ?2, 'react_spa', 'u', ?3)").bind(templateId, `Manage ${n}`, NOW).run();
+  for (const [i, status] of list.entries()) {
+    const sealed = status === "sealed";
+    await env.FACTORY.batch([
+      env.FACTORY.prepare(`INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, sealed_by, sealed_at, created_by, created_at, theme_vars_json)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'u', ?9, ?10)`)
+        .bind(versionIds[i], templateId, i + 1, `${n}-${i}`.padStart(64, "0"), `templates/${versionIds[i]}.zip`, status, sealed ? "owner" : null, sealed ? NOW : null, NOW, sealed ? THEME : null),
+      env.FACTORY.prepare("INSERT INTO certifications (template_version_id, check_name, result, details_json, created_at) VALUES (?1, 'lint', ?2, '{}', ?3)")
+        .bind(versionIds[i], status === "rejected" ? "fail" : "pass", NOW),
+      env.FACTORY.prepare("INSERT INTO template_fingerprints (template_version_id, fingerprint_json, created_at) VALUES (?1, '{}', ?2)").bind(versionIds[i], NOW),
+    ]);
+  }
+  return { templateId, versionId: versionIds[0]!, versionIds };
 }
 
 async function seedBrand(versionId: string): Promise<string> {
@@ -47,6 +57,25 @@ const audits = (action: string, entityId: string) => count("SELECT COUNT(*) AS n
 const list = async (cookie: string, query = "") => TemplateListResponse.parse(await (await call(`/api/templates${query}`, { cookie })).json());
 const post = (cookie: string, path: string, body: unknown = {}) => call(path, { cookie, method: "POST", body });
 const createCategory = async (name: string) => TemplateCategoryCreateResponse.parse(await (await post(owner, "/api/templates/categories", { name })).json()).category;
+const mapOf = async (templateId: string) => (await env.FACTORY.prepare("SELECT category_id FROM template_category_map WHERE template_id = ?1").bind(templateId).first<{ category_id: string }>())?.category_id ?? null;
+const seal = (versionId: string) => env.FACTORY.prepare("UPDATE template_versions SET status = 'sealed', sealed_by = 'owner', sealed_at = ?2 WHERE template_version_id = ?1").bind(versionId, NOW).run();
+
+/**
+ * The route with a hook that runs once, right before its first batch: after every read of the route and before its writes.
+ * It stands in for another request that lands between the two.
+ */
+const racing = (beforeBatch: () => Promise<unknown>) => {
+  let fired = false;
+  return makeEnv({
+    FACTORY: {
+      prepare: (sql: string) => env.FACTORY.prepare(sql),
+      batch: async (statements: D1PreparedStatement[]) => {
+        if (!fired) { fired = true; await beforeBatch(); }
+        return env.FACTORY.batch(statements);
+      },
+    } as unknown as D1Database,
+  });
+};
 
 describe("template categories", () => {
   it("creates a category for the owner, refuses a duplicate name, and audits once", async () => {
@@ -66,6 +95,14 @@ describe("template categories", () => {
     expect((await list(owner)).categories.map((c) => c.id)).toEqual(expect.arrayContaining([category.id, second.id]));
     expect((await post(owner, "/api/templates/categories", { name: "   " })).status).toBe(422);
     expect((await post(owner, "/api/templates/categories", { name: "x", extra: 1 })).status).toBe(422);
+  });
+
+  it("refuses an employee for category create (403) and creates nothing", async () => {
+    const denied = await post(employee, "/api/templates/categories", { name: "พนักงานสร้าง" });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ error: "forbidden_role", required_role: "owner" });
+    expect(await count("SELECT COUNT(*) AS n FROM template_categories WHERE name = 'พนักงานสร้าง'")).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'template_category.create' AND after_json LIKE '%พนักงานสร้าง%'")).toBe(0);
   });
 
   it("assigns, changes and clears a template's category with an audit row each time", async () => {
@@ -93,6 +130,34 @@ describe("template categories", () => {
     expect((await patch({})).status).toBe(422);
     expect((await patch({ category_id: a.id }, templateId, employee)).status).toBe(403);
     expect(await categoryOf()).toBeNull();
+  });
+
+  it("writes nothing and no audit row when the category changed between the read and the write", async () => {
+    const { templateId } = await seedTemplate("certified");
+    const a = await createCategory("แข่ง A");
+    const b = await createCategory("แข่ง B");
+    const c = await createCategory("แข่ง C");
+    const patch = (to: string | null, testEnv = makeEnv()) => call(`/api/templates/${templateId}/category`, { cookie: owner, method: "PATCH", body: { category_id: to }, env: testEnv });
+    const setMap = (to: string) => env.FACTORY.prepare("INSERT OR REPLACE INTO template_category_map (template_id, category_id) VALUES (?1, ?2)").bind(templateId, to).run();
+    const clearMap = () => env.FACTORY.prepare("DELETE FROM template_category_map WHERE template_id = ?1").bind(templateId).run();
+
+    // No category when read, another request sets one before this write: the insert must not overwrite it.
+    const lostInsert = await patch(a.id, racing(() => setMap(b.id)));
+    expect(lostInsert.status).toBe(409);
+    expect(await lostInsert.json()).toEqual({ error: "conflict" });
+    expect(await mapOf(templateId)).toBe(b.id);
+
+    // Category b when read, another request moves it to c: the update must not overwrite it.
+    const lostUpdate = await patch(a.id, racing(() => setMap(c.id)));
+    expect(lostUpdate.status).toBe(409);
+    expect(await mapOf(templateId)).toBe(c.id);
+
+    // Category c when read, another request clears it: the delete changes nothing.
+    const lostDelete = await patch(null, racing(clearMap));
+    expect(lostDelete.status).toBe(409);
+    expect(await mapOf(templateId)).toBeNull();
+
+    expect(await audits("template.category", templateId)).toBe(0);
   });
 });
 
@@ -127,6 +192,18 @@ describe("template archive", () => {
     expect((await post(owner, "/api/templates/tpl-missing/archive")).status).toBe(404);
   });
 
+  it("answers the stored stamp, with no second audit row, when a concurrent archive won", async () => {
+    const { templateId } = await seedTemplate("certified");
+    const raced = await call(`/api/templates/${templateId}/archive`, {
+      cookie: owner, method: "POST", body: {},
+      env: racing(() => env.FACTORY.prepare("UPDATE templates SET archived_at = ?2 WHERE template_id = ?1").bind(templateId, EARLIER).run()),
+    });
+    expect(raced.status).toBe(200);
+    expect(TemplateArchiveResponse.parse(await raced.json()).archived_at).toBe(EARLIER);
+    expect(await count("SELECT COUNT(*) AS n FROM templates WHERE template_id = ?1 AND archived_at = ?2", templateId, EARLIER)).toBe(1);
+    expect(await audits("template.archive", templateId)).toBe(0);
+  });
+
   it("refuses an employee for archive", async () => {
     const { templateId } = await seedTemplate("certified");
     const denied = await post(employee, `/api/templates/${templateId}/archive`);
@@ -137,59 +214,103 @@ describe("template archive", () => {
 });
 
 describe("guarded template delete", () => {
-  const del = (cookie: string, id: string) => call(`/api/templates/${id}`, { cookie, method: "DELETE" });
-  const rows = (templateId: string, versionId: string) => Promise.all([
-    count("SELECT COUNT(*) AS n FROM templates WHERE template_id = ?1", templateId),
-    count("SELECT COUNT(*) AS n FROM template_versions WHERE template_version_id = ?1", versionId),
-    count("SELECT COUNT(*) AS n FROM certifications WHERE template_version_id = ?1", versionId),
-  ]);
+  const del = (cookie: string, id: string, testEnv = makeEnv()) => call(`/api/templates/${id}`, { cookie, method: "DELETE", env: testEnv });
+  /** Counts of the template row, its versions, certifications, fingerprints and category link. */
+  const snapshot = (templateId: string, versionIds: string[]) => {
+    const marks = versionIds.map((_, i) => `?${i + 1}`).join(", ");
+    return Promise.all([
+      count("SELECT COUNT(*) AS n FROM templates WHERE template_id = ?1", templateId),
+      count(`SELECT COUNT(*) AS n FROM template_versions WHERE template_version_id IN (${marks})`, ...versionIds),
+      count(`SELECT COUNT(*) AS n FROM certifications WHERE template_version_id IN (${marks})`, ...versionIds),
+      count(`SELECT COUNT(*) AS n FROM template_fingerprints WHERE template_version_id IN (${marks})`, ...versionIds),
+      count("SELECT COUNT(*) AS n FROM template_category_map WHERE template_id = ?1", templateId),
+    ]);
+  };
 
   it("refuses a template that a brand uses with template_in_use", async () => {
-    const { templateId, versionId } = await seedTemplate("sealed");
-    await seedBrand(versionId);
+    const { templateId, versionIds } = await seedTemplate("sealed");
+    await seedBrand(versionIds[0]!);
     const refused = await del(owner, templateId);
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({ error: "template_in_use" });
-    expect(await rows(templateId, versionId)).toEqual([1, 1, 1]);
+    expect(await snapshot(templateId, versionIds)).toEqual([1, 1, 1, 1, 0]);
     expect(await audits("template.delete", templateId)).toBe(0);
   });
 
   it("refuses a template that a brand uses even when its version was never sealed", async () => {
-    const { templateId, versionId } = await seedTemplate("certified");
-    await seedBrand(versionId);
+    const { templateId, versionIds } = await seedTemplate("certified");
+    await seedBrand(versionIds[0]!);
     expect(await (await del(owner, templateId)).json()).toEqual({ error: "template_in_use" });
-    expect(await rows(templateId, versionId)).toEqual([1, 1, 1]);
+    expect(await snapshot(templateId, versionIds)).toEqual([1, 1, 1, 1, 0]);
   });
 
   it("refuses a sealed template that no brand uses with template_was_approved", async () => {
-    const { templateId, versionId } = await seedTemplate("sealed");
+    const { templateId, versionIds } = await seedTemplate("sealed");
     const refused = await del(owner, templateId);
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({ error: "template_was_approved" });
-    expect(await rows(templateId, versionId)).toEqual([1, 1, 1]);
+    expect(await snapshot(templateId, versionIds)).toEqual([1, 1, 1, 1, 0]);
   });
 
-  it("deletes a never-approved unused template with its certifications, versions and category link (204)", async () => {
-    const draft = await seedTemplate("draft");
+  it("refuses a template whose older version was sealed, while its newest version never was", async () => {
+    const { templateId, versionIds } = await seedTemplate(["sealed", "certified"]);
+    expect(await (await del(owner, templateId)).json()).toEqual({ error: "template_was_approved" });
+    expect(await snapshot(templateId, versionIds)).toEqual([1, 2, 2, 2, 0]);
+  });
+
+  it("deletes a never-approved unused template with its certifications, fingerprints, versions and category link (204)", async () => {
+    // A rejected and a certified version: the certifier wrote a fingerprint row for each, and each references its version.
+    const draft = await seedTemplate(["rejected", "certified"]);
     const other = await seedTemplate("certified");
     const category = await createCategory("ลบได้");
     for (const id of [draft.templateId, other.templateId]) await call(`/api/templates/${id}/category`, { cookie: owner, method: "PATCH", body: { category_id: category.id } });
+    expect(await snapshot(draft.templateId, draft.versionIds)).toEqual([1, 2, 2, 2, 1]);
 
     const refused = await del(employee, draft.templateId);
     expect(refused.status).toBe(403);
-    expect(await rows(draft.templateId, draft.versionId)).toEqual([1, 1, 1]);
+    expect(await snapshot(draft.templateId, draft.versionIds)).toEqual([1, 2, 2, 2, 1]);
 
     const deleted = await del(owner, draft.templateId);
     expect(deleted.status).toBe(204);
     expect(await deleted.text()).toBe("");
-    expect(await rows(draft.templateId, draft.versionId)).toEqual([0, 0, 0]);
-    expect(await count("SELECT COUNT(*) AS n FROM template_category_map WHERE template_id = ?1", draft.templateId)).toBe(0);
+    expect(await snapshot(draft.templateId, draft.versionIds)).toEqual([0, 0, 0, 0, 0]);
     expect(await audits("template.delete", draft.templateId)).toBe(1);
     // The other template and the category stay.
-    expect(await rows(other.templateId, other.versionId)).toEqual([1, 1, 1]);
-    expect(await count("SELECT COUNT(*) AS n FROM template_category_map WHERE template_id = ?1", other.templateId)).toBe(1);
+    expect(await snapshot(other.templateId, other.versionIds)).toEqual([1, 1, 1, 1, 1]);
     expect(await count("SELECT COUNT(*) AS n FROM template_categories WHERE id = ?1", category.id)).toBe(1);
 
     expect((await del(owner, draft.templateId)).status).toBe(404);
+  });
+
+  describe("when the state changes after the read and before the batch", () => {
+    // Every race starts from a template the first read accepts: certified versions, no brand, nothing sealed.
+    it("a seal of the older version lands: 409 template_was_approved, nothing deleted, no audit row", async () => {
+      const { templateId, versionIds } = await seedTemplate(["certified", "certified"]);
+      const category = await createCategory("แข่งลบ");
+      await call(`/api/templates/${templateId}/category`, { cookie: owner, method: "PATCH", body: { category_id: category.id } });
+      const raced = await del(owner, templateId, racing(() => seal(versionIds[0]!)));
+      expect(raced.status).toBe(409);
+      expect(await raced.json()).toEqual({ error: "template_was_approved" });
+      expect(await snapshot(templateId, versionIds)).toEqual([1, 2, 2, 2, 1]);
+      expect(await audits("template.delete", templateId)).toBe(0);
+    });
+
+    it("a brand revision on the older version lands: 409 template_in_use, nothing deleted, no audit row", async () => {
+      const { templateId, versionIds } = await seedTemplate(["certified", "certified"]);
+      const raced = await del(owner, templateId, racing(() => seedBrand(versionIds[0]!)));
+      expect(raced.status).toBe(409);
+      expect(await raced.json()).toEqual({ error: "template_in_use" });
+      expect(await snapshot(templateId, versionIds)).toEqual([1, 2, 2, 2, 0]);
+      expect(await audits("template.delete", templateId)).toBe(0);
+    });
+
+    it("a seal of the only version lands: 409 template_was_approved, nothing deleted, no audit row", async () => {
+      const { templateId, versionIds } = await seedTemplate("certified");
+      const raced = await del(owner, templateId, racing(() => seal(versionIds[0]!)));
+      expect(raced.status).toBe(409);
+      expect(await raced.json()).toEqual({ error: "template_was_approved" });
+      expect(await snapshot(templateId, versionIds)).toEqual([1, 1, 1, 1, 0]);
+      expect(await audits("template.delete", templateId)).toBe(0);
+    });
   });
 });
