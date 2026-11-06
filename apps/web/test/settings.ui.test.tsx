@@ -140,11 +140,11 @@ describe("Settings in the app", () => {
     vi.spyOn(api, "alerts").mockRejectedValue(new Error("alerts are not under test"));
   });
 
-  it("the sidebar shows Settings to an owner and not to an employee", async () => {
+  it("the sidebar opens Settings for an owner and the first allowed tab for an employee", async () => {
     vi.spyOn(api, "me").mockResolvedValue(owner);
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(nav).getByRole("link", { name: "ตั้งค่า (Settings)" }).getAttribute("href")).toBe("/settings");
+    expect(within(nav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("href")).toBe("/settings");
     cleanup();
 
     vi.restoreAllMocks();
@@ -153,7 +153,10 @@ describe("Settings in the app", () => {
     window.history.replaceState(null, "", "/settings");
     render(<App />);
     const employeeNav = await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(employeeNav).queryByRole("link", { name: "ตั้งค่า (Settings)" })).toBeNull();
+    expect(within(employeeNav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("href")).toBe("/mailing");
+    // The Settings tab is owner only, so the tab strip leaves it out for an employee.
+    const tabs = within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
+    expect(tabs.queryByRole("link", { name: "ตั้งค่า" })).toBeNull();
   });
 
   it("an owner opening /settings sees the table", async () => {
@@ -161,7 +164,9 @@ describe("Settings in the app", () => {
     render(<App />);
     expect(await screen.findByRole("table", { name: "ตั้งค่าแบรนด์ (Brand settings)" })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(nav).getByRole("link", { name: "ตั้งค่า (Settings)" }).getAttribute("aria-current")).toBe("page");
+    expect(within(nav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("aria-current")).toBe("page");
+    const tabs = within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
+    expect(tabs.getByRole("link", { name: "ตั้งค่า" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("an employee opening /settings sees the Owner-only card and no request goes to /api/settings/brands", async () => {
