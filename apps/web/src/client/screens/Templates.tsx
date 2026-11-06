@@ -1,9 +1,10 @@
 import { TemplateSubmitIssue, TemplateThemeVars, isEmptyThemeVars } from "@anjuna/contracts";
 import { ruleDisposition } from "@anjuna/template-cert/policy";
-import type { TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
+import type { TemplateCategory, TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
+import { TemplateCategoryBar, TemplateCategoryPicker, type CategoryFilter } from "./TemplateCategories";
 import { TemplateZipImport } from "./TemplateZipImport";
 
 const statusLabel: Record<TemplateReviewStatus, string> = {
@@ -14,7 +15,14 @@ const statusLabel: Record<TemplateReviewStatus, string> = {
 };
 const statusPill: Record<TemplateReviewStatus, string> = { checking: "p-blue", rejected: "p-bad", awaiting_approval: "p-warn", approved: "p-live" };
 
-const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? e.thai) : "ไม่สำเร็จ");
+/** Why the server refused a template manager action. */
+const REFUSAL_TEXT: Record<string, string> = {
+  template_in_use: "ลบไม่ได้ เพราะมีแบรนด์ใช้เทมเพลตนี้อยู่",
+  template_was_approved: "ลบไม่ได้ เพราะเทมเพลตนี้เคยอนุมัติแล้ว",
+  category_exists: "มีหมวดชื่อนี้อยู่แล้ว",
+};
+
+const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? REFUSAL_TEXT[e.body?.error ?? ""] ?? e.thai) : "ไม่สำเร็จ");
 
 export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selectedId?: string | null; onSelect?: (id: string | null) => void }) {
   const [templates, setTemplates] = useState<TemplateVersionSummary[] | null>(null);
@@ -29,9 +37,19 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
   const [busy, setBusy] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
   const [filter, setFilter] = useState<TemplateReviewStatus | "all">("all");
-  const visibleTemplates = (templates ?? []).filter((t) => filter === "all" || t.status === filter);
+  const [categories, setCategories] = useState<TemplateCategory[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
+  // A refused delete keeps its reason on screen with an archive button, the safe alternative.
+  const [refused, setRefused] = useState<{ templateId: string; name: string; reason: string } | null>(null);
+  const owner = me.role === "owner";
+  const visibleTemplates = (templates ?? []).filter((t) =>
+    (filter === "all" || t.status === filter)
+    && (categoryFilter === "archived" ? t.archived : !t.archived && (categoryFilter === "all" || t.category_id === categoryFilter)));
 
-  const load = useCallback(() => api.templates().then((r) => setTemplates(r.templates), (e) => setMsg({ kind: "err", text: errorText(e) })), []);
+  const load = useCallback(() => api.templates({ includeArchived: true }).then((r) => {
+    setTemplates(r.templates);
+    setCategories(r.categories);
+  }, (e) => setMsg({ kind: "err", text: errorText(e) })), []);
   useEffect(() => void load(), [load]);
   useEffect(() => {
     setDetail(null);
@@ -60,6 +78,59 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     }
   }
 
+  /** One template manager write: clear the old notices, run it, show the result, reload the list. */
+  async function manage(action: () => Promise<unknown>, okText: string): Promise<boolean> {
+    setMsg(null);
+    setRefused(null);
+    setBusy(true);
+    try {
+      await action();
+      setMsg({ kind: "ok", text: okText });
+      await load();
+      return true;
+    } catch (e) {
+      setMsg({ kind: "err", text: errorText(e) });
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archive(t: TemplateVersionSummary) {
+    const ok = await confirm({
+      title: "เก็บเทมเพลตเข้าคลัง?",
+      body: `${t.name} จะไม่แสดงตอนเลือกเทมเพลตสร้างแบรนด์ แบรนด์ที่ใช้อยู่ยังทำงานต่อ`,
+      confirmLabel: "เก็บถาวร",
+    });
+    if (ok) await manage(() => api.archiveTemplate(t.template_id), `เก็บ ${t.name} เข้าคลังแล้ว`);
+  }
+
+  async function remove(t: TemplateVersionSummary) {
+    const ok = await confirm({
+      title: "ลบเทมเพลต?",
+      body: `${t.name} และทุกเวอร์ชันจะถูกลบถาวร ลบได้เฉพาะเทมเพลตที่ไม่มีแบรนด์ใช้และไม่เคยอนุมัติ`,
+      confirmLabel: "ลบ",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setMsg(null);
+    setRefused(null);
+    setBusy(true);
+    try {
+      await api.deleteTemplate(t.template_id);
+      // A deleted version cannot stay selected.
+      if (templates?.some((x) => x.template_id === t.template_id && x.template_version_id === selected)) select(null);
+      setMsg({ kind: "ok", text: `ลบ ${t.name} แล้ว` });
+      await load();
+    } catch (e) {
+      const reason = e instanceof ApiError && e.status === 409 ? REFUSAL_TEXT[e.body?.error ?? ""] : undefined;
+      if (reason) setRefused({ templateId: t.template_id, name: t.name, reason });
+      else setMsg({ kind: "err", text: errorText(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function importUrl() {
     setMsg(null);
     setImported(null);
@@ -82,7 +153,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginBottom: 18 }}>
         <div>
           <h1 aria-label="เทมเพลต (Templates)">เทมเพลต</h1>
-          <p className="hint">{templates ? `${templates.filter((t) => t.status === "awaiting_approval").length} รายการรอ Owner อนุมัติ` : "กำลังโหลด…"}</p>
+          <p className="hint">{templates ? `${templates.filter((t) => !t.archived && t.status === "awaiting_approval").length} รายการรอ Owner อนุมัติ` : "กำลังโหลด…"}</p>
         </div>
         <div className="seg" role="group" aria-label="กรองสถานะเทมเพลต" style={{ flexWrap: "wrap" }}>
           {([
@@ -91,6 +162,18 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
         </div>
       </div>
       {msg && <div className={msg.kind === "ok" ? "note pos" : "note neg"} style={{ background: msg.kind === "ok" ? "var(--moneybg)" : "var(--badbg)", color: msg.kind === "ok" ? "var(--money)" : "var(--bad)" }} role="status">{msg.text}</div>}
+      {refused && (
+        <div className="note neg" role="alert" style={{ background: "var(--badbg)", color: "var(--bad)", display: "grid", gap: 8 }}>
+          <b>{refused.name}</b>
+          <span>{refused.reason}</span>
+          <span>เก็บถาวรแทนได้ เทมเพลตจะไม่แสดงตอนสร้างแบรนด์ แต่แบรนด์เดิมยังทำงานต่อ</span>
+          <button type="button" className="btn" style={{ justifySelf: "start" }} disabled={busy} onClick={() => {
+            const target = templates?.find((t) => t.template_id === refused.templateId);
+            setRefused(null);
+            if (target) void archive(target);
+          }}>เก็บถาวรแทน</button>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))", gap: 16, marginBottom: 16 }}>
       <TemplateZipImport busy={busy} onBusy={(value) => {
         setBusy(value);
@@ -113,6 +196,8 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       </section>
       </div>
       {imported && <SubmitOutcome result={imported} />}
+      <TemplateCategoryBar categories={categories} filter={categoryFilter} onFilter={setCategoryFilter} owner={owner} busy={busy}
+        onCreate={(name) => manage(() => api.createTemplateCategory(name), `เพิ่มหมวด ${name} แล้ว`)} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 14 }}>
         {visibleTemplates.map((t) => {
           const currentDetail = detail?.template.template_version_id === t.template_version_id ? detail : null;
@@ -124,7 +209,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
                 {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name} (Template preview)`} loading="lazy" style={{ width: "100%", aspectRatio: "16 / 10", objectFit: "cover", display: "block", borderBottom: "1px solid var(--line)" }} /> : <span className="hint" style={{ display: "grid", placeItems: "center", aspectRatio: "16 / 10", background: "var(--paper)", borderBottom: "1px solid var(--line)" }}>ไม่มีภาพตัวอย่าง (No preview)</span>}
                 <span style={{ display: "grid", gap: 6, padding: "12px 14px" }}>
                   <span style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}><strong style={{ fontWeight: 500 }}>{t.name}</strong><span>v{t.version}</span></span>
-                  <span><span className={`pill ${statusPill[status]}`}>{statusLabel[status]}</span></span>
+                  <span><span className={`pill ${statusPill[status]}`}>{statusLabel[status]}</span>{t.archived && <>{" "}<span className="pill">เก็บถาวร</span></>}</span>
                   <span className="hint">แบรนด์ที่ใช้ (Brands using): {t.brands_using}</span>
                   {warnings.length > 0 && <span className="amb">คำเตือน {warnings.length} ข้อ ไม่บล็อก</span>}
                   {!currentDetail && <span className="hint">ดูผลตรวจและคำเตือน</span>}
@@ -132,6 +217,14 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
                 </span>
               </button>
               {me.role === "owner" && status === "awaiting_approval" && !currentDetail && <button type="button" className="btn pri" style={{ margin: "0 14px 12px", alignSelf: "start" }} aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => void approve(t.template_version_id)}>อนุมัติ</button>}
+              {(owner || t.category_id) && (
+                <div className="row" style={{ margin: "0 14px 12px", gap: 8, flexWrap: "wrap" }}>
+                  <TemplateCategoryPicker templateName={t.name} value={t.category_id} categories={categories} owner={owner} busy={busy}
+                    onChange={(categoryId) => void manage(() => api.setTemplateCategory(t.template_id, categoryId), "บันทึกหมวดแล้ว")} />
+                  {owner && !t.archived && <button type="button" className="btn" aria-label={`เก็บถาวร ${t.name} v${t.version}`} disabled={busy} onClick={() => void archive(t)}>เก็บถาวร</button>}
+                  {owner && <button type="button" className="btn danger" aria-label={`ลบ ${t.name} v${t.version}`} disabled={busy} onClick={() => void remove(t)}>ลบ</button>}
+                </div>
+              )}
             </article>
           );
         })}

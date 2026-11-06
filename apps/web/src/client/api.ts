@@ -1,6 +1,6 @@
 import { TrafficBreakdownResponse, type TemplateThemeVars, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contracts";
-import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
+import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { ConversionSetupStateResponse } from "@anjuna/contracts";
@@ -152,7 +152,14 @@ export const api = {
   builderKeys: () => request<unknown>("GET", "/api/builder-keys").then((body) => BuilderKeyListResponse.parse(body)),
   createBuilderKey: (label: string) => request<unknown>("POST", "/api/builder-keys", { label }).then((body) => BuilderKeyCreateResponse.parse(body).key),
   revokeBuilderKey: (id: string) => request<{ key: unknown }>("POST", `/api/builder-keys/${encodeURIComponent(id)}/revoke`, {}).then((body) => BuilderKeySummary.parse(body.key)),
-  templates: () => request<unknown>("GET", "/api/templates").then((body) => TemplateListResponse.parse(body)),
+  /** Archived templates are left out unless the Templates screen asks for them; pickers and counts never do. */
+  templates: (options?: { includeArchived?: boolean }) =>
+    request<unknown>("GET", options?.includeArchived ? "/api/templates?include_archived=1" : "/api/templates").then((body) => TemplateListResponse.parse(body)),
+  createTemplateCategory: (name: string) => request<unknown>("POST", "/api/templates/categories", { name }).then((body) => TemplateCategoryCreateResponse.parse(body).category),
+  setTemplateCategory: (templateId: string, categoryId: string | null) =>
+    request<unknown>("PATCH", `/api/templates/${encodeURIComponent(templateId)}/category`, { category_id: categoryId }).then((body) => TemplateCategoryAssignResponse.parse(body)),
+  archiveTemplate: (templateId: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(templateId)}/archive`, {}).then((body) => TemplateArchiveResponse.parse(body)),
+  deleteTemplate: (templateId: string) => request<unknown>("DELETE", `/api/templates/${encodeURIComponent(templateId)}`).then(() => undefined),
   template: (id: string) => request<unknown>("GET", `/api/templates/${encodeURIComponent(id)}`).then((body) => TemplateDetailResponse.parse(body)),
   approveTemplate: (id: string, themeVars?: TemplateThemeVars) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, themeVars ? { theme_vars: themeVars } : {}).then((body) => TemplateApproveResponse.parse(body)),
   detectTemplateThemeVars: (id: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/detect-theme-vars`, {}).then((body) => TemplateThemeVarsResponse.parse(body)),
