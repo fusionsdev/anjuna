@@ -1,0 +1,170 @@
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TemplatesScreen } from "../src/client/screens/Templates";
+
+const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
+const employee = { ...owner, id: "employee", role: "employee" as const };
+const STAMP = "2026-11-01T00:00:00.000Z";
+const LIST = "GET /api/templates?include_archived=1";
+
+const summary = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+  template_version_id: `tv-${id}`, template_id: `tpl-${id}`, name, version: 1, status: "approved",
+  submitted_by_label: "Somchai", created_at: STAMP, sealed_at: STAMP, thumbnail_url: null, brands_using: 0, archived: false, category_id: null, ...over,
+});
+const categories = [{ id: "cat-loan", name: "เงินกู้", sort: 1 }, { id: "cat-card", name: "บัตรเครดิต", sort: 2 }];
+
+type Handler = (init?: RequestInit) => Response;
+let routes: Map<string, Handler>;
+let requests: Array<{ method: string; path: string; body: unknown }>;
+let templates: Array<ReturnType<typeof summary>>;
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const calls = (method: string, path: string) => requests.filter((r) => r.method === method && r.path === path);
+
+beforeEach(() => {
+  requests = [];
+  templates = [
+    summary("a", "Alpha", { category_id: "cat-loan" }),
+    summary("b", "Bravo", { category_id: "cat-card" }),
+    summary("c", "Charlie", { archived: true }),
+  ];
+  routes = new Map<string, Handler>([[LIST, () => json({ templates, categories })]]);
+  vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    requests.push({ method, path: input, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const handler = routes.get(`${method} ${input}`);
+    if (!handler) throw new Error(`Unexpected test HTTP request: ${method} ${input}`);
+    return handler(init);
+  }));
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+const confirmDialog = async (label: string) => fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: label }));
+
+describe("template manager: categories", () => {
+  it("filters the list by category and keeps archived templates out of every category view", async () => {
+    render(<TemplatesScreen me={owner} />);
+    expect(await screen.findByText("Alpha")).toBeTruthy();
+    expect(screen.getByText("Bravo")).toBeTruthy();
+    expect(screen.queryByText("Charlie")).toBeNull();
+
+    const group = screen.getByRole("group", { name: "กรองหมวดเทมเพลต" });
+    fireEvent.click(within(group).getByRole("button", { name: "เงินกู้" }));
+    expect(screen.getByText("Alpha")).toBeTruthy();
+    expect(screen.queryByText("Bravo")).toBeNull();
+
+    fireEvent.click(within(group).getByRole("button", { name: "เก็บถาวร" }));
+    expect(screen.getByText("Charlie")).toBeTruthy();
+    expect(screen.queryByText("Alpha")).toBeNull();
+
+    fireEvent.click(within(group).getByRole("button", { name: "ทุกหมวด" }));
+    expect(screen.getByText("Bravo")).toBeTruthy();
+  });
+
+  it("sends the chosen category for the template, then reloads", async () => {
+    routes.set("PATCH /api/templates/tpl-b/category", () => json({ template_id: "tpl-b", category_id: "cat-loan" }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.change(await screen.findByLabelText("หมวดของ Bravo"), { target: { value: "cat-loan" } });
+    await screen.findByText("บันทึกหมวดแล้ว");
+    expect(calls("PATCH", "/api/templates/tpl-b/category")[0]!.body).toEqual({ category_id: "cat-loan" });
+    expect(calls("GET", "/api/templates?include_archived=1")).toHaveLength(2);
+  });
+
+  it("sends null when the owner clears the category", async () => {
+    routes.set("PATCH /api/templates/tpl-a/category", () => json({ template_id: "tpl-a", category_id: null }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.change(await screen.findByLabelText("หมวดของ Alpha"), { target: { value: "" } });
+    await screen.findByText("บันทึกหมวดแล้ว");
+    expect(calls("PATCH", "/api/templates/tpl-a/category")[0]!.body).toEqual({ category_id: null });
+  });
+
+  it("creates a category from the owner's field and clears the field", async () => {
+    routes.set("POST /api/templates/categories", () => json({ category: { id: "cat-new", name: "สินเชื่อบ้าน", sort: 3 } }, 201));
+    render(<TemplatesScreen me={owner} />);
+    const field = (await screen.findByLabelText("ชื่อหมวดใหม่")) as HTMLInputElement;
+    const add = screen.getByRole("button", { name: "เพิ่มหมวด" }) as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    fireEvent.change(field, { target: { value: "  สินเชื่อบ้าน " } });
+    fireEvent.click(add);
+    await screen.findByText("เพิ่มหมวด สินเชื่อบ้าน แล้ว");
+    expect(calls("POST", "/api/templates/categories")[0]!.body).toEqual({ name: "สินเชื่อบ้าน" });
+    await waitFor(() => expect(field.value).toBe(""));
+  });
+
+  it("shows the Thai reason for a duplicate category name and keeps the typed name", async () => {
+    routes.set("POST /api/templates/categories", () => json({ error: "category_exists" }, 409));
+    render(<TemplatesScreen me={owner} />);
+    const field = (await screen.findByLabelText("ชื่อหมวดใหม่")) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "เงินกู้" } });
+    fireEvent.click(screen.getByRole("button", { name: "เพิ่มหมวด" }));
+    expect(await screen.findByText("มีหมวดชื่อนี้อยู่แล้ว")).toBeTruthy();
+    expect(field.value).toBe("เงินกู้");
+  });
+
+  it("gives an employee the category names only: no picker, no add field, no archive, no delete", async () => {
+    render(<TemplatesScreen me={employee} />);
+    expect(await screen.findByText("Alpha")).toBeTruthy();
+    expect(screen.queryByLabelText("หมวดของ Alpha")).toBeNull();
+    expect(screen.queryByLabelText("ชื่อหมวดใหม่")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^เก็บถาวร Alpha/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^ลบ Alpha/ })).toBeNull();
+    // The category name is visible on the card as a label, besides the filter button.
+    expect(screen.getAllByText("เงินกู้").length).toBe(2);
+  });
+});
+
+describe("template manager: archive and delete", () => {
+  it("archives only after the owner confirms", async () => {
+    routes.set("POST /api/templates/tpl-a/archive", () => json({ ok: true, template_id: "tpl-a", archived_at: STAMP }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "เก็บถาวร Alpha v1" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/แบรนด์ที่ใช้อยู่ยังทำงานต่อ/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยกเลิก (Cancel)" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(calls("POST", "/api/templates/tpl-a/archive")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "เก็บถาวร Alpha v1" }));
+    await confirmDialog("เก็บถาวร");
+    expect(await screen.findByText("เก็บ Alpha เข้าคลังแล้ว")).toBeTruthy();
+    expect(calls("POST", "/api/templates/tpl-a/archive")).toHaveLength(1);
+  });
+
+  it("deletes after confirmation and reloads the list", async () => {
+    routes.set("DELETE /api/templates/tpl-a", () => new Response(null, { status: 204 }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "ลบ Alpha v1" }));
+    expect(calls("DELETE", "/api/templates/tpl-a")).toHaveLength(0);
+    await confirmDialog("ลบ");
+    expect(await screen.findByText("ลบ Alpha แล้ว")).toBeTruthy();
+    expect(calls("DELETE", "/api/templates/tpl-a")).toHaveLength(1);
+    expect(calls("GET", "/api/templates?include_archived=1")).toHaveLength(2);
+  });
+
+  it.each([
+    ["template_in_use", "ลบไม่ได้ เพราะมีแบรนด์ใช้เทมเพลตนี้อยู่"],
+    ["template_was_approved", "ลบไม่ได้ เพราะเทมเพลตนี้เคยอนุมัติแล้ว"],
+  ])("shows the Thai reason for a 409 %s and offers archive instead", async (error, reason) => {
+    routes.set("DELETE /api/templates/tpl-a", () => json({ error }, 409));
+    routes.set("POST /api/templates/tpl-a/archive", () => json({ ok: true, template_id: "tpl-a", archived_at: STAMP }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "ลบ Alpha v1" }));
+    await confirmDialog("ลบ");
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText(reason)).toBeTruthy();
+    expect(calls("POST", "/api/templates/tpl-a/archive")).toHaveLength(0);
+
+    fireEvent.click(within(alert).getByRole("button", { name: "เก็บถาวรแทน" }));
+    await confirmDialog("เก็บถาวร");
+    expect(await screen.findByText("เก็บ Alpha เข้าคลังแล้ว")).toBeTruthy();
+    expect(calls("POST", "/api/templates/tpl-a/archive")).toHaveLength(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("marks an archived template and gives it no archive button", async () => {
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "เก็บถาวร" }));
+    expect(await screen.findByText("Charlie")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "เก็บถาวร Charlie v1" })).toBeNull();
+    expect(screen.getByRole("button", { name: "ลบ Charlie v1" })).toBeTruthy();
+  });
+});

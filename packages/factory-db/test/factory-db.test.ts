@@ -74,6 +74,8 @@ describe("factory-db migrations", () => {
         "install_receipts",
         "installs",
         "panel_settings",
+        "template_categories",
+        "template_category_map",
         "template_theme_vars",
         "template_versions",
         "template_fingerprints",
@@ -304,6 +306,16 @@ describe("factory-db constraints", () => {
       "INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('missing', ?1, 'owner1', ?2)",
       vars, NOW,
     )).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("migration 0013 adds template categories with a unique name and foreign keys", async () => {
+    await run("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('t-cat', 'Categorised', 'react_spa', 'bk_1', ?1)", NOW);
+    await run("INSERT INTO template_categories (id, name, sort) VALUES ('cat-1', 'Loans', 1)");
+    await expect(run("INSERT INTO template_categories (id, name, sort) VALUES ('cat-2', 'Loans', 2)")).rejects.toThrow(/UNIQUE/);
+    await run("INSERT INTO template_category_map (template_id, category_id) VALUES ('t-cat', 'cat-1')");
+    await expect(run("INSERT INTO template_category_map (template_id, category_id) VALUES ('t-cat', 'cat-1')")).rejects.toThrow(/UNIQUE|PRIMARY KEY/);
+    await expect(run("INSERT INTO template_category_map (template_id, category_id) VALUES ('missing', 'cat-1')")).rejects.toThrow(/FOREIGN KEY/);
+    await expect(run("UPDATE template_category_map SET category_id = 'missing' WHERE template_id = 't-cat'")).rejects.toThrow(/FOREIGN KEY/);
   });
 
   it("effectiveThemeVarsSql prefers the backfill row", async () => {

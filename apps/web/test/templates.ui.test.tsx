@@ -34,7 +34,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 beforeEach(() => {
   requests = [];
   routes = new Map<string, Handler>([
-    ["GET /api/templates", () => json({ templates: [summary] })],
+    ["GET /api/templates?include_archived=1", () => json({ templates: [summary] })],
     ["GET /api/templates/tv-bolt-1", () => json(detail)],
     ["POST /api/templates/tv-bolt-1/approve", () => json({ ok: true, template_version_id: "tv-bolt-1", sealed_by: "owner", sealed_at: STAMP, already_sealed: false })],
   ]);
@@ -264,7 +264,7 @@ describe("Templates screen", () => {
   it("shows the list when no id is selected", async () => {
     render(<TemplatesScreen me={owner} selectedId={null} onSelect={() => undefined} />);
     expect(await screen.findByText("Bolt Harbor")).toBeTruthy();
-    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates"]);
+    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates?include_archived=1"]);
   });
 
   it("reports a card click through onSelect and keeps the URL in charge of the selection", async () => {
@@ -272,7 +272,7 @@ describe("Templates screen", () => {
     render(<TemplatesScreen me={owner} selectedId={null} onSelect={onSelect} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
     expect(onSelect).toHaveBeenCalledWith("tv-bolt-1");
-    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates"]);
+    expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates?include_archived=1"]);
   });
 
   it("imports from a URL and shows the static HTML instruction on rejection", async () => {
@@ -363,7 +363,7 @@ describe("App deep link", () => {
 
     it("owner detects colors on a sealed version and saves the map", async () => {
       let saved: unknown = null;
-      routes.set("GET /api/templates", () => json({ templates: [sealedSummary] }));
+      routes.set("GET /api/templates?include_archived=1", () => json({ templates: [sealedSummary] }));
       routes.set("GET /api/templates/tv-bolt-1", () => json(sealedDetail(saved)));
       routes.set("POST /api/templates/tv-bolt-1/detect-theme-vars", () => json({ template_version_id: "tv-bolt-1", theme_vars: found }));
       routes.set("PUT /api/templates/tv-bolt-1/theme-vars", (init) => { saved = JSON.parse(String(init?.body)).theme_vars; return json({ template_version_id: "tv-bolt-1", theme_vars: saved }); });
@@ -383,7 +383,7 @@ describe("App deep link", () => {
 
     it("save note shows even when the reload fails", async () => {
       let saved = false;
-      routes.set("GET /api/templates", () => json({ templates: [sealedSummary] }));
+      routes.set("GET /api/templates?include_archived=1", () => json({ templates: [sealedSummary] }));
       routes.set("GET /api/templates/tv-bolt-1", () => (saved ? json({ error: "reload_failed" }, 500) : json(sealedDetail(null))));
       routes.set("PUT /api/templates/tv-bolt-1/theme-vars", () => { saved = true; return json({ template_version_id: "tv-bolt-1", theme_vars: found }); });
       await open(owner);
@@ -395,7 +395,7 @@ describe("App deep link", () => {
     });
 
     it("detect with no variables clears filled inputs", async () => {
-      routes.set("GET /api/templates", () => json({ templates: [sealedSummary] }));
+      routes.set("GET /api/templates?include_archived=1", () => json({ templates: [sealedSummary] }));
       routes.set("GET /api/templates/tv-bolt-1", () => json(sealedDetail(found)));
       routes.set("POST /api/templates/tv-bolt-1/detect-theme-vars", () => json({ template_version_id: "tv-bolt-1", theme_vars: empty }));
       await open(owner);
@@ -419,7 +419,7 @@ describe("App deep link", () => {
 
     it("opening another template resets the color inputs", async () => {
       const second = { ...sealedSummary, template_version_id: "tv-bolt-2", name: "Bolt Marina", version: 2 };
-      routes.set("GET /api/templates", () => json({ templates: [sealedSummary, second] }));
+      routes.set("GET /api/templates?include_archived=1", () => json({ templates: [sealedSummary, second] }));
       routes.set("GET /api/templates/tv-bolt-1", () => json(sealedDetail(null)));
       routes.set("GET /api/templates/tv-bolt-2", () => json({ ...detail2, template: { ...sealedDetail(null).template, template_version_id: "tv-bolt-2", version: 2, text_defaults: detail2.template.text_defaults } }));
       routes.set("POST /api/templates/tv-bolt-1/detect-theme-vars", () => json({ template_version_id: "tv-bolt-1", theme_vars: found }));

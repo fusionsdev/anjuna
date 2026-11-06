@@ -72,11 +72,46 @@ export const TemplateVersionSummary = z.strictObject({
   sealed_at: Stamp.nullable(),
   thumbnail_url: z.string().nullable().default(null),
   brands_using: z.number().int().nonnegative().default(0),
+  /** templates.archived_at is set: hidden from the brand picker, existing brands keep running. */
+  archived: z.boolean().default(false),
+  category_id: z.string().nullable().default(null),
 });
 export type TemplateVersionSummary = z.infer<typeof TemplateVersionSummary>;
 
-export const TemplateListResponse = z.strictObject({ templates: z.array(TemplateVersionSummary) });
+export const TemplateCategory = z.strictObject({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(64),
+  sort: z.number().int(),
+});
+export type TemplateCategory = z.infer<typeof TemplateCategory>;
+
+export const TemplateListResponse = z.strictObject({
+  templates: z.array(TemplateVersionSummary),
+  categories: z.array(TemplateCategory).default([]),
+});
 export type TemplateListResponse = z.infer<typeof TemplateListResponse>;
+
+// Template manager (owner only): categories, archive, guarded delete. :id in these routes is the template id.
+
+export const TemplateCategoryCreateRequest = z.strictObject({ name: z.string().trim().min(1).max(64) });
+export type TemplateCategoryCreateRequest = z.infer<typeof TemplateCategoryCreateRequest>;
+
+export const TemplateCategoryCreateResponse = z.strictObject({ category: TemplateCategory });
+export type TemplateCategoryCreateResponse = z.infer<typeof TemplateCategoryCreateResponse>;
+
+/** category_id null removes the template from its category. */
+export const TemplateCategoryAssignRequest = z.strictObject({ category_id: z.string().min(1).max(64).nullable() });
+export type TemplateCategoryAssignRequest = z.infer<typeof TemplateCategoryAssignRequest>;
+
+export const TemplateCategoryAssignResponse = z.strictObject({ template_id: z.string(), category_id: z.string().nullable() });
+export type TemplateCategoryAssignResponse = z.infer<typeof TemplateCategoryAssignResponse>;
+
+export const TemplateArchiveResponse = z.strictObject({ ok: z.literal(true), template_id: z.string(), archived_at: z.string() });
+export type TemplateArchiveResponse = z.infer<typeof TemplateArchiveResponse>;
+
+/** DELETE answers 204, or 409 with one of these reasons; the panel then offers archive. */
+export const TemplateDeleteRefusal = z.strictObject({ error: z.enum(["template_in_use", "template_was_approved"]) });
+export type TemplateDeleteRefusal = z.infer<typeof TemplateDeleteRefusal>;
 
 export const TemplateCheckResult = z.strictObject({
   check_name: z.enum(["lint", "identity_scan", "screenshot_desktop", "screenshot_mobile"]),

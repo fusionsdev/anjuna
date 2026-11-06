@@ -301,6 +301,7 @@ describe("role table coverage", () => {
       listTemplates: "employee",
       importTemplate: "employee",
       approveTemplate: "owner",
+      manageTemplates: "owner",
       viewBuilderKeys: "employee",
       manageBuilderKeys: "owner",
       viewSettings: "owner",
