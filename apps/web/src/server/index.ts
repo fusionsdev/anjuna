@@ -13,6 +13,7 @@ import {
   BrandStatusChangeRequest,
   ConversionsQuery,
   LeadAggregatesQuery,
+  SpendReportResponse,
   authorize,
   type AdminError,
   type AdminRequestContext,
@@ -33,7 +34,8 @@ import { handleAuditRoute } from "./audit-route.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleLeadsRoute } from "./leads.js";
-import { handleSettingsRoute } from "./settings.js";
+import { handleFxSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
+import { withUsd } from "./money.js";
 import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
 import { handleTrafficRiskRoute } from "./traffic-risk.js";
@@ -125,6 +127,10 @@ async function route(
   // spec settings (FUS-378): Owner-only settings read.
   const settings = await handleSettingsRoute(request, env, path, ctx);
   if (settings) return settings;
+
+  // Baht per dollar for USD spend and profit (panel redesign, Task 1): owner read and write.
+  const fxSetting = await handleFxSettingRoute(request, env, path, ctx);
+  if (fxSetting) return fxSetting;
 
   const wizard = await handleWizardRoute(request, env, path, ctx);
   if (wizard) return wizard;
@@ -303,11 +309,15 @@ async function route(
     return fromCore(await callCore(env, ctx, { endpoint: "mailingStatus" }));
   }
 
-  // Ad spend (FUS-368): owner only, so an employee never receives money figures.
+  // Ad spend (FUS-368): owner only, so an employee never receives money figures. Core reports cost
+  // in the account currency; the panel adds cost_usd and total_cost_usd at the owner's fx rate.
   if (path === "/api/spend" && method === "GET") {
     const g = authorize("spendReport", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    return fromCore(await callCore(env, ctx, { endpoint: "spendReport", query: url.searchParams }));
+    const report = await callCore(env, ctx, { endpoint: "spendReport", query: url.searchParams });
+    if (report.status !== 200) return fromCore(report);
+    const fx = await readFxSetting(env.FACTORY);
+    return json(200, withUsd(SpendReportResponse.parse(report.body), fx.thbPerUsd));
   }
 
   // Conversion action status (FUS-384): owner only, shown in the money section.

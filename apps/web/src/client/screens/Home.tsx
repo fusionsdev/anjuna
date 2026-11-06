@@ -1,8 +1,8 @@
-import { CONVERSION_STALLED_HOURS, spendPeriodRange, type AlertsReportResponse, type ConversionsReportResponse, type FunnelReportResponse, type SpendReportResponse } from "@anjuna/contracts";
+import { CONVERSION_STALLED_HOURS, spendPeriodRange, type AlertsReportResponse, type ConversionsReportResponse, type FunnelReportResponse, type PanelSpendReportResponse } from "@anjuna/contracts";
 import { useEffect, useState, type MouseEvent } from "react";
 import { api, type Me } from "../api";
 import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars";
-import { delta, previousRange } from "../home-metrics";
+import { delta, previousRange, spendTotals } from "../home-metrics";
 import { isPlainLeftClick, navigate } from "../router";
 import { conversionsPath } from "./Conversions";
 import "./Home.css";
@@ -10,8 +10,8 @@ import "./Home.css";
 export type HomePeriod = "today" | "7d" | "30d";
 export type HomeTarget = "brands" | "new-brand" | "templates" | "funnel" | "alerts";
 
-/** GET /api/spend?period= (owner only, cost in USD; FUS-368). */
-export type SpendReport = SpendReportResponse;
+/** GET /api/spend?period= (owner only; cost in the account currency, cost_usd at the panel's rate). */
+export type SpendReport = PanelSpendReportResponse;
 
 /** A number, `null` for data that could not be read (shown as "—"), `undefined` while it loads (shown as "…"). */
 type Value = number | null | undefined;
@@ -33,13 +33,17 @@ function periodRange(period: HomePeriod): { from: string; to: string } {
 
 const mark = (value: Value): string | null => (value === undefined ? "…" : value === null ? "—" : null);
 const num = (value: Value): string => mark(value) ?? Math.round(value as number).toLocaleString("en-US");
-const usd = (value: Value): string => {
+const money = (symbol: "$" | "฿") => (value: Value): string => {
   const shown = mark(value);
   if (shown) return shown;
   const amount = value as number;
   const text = Math.abs(amount) >= 100 || Number.isInteger(amount) ? Math.round(Math.abs(amount)).toLocaleString("en-US") : Math.abs(amount).toFixed(2);
-  return `${amount < 0 ? "−$" : "$"}${text}`;
+  return `${amount < 0 ? "−" : ""}${symbol}${text}`;
 };
+/** Revenue and profit: conversion values are USD. */
+const usd = money("$");
+/** Ad spend and cost per lead: the Google Ads accounts bill in baht. */
+const thb = money("฿");
 
 /** Two decimals like the Conversions page, so the card and the page show the same amount. */
 const usdCents = (amount: number): string => `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -66,12 +70,6 @@ function sumFunnel(report: FunnelReportResponse): FunnelTotals {
   }
   if (report.rows.some((row) => row.revenue === null)) total.revenue = null;
   return total;
-}
-
-/** No AdKit rows for the period means nothing was synced, not that nothing was spent. */
-function spendTotals(report: SpendReport): { cost: number; clicks: number } | null {
-  if (report.brands.length === 0 && report.totals.cost === 0 && report.totals.clicks === 0) return null;
-  return { cost: report.totals.cost, clicks: report.totals.clicks };
 }
 
 /** Change against the previous window, under a ledger value. Every metric using it is good when up. */
@@ -164,7 +162,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [period, setPeriod] = useState<HomePeriod>("7d");
   const [funnel, setFunnel] = useState<FunnelTotals | null | undefined>(undefined);
   const [previousFunnel, setPreviousFunnel] = useState<FunnelTotals | null | undefined>(undefined);
-  const [spend, setSpend] = useState<{ cost: number; clicks: number } | null | undefined>(undefined);
+  const [spend, setSpend] = useState<{ thb: number; usd: number; clicks: number } | null | undefined>(undefined);
   const [alerts, setAlerts] = useState<AlertsReportResponse | null | undefined>(undefined);
   const [conversions, setConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
   const [daily, setDaily] = useState<DailyCount[] | null | undefined>(undefined);
@@ -213,10 +211,12 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   }, []);
 
   const leads = funnel === undefined ? undefined : funnel?.leads ?? null;
-  const spendCost: Value = spend === undefined ? undefined : spend?.cost ?? null;
+  // Spend and cost per lead stay in baht. Profit subtracts the server's USD spend from USD revenue, never baht.
+  const spendThb: Value = spend === undefined ? undefined : spend?.thb ?? null;
+  const spendUsd: Value = spend === undefined ? undefined : spend?.usd ?? null;
   const revenue: Value = funnel === undefined ? undefined : funnel === null ? null : funnel.revenue;
-  const costPerLead: Value = spendCost === undefined || leads === undefined ? undefined : spendCost === null || !leads ? null : spendCost / leads;
-  const profit: Value = spendCost === undefined || revenue === undefined ? undefined : spendCost === null || revenue === null ? null : revenue - spendCost;
+  const costPerLead: Value = spendThb === undefined || leads === undefined ? undefined : spendThb === null || !leads ? null : spendThb / leads;
+  const profit: Value = spendUsd === undefined || revenue === undefined ? undefined : spendUsd === null || revenue === null ? null : revenue - spendUsd;
   const pending: Value = alerts === undefined ? undefined : alerts === null ? null : pendingLeads(alerts);
   const field = (pick: (f: FunnelTotals) => number): Value => (funnel === undefined ? undefined : funnel === null ? null : pick(funnel));
   const before = (pick: (f: FunnelTotals) => Value): Value => (previousFunnel === undefined ? undefined : previousFunnel === null ? null : pick(previousFunnel));
@@ -252,7 +252,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
         <div>
           <h1>
             {owner
-              ? `จ่ายค่าโฆษณา ${usd(spendCost)} ได้ ${num(leads)} ลีด ต้นทุนลีดละ ${usd(costPerLead)}`
+              ? `จ่ายค่าโฆษณา ${thb(spendThb)} ได้ ${num(leads)} ลีด ต้นทุนลีดละ ${thb(costPerLead)}`
               : `ผู้เข้าเว็บ ${num(field((f) => f.clicks))} คน ได้ ${num(leads)} ลีด ขายได้ ${num(field((f) => f.sold))}`}
           </h1>
           <p className="home-sub">{owner ? "ทุกแบรนด์ใน aduplift ค่าโฆษณาจาก AdKit อัปเดตทุกชั่วโมง" : "ทุกแบรนด์ใน aduplift"}</p>
@@ -270,8 +270,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
         <div className="ledger" role="group" aria-label="สรุปตัวเลข">
           {owner ? (
             <>
-              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{usd(spendCost)}</p></div>
-              <div className="cell"><p className="k">ต้นทุนต่อลีด</p><p className="v">{usd(costPerLead)}</p></div>
+              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{thb(spendThb)}</p>{typeof spendUsd === "number" && <p className="hint">{usd(spendUsd)}</p>}</div>
+              <div className="cell"><p className="k">ต้นทุนต่อลีด</p><p className="v">{thb(costPerLead)}</p></div>
               <div className="cell"><p className="k">รายได้</p><p className="v">{usd(revenue)}</p><Delta now={revenue} before={before((f) => f.revenue)} /></div>
               <div className="cell"><p className="k">กำไร/ขาดทุน</p><p className={typeof profit === "number" ? (profit < 0 ? "v neg" : "v pos") : "v"}>{usd(profit)}</p></div>
             </>

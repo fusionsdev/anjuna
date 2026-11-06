@@ -29,7 +29,7 @@ beforeEach(() => {
     requests.push(input);
     const url = new URL(input, "https://app.test");
     if (url.pathname === "/api/me") return json({ user: { id: "user", email: "user@example.test", role } });
-    if (url.pathname === "/api/spend") return json(spendStatus === 200 ? { brands: [{ brand_id: "brand-a", clicks: 200 }] } : { error: "not_found" }, spendStatus);
+    if (url.pathname === "/api/spend") return json(spendStatus === 200 ? { brands: [{ brand_id: "brand-a", currency: "THB", clicks: 150 }, { brand_id: "brand-a", currency: "USD", clicks: 50 }] } : { error: "not_found" }, spendStatus);
     if (url.pathname === "/api/funnel") return json({ from, to, rows: empty ? [] : [reportRow, { ...reportRow, variant: "b", sold: 3 }] });
     if (url.pathname === "/api/traffic/breakdown") return json(trafficStatus === 200 ? traffic(url.searchParams.get("period") as TrafficBreakdownResponse["period"], url.searchParams.get("by") as TrafficBreakdownResponse["by"]) : { error: "internal" }, trafficStatus);
     if (url.pathname === "/api/traffic/risk") return json(trafficRisk);

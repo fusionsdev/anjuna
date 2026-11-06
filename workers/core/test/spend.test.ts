@@ -100,6 +100,25 @@ describe("POST /api/spend/ingest", () => {
     ]);
   });
 
+  it("stores the row currency, and THB for a row sent without one", async () => {
+    const response = await ingest({ rows: [
+      { brand_id: "brand-a", date: "2026-10-21", hour: 9, cost: 12448, currency: "THB", clicks: 3, impressions: 120 },
+      { brand_id: "brand-b", date: "2026-10-21", hour: 9, cost: 500, clicks: 1, impressions: 10 },
+    ] });
+    expect(response.status).toBe(200);
+    const { results } = await h.db.prepare("SELECT brand_id, cost, currency FROM ad_spend ORDER BY brand_id").all();
+    expect(results).toEqual([
+      { brand_id: "brand-a", cost: 12448, currency: "THB" },
+      { brand_id: "brand-b", cost: 500, currency: "THB" },
+    ]);
+  });
+
+  it("rejects a currency other than THB or USD with 400 and writes nothing", async () => {
+    const response = await ingest({ rows: [{ brand_id: "brand-a", date: "2026-10-21", hour: 9, cost: 1, currency: "EUR", clicks: 1, impressions: 1 }] });
+    expect(response.status).toBe(400);
+    expect((await spendRows()).results).toEqual([]);
+  });
+
   it("accepts an empty batch", async () => {
     expect(await (await ingest({ rows: [] })).json()).toEqual({ status: "accepted", upserted: 0 });
   });
@@ -141,34 +160,47 @@ describe("GET /admin/spend", () => {
     const day = await read("today");
     expect(day).toMatchObject({ period: "today", ...spendPeriodRange("today") });
     expect(pick(day)).toEqual({
-      totals: { cost: 8.3, clicks: 7, impressions: 70 },
+      totals: { cost_by_currency: { THB: 8.3, USD: 0 }, clicks: 7, impressions: 70 },
       brands: [
-        { brand_id: "brand-a", cost: 3.3, clicks: 3, impressions: 30 },
-        { brand_id: "brand-b", cost: 5, clicks: 4, impressions: 40 },
+        { brand_id: "brand-a", currency: "THB", cost: 3.3, clicks: 3, impressions: 30 },
+        { brand_id: "brand-b", currency: "THB", cost: 5, clicks: 4, impressions: 40 },
       ],
     });
     expect(Date.parse(day.brands[0]!.updated_at)).toBeGreaterThan(Date.now() - 60_000);
 
     expect(pick(await read("7d"))).toEqual({
-      totals: { cost: 25.3, clicks: 24, impressions: 240 },
+      totals: { cost_by_currency: { THB: 25.3, USD: 0 }, clicks: 24, impressions: 240 },
       brands: [
-        { brand_id: "brand-a", cost: 13.3, clicks: 13, impressions: 130 },
-        { brand_id: "brand-b", cost: 12, clicks: 11, impressions: 110 },
+        { brand_id: "brand-a", currency: "THB", cost: 13.3, clicks: 13, impressions: 130 },
+        { brand_id: "brand-b", currency: "THB", cost: 12, clicks: 11, impressions: 110 },
       ],
     });
     const month = await read("30d");
     expect(month).toMatchObject({ period: "30d", from: daysAgo(29), to: today() });
     expect(pick(month)).toEqual({
-      totals: { cost: 45.3, clicks: 44, impressions: 440 },
+      totals: { cost_by_currency: { THB: 45.3, USD: 0 }, clicks: 44, impressions: 440 },
       brands: [
-        { brand_id: "brand-a", cost: 13.3, clicks: 13, impressions: 130 },
-        { brand_id: "brand-b", cost: 32, clicks: 31, impressions: 310 },
+        { brand_id: "brand-a", currency: "THB", cost: 13.3, clicks: 13, impressions: 130 },
+        { brand_id: "brand-b", currency: "THB", cost: 32, clicks: 31, impressions: 310 },
       ],
     });
   });
 
+  it("returns the stored currency per brand row and never sums baht with dollars", async () => {
+    await ingest({ rows: [
+      { brand_id: "brand-a", date: today(), hour: 1, cost: 12448, currency: "THB", clicks: 3, impressions: 30 },
+      { brand_id: "brand-b", date: today(), hour: 1, cost: 20, currency: "USD", clicks: 2, impressions: 20 },
+    ] });
+    const body = SpendReportResponse.parse(await (await report("today")).json());
+    expect(body.totals).toEqual({ cost_by_currency: { THB: 12448, USD: 20 }, clicks: 5, impressions: 50 });
+    expect(body.brands.map(({ brand_id, currency, cost }) => ({ brand_id, currency, cost }))).toEqual([
+      { brand_id: "brand-a", currency: "THB", cost: 12448 },
+      { brand_id: "brand-b", currency: "USD", cost: 20 },
+    ]);
+  });
+
   it("returns zero totals and no brands when nothing was ingested", async () => {
     const response = await report("30d");
-    expect(await response.json()).toMatchObject({ totals: { cost: 0, clicks: 0, impressions: 0 }, brands: [] });
+    expect(await response.json()).toMatchObject({ totals: { cost_by_currency: { THB: 0, USD: 0 }, clicks: 0, impressions: 0 }, brands: [] });
   });
 });

@@ -18,7 +18,10 @@ async function paidClicks(period: TrafficPeriod): Promise<Map<string, number>> {
   const response = await fetch(`/api/spend?period=${period}`, { credentials: "same-origin" });
   if (response.status === 404 || response.status === 403) return new Map();
   if (!response.ok) throw new Error("spend unavailable");
-  return new Map(Spend.parse(await response.json()).brands.map((b) => [b.brand_id, b.clicks]));
+  // A brand has one spend row per billing currency; its paid clicks are the sum of them.
+  const clicks = new Map<string, number>();
+  for (const b of Spend.parse(await response.json()).brands) clicks.set(b.brand_id, (clicks.get(b.brand_id) ?? 0) + b.clicks);
+  return clicks;
 }
 
 export function biggestLeak(stages: Array<[string, number | null]>): { label: string; loss: number } | null {

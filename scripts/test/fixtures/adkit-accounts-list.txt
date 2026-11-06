@@ -1,0 +1,2 @@
+Notice: a newer AdKit CLI is available.
+{"accounts":[{"id":"4811219623","name":"Brand A","currencyCode":"THB","timeZone":"Asia/Bangkok"},{"customerId":"123-456-7890","descriptiveName":"Brand B","currency":"thb"},{"id":"5550001111","name":"Dollar test","currencyCode":"USD"},{"id":"9990001111","name":"Euro test","currencyCode":"EUR"}]}

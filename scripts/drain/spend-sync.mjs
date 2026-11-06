@@ -14,7 +14,13 @@
  *      --from <date> --to <date> --json [--project <project>]. One date per call, because an hour
  *      breakdown over several days would sum by hour of day. Hour rows carry no date, so the
  *      call's date is stamped on them.
- *   3. Map the output to { brand_id, date, hour, cost, clicks, impressions } rows (cost in USD).
+ *   3. Map the output to { brand_id, date, hour, cost, currency, clicks, impressions } rows. cost is in
+ *      the account's billing currency. results carries no currency field, so it comes from
+ *      adkit manage google accounts list --json [--project <project>], asked once per project per run.
+ *      A failed or unparsable list (no account with a currency) fails every brand of that project and
+ *      sends none of their rows, because a row without currency is stored as THB and would overwrite
+ *      a stored USD row. An account listed in a currency other than THB or USD fails its brand. An
+ *      account a parsed list does not name sends rows without currency (core stores THB) and a warning.
  *   4. POST them to ${FORM_BASE_URL}/api/spend/ingest in chunks; core upserts, so re-sending a
  *      day replaces its values and every run can resend the whole window AdKit returns.
  * --dry-run prints the mapped rows per brand and POSTs nothing.
@@ -29,6 +35,8 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const CHUNK = 1000;
 const DATE = /^\d{4}-\d{2}-\d{2}/;
+/** The currencies core's ad_spend.currency accepts. */
+const CURRENCIES = new Set(["THB", "USD"]);
 
 /** The dates synced each run: yesterday and today in UTC (no account timezone rule exists). */
 export function syncDates(now = new Date()) {
@@ -47,6 +55,13 @@ export function adkitArgsFor(route, breakdown, fallbackProject, date) {
     "--json",
   ];
   const project = route.project || fallbackProject;
+  if (project) args.push("--project", project);
+  return args;
+}
+
+/** The adkit argv listing the Google Ads accounts of a project, with their billing currency. */
+export function accountsListArgs(project) {
+  const args = ["manage", "google", "accounts", "list", "--json"];
   if (project) args.push("--project", project);
   return args;
 }
@@ -71,6 +86,25 @@ function resultRows(out) {
   return [];
 }
 
+const accountKey = (id) => String(id ?? "").replace(/\D/g, "");
+
+/**
+ * Account id (digits only, so 123-456-7890 matches 1234567890) to upper-case currency code, from
+ * accounts list output. Reads the id from id / account / accountId / customerId and the currency from
+ * currency / currencyCode / currency_code, on the item or its `customer` object.
+ */
+export function accountCurrencies(out) {
+  const items = Array.isArray(out) ? out : Array.isArray(out?.accounts) ? out.accounts : resultRows(out);
+  const currencies = new Map();
+  for (const item of items) {
+    const sources = [item, item?.customer];
+    const id = accountKey(pick(sources, ["id", "account", "accountId", "account_id", "customerId", "customer_id"]));
+    const currency = pick(sources, ["currency", "currencyCode", "currency_code"]);
+    if (id && typeof currency === "string" && currency.trim()) currencies.set(id, currency.trim().toUpperCase());
+  }
+  return currencies;
+}
+
 function num(value) {
   if (value === null || value === undefined || value === "") return undefined;
   const n = typeof value === "number" ? value : Number(value);
@@ -84,7 +118,7 @@ const pick = (sources, keys) => {
 
 /**
  * Map adkit results output to ingest rows for one brand. Reads date/hour from the row or its
- * `segments`, cost from `cost` (USD) or `costMicros` / `cost_micros` (micros), clicks and
+ * `segments`, cost from `cost` (account currency) or `costMicros` / `cost_micros` (micros), clicks and
  * impressions from the row or its `metrics`. Rows sharing a date and hour are summed. Returns the
  * rows plus how many input rows were skipped for a missing date, hour or cost. `defaultDate`
  * (YYYY-MM-DD) stamps rows that carry no date, as hour-breakdown rows do.
@@ -140,6 +174,25 @@ export async function syncSpend({
   const routing = await res.json();
   if (routing === null || typeof routing !== "object" || Array.isArray(routing)) throw new Error("routing: not a JSON object");
 
+  // One accounts list per project for the whole run; null when the call failed or named no account.
+  const currencyLists = new Map();
+  const currencyListFor = async (route) => {
+    const project = route.project || fallbackProject;
+    const key = project ?? "";
+    if (!currencyLists.has(key)) {
+      let list = null;
+      try {
+        list = accountCurrencies(parseAdkitJson(await runAdkit(accountsListArgs(project))));
+        if (list.size === 0) throw new Error("no account with a currency in the output");
+      } catch (e) {
+        list = null;
+        error(`spend-sync: accounts list failed: ${e?.message || e}${project ? ` (project ${project})` : ""}`);
+      }
+      currencyLists.set(key, list);
+    }
+    return currencyLists.get(key);
+  };
+
   let failures = 0;
   const rows = [];
   const accounts = new Map();
@@ -150,6 +203,20 @@ export async function syncSpend({
       continue;
     }
     accounts.set(route.account, brandId);
+    const list = await currencyListFor(route);
+    if (list === null) {
+      error(`spend-sync: ${brandId} skipped: no accounts list to read the currency of account ${route.account}`);
+      failures++;
+      continue;
+    }
+    const currency = list.get(accountKey(route.account));
+    if (currency === undefined) {
+      error(`spend-sync: ${brandId} account ${route.account} has no currency in accounts list; core stores THB`);
+    } else if (!CURRENCIES.has(currency)) {
+      error(`spend-sync: ${brandId} account ${route.account} bills in ${currency}; core stores THB or USD only, skipped`);
+      failures++;
+      continue;
+    }
     try {
       const brandRows = [];
       let skipped = 0;
@@ -157,7 +224,7 @@ export async function syncSpend({
         const out = parseAdkitJson(await runAdkit(adkitArgsFor(route, breakdown, fallbackProject, date)));
         if (out && !Array.isArray(out) && out.error) throw new Error(`${date}: ${String(out.error).slice(0, 200)}`);
         const mapped = spendRowsFromAdkit(out, brandId, breakdown, date);
-        brandRows.push(...mapped.rows);
+        brandRows.push(...(currency ? mapped.rows.map((row) => ({ ...row, currency })) : mapped.rows));
         skipped += mapped.skipped;
       }
       log(`spend-sync: ${brandId} rows=${brandRows.length} skipped=${skipped}`);

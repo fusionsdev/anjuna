@@ -27,7 +27,8 @@ const runtimeRow = (id: string) => ({
 const funnelRow = (brand: string, clicks: number, submits: number, revenue: number) => ({
   brand, keyword: null, variant: null, clicks, go_count: 0, form_views: 0, submits, sold: 0, revenue, submit_rate: null, sold_rate: null,
 });
-const cost = (brand_id: string, value: number) => ({ brand_id, cost: value, clicks: 1, impressions: 1, updated_at: "2026-10-06T00:00:00.000Z" });
+// `usd` dollars of spend, billed in baht at 35 THB per USD: the server sends cost in THB and cost_usd.
+const cost = (brand_id: string, usd: number) => ({ brand_id, currency: "THB" as const, cost: usd * 35, cost_usd: usd, clicks: 1, impressions: 1, updated_at: "2026-10-06T00:00:00.000Z" });
 
 // Per period: [funnel rows, spend rows]. Wizard Demo has funnel numbers but no spend row, so its profit is unknown.
 const DATA: Record<string, { funnel: ReturnType<typeof funnelRow>[]; spend: ReturnType<typeof cost>[] }> = {
@@ -51,7 +52,10 @@ let originalSpend: SpendFn | undefined;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const spendReport = (period: string) => {
   const { spend: rows } = DATA[period] ?? DATA["7d"]!;
-  return { period, from: "2026-10-01", to: "2026-10-07", totals: { cost: rows.reduce((sum, row) => sum + row.cost, 0), clicks: 0, impressions: 0 }, brands: rows };
+  return {
+    period, from: "2026-10-01", to: "2026-10-07", totals: { cost_by_currency: { THB: rows.reduce((sum, row) => sum + row.cost, 0), USD: 0 }, clicks: 0, impressions: 0 }, brands: rows,
+    total_cost_usd: rows.reduce((sum, row) => sum + row.cost_usd, 0), fx: { thbPerUsd: 35 },
+  };
 };
 
 beforeEach(() => {
@@ -119,13 +123,26 @@ describe("brands table for the Owner", () => {
   it("lists spend, clicks, leads, cost per lead and profit, issues first", async () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]));
-    expect(cells("floatsme.test")).toEqual(["live", "Keyword Param", "$620", "96", "0", "—", "−$620"]);
-    expect(cells("creditsgene.test")).toEqual(["live", "Keyword Param", "$800", "212", "10", "$80", "−$546"]);
-    expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "$100", "50", "5", "$20", "$300"]);
+    expect(cells("floatsme.test")).toEqual(["live", "Keyword Param", "฿21,700", "96", "0", "—", "−$620"]);
+    expect(cells("creditsgene.test")).toEqual(["live", "Keyword Param", "฿28,000", "212", "10", "฿2,800", "−$546"]);
+    expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "฿3,500", "50", "5", "฿700", "$300"]);
     // No spend row: spend, cost per lead and profit are unknown, never 0.
     expect(cells("wizard.test")).toEqual(["live", "Keyword Param", "—", "40", "4", "—", "—"]);
     expect(screen.getByRole("columnheader", { name: /กำไร/ })).toBeTruthy();
     expect(spend).toHaveBeenCalledWith("7d");
+  });
+
+  it("shows ฿350 spend against $20 revenue at 35 THB per USD as a $10 profit, never $20 − 350", async () => {
+    const week = DATA["7d"]!;
+    const saved = { funnel: week.funnel, spend: week.spend };
+    week.funnel = [funnelRow("brand-al", 50, 5, 20)];
+    week.spend = [cost("brand-al", 10)];
+    try {
+      render(<BrandLifecycle me={owner} />);
+      await waitFor(() => expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "฿350", "50", "5", "฿70", "$10"]));
+    } finally {
+      Object.assign(week, saved);
+    }
   });
 
   it("shows a loss in the negative colour class and a gain in the positive one", async () => {
@@ -146,7 +163,7 @@ describe("brands table for the Owner", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith("today"));
-    await waitFor(() => expect(cells("creditsgene.test")).toEqual(["live", "Keyword Param", "$90", "20", "2", "$45", "$410"]));
+    await waitFor(() => expect(cells("creditsgene.test")).toEqual(["live", "Keyword Param", "฿3,150", "20", "2", "฿1,575", "$410"]));
     expect(screen.getByRole("button", { name: "วันนี้" }).getAttribute("aria-pressed")).toBe("true");
     const today = funnelPaths().at(-1)!;
     const params = new URLSearchParams(today.split("?")[1]);
@@ -207,18 +224,35 @@ describe("side panel of the selected brand", () => {
 });
 
 describe("brandMoney, periodWindow and sortWorstProfitFirst", () => {
-  const spendFixture: SpendReport = { period: "7d", from: "2026-10-01", to: "2026-10-07", totals: { cost: 50, clicks: 0, impressions: 0 }, brands: [{ brand_id: "b", cost: 50, clicks: 0, impressions: 0, updated_at: "2026-10-06T00:00:00.000Z" }] };
+  const spendFixture: SpendReport = {
+    period: "7d", from: "2026-10-01", to: "2026-10-07", totals: { cost_by_currency: { THB: 350, USD: 0 }, clicks: 0, impressions: 0 },
+    brands: [{ brand_id: "b", currency: "THB", cost: 350, cost_usd: 10, clicks: 0, impressions: 0, updated_at: "2026-10-06T00:00:00.000Z" }],
+    total_cost_usd: 10, fx: { thbPerUsd: 35 },
+  };
   const runtime = [runtimeRow("b"), runtimeRow("c")] as never;
   const funnel = { from: "", to: "", rows: [funnelRow("b", 10, 4, 120), funnelRow("b", 5, 1, 30)] };
 
   it("sums the funnel rows of a brand and derives cost per lead and profit", () => {
-    expect(brandMoney("b", runtime, funnel, spendFixture)).toEqual({ clicks: 15, leads: 5, spend: 50, costPerLead: 10, profit: 100 });
+    expect(brandMoney("b", runtime, funnel, spendFixture)).toEqual({
+      clicks: 15, leads: 5, spend: { THB: 350 }, costPerLead: { THB: 70 }, profit: 140, spendText: "฿350", costPerLeadText: "฿70",
+    });
+  });
+
+  it("keeps every currency row of a brand and takes profit from the summed cost_usd", () => {
+    const twoCurrencies: SpendReport = {
+      ...spendFixture,
+      brands: [...spendFixture.brands, { brand_id: "b", currency: "USD", cost: 5, cost_usd: 5, clicks: 0, impressions: 0, updated_at: "2026-10-06T00:00:00.000Z" }],
+    };
+    expect(brandMoney("b", runtime, funnel, twoCurrencies)).toEqual({
+      clicks: 15, leads: 5, spend: { THB: 350, USD: 5 }, costPerLead: { THB: 70, USD: 1 }, profit: 135, spendText: "฿350 + $5", costPerLeadText: "฿70 + $1",
+    });
   });
 
   it("keeps a missing source unknown instead of 0", () => {
-    expect(brandMoney("c", runtime, funnel, spendFixture)).toEqual({ clicks: 0, leads: 0, spend: null, costPerLead: null, profit: null });
-    expect(brandMoney("b", runtime, null, spendFixture)).toEqual({ clicks: null, leads: null, spend: 50, costPerLead: null, profit: null });
-    expect(brandMoney("b", null, funnel, null)).toEqual({ clicks: null, leads: null, spend: null, costPerLead: null, profit: null });
+    const unknown = { spend: null, costPerLead: null, profit: null, spendText: "—", costPerLeadText: "—" };
+    expect(brandMoney("c", runtime, funnel, spendFixture)).toEqual({ clicks: 0, leads: 0, ...unknown });
+    expect(brandMoney("b", runtime, null, spendFixture)).toEqual({ clicks: null, leads: null, ...unknown, spend: { THB: 350 }, spendText: "฿350" });
+    expect(brandMoney("b", null, funnel, null)).toEqual({ clicks: null, leads: null, ...unknown });
     expect(brandMoney("draft", runtime, funnel, spendFixture).clicks).toBeNull();
   });
 
