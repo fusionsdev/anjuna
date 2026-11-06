@@ -17,8 +17,10 @@
  *   3. Map the output to { brand_id, date, hour, cost, currency, clicks, impressions } rows. cost is in
  *      the account's billing currency. results carries no currency field, so it comes from
  *      adkit manage google accounts list --json [--project <project>], asked once per project per run.
- *      An account listed in a currency other than THB or USD fails its brand. An account the list
- *      does not name (or a failed list) sends rows without currency, which core stores as THB.
+ *      A failed or unparsable list (no account with a currency) fails every brand of that project and
+ *      sends none of their rows, because a row without currency is stored as THB and would overwrite
+ *      a stored USD row. An account listed in a currency other than THB or USD fails its brand. An
+ *      account a parsed list does not name sends rows without currency (core stores THB) and a warning.
  *   4. POST them to ${FORM_BASE_URL}/api/spend/ingest in chunks; core upserts, so re-sending a
  *      day replaces its values and every run can resend the whole window AdKit returns.
  * --dry-run prints the mapped rows per brand and POSTs nothing.
@@ -172,21 +174,23 @@ export async function syncSpend({
   const routing = await res.json();
   if (routing === null || typeof routing !== "object" || Array.isArray(routing)) throw new Error("routing: not a JSON object");
 
-  // One accounts list per project for the whole run; null when the call failed.
+  // One accounts list per project for the whole run; null when the call failed or named no account.
   const currencyLists = new Map();
-  const currencyOf = async (route) => {
+  const currencyListFor = async (route) => {
     const project = route.project || fallbackProject;
     const key = project ?? "";
     if (!currencyLists.has(key)) {
       let list = null;
       try {
         list = accountCurrencies(parseAdkitJson(await runAdkit(accountsListArgs(project))));
+        if (list.size === 0) throw new Error("no account with a currency in the output");
       } catch (e) {
+        list = null;
         error(`spend-sync: accounts list failed: ${e?.message || e}${project ? ` (project ${project})` : ""}`);
       }
       currencyLists.set(key, list);
     }
-    return currencyLists.get(key)?.get(accountKey(route.account));
+    return currencyLists.get(key);
   };
 
   let failures = 0;
@@ -199,7 +203,13 @@ export async function syncSpend({
       continue;
     }
     accounts.set(route.account, brandId);
-    const currency = await currencyOf(route);
+    const list = await currencyListFor(route);
+    if (list === null) {
+      error(`spend-sync: ${brandId} skipped: no accounts list to read the currency of account ${route.account}`);
+      failures++;
+      continue;
+    }
+    const currency = list.get(accountKey(route.account));
     if (currency === undefined) {
       error(`spend-sync: ${brandId} account ${route.account} has no currency in accounts list; core stores THB`);
     } else if (!CURRENCIES.has(currency)) {

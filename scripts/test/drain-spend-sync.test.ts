@@ -168,19 +168,36 @@ describe("scripts/drain/spend-sync.mjs job", () => {
     expect(posts.flatMap((p) => (p as { rows: Row[] }).rows)).toEqual([]);
   });
 
-  it("sends rows without a currency (core stores THB) and warns when accounts list fails", async () => {
+  it.each([
+    ["fails", async (): Promise<string> => { throw new Error("spawn adkit ENOENT"); }, "accounts list failed: spawn adkit ENOENT"],
+    ["cannot be read", async () => fixture("adkit-results-hour-live.txt"), "accounts list failed: no account with a currency in the output"],
+  ])("fails every brand of the project and posts nothing when accounts list %s", async (_name, accountsList, message) => {
+    // A row without currency would be stored as THB and overwrite a stored USD row, so nothing is sent.
     const { posts, fetchImpl } = fakeCore();
     const errors: string[] = [];
+    const calls: string[][] = [];
     const runAdkit = async (args: string[]) => {
-      if (args[2] === "accounts") throw new Error("spawn adkit ENOENT");
-      return fixture("adkit-results-hour-live.txt");
+      calls.push(args);
+      return args[2] === "accounts" ? accountsList() : fixture("adkit-results-hour-live.txt");
     };
+    const now = new Date("2026-10-26T10:00:00Z");
+    expect(await s.syncSpend({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl, log: () => {}, error: (l) => errors.push(l), now })).toBe(2);
+    expect(posts).toEqual([]);
+    expect(calls.filter((a) => a[2] === "results")).toEqual([]);
+    expect(errors.join("\n")).toContain(message);
+    expect(errors.join("\n")).toContain("brand-a skipped: no accounts list to read the currency of account 4811219623");
+  });
+
+  it("sends rows without a currency (core stores THB) and warns when a parsed accounts list does not name the account", async () => {
+    const { posts, fetchImpl } = fakeCore();
+    const errors: string[] = [];
+    const runAdkit = async (args: string[]) =>
+      args[2] === "accounts" ? '{"accounts":[{"id":"5550001111","currencyCode":"USD"}]}' : fixture("adkit-results-hour-live.txt");
     const now = new Date("2026-10-26T10:00:00Z");
     expect(await s.syncSpend({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl, log: () => {}, error: (l) => errors.push(l), now })).toBe(0);
     const rows = (posts[0] as { rows: Row[] }).rows;
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => !("currency" in r))).toBe(true);
-    expect(errors.join("\n")).toContain("accounts list failed: spawn adkit ENOENT");
     expect(errors.join("\n")).toContain("brand-a account 4811219623 has no currency in accounts list; core stores THB");
   });
 
@@ -188,6 +205,7 @@ describe("scripts/drain/spend-sync.mjs job", () => {
     const dry = fakeCore();
     const errors: string[] = [];
     const runAdkit = async (args: string[]) => {
+      if (args[2] === "accounts") return fixture("adkit-accounts-list.txt");
       if (args.includes("1234567890")) throw new Error("spawn adkit ENOENT");
       return fixture("adkit-results-hour-live.txt");
     };

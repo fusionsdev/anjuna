@@ -726,11 +726,11 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
                     <RowMenu label="จัดการ (Actions)" items={rowMenuItems(brand)} />
                   </td>
                   <td data-label="โฟลว์ (Flow gate)">{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
-                  {owner && <td data-label="ค่าโฆษณา (Spend)" className="blue">{usd(money.spend)}</td>}
+                  {owner && <td data-label="ค่าโฆษณา (Spend)" className="blue">{money.spendText}</td>}
                   <td data-label="คลิก (Clicks)">{count(money.clicks)}</td>
                   <td data-label="ลีด (Leads)">{count(money.leads)}</td>
                   {owner && <>
-                    <td data-label="ต้นทุน/ลีด (Cost per lead)">{usd(money.costPerLead)}</td>
+                    <td data-label="ต้นทุน/ลีด (Cost per lead)">{money.costPerLeadText}</td>
                     <td data-label="กำไร (Profit)" className={money.profit === null ? undefined : money.profit < 0 ? "neg" : "pos"}>{usd(money.profit)}</td>
                   </>}
                 </tr>

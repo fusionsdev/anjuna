@@ -1,5 +1,5 @@
 /** The numbers of the brands screen: the 7-day stats row under each brand, and the per-period money columns of the table. An unknown number is "—", never 0. */
-import type { BrandSummary, FunnelReportResponse, SpendReportResponse } from "@anjuna/contracts";
+import type { BrandSummary, FunnelReportResponse, PanelSpendReportResponse, SpendCurrency } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 export { sortWorstProfitFirst } from "../brand-health";
@@ -62,8 +62,8 @@ export function usePeriodFunnel(period: BrandPeriod, refreshKey: number, week: F
   return period === "7d" ? week : own;
 }
 
-/** GET /api/spend?period= (owner only, cost in USD; FUS-368). */
-export type SpendReport = SpendReportResponse;
+/** GET /api/spend?period= (owner only; cost in the account currency, cost_usd at the panel's rate). */
+export type SpendReport = PanelSpendReportResponse;
 
 /** The ad spend per brand of a period. Only the Owner asks: the API answers 403 to an Employee. Null while loading or when it failed. */
 export function useSpendReport(period: BrandPeriod, enabled: boolean, refreshKey: number): SpendReport | null {
@@ -77,18 +77,38 @@ export function useSpendReport(period: BrandPeriod, enabled: boolean, refreshKey
   return enabled && loaded && loaded.period === period ? loaded.report : null;
 }
 
+/** An amount per billing currency. Baht and dollars are never added together. */
+export type ByCurrency = Partial<Record<SpendCurrency, number>>;
+
 /** One table row of the brands screen. Every number is null when its source did not load: "—", never 0. */
 export interface BrandMoney {
   clicks: number | null;
   leads: number | null;
-  spend: number | null;
-  costPerLead: number | null;
+  /** Spend in each currency the brand's accounts bill in (THB in production). */
+  spend: ByCurrency | null;
+  costPerLead: ByCurrency | null;
+  /** USD: revenue minus the server's cost_usd. */
   profit: number | null;
+  /** `spend` and `costPerLead` as the table shows them, e.g. "฿3,500" or "฿350 + $5". */
+  spendText: string;
+  costPerLeadText: string;
+}
+
+const SYMBOL: Record<SpendCurrency, string> = { THB: "฿", USD: "$" };
+
+/** "฿350", "฿350 + $5", or "—" for null. Whole units from 100 up, two decimals below. */
+export function byCurrencyText(value: ByCurrency | null): string {
+  if (value === null) return "—";
+  return (["THB", "USD"] as const).filter((c) => value[c] !== undefined).map((c) => {
+    const amount = value[c]!;
+    return `${SYMBOL[c]}${amount >= 100 || Number.isInteger(amount) ? Math.round(amount).toLocaleString("en-US") : amount.toFixed(2)}`;
+  }).join(" + ");
 }
 
 /**
  * Clicks, leads and revenue come from the funnel report of the period (same rule as `brandStats`: known only for a brand core lists),
- * spend from the spend report. A brand missing from the spend report was not synced, so its spend, cost per lead and profit are unknown.
+ * spend from every spend row of the brand (one per currency). A brand missing from the spend report was not synced, so its spend,
+ * cost per lead and profit are unknown. Profit subtracts the server's USD cost from USD revenue, never baht.
  */
 export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funnel: FunnelReportResponse | null, spend: SpendReport | null): BrandMoney {
   const listed = runtime?.some((brand) => brand.brand_id === brandId);
@@ -96,13 +116,22 @@ export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funn
   const clicks = rows ? rows.reduce((sum, row) => sum + row.clicks, 0) : null;
   const leads = rows ? rows.reduce((sum, row) => sum + row.submits, 0) : null;
   const revenue = rows && !rows.some((row) => row.revenue === null) ? rows.reduce((sum, row) => sum + (row.revenue ?? 0), 0) : null;
-  const cost = spend?.brands.find((row) => row.brand_id === brandId)?.cost ?? null;
+  const spendRows = spend ? spend.brands.filter((row) => row.brand_id === brandId) : [];
+  let cost: ByCurrency | null = null;
+  let costUsd: number | null = null;
+  for (const row of spendRows) {
+    cost = { ...(cost ?? {}), [row.currency]: (cost?.[row.currency] ?? 0) + row.cost };
+    costUsd = (costUsd ?? 0) + row.cost_usd;
+  }
+  const costPerLead = cost !== null && leads ? Object.fromEntries(Object.entries(cost).map(([c, amount]) => [c, amount / leads])) as ByCurrency : null;
   return {
     clicks,
     leads,
     spend: cost,
-    costPerLead: cost !== null && leads ? cost / leads : null,
-    profit: cost !== null && revenue !== null ? revenue - cost : null,
+    costPerLead,
+    profit: costUsd !== null && revenue !== null ? Math.round((revenue - costUsd) * 100) / 100 : null,
+    spendText: byCurrencyText(cost),
+    costPerLeadText: byCurrencyText(costPerLead),
   };
 }
 

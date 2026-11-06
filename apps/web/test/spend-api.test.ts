@@ -94,19 +94,28 @@ describe("/api/settings/fx (owner only)", () => {
     expect(await response.json()).toEqual({ thbPerUsd: 35, updated_at: null });
   });
 
-  it("stores the owner's rate with who set it and when", async () => {
+  it("stores the owner's rate and writes an audit_log row with the old and new rate", async () => {
     const response = await call("/api/settings/fx", { cookie: owner, method: "PUT", body: { thbPerUsd: 36.5 } });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ thbPerUsd: 36.5 });
     expect(await (await call("/api/settings/fx", { cookie: owner })).json()).toMatchObject({ thbPerUsd: 36.5 });
     const row = await env.FACTORY.prepare("SELECT value_json, updated_by FROM panel_settings WHERE key = 'fx_thb_per_usd'").first<{ value_json: string; updated_by: string }>();
     expect(row?.value_json).toBe("36.5");
-    expect(row?.updated_by).toMatch(/.+/);
+    const audit = await env.FACTORY.prepare(
+      "SELECT actor_id, actor_role, entity_type, entity_id, before_json, after_json FROM audit_log WHERE action = 'settings.fx_rate' ORDER BY id DESC LIMIT 1",
+    ).first<Record<string, string>>();
+    expect(audit).toEqual({
+      actor_id: row!.updated_by, actor_role: "owner", entity_type: "panel_setting", entity_id: "fx_thb_per_usd",
+      before_json: '{"thbPerUsd":35}', after_json: '{"thbPerUsd":36.5}',
+    });
   });
 
-  it.each([[0], [-1], ["35"], [null], [1001]])("rejects rate %j with 422 and keeps the old one", async (rate) => {
+  it.each([[0], [-1], ["35"], [null], [1001]])("rejects rate %j with 422, keeps the old one and writes no audit row", async (rate) => {
+    const audits = async () => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'settings.fx_rate'").first<{ n: number }>())!.n;
+    const auditsBefore = await audits();
     const response = await call("/api/settings/fx", { cookie: owner, method: "PUT", body: { thbPerUsd: rate } });
     expect(response.status).toBe(422);
+    expect(await audits()).toBe(auditsBefore);
     expect(await (await call("/api/settings/fx", { cookie: owner })).json()).toMatchObject({ thbPerUsd: 35 });
   });
 

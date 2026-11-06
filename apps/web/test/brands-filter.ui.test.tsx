@@ -30,7 +30,8 @@ const runtimeRow = (id: string) => ({
 const funnelRow = (brand: string, clicks: number, submits: number, revenue: number) => ({
   brand, keyword: null, variant: null, clicks, go_count: 0, form_views: 0, submits, sold: 0, revenue, submit_rate: null, sold_rate: null,
 });
-const cost = (brand_id: string, value: number) => ({ brand_id, cost: value, clicks: 1, impressions: 1, updated_at: "2026-10-06T00:00:00.000Z" });
+// `usd` dollars of spend, billed in baht at 35 THB per USD: the server sends cost in THB and cost_usd.
+const cost = (brand_id: string, usd: number) => ({ brand_id, currency: "THB" as const, cost: usd * 35, cost_usd: usd, clicks: 1, impressions: 1, updated_at: "2026-10-06T00:00:00.000Z" });
 // Profit: FloatMe -620, Credit Genie -546, Alpha Loans 300, Wizard Demo unknown (no spend row).
 const funnel = [funnelRow("brand-cg", 212, 10, 254), funnelRow("brand-fm", 96, 0, 0), funnelRow("brand-al", 50, 5, 400), funnelRow("brand-wd", 40, 4, 300)];
 const spendRows = [cost("brand-cg", 800), cost("brand-fm", 620), cost("brand-al", 100)];
@@ -71,7 +72,7 @@ beforeEach(() => {
   }));
   originalSpend = apiWithSpend.spend;
   apiWithSpend.spend = (async (period: string) => ({
-    period, from: "2026-10-01", to: "2026-10-07", totals: { cost: 1520, clicks: 0, impressions: 0 }, brands: spendRows,
+    period, from: "2026-10-01", to: "2026-10-07", totals: { cost_by_currency: { THB: 1520 * 35, USD: 0 }, clicks: 0, impressions: 0 }, brands: spendRows, total_cost_usd: 1520, fx: { thbPerUsd: 35 },
   })) as SpendFn;
 });
 
