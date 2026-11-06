@@ -342,6 +342,38 @@ describe("brands list filters and sort", () => {
     expect(within(document.querySelector(".brands-aside")!).queryByRole("heading", { level: 2, name: /demo1.test/ })).toBeNull();
   });
 
+  it("opens no brand and says demo brands are hidden when every brand is a demo and the box is off", async () => {
+    const demoOne = lifecycle("brand-d1", "demo1", "demo1.test");
+    const demoTwo = lifecycle("brand-d2", "demo22", "demo22.test");
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [demoOne, demoTwo] }));
+    render(<BrandLifecycle me={owner} />);
+    expect(await screen.findByText(/ไม่พบแบรนด์ที่ตรงกับตัวกรอง/)).toBeTruthy();
+    expect(names()).toEqual([]);
+    expect(document.querySelector(".brand-table")!.textContent).toContain("แบรนด์ทดลอง 2 แบรนด์ถูกซ่อนอยู่");
+    // Nothing is selected for the operator: the side panel keeps its prompt and shows no hidden brand.
+    expect(within(document.querySelector<HTMLElement>(".brands-aside")!).getByText("เลือกแบรนด์จากตารางเพื่อดูและแก้ไข")).toBeTruthy();
+    expect(document.querySelector(".brands-aside h2")?.textContent ?? "").not.toMatch(/demo/);
+    expect(chipButton(/^ทั้งหมด/).textContent).toContain("0");
+    fireEvent.click(screen.getByLabelText("แสดงแบรนด์ทดลอง"));
+    expect(names()).toEqual(["demo1.test", "demo22.test"]);
+  });
+
+  it("ล้างตัวกรอง also turns แสดงแบรนด์ทดลอง back off", async () => {
+    const demoOne = lifecycle("brand-d1", "demo1", "demo1.test");
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [...lifecycleRows, demoOne] }));
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    const toggle = screen.getByLabelText("แสดงแบรนด์ทดลอง") as HTMLInputElement;
+    fireEvent.click(toggle);
+    expect(names()).toHaveLength(5);
+    fireEvent.change(screen.getByLabelText(/ค้นหาโดเมน/), { target: { value: "zzz" } });
+    fireEvent.click(screen.getByRole("button", { name: "ล้างตัวกรอง" }));
+    expect(toggle.checked).toBe(false);
+    expect((screen.getByLabelText(/ค้นหาโดเมน/) as HTMLInputElement).value).toBe("");
+    expect(names()).toHaveLength(4);
+    expect(names()).not.toContain("demo1.test");
+  });
+
   it("labels the columns and the page buttons in Thai only, and each cell carries its column label for the card layout", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);

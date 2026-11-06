@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-export type RowMenuItem = { key: string; label: string; onSelect: () => void; group?: string; tone?: "danger" };
+/** disabled with a reason: the item stays in the list, announced as disabled, with the reason as its title. Choosing it does nothing and keeps the menu open. */
+export type RowMenuItem = { key: string; label: string; onSelect: () => void; group?: string; tone?: "danger"; disabled?: boolean; reason?: string };
 
 /** A row-level action menu. Renders nothing for an empty list. Closes on Escape and outside click; arrow keys move focus. */
 export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
@@ -118,9 +119,11 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
         lastGroup = item.group;
         return <Fragment key={item.key}>
           {divider && <hr className="row-menu-sep" role="separator" />}
-          <button type="button" role="menuitem" className={item.tone === "danger" ? "row-menu-item danger" : "row-menu-item"}
+          {/* aria-disabled, not disabled: a disabled button cannot take focus, so arrow keys would skip the item and a keyboard user would never read its reason. */}
+          <button type="button" role="menuitem" className={[item.tone === "danger" ? "row-menu-item danger" : "row-menu-item", item.disabled ? "disabled" : ""].filter(Boolean).join(" ")}
             ref={(el) => { itemRefs.current[index] = el; }}
-            onClick={(e) => { e.stopPropagation(); setOpen(false); item.onSelect(); }}>
+            aria-disabled={item.disabled || undefined} title={item.disabled ? item.reason : undefined}
+            onClick={(e) => { e.stopPropagation(); if (item.disabled) return; setOpen(false); item.onSelect(); }}>
             {item.label}
           </button>
         </Fragment>;

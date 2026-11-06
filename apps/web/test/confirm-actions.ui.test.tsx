@@ -130,7 +130,7 @@ describe("BrandLifecycle actions that had no confirmation", () => {
     await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
     fireEvent.change(screen.getByLabelText("from_template_version_id"), { target: { value: "tv-1" } });
     fireEvent.change(screen.getByLabelText("to_template_version_id"), { target: { value: "tv-2" } });
-    const start = () => fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)" }));
+    const start = () => fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์" }));
     start();
     const dialog = await answerConfirm(false);
     expect(dialog.textContent).toContain("tv-1");

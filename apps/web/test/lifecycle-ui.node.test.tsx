@@ -173,7 +173,7 @@ describe("BrandLifecycle SSR", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "owner", email: "owner@example.test", role: "owner" }} />);
     expect(html).toContain("แบรนด์ใหม่");
     expect(html).toContain("ปุ่มหลักของแต่ละแถวคือขั้นตอนถัดไปของแบรนด์ ปุ่มจัดการรวมการทำงานอื่น");
-    expect(html).toContain("อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)");
+    expect(html).toContain("อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)");
     expect(html).toContain("อัปเกรดแบบ canary ก่อน");
     // The create form moved into the wizard: the list screen holds one button that opens it.
     expect(html.match(/แบรนด์ใหม่/g)).toHaveLength(1);
@@ -184,7 +184,7 @@ describe("BrandLifecycle SSR", () => {
 
   it("does not render upgrade-all for employees", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "employee", email: "employee@example.test", role: "employee" }} />);
-    expect(html).not.toContain("Upgrade-all");
+    expect(html).not.toContain("อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)");
     expect(html).toContain("สถานะ");
   });
 
@@ -230,14 +230,17 @@ describe("BrandLifecycle SSR", () => {
   });
 });
 
- it.each(["owner", "employee"] as const)("Recover is visible only to Owner (%s)", (role) => {
+ it.each(["owner", "employee"] as const)("Recover is enabled for the Owner and disabled with a reason for the Employee (%s)", (role) => {
    const html = renderToStaticMarkup(<LifecycleDetail
      me={{ id: role, email: `${role}@example.test`, role }}
      brand={{ brand_id: "b", account: "a", hostnames: ["brand.example"], status: "installing", current_revision_id: null, bundle_form_version: null, payload_version: null, runtime_sync_status: "failed" }}
      install={{ install_id: "i", brand_id: "b", revision_id: null, status: "failed", runtime_sync_status: "failed", receipts: [], recovery_required: true }}
      checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}}
    />);
-   expect(html.includes("กู้คืน")).toBe(role === "owner");
+   const recover = html.match(/<button[^>]*>กู้คืน<\/button>/)?.[0] ?? "";
+   expect(recover).not.toBe("");
+   expect(recover.includes("disabled")).toBe(role === "employee");
+   expect(recover.includes('title="เฉพาะเจ้าของกู้คืนได้"')).toBe(role === "employee");
    expect(html).not.toContain(">ลองใหม่ (Retry)<");
  });
 

@@ -92,9 +92,16 @@ describe("brand row basics", () => {
     expect(pick.getAttribute("aria-current")).toBeNull();
   });
 
-  it("lets an Employee resume a paused brand but not pause a live one", async () => {
+  it("lets an Employee resume a paused brand and shows Pause of a live one disabled with the reason", async () => {
     render(<BrandLifecycle me={{ ...owner, role: "employee" }} />);
-    expect(await menuLabels(await rowOf("live.example"))).not.toContain(pauseName);
+    const live = await rowOf("live.example");
+    fireEvent.click(within(live).getByRole("button", { name: "จัดการ" }));
+    const pause = within(await screen.findByRole("menu")).getByRole("menuitem", { name: pauseName });
+    expect(pause.getAttribute("aria-disabled")).toBe("true");
+    expect(pause.getAttribute("title")).toBe("เฉพาะเจ้าของหยุดแบรนด์ได้");
+    fireEvent.click(pause);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posts("/api/brands/b-live/pause")).toHaveLength(0);
     expect(within(await rowOf("paused.example")).getByRole("button", { name: resumeName })).toBeTruthy();
   });
 

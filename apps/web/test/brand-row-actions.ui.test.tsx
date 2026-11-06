@@ -55,20 +55,28 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-/** The detail aside still shows InstallProgress's "ลองใหม่ (Retry)"; compare labels without a trailing English note. */
-const plain = (label: string) => label.replace(/\s*\([A-Za-z][^)]*\)\s*$/, "");
-/** Every button and link label the detail aside shows. */
+/**
+ * Every action button and link the detail aside shows, with its exact text. The sections below the actions (install progress,
+ * revisions, checklist) are not row actions: InstallProgress is shared with Deploys and keeps its own "ลองใหม่ (Retry)".
+ */
 const detailLabels = () => {
   const aside = document.querySelector(".brands-aside")!;
-  return [...aside.querySelectorAll("button, a")].map((el) => plain(el.textContent ?? "")).sort();
+  return [...aside.querySelectorAll("button, a")].filter((el) => !el.closest(".section")).map((el) => el.textContent ?? "").sort();
 };
+/** True when the install progress section offers its Retry button. */
+const detailRetry = () => [...document.querySelectorAll(".brands-aside .section button.primary")].some((el) => el.textContent?.startsWith("ลองใหม่"));
 /** The runtime toggle is a menu item only: the detail lists Pause and Resume in the runtime drawer. */
 const MENU_ONLY = ["หยุดชั่วคราว", "เปิดใช้งานต่อ"];
-/** The row's primary button runs Install, Retry or Recover: the menu leaves that item out and the detail still lists it. */
+/**
+ * The row's primary button runs Install or Recover: the menu leaves that item out and the detail actions still list it, disabled or not.
+ * Retry is the other case: the detail offers it in the install progress section (see detailRetry).
+ */
 const primaryInDetail = (tr: HTMLElement) => {
   const button = tr.querySelector<HTMLButtonElement>("button.row-primary");
-  return button && !button.disabled && (button.dataset.nextAction === "install" || button.dataset.nextAction === "retry") ? [button.textContent ?? ""] : [];
+  const label = button?.textContent ?? "";
+  return button && (button.dataset.nextAction === "install" || (button.dataset.nextAction === "retry" && label === "กู้คืน")) ? [label] : [];
 };
+const primaryIsRetry = (tr: HTMLElement) => tr.querySelector<HTMLButtonElement>("button.row-primary")?.textContent === "ลองใหม่";
 const openRowMenu = async () => {
   fireEvent.click(await screen.findByRole("button", { name: "จัดการ" }));
   const menu = await screen.findByRole("menu");
@@ -118,6 +126,7 @@ describe("brand row actions menu", () => {
       const tr = document.querySelector<HTMLElement>(".brand-table tbody tr.click")!;
       const actual = [...(await openRowMenu()).filter((label) => !MENU_ONLY.includes(label)), ...primaryInDetail(tr)].sort();
       expect({ role: me.role, actual }).toEqual({ role: me.role, actual: expected });
+      expect({ role: me.role, retry: detailRetry() }).toEqual({ role: me.role, retry: primaryIsRetry(tr) });
       cleanup();
     }
   });
@@ -177,13 +186,12 @@ describe("brand row actions menu", () => {
       expect(menuB).not.toContain("กู้คืน");
       fireEvent.click(document.body);
       const aside = detailLabels();
-      if (me.role === "owner") {
-        expect(aside).toContain("กู้คืน");
-        expect(aside).not.toContain("ลองใหม่");
-      } else {
-        expect(aside).not.toContain("กู้คืน");
-        expect(aside).not.toContain("ลองใหม่");
-      }
+      // Recover is in the detail for both roles; the employee's is disabled with the reason.
+      expect(aside).toContain("กู้คืน");
+      expect(aside).not.toContain("ลองใหม่");
+      const recover = [...document.querySelectorAll<HTMLButtonElement>(".brands-aside .side-actions button")].find((el) => el.textContent === "กู้คืน")!;
+      expect(recover.disabled).toBe(me.role === "employee");
+      expect(recover.title).toBe(me.role === "employee" ? "เฉพาะเจ้าของกู้คืนได้" : "");
       cleanup();
     }
   });
@@ -319,11 +327,13 @@ describe("brand row actions menu", () => {
       const menuB = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((el) => el.textContent ?? "").filter((label) => !MENU_ONLY.includes(label));
       // Install or Retry is the row's primary button, so the menu leaves it out and the detail lists it.
       const rowB = [...menuB, ...primaryInDetail(trB)].sort();
+      const retryB = primaryIsRetry(trB);
       fireEvent.mouseDown(document.body);
       fireEvent.click(await screen.findByRole("button", { name: /brand-b\.test/ }));
       await waitFor(() => expect(document.querySelector(".brands-aside")!.textContent).toContain("brand-b.test"));
       // The detail hides deploy buttons while its history recovers, so wait until it settles on the row's labels.
       await waitFor(() => expect(detailLabels()).toEqual(rowB));
+      await waitFor(() => expect(detailRetry()).toBe(retryB));
     },
   );
 
@@ -556,7 +566,56 @@ describe("brand row primary action", () => {
     render(<BrandLifecycle me={employee} />);
     const trE = await rowEl("brand-s.test");
     await waitFor(() => expect(primaryOf(trE)[0]?.dataset.nextAction).toBe("open"));
-    expect(await menuLabels(trE)).not.toContain("หยุดชั่วคราว");
+    // The employee still sees Pause, disabled with the reason: only the Owner pauses.
+    fireEvent.click(within(trE).getByRole("button", { name: "จัดการ" }));
+    const pause = within(await screen.findByRole("menu")).getByRole("menuitem", { name: "หยุดชั่วคราว" });
+    expect(pause.getAttribute("aria-disabled")).toBe("true");
+    expect(pause.getAttribute("title")).toBe("เฉพาะเจ้าของหยุดแบรนด์ได้");
+    requests.length = 0;
+    fireEvent.click(pause);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
+  });
+
+  it("an employee sees Rollback and Redeploy of a live brand in the row menu and the detail, disabled with a reason, and sending nothing", async () => {
+    serveBrand(base("brand-s", "live", { newer_form: newerForm }));
+    render(<BrandLifecycle me={employee} />);
+    const tr = await rowEl("brand-s.test");
+    await waitFor(() => expect(detailLabels()).toContain("ย้อนกลับ"));
+    const owners = ["ย้อนกลับ", "ติดตั้งใหม่", "ติดตั้งใหม่พร้อมฟอร์มล่าสุด"];
+    const reasons: Record<string, string> = { "ย้อนกลับ": "เฉพาะเจ้าของย้อนกลับแบรนด์ได้", "ติดตั้งใหม่": "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้", "ติดตั้งใหม่พร้อมฟอร์มล่าสุด": "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้" };
+    requests.length = 0;
+    // Detail panel: disabled buttons with the reason as title, and one note that says why.
+    const aside = within(document.querySelector<HTMLElement>(".brands-aside")!);
+    for (const label of owners) {
+      const button = aside.getByRole("button", { name: label }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.title).toBe(reasons[label]);
+      fireEvent.click(button);
+    }
+    expect(aside.getByRole("note").textContent).toContain("เฉพาะเจ้าของ");
+    // Row menu: aria-disabled items with the same reasons; choosing one keeps the menu open and sends nothing.
+    fireEvent.click(within(tr).getByRole("button", { name: "จัดการ" }));
+    const menu = within(await screen.findByRole("menu"));
+    for (const label of owners) {
+      const item = menu.getByRole("menuitem", { name: label });
+      expect(item.getAttribute("aria-disabled")).toBe("true");
+      expect(item.getAttribute("title")).toBe(reasons[label]);
+      fireEvent.click(item);
+    }
+    expect(screen.queryByRole("menu")).not.toBeNull();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
+    cleanup();
+
+    // The owner gets the same items enabled.
+    serveBrand(base("brand-s", "live", { newer_form: newerForm }));
+    render(<BrandLifecycle me={owner} />);
+    const trO = await rowEl("brand-s.test");
+    await waitFor(() => expect(detailLabels()).toContain("ย้อนกลับ"));
+    fireEvent.click(within(trO).getByRole("button", { name: "จัดการ" }));
+    const menuO = within(await screen.findByRole("menu"));
+    for (const label of owners) expect(menuO.getByRole("menuitem", { name: label }).getAttribute("aria-disabled")).toBeNull();
   });
 
   it("Open selects the row of a brand that is not selected", async () => {

@@ -63,7 +63,14 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
  * a brand without a form artifact keeps a disabled Install the menu hides and the handler refuses.
  */
 export type BrandActionKey = "install" | "rollback" | "redeploy" | "redeployLatest" | "recover" | "resumeWizard" | "duplicate" | "retry" | "timeline" | "openSite" | "copyFinalUrl" | "runtimeConfig";
-export interface BrandActionItem { key: BrandActionKey; label: string; group: "deploy" | "other"; tone?: "danger"; disabled?: boolean }
+/** disabled without a reason: the action cannot run for any role (Install without a form artifact). disabled with a reason: this role may not run it. */
+export interface BrandActionItem { key: BrandActionKey; label: string; group: "deploy" | "other"; tone?: "danger"; disabled?: boolean; reason?: string }
+const ownerOnlyReason: Partial<Record<BrandActionKey, string>> = {
+  rollback: "เฉพาะเจ้าของย้อนกลับแบรนด์ได้",
+  redeploy: "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้",
+  redeployLatest: "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้",
+  recover: "เฉพาะเจ้าของกู้คืนได้",
+};
 export interface BrandActionGating {
   brand: LifecycleBrandSummary;
   installStatus?: InstallWithReceipts["status"];
@@ -84,14 +91,16 @@ export function brandActionItems(g: BrandActionGating): BrandActionItem[] {
   const owner = g.role === "owner";
   const managed = brand.status !== "unmanaged";
   const items: BrandActionItem[] = [];
+  // The server still refuses an employee. The panel shows the action disabled with the reason instead of hiding it.
+  const ownerOnly = (item: BrandActionItem): BrandActionItem => (owner ? item : { ...item, disabled: true, reason: ownerOnlyReason[item.key] });
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
   if (managed && actions.install) items.push({ key: "install", label: "ติดตั้ง", group: "deploy", ...(missingArtifact ? { disabled: true } : {}) });
-  if (managed && owner && actions.rollback) items.push({ key: "rollback", label: "ย้อนกลับ", group: "deploy" });
-  if (managed && owner && brand.status === "live" && actions.rollback) {
-    items.push({ key: "redeploy", label: "ติดตั้งใหม่", group: "deploy" });
-    if (brand.newer_form && g.hasRedeployLatest) items.push({ key: "redeployLatest", label: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด", group: "deploy" });
+  if (managed && actions.rollback) items.push(ownerOnly({ key: "rollback", label: "ย้อนกลับ", group: "deploy" }));
+  if (managed && brand.status === "live" && actions.rollback) {
+    items.push(ownerOnly({ key: "redeploy", label: "ติดตั้งใหม่", group: "deploy" }));
+    if (brand.newer_form && g.hasRedeployLatest) items.push(ownerOnly({ key: "redeployLatest", label: "ติดตั้งใหม่พร้อมฟอร์มล่าสุด", group: "deploy" }));
   }
-  if (managed && actions.recover && owner) items.push({ key: "recover", label: "กู้คืน", group: "deploy", tone: "danger" });
+  if (managed && actions.recover) items.push(ownerOnly({ key: "recover", label: "กู้คืน", group: "deploy", tone: "danger" }));
   if (managed && actions.retry && g.hasRetryTarget) items.push({ key: "retry", label: "ลองใหม่", group: "deploy" });
   if (managed && (brand.status === "draft" || brand.status === "failed") && g.hasResumeWizard) items.push({ key: "resumeWizard", label: "ทำต่อในวิซาร์ด", group: "other" });
   if (managed && g.hasDuplicate) items.push({ key: "duplicate", label: "ทำสำเนา", group: "other" });
@@ -173,6 +182,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [search, setSearch] = useState("");
   // Brands named demo<digits> stay hidden until the operator asks for them.
   const [showDemo, setShowDemo] = useState(false);
+  // load() is memoised on the selection, so it reads the checkbox through a ref.
+  const showDemoRef = useRef(showDemo);
+  showDemoRef.current = showDemo;
   const owner = me.role === "owner";
   const periodFunnel = usePeriodFunnel(period, refresh, weekFunnel);
   // The spend API answers 403 to an Employee, so only the Owner asks, and only the Owner sees money columns.
@@ -211,8 +223,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       } else {
         setRuntimeError("โหลด runtime config ไม่สำเร็จ กรุณารีเฟรช");
       }
-      // A demo brand is hidden by default, so the side panel must not open on one.
-      const first = result.brands.find((brand) => !isDemoBrand(brand)) ?? result.brands[0];
+      // A hidden demo brand is never selected for the operator: with only demo brands and the box off, nothing is selected.
+      const first = result.brands.find((brand) => showDemoRef.current || !isDemoBrand(brand));
       if (!selectedId && !routeBrandId && first) setSelectedId(first.brand_id);
     } catch (e) {
       if (isCurrentRefresh(token.selectedId, token.generation, selectedId, operationGeneration.current)) {
@@ -595,7 +607,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     if (recoveringRef.current) return;
     if (queued.key === "rollback" && (revisions === undefined || (revisions !== null && revisions.brand_id !== queued.brandId))) return;
     queuedDeploy.current = null;
-    if (rowMenuItems(selected).some((item) => item.key === queued.key)) runDeploy(queued.key, selected);
+    if (rowMenuItems(selected).some((item) => item.key === queued.key && !item.disabled)) runDeploy(queued.key, selected);
   }, [selectedId, selected, recovering, revisions]);
   function rowAction(key: BrandActionKey, brand: LifecycleBrandSummary) {
     const site = siteUrl(brand.hostnames);
@@ -625,7 +637,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     }
   }
 
-  /** The row menu gating equals the detail panel: the selected row uses the detail inputs, any other row brand.status and latest_install. Retry and Recover stay on the selected row with install detail loaded; a disabled Install (missing form artifact) is hidden. */
+  /** The row menu gating equals the detail panel: the selected row uses the detail inputs, any other row brand.status and latest_install. Retry and Recover stay on the selected row with install detail loaded; a disabled Install (missing form artifact, no role can run it) is hidden; an action only the Owner may run shows disabled with a reason. */
   function rowMenuItems(brand: LifecycleBrandSummary): RowMenuItem[] {
     const isSelected = brand.brand_id === selectedId;
     const gating = isSelected
@@ -646,8 +658,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       hasRedeployLatest: true, hasResumeWizard: true, hasDuplicate: true,
       hasRetryTarget: isSelected && install !== undefined,
       hasCopy: true,
-    }).filter((item) => !item.disabled).map((item): RowMenuItem => ({
+    }).filter((item) => !item.disabled || item.reason).map((item): RowMenuItem => ({
       key: item.key, label: item.label, group: item.group, tone: item.tone,
+      ...(item.disabled ? { disabled: true, reason: item.reason } : {}),
       onSelect: () => rowAction(item.key, brand),
     }));
   }
@@ -694,17 +707,21 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }
   /**
    * The menu holds every action but the one the primary button already runs. Pause and Resume join it:
-   * Resume is the primary of a paused brand, so a paused brand has no Pause item, and only the Owner pauses.
+   * Resume is the primary of a paused brand, so a paused brand has no Pause item.
    */
   function menuItemsFor(brand: LifecycleBrandSummary, runtime: BrandSummary | undefined, primary: NextAction): RowMenuItem[] {
     const items = rowMenuItems(brand).filter((item) => !(
       (primary.kind === "install" && item.key === "install")
       || (primary.kind === "retry" && (item.key === "retry" || item.key === "recover"))
     ));
-    const canToggle = runtime && (runtime.status === "paused" || (runtime.status === "live" && owner));
-    if (canToggle && primary.kind !== "resume") {
+    if (runtime && (runtime.status === "paused" || runtime.status === "live") && primary.kind !== "resume") {
       const pausing = runtime.status === "live";
-      items.push({ key: "toggleStatus", label: pausing ? "หยุดชั่วคราว" : "เปิดใช้งานต่อ", group: "other", tone: pausing ? "danger" : undefined, onSelect: () => { if (!toggling.has(brand.brand_id)) void toggleStatus(runtime); } });
+      // Only the Owner pauses (the server refuses an employee); an employee sees the item disabled with the reason.
+      items.push({
+        key: "toggleStatus", label: pausing ? "หยุดชั่วคราว" : "เปิดใช้งานต่อ", group: "other", tone: pausing ? "danger" : undefined,
+        ...(pausing && !owner ? { disabled: true, reason: "เฉพาะเจ้าของหยุดแบรนด์ได้" } : {}),
+        onSelect: () => { if (!toggling.has(brand.brand_id)) void toggleStatus(runtime); },
+      });
     }
     return items;
   }
@@ -713,7 +730,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     const ok = await confirm({
       title: "เริ่มอัปเกรดทุกแบรนด์?",
       body: `Upgrade every brand from ${upgrade.from_template_version_id || "—"} to ${upgrade.to_template_version_id || "—"}, canary ${upgrade.canary_brand_id || "—"} first.`,
-      confirmLabel: "เริ่มอัปเกรด (Start upgrade)",
+      confirmLabel: "เริ่มอัปเกรด",
       tone: "danger",
     });
     if (!ok) return;
@@ -737,6 +754,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }));
   // Chip counts follow the demo toggle and the search, so a count never promises rows they have hidden.
   const shownRows = tableRows.filter((row) => showDemo || !isDemoBrand(row.brand));
+  const hiddenDemoCount = tableRows.length - shownRows.length;
   const searchedRows = shownRows.filter((row) => matchesBrandSearch(row.brand, search));
   const chipCounts = Object.fromEntries(BRAND_CHIPS.map(({ id }) => [id, searchedRows.filter((row) => matchesBrandChip(row.health, row.brand, id)).length])) as Record<BrandChip, number>;
   const sortedRows = sortBrands(
@@ -802,8 +820,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
             })}
             {brands.length === 0 && <tr><td colSpan={columns} data-label="" className="muted">ยังไม่มีแบรนด์</td></tr>}
             {brands.length > 0 && sortedRows.length === 0 && <tr><td colSpan={columns} data-label="">
-              <EmptyState title="ไม่พบแบรนด์ที่ตรงกับตัวกรอง" hint="ลองล้างตัวกรองหรือคำค้นหา"
-                action={<button type="button" className="btn" onClick={() => { setChip("all"); setSearch(""); }}>ล้างตัวกรอง</button>} />
+              <EmptyState title="ไม่พบแบรนด์ที่ตรงกับตัวกรอง" hint={hiddenDemoCount > 0 ? `ลองล้างตัวกรองหรือคำค้นหา แบรนด์ทดลอง ${hiddenDemoCount} แบรนด์ถูกซ่อนอยู่ ติ๊ก แสดงแบรนด์ทดลอง เพื่อดู` : "ลองล้างตัวกรองหรือคำค้นหา"}
+                action={<button type="button" className="btn" onClick={() => { setChip("all"); setSearch(""); setShowDemo(false); }}>ล้างตัวกรอง</button>} />
             </td></tr>}
           </tbody>
         </table></div>
@@ -827,7 +845,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     </div>
     {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); onSelectBrand?.(brandId); }} />}
     {configBrandId && configBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={brands.find((brand) => brand.brand_id === configBrandId)?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
-    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)</button></div></section>}
+    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์</button></div></section>}
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
     {toast && <Toast key={toast.id} kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
     {confirmDialog}
@@ -850,13 +868,17 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
     hasDuplicate: onDuplicate !== undefined, hasRetryTarget: install !== undefined, hasCopy: onCopyFinalUrl !== undefined,
   });
   const showAction = (key: BrandActionKey) => actionItems.some((item) => item.key === key);
+  const actionItem = (key: BrandActionKey) => actionItems.find((item) => item.key === key);
+  // Disabled and titled for the reason; for an employee these are the owner-only actions.
+  const gate = (key: BrandActionKey) => ({ disabled: actionItem(key)?.disabled === true, title: actionItem(key)?.reason });
+  const ownerOnlyShown = (["rollback", "redeploy", "redeployLatest", "recover"] as const).some((key) => actionItem(key)?.reason !== undefined);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
   const site = siteUrl(brand.hostnames);
   const finalUrlFieldId = useId();
   return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</h2><p className="muted">{brand.name && brand.name !== (brand.hostnames[0] ?? brand.name ?? brand.brand_id) && `${brand.name} · `}form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
-    {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง</button>}{showAction("rollback") && <button className="btn" onClick={onRollback}>ย้อนกลับ</button>}{showAction("redeploy") && <button className="btn" onClick={onRedeploy}>ติดตั้งใหม่</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด</button>}{showAction("recover") && <button className="btn danger" onClick={onRecover}>กู้คืน</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}</div>}
+    {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง</button>}{showAction("rollback") && <button className="btn" {...gate("rollback")} onClick={onRollback}>ย้อนกลับ</button>}{showAction("redeploy") && <button className="btn" {...gate("redeploy")} onClick={onRedeploy}>ติดตั้งใหม่</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" {...gate("redeployLatest")} onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด</button>}{showAction("recover") && <button className="btn danger" {...gate("recover")} onClick={onRecover}>กู้คืน</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}{ownerOnlyShown && <p className="muted small" role="note">ปุ่มที่กดไม่ได้ใช้ได้เฉพาะเจ้าของ</p>}</div>}
     {/* spec timeline: the managed-only row above would hide it for an unmanaged brand */}
     <div className="side-actions"><a className="btn" href={routePath({ view: "brand-timeline", brandId: brand.brand_id })} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); }}>ไทม์ไลน์</a></div>
     {site && <div className="side-actions">

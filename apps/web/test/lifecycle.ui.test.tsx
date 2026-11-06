@@ -191,15 +191,20 @@ describe("mounted lifecycle UI with API responses", () => {
     await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
     const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
     const before = reads();
-    fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)" }));
+    fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์" }));
     await answerConfirm(true);
     await waitFor(() => expect(reads()).toBeGreaterThan(before));
   });
 
-  it("hides Rollback from Employees on a live brand", async () => {
+  it("shows Rollback to Employees on a live brand disabled with the reason, and sends nothing", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "renderable.test" });
-    expect(screen.queryByRole("button", { name: rollbackName })).toBeNull();
+    const button = await inAside().findByRole("button", { name: rollbackName }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("เฉพาะเจ้าของย้อนกลับแบรนด์ได้");
+    fireEvent.click(button);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
   });
 
   it("loads API rows and opens working runtime pause, keyword, buckets and gate controls", async () => {

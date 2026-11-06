@@ -21,6 +21,8 @@
 .row-menu-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 10px; font: inherit; color: inherit; border-radius: 6px; }
 .row-menu-item:hover, .row-menu-item:focus-visible { background: var(--paper); }
 .row-menu-item.danger { color: var(--danger); }
+.row-menu-item.disabled { color: var(--muted); cursor: not-allowed; }
+.row-menu-item.disabled:hover { background: transparent; }
 .row-menu-sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .brand-table tr.stats td { border-top: 0; padding: 0 8px 8px 0; text-align: left; }
 .brand-table .brand-stats { padding: 0; font-size: 12px; }
