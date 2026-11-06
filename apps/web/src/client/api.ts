@@ -32,7 +32,7 @@ import type {
   FunnelReportResponse,
   MailingStatusResponse,
   SpendPeriod,
-  SpendReportResponse,
+  PanelSpendReportResponse,
   TemplateImportRequest,
   TemplateZipImportRequest,
 } from "@anjuna/contracts";
@@ -240,7 +240,7 @@ export const api = {
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
   /** Owner only: an employee gets 403 forbidden_role. */
-  spend: (period: SpendPeriod) => request<SpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),
+  spend: (period: SpendPeriod) => request<PanelSpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),
   trafficRisk: (period: RiskPeriod) =>
     request<unknown>("GET", `/api/traffic/risk?${new URLSearchParams({ period })}`).then((body) => TrafficRiskResponse.parse(body)),
   /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */

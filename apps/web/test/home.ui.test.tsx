@@ -20,9 +20,11 @@ const FUNNEL_30D = { from: "2026-09-23T00:00:00.000Z", to: "2026-10-23T00:00:00.
 const FUNNEL_BEFORE = { from: "2026-10-09T00:00:00.000Z", to: "2026-10-16T00:00:00.000Z", rows: [row("cg", 200, 90, 60, 8, 2, 500), row("d6", 100, 40, 30, 2, 0, 100)] };
 // The previous range starts one window earlier than the current one: 7d 2026-10-09, 30d 2026-08-24, today 2026-10-21.
 const isPreviousFrom = (from: string) => ["2026-10-09", "2026-08-24", "2026-10-21"].some((day) => from.startsWith(day));
-const spendReport = (cost: number, clicks: number) => ({
-  period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost, clicks, impressions: 9000 },
-  brands: [{ brand_id: "cg", cost, clicks, impressions: 9000, updated_at: "2026-10-22T09:00:00.000Z" }],
+// Spend in baht as the THB accounts bill it, with the server's USD at 35 THB per USD. 62,300 THB is $1,780.
+const spendReport = (cost: number, clicks: number, thbPerUsd = 35) => ({
+  period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost_by_currency: { THB: cost, USD: 0 }, clicks, impressions: 9000 },
+  brands: [{ brand_id: "cg", currency: "THB", cost, cost_usd: Math.round((cost / thbPerUsd) * 100) / 100, clicks, impressions: 9000, updated_at: "2026-10-22T09:00:00.000Z" }],
+  total_cost_usd: Math.round((cost / thbPerUsd) * 100) / 100, fx: { thbPerUsd },
 });
 const alertsReport = {
   generated_at: "2026-10-22T10:00:00.000Z",
@@ -65,7 +67,7 @@ beforeEach(() => {
   aggregates = (from, to) => json(aggregatesBody(from, to));
   alertsBody = alertsReport;
   alertsReply = () => json(alertsBody);
-  spend = vi.fn(async (period: string) => (period === "30d" ? spendReport(2400, 1200) : spendReport(1780, 402)));
+  spend = vi.fn(async (period: string) => (period === "30d" ? spendReport(84000, 1200) : spendReport(62300, 402)));
   (api as unknown as { spend: unknown }).spend = spend;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     requests.push(input);
@@ -131,10 +133,10 @@ const appTakesClick = (link: Element, init: MouseEventInit = {}) => {
 describe("Home screen, owner", () => {
   it("shows spend, leads, cost per lead, the ledger, the money flow and the to-do list", async () => {
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
 
-    expect(ledgerValue("ค่าโฆษณา").text).toBe("$1,780");
-    expect(ledgerValue("ต้นทุนต่อลีด").text).toBe("$105");
+    expect(ledgerValue("ค่าโฆษณา").text).toBe("฿62,300");
+    expect(ledgerValue("ต้นทุนต่อลีด").text).toBe("฿3,665");
     expect(ledgerValue("รายได้").text).toBe("$410");
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
 
@@ -157,11 +159,27 @@ describe("Home screen, owner", () => {
     expect(todo.getByText("1 ร่าง")).toBeTruthy();
   });
 
+  it("shows spend and cost per lead in baht with the server's USD spend under it, and profit in USD", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    const spendCell = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText("ค่าโฆษณา").parentElement!;
+    expect(spendCell.querySelector(".hint")!.textContent).toBe("$1,780");
+    // Revenue $410 minus $1,780, never $410 minus 62,300 baht.
+    expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
+  });
+
+  it("takes profit from the server's total_cost_usd at the owner's rate, not a client-side rate", async () => {
+    spend.mockResolvedValue(spendReport(62300, 402, 31.15));
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,590", className: "v neg" });
+  });
+
   it("names the paid-click loss in the note when it is the biggest leak", async () => {
     funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 900, 800, 700, 600, 500, 5000)] });
-    spend.mockResolvedValue(spendReport(2622, 3000));
+    spend.mockResolvedValue(spendReport(91770, 3000));
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $2,622 ได้ 600 ลีด ต้นทุนลีดละ $4.37");
+    await heading("จ่ายค่าโฆษณา ฿91,770 ได้ 600 ลีด ต้นทุนลีดละ ฿153");
     expect(document.querySelector(".home-stage.leak")!.textContent).toBe("900ถึงเว็บ");
     expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หลุด 70%");
     expect(document.querySelector(".note")!.textContent).toContain("Google คิดเงิน 3,000 คลิก มาถึงเว็บจริง 900 คน หายไป 2,100 คลิก (70%)");
@@ -169,7 +187,7 @@ describe("Home screen, owner", () => {
 
   it("switches between today, 7 days and 30 days and asks funnel and spend for that window", async () => {
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     expect(screen.getByRole("button", { name: "7 วัน" }).getAttribute("aria-pressed")).toBe("true");
     // Every period asks the funnel twice: the window itself, then the window of equal length before it.
     const funnelQuery = (n: number) => funnelQueries()[n]!;
@@ -180,7 +198,7 @@ describe("Home screen, owner", () => {
     expect(spend).toHaveBeenLastCalledWith("7d");
 
     fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
-    await heading("จ่ายค่าโฆษณา $2,400 ได้ 60 ลีด ต้นทุนลีดละ $40");
+    await heading("จ่ายค่าโฆษณา ฿84,000 ได้ 60 ลีด ต้นทุนลีดละ ฿1,400");
     expect(screen.getByRole("button", { name: "30 วัน" }).getAttribute("aria-pressed")).toBe("true");
     expect(funnelQuery(2).get("from")).toBe("2026-09-23T00:00:00.000Z");
     expect(funnelQuery(3).get("from")).toBe("2026-08-24T00:00:00.000Z");
@@ -198,7 +216,7 @@ describe("Home screen, owner", () => {
 
   it("shows the revenue change against the previous window and no delta on spend, cost per lead or profit", async () => {
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "▼ 32%", className: "d neg" }));
     expect(ledgerDelta("ค่าโฆษณา")).toBeNull();
     expect(ledgerDelta("ต้นทุนต่อลีด")).toBeNull();
@@ -208,7 +226,7 @@ describe("Home screen, owner", () => {
   it("shows a dash instead of a percent when the previous revenue is 0", async () => {
     funnel = (from) => json(isPreviousFrom(from) ? { ...FUNNEL_BEFORE, rows: [row("cg", 200, 90, 60, 8, 2, 0)] } : FUNNEL_7D);
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
     expect(document.body.textContent).not.toMatch(/Infinity|NaN/);
   });
@@ -216,7 +234,7 @@ describe("Home screen, owner", () => {
   it("shows a dash for the revenue change when core withheld the revenue", async () => {
     funnel = () => json({ ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
     expect(ledgerValue("รายได้").text).toBe("—");
   });
@@ -224,7 +242,7 @@ describe("Home screen, owner", () => {
   it("keeps the current values and shows a dash when the previous window fails", async () => {
     funnel = (from) => (isPreviousFrom(from) ? json({ error: "core_unavailable" }, 502) : json(FUNNEL_7D));
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
     expect(ledgerValue("รายได้").text).toBe("$410");
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
@@ -235,7 +253,7 @@ describe("Home screen, owner", () => {
     const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
     funnel = (from) => (from.startsWith("2026-10-09") ? old : json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D));
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     expect(ledgerDelta("รายได้")).toBeNull();
 
     // The 30 day previous window (1500 now against 600 before) answers; then the 7 day one arrives with a different number.
@@ -259,7 +277,7 @@ describe("Home screen, owner", () => {
   });
 
   it("shows — when the spend API has no rows for the period instead of $0", async () => {
-    spend.mockResolvedValue({ period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost: 0, clicks: 0, impressions: 0 }, brands: [] });
+    spend.mockResolvedValue({ period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost_by_currency: { THB: 0, USD: 0 }, clicks: 0, impressions: 0 }, brands: [], total_cost_usd: 0, fx: { thbPerUsd: 35 } });
     render(<HomeScreen me={owner} />);
     await heading("จ่ายค่าโฆษณา — ได้ 17 ลีด ต้นทุนลีดละ —");
   });
@@ -267,7 +285,7 @@ describe("Home screen, owner", () => {
   it("shows — for every funnel number when the funnel API fails", async () => {
     funnel = () => json({ error: "core_unavailable" }, 502);
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ — ลีด ต้นทุนลีดละ —");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ — ลีด ต้นทุนลีดละ —");
     expect(ledgerValue("รายได้").text).toBe("—");
     expect(ledgerValue("กำไร/ขาดทุน").text).toBe("—");
     expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["402คลิกที่จ่าย", "—ถึงเว็บ", "—ถึง /go", "—เปิดฟอร์ม", "—ลีด", "—ขายได้"]);
@@ -277,7 +295,7 @@ describe("Home screen, owner", () => {
   it("shows — for revenue and profit when every funnel row has null revenue instead of $0", async () => {
     funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     expect(ledgerValue("รายได้").text).toBe("—");
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "—", className: "v" });
   });
@@ -285,7 +303,7 @@ describe("Home screen, owner", () => {
   it("shows — for revenue and profit when one funnel row has null revenue instead of a partial sum", async () => {
     funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, 156)] });
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     expect(ledgerValue("รายได้").text).toBe("—");
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "—", className: "v" });
   });
@@ -293,7 +311,7 @@ describe("Home screen, owner", () => {
   it("shows a real 0 for no leads and — for the cost per lead it cannot divide", async () => {
     funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [] });
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 0 ลีด ต้นทุนลีดละ —");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 0 ลีด ต้นทุนลีดละ —");
     expect(ledgerValue("รายได้").text).toBe("$0");
     expect(ledgerValue("กำไร/ขาดทุน").text).toBe("−$1,780");
   });
@@ -301,7 +319,7 @@ describe("Home screen, owner", () => {
   it("opens the matching screen from the buttons", async () => {
     const onGo = vi.fn();
     render(<HomeScreen me={owner} onGo={onGo} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     fireEvent.click(screen.getByRole("button", { name: "+ สร้างแบรนด์ใหม่" }));
     fireEvent.click(screen.getByRole("button", { name: "ดูทั้งหมด" }));
     fireEvent.click(screen.getByRole("button", { name: "แยกตามแบรนด์" }));
@@ -313,7 +331,7 @@ describe("Home screen, owner", () => {
 
   it("shows conversion counts and links the card and the dead count to the Conversions page", async () => {
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
     expect(cardValue("ค้างส่ง")).toBe("3");
     expect(cardValue("ส่งไม่ได้")).toBe("4");
@@ -382,7 +400,7 @@ describe("Home screen, owner", () => {
     const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
     conversions = (period) => (period === "7d" ? old : json(CONVERSIONS_30D));
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     // The 7 day answer is still on its way: every cell shows the loading mark.
     expect(["ส่งแล้ว", "ค้างส่ง", "ส่งไม่ได้", "ค้างเกิน 6 ชม."].map(cardValue)).toEqual(["…", "…", "…", "…"]);
     expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
@@ -498,7 +516,7 @@ describe("Home screen, owner", () => {
   it("hides the card body behind — when the conversions call fails", async () => {
     conversions = () => json({ error: "core_unavailable" }, 502);
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("—"));
     expect(["ส่งแล้ว", "ค้างส่ง", "ส่งไม่ได้", "ค้างเกิน 6 ชม."].map(cardValue)).toEqual(["—", "—", "—", "—"]);
     expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
@@ -536,7 +554,7 @@ describe("Home screen, owner", () => {
     let release: (response: Response) => void = () => {};
     aggregates = () => new Promise<Response>((resolve) => { release = resolve; });
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     expect(dailyPanel().getByText("…")).toBeTruthy();
     expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
 
@@ -551,7 +569,7 @@ describe("Home screen, owner", () => {
   it("shows — and the failure in the daily bars panel when the aggregates call fails and keeps the other panels", async () => {
     aggregates = () => json({ error: "core_unavailable" }, 502);
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(dailyPanel().getByText("— โหลดลีดรายวันไม่สำเร็จ")).toBeTruthy());
     expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
     expect(dailyPanel().queryByText("ยังไม่มีลีดในช่วงนี้")).toBeNull();
@@ -575,7 +593,7 @@ describe("Home screen, owner", () => {
     // The 7 day window starts on 2026-10-16 and is still on its way; the 30 day window answers first.
     aggregates = (from, to) => (from === "2026-10-16" ? old : json(aggregatesBody(from, to)));
     render(<HomeScreen me={owner} />);
-    await heading("จ่ายค่าโฆษณา $1,780 ได้ 17 ลีด ต้นทุนลีดละ $105");
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
     await waitFor(() => expect(dayTitles()).toHaveLength(30));
 

@@ -358,6 +358,12 @@ describe("Anjuna additions", () => {
       env.DB.prepare(UPSERT).bind("brand-spend", "2026-10-21", hour, cost, 3, 90, at).run();
     const rows = () => env.DB.prepare("SELECT hour, cost, updated_at FROM ad_spend WHERE brand_id = 'brand-spend' ORDER BY hour").all();
 
+    it("stores THB for a row written without a currency (0019: legacy rows are baht)", async () => {
+      await env.DB.prepare("INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('brand-legacy', '2026-10-21', 7, 12448, 'x')").run();
+      const row = await env.DB.prepare("SELECT cost, currency FROM ad_spend WHERE brand_id = 'brand-legacy'").first();
+      expect(row).toEqual({ cost: 12448, currency: "THB" });
+    });
+
     it("upserts one row per (brand, date, hour, source), whole-day NULL hour included", async () => {
       await upsert(5, 1.25);
       await upsert(null, 10);
@@ -374,6 +380,7 @@ describe("Anjuna additions", () => {
       ["negative cost", "INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('b', '2026-10-21', 1, -1, 'x')"],
       ["timestamp date", "INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('b', '2026-10-21T00', 1, 1, 'x')"],
       ["unknown source", "INSERT INTO ad_spend (brand_id, date, hour, cost, source, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'bing', 'x')"],
+      ["unknown currency", "INSERT INTO ad_spend (brand_id, date, hour, cost, currency, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'EUR', 'x')"],
     ])("rejects %s", async (_name, sql) => {
       await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
     });

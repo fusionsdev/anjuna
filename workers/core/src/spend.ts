@@ -1,11 +1,14 @@
 /**
  * Ad spend (FUS-368). The VPS spend-sync job POSTs AdKit results to /api/spend/ingest with the
  * drain token; the panel reads per-brand totals through GET /admin/spend (owner only).
+ * `cost` is in the account's billing currency (THB or USD, THB when a row names none). The report
+ * groups by brand and currency and never adds baht to dollars; the panel converts to USD.
  */
 import {
   SpendIngestRequest,
   SpendReportResponse,
   spendPeriodRange,
+  type SpendCurrency,
   type SpendPeriod,
 } from "@anjuna/contracts";
 import { drainAuthorized } from "./auth.js";
@@ -22,13 +25,14 @@ const INGEST_BODY_LIMIT = 1_000_000;
  * The conflict target is the ad_spend_key unique index expression (NULL hour = whole day).
  */
 const UPSERT_SQL = `
-  INSERT INTO ad_spend (brand_id, date, hour, cost, clicks, impressions, source, updated_at)
+  INSERT INTO ad_spend (brand_id, date, hour, cost, currency, clicks, impressions, source, updated_at)
   SELECT json_extract(value, '$.brand_id'), json_extract(value, '$.date'), json_extract(value, '$.hour'),
-         json_extract(value, '$.cost'), json_extract(value, '$.clicks'), json_extract(value, '$.impressions'),
-         'google', ?2
+         json_extract(value, '$.cost'), json_extract(value, '$.currency'), json_extract(value, '$.clicks'),
+         json_extract(value, '$.impressions'), 'google', ?2
   FROM json_each(?1) WHERE true
   ON CONFLICT (brand_id, date, COALESCE(hour, -1), source) DO UPDATE SET
-    cost = excluded.cost, clicks = excluded.clicks, impressions = excluded.impressions, updated_at = excluded.updated_at`;
+    cost = excluded.cost, currency = excluded.currency, clicks = excluded.clicks, impressions = excluded.impressions,
+    updated_at = excluded.updated_at`;
 
 const invalid = (message: string, extra: Record<string, unknown> = {}, status = 400) =>
   json({ status: "invalid", message, ...extra }, status);
@@ -61,7 +65,8 @@ export async function handleSpendIngest(request: Request, env: Env): Promise<Res
   if (unknown.length) return invalid("Unknown brand_id", { unknown_brand_ids: unknown }, 422);
 
   if (rows.length === 0) return json({ status: "accepted", upserted: 0 });
-  const payload = rows.map((r) => ({ ...r, hour: r.hour ?? null }));
+  // A row without a currency is baht: every account billed in THB before spend-sync sent the field.
+  const payload = rows.map((r) => ({ ...r, hour: r.hour ?? null, currency: r.currency ?? "THB" }));
   await env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(payload), new Date().toISOString()).run();
   return json({ status: "accepted", upserted: rows.length });
 }
@@ -69,34 +74,37 @@ export async function handleSpendIngest(request: Request, env: Env): Promise<Res
 const cents = (value: number) => Math.round(value * 100) / 100;
 
 /**
- * Per-brand totals for the period's UTC days. A day that has hourly rows counts only those; a
+ * Per-brand, per-currency totals for the period's UTC days. Totals keep one cost sum per currency. A day that has hourly rows counts only those; a
  * whole-day row (hour NULL) counts only for a brand and day with no hourly rows, so switching the
  * job between day and hour breakdowns never double-counts.
  */
 export async function loadSpendReport(env: Env, period: SpendPeriod, now = new Date()): Promise<SpendReportResponse> {
   const { from, to } = spendPeriodRange(period, now);
   const { results } = await env.LEADS.prepare(`
-    SELECT s.brand_id, SUM(s.cost) AS cost, SUM(s.clicks) AS clicks, SUM(s.impressions) AS impressions,
+    SELECT s.brand_id, s.currency, SUM(s.cost) AS cost, SUM(s.clicks) AS clicks, SUM(s.impressions) AS impressions,
            MAX(s.updated_at) AS updated_at
     FROM ad_spend s
     WHERE s.date BETWEEN ?1 AND ?2
       AND (s.hour IS NOT NULL OR NOT EXISTS (
         SELECT 1 FROM ad_spend h
         WHERE h.brand_id = s.brand_id AND h.date = s.date AND h.source = s.source AND h.hour IS NOT NULL))
-    GROUP BY s.brand_id
-    ORDER BY s.brand_id`).bind(from, to).all<{
-    brand_id: string; cost: number; clicks: number; impressions: number; updated_at: string;
+    GROUP BY s.brand_id, s.currency
+    ORDER BY s.brand_id, s.currency`).bind(from, to).all<{
+    brand_id: string; currency: SpendCurrency; cost: number; clicks: number; impressions: number; updated_at: string;
   }>();
   const brands = results.map((r) => ({
     brand_id: r.brand_id,
+    currency: r.currency,
     cost: cents(Number(r.cost)),
     clicks: Number(r.clicks),
     impressions: Number(r.impressions),
     updated_at: r.updated_at,
   }));
-  const totals = brands.reduce(
-    (t, b) => ({ cost: cents(t.cost + b.cost), clicks: t.clicks + b.clicks, impressions: t.impressions + b.impressions }),
-    { cost: 0, clicks: 0, impressions: 0 },
-  );
+  const totals = { cost_by_currency: { THB: 0, USD: 0 }, clicks: 0, impressions: 0 };
+  for (const b of brands) {
+    totals.cost_by_currency[b.currency] = cents(totals.cost_by_currency[b.currency] + b.cost);
+    totals.clicks += b.clicks;
+    totals.impressions += b.impressions;
+  }
   return SpendReportResponse.parse({ period, from, to, totals, brands });
 }

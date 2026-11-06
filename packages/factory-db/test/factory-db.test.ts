@@ -73,6 +73,7 @@ describe("factory-db migrations", () => {
         "form_artifacts",
         "install_receipts",
         "installs",
+        "panel_settings",
         "template_theme_vars",
         "template_versions",
         "template_fingerprints",
