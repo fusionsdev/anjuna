@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { App } from "../src/client/App";
@@ -89,7 +89,10 @@ describe("brand timeline route", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "ไทม์ไลน์แบรนด์ (Brand timeline)" })).toBeTruthy();
     await waitFor(() => expect(timeline).toHaveBeenCalledWith("b1", expect.anything()));
-    expect(screen.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
+    const menu = within(screen.getByRole("navigation", { name: "เมนูหลัก" }));
+    expect(menu.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
+    const tabs = within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
+    expect(tabs.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
     expect(screen.queryByText(LINK)).toBeNull();
   });
 });
