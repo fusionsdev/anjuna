@@ -2,15 +2,14 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-07
-- **Brief refs:** §3 Non-goals ("Direct Google Ads API work. AdKit is used only by the existing drain."), CO-4, AGENTS.md hard rules 5 and 7
+- **Brief refs:** §3 Non-goals ("Direct Google Ads API work. AdKit is used only by the existing drain."), CO-4, AGENTS.md hard rules 5 and 7 (the brief's §8 lists "0005 (postback to core)"; that decision is ADR-0002, so this file takes the number 0005)
 - **Spec:** `docs/superpowers/specs/2026-11-07-panel-redesign-design.md`, section "Decisions", AdKit bullet
-- **Numbering:** the brief's §8 reserves "0005" for "postback to core". That decision is recorded as ADR-0002, so this file takes the number 0005.
 
 ## Context
 
 The panel's new-brand wizard step 4 is four empty text fields: Google Ads account, conversion action, AdKit project, Microsoft account. The owner types ids by hand. 29 brands wait for a per-brand route and "Test sold". The redesign needs project and account selects filled from AdKit, and a conversion action created from the panel.
 
-The brief's non-goal says AdKit is used only by the existing drain. That was written when AdKit only uploaded conversions. Since FUS-384 the VPS job `scripts/drain/conversion-sync.mjs` already runs `adkit manage google conversions create ... --publish` and `scripts/drain/spend-sync.mjs` already runs `adkit manage google results`. Both talk to core with the drain token. The non-goal no longer describes the code.
+The brief's non-goal says AdKit is used only by the existing drain. That was written when AdKit only uploaded conversions. Since FUS-384 the VPS job `scripts/drain/conversion-sync.mjs` already runs `adkit manage google conversions create ... --publish`. Since FUS-368 `scripts/drain/spend-sync.mjs` already runs `adkit manage google results`. Both talk to core with the drain token. The non-goal no longer describes the code.
 
 Workers cannot run the `adkit` CLI. The AdKit API key is a credential that would sit in Worker secrets on core and on the panel Worker.
 
@@ -34,7 +33,7 @@ Workers cannot run the `adkit` CLI. The AdKit API key is a credential that would
 
 - AdKit credentials stay on one host that the owner already operates. A Worker leak exposes no ad-account access.
 - The panel cannot act on AdKit in real time. A job waits for the next executor run, so the UI shows queued, claimed, done and failed states, not an instant result.
-- A VPS that is down stops new conversion actions and directory refreshes. The conversion upload path (drain, ADR-0002) is unaffected because it does not depend on the job queue.
+- An executor or job-queue failure stops new conversion actions and directory refreshes. The drain (ADR-0002) keeps uploading because it does not read the job queue. A VPS outage stops both the executor and the drain, because both run on that host.
 - The executor is new code on the VPS. Its install is an owner action behind the Wave 4 gate. Tests use fixtures and an empty `PATH`, and no test calls AdKit.
 - `docs/PRODUCT-BRIEF.md` §3 no longer lists AdKit as drain-only. It points to this ADR. AGENTS.md line 3 still describes AdKit as the drain's upload path and needs the same pointer.
 - Campaign enable stays a human decision, so a bug in the panel or a leaked scoped key cannot start ad spend.
