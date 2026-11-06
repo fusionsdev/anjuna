@@ -35,10 +35,14 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const lastBody = (path: string) => requests.filter((r) => r.path === path && r.method === "PATCH").at(-1)?.body;
 const history = (installs: unknown[]) => routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
 const detail = (install: InstallWithReceipts) => routes.set(`GET /api/installs/${install.install_id}`, () => json(install));
-const installName = "ติดตั้ง (Install)";
-const rollbackName = "ย้อนกลับ (Rollback)";
+/** The row also has an Install and a Recover button (its primary one): the detail aside is the scope of these names. */
+const inAside = () => within(document.querySelector<HTMLElement>(".brands-aside")!);
+const installName = "ติดตั้ง";
+const rollbackName = "ย้อนกลับ";
+/** The Runtime config drawer (ConfigPanel, not changed here) still titles its rollback section with the English term. */
+const rollbackHeading = "ย้อนกลับ (Rollback)";
 const retryName = "ลองใหม่ (Retry)";
-const recoverName = "กู้คืน (Recover, Owner)";
+const recoverName = "กู้คืน";
 const configLabel = "การตั้งค่าแบรนด์ (Brand config)";
 const pauseName = "หยุดชั่วคราว (Pause)";
 const resumeName = "เปิดใช้งานต่อ (Resume)";
@@ -55,7 +59,7 @@ const actionLabel = "รหัส conversion action (Conversion action)";
 const projectLabel = "โปรเจกต์ AdKit (AdKit project)";
 const moneySection = "เส้นทางเงิน (Money-path, Owner เท่านั้น)";
 const openRuntimeConfig = async () => {
-  fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "ตั้งค่าแบรนด์" }));
 };
 const section = (panel: HTMLElement, heading: string | RegExp) => within(within(panel).getByRole("heading", { name: heading }).closest("section")!);
 
@@ -113,7 +117,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(await screen.findByText(/Core brand list is unavailable/)).toBeTruthy();
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeTruthy();
     routes.set("GET /api/lifecycle/brands", () => json({ brands: lifecycleRows, core_error: null }));
-    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    fireEvent.click(screen.getByRole("button", { name: "รีเฟรช" }));
     await waitFor(() => expect(screen.queryByText(/Core brand list is unavailable/)).toBeNull());
   });
 
@@ -257,7 +261,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(panel).queryByRole("combobox")).toBeNull();
     expect(within(panel).queryByRole("button", { name: rotateName })).toBeNull();
     for (const label of [accountLabel, actionLabel, projectLabel]) expect(within(panel).queryByRole("textbox", { name: label })).toBeNull();
-    expect(within(panel).queryByRole("heading", { name: rollbackName })).toBeNull();
+    expect(within(panel).queryByRole("heading", { name: rollbackHeading })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /Rollback/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /เริ่มอัปเกรดทุกแบรนด์/ })).toBeNull();
   });
@@ -269,7 +273,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findByRole("button", { name: pauseName });
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", "โลโก้และไอคอน (Logo and favicon)", rollbackName, "เวอร์ชันเทมเพลต (Template version, Owner เท่านั้น)", abSummarySection, bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
+      "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", "โลโก้และไอคอน (Logo and favicon)", rollbackHeading, "เวอร์ชันเทมเพลต (Template version, Owner เท่านั้น)", abSummarySection, bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
     ]);
     for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)", accountLabel, actionLabel, projectLabel]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
     expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();
@@ -349,9 +353,9 @@ describe("mounted lifecycle UI with API responses", () => {
     render(<BrandLifecycle me={employee} />);
     expect(await screen.findByRole("button", { name: /renderable.test/ })).toBeDefined();
     // No confirmed form artifact: Install is shown but disabled, with the reason.
-    expect(await screen.findByRole("button", { name: installName })).toHaveProperty("disabled", true);
+    expect(await inAside().findByRole("button", { name: installName })).toHaveProperty("disabled", true);
     expect((await screen.findByRole("note")).textContent).toBe("ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว");
-    expect(screen.queryByRole("button", { name: /Runtime config/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "ตั้งค่าแบรนด์" })).toBeNull();
   });
 
   it("reloads terminal upgrade outcomes after an install retry is accepted", async () => {
@@ -376,7 +380,7 @@ describe("mounted lifecycle UI with API responses", () => {
     });
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByText("Smoke check failed")).toBeDefined();
-    fireEvent.click(await screen.findByRole("button", { name: installName }));
+    fireEvent.click(await inAside().findByRole("button", { name: installName }));
     fireEvent.click(await screen.findByRole("button", { name: retryName }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/installs/failed-1/retry")).toBe(true));
     expect(await screen.findByText("retry-install", { selector: "code" })).toBeDefined();
@@ -385,7 +389,7 @@ describe("mounted lifecycle UI with API responses", () => {
 
   describe("runtime sync cell after a redeploy", () => {
     const syncCell = () => screen.getByText("การซิงก์ runtime").nextElementSibling?.textContent;
-    const redeployName = "ติดตั้งใหม่ (Redeploy)";
+    const redeployName = "ติดตั้งใหม่";
     const readyLabel = "พร้อมใช้งาน (ready)";
     const runningLabel = "กำลังทำงาน (running)";
     const syncErrorLabel = "ซิงก์ผิดพลาด (sync_error)";
@@ -432,13 +436,13 @@ describe("mounted lifecycle UI with API responses", () => {
       return json({ install_id: failed.install_id, brand_id: "brand-a", status: "running" }, 201);
     });
     render(<BrandLifecycle me={employee} />);
-    fireEvent.click(await screen.findByRole("button", { name: installName }));
+    fireEvent.click(await inAside().findByRole("button", { name: installName }));
     expect(await screen.findByText("failed-1", { selector: "code" })).toBeDefined();
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Factory Worker binding is missing");
     fireEvent.click(await screen.findByRole("button", { name: retryName }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/installs/failed-1/retry")).toBe(true));
     await waitFor(() => expect(screen.queryByRole("button", { name: retryName })).toBeNull());
-    expect(screen.queryByRole("button", { name: installName })).toBeNull();
+    expect(inAside().queryByRole("button", { name: installName })).toBeNull();
   });
 
   it("recovers the latest failed attempt and its persisted error on reload and Refresh", async () => {
@@ -455,7 +459,7 @@ describe("mounted lifecycle UI with API responses", () => {
     const latest = { ...failed, install_id: "failed-2", receipts: [{ step: "sync_runtime", status: "failed" as const, error: "Core sync failed" }] };
     history([{ ...latest, error: "Second failure" }, { ...failed, error: null }]);
     detail(latest);
-    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    fireEvent.click(screen.getByRole("button", { name: "รีเฟรช" }));
     expect(await screen.findByText("failed-2", { selector: "code" })).toBeDefined();
     expect(await screen.findByText("Core sync failed")).toBeDefined();
     expect(screen.queryByText("failed-1", { selector: "code" })).toBeNull();
@@ -489,7 +493,7 @@ describe("mounted lifecycle UI with API responses", () => {
       detail(running);
       vi.useFakeTimers({ shouldAdvanceTime: true });
       await act(async () => { render(<BrandLifecycle me={owner} />); });
-      fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่ (Redeploy)" }));
+      fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่" }));
       await answerConfirm(true);
       await screen.findAllByText("redeploy-9", { selector: "code" });
       await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
@@ -542,11 +546,11 @@ describe("mounted lifecycle UI with API responses", () => {
     render(<BrandLifecycle me={employee} />);
     await waitFor(() => expect(release).toBeTypeOf("function"));
     fireEvent.click(screen.getByRole("button", { name: /second.test/ }));
-    await screen.findByRole("button", { name: installName });
+    await inAside().findByRole("button", { name: installName });
     await act(async () => { release(json({ brand_id: "brand-a", installs: [{ ...failed, error: "stale failure" }] })); });
     expect(screen.queryByText("failed-1", { selector: "code" })).toBeNull();
     expect(screen.queryByText("stale failure")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Runtime config/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "ตั้งค่าแบรนด์" })).toBeNull();
   });
 });
 
@@ -572,8 +576,8 @@ describe("a confirm left open when the operator leaves the brand", () => {
   });
 
   it.each([
-    ["redeploy", "ติดตั้งใหม่ (Redeploy)", false],
-    ["redeploy with the latest form", "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)", false],
+    ["redeploy", "ติดตั้งใหม่", false],
+    ["redeploy with the latest form", "ติดตั้งใหม่พร้อมฟอร์มล่าสุด", false],
     ["rollback", rollbackName, false],
     ["recover", recoverName, true],
   ] as const)("closes the %s dialog on a route change and sends nothing for the old brand", async (_name, button, needsRecovery) => {
@@ -593,7 +597,7 @@ describe("a confirm left open when the operator leaves the brand", () => {
     routes.set("GET /api/templates", () => json({ templates: [] }));
     routes.set("GET /api/wizard/defaults", () => json({ amount_buckets: [100, 200, 300], form_route: "/request" }));
     const view = render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่ (Redeploy)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่" }));
     await screen.findByRole("alertdialog");
     view.rerender(<BrandLifecycle me={owner} wizardRoute />);
     expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeDefined();
@@ -609,7 +613,7 @@ describe("a click right after a brand is selected", () => {
   // No wait for the checklist request: the controls of a newly selected brand must keep what the first click does.
   it("keeps the Runtime config drawer opened by an immediate click", async () => {
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Runtime config/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "ตั้งค่าแบรนด์" }));
     expect(await screen.findByRole("complementary", { name: configLabel })).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.getByRole("complementary", { name: configLabel })).toBeTruthy();
@@ -621,7 +625,7 @@ describe("a click right after a brand is selected", () => {
     routes.set("POST /api/brands/brand-a/install", () => json({ install_id: "new-install" }, 201));
     detail({ ...failed, install_id: "new-install", status: "running", runtime_sync_status: "running" });
     render(<BrandLifecycle me={employee} />);
-    fireEvent.click(await screen.findByRole("button", { name: installName }));
+    fireEvent.click(await inAside().findByRole("button", { name: installName }));
     expect((await screen.findAllByText("new-install", { selector: "code" })).length).toBeGreaterThan(0);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.getAllByText("new-install", { selector: "code" }).length).toBeGreaterThan(0);
@@ -638,12 +642,12 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   });
   detail({ ...failed, install_id: "recovery-1", revision_id: null, status: "rolled_back", runtime_sync_status: "ready", receipts: [{ step: "receipt", status: "ready" }] });
   render(<BrandLifecycle me={owner} />);
-  fireEvent.click(await screen.findByRole("button", { name: recoverName }));
+  fireEvent.click(await inAside().findByRole("button", { name: recoverName }));
   await answerConfirm(true);
   await waitFor(() => expect(requests.filter((r) => r.path === "/api/brands/brand-a/recover")).toHaveLength(1));
   await screen.findByText("recovery-1");
-  await screen.findByRole("button", { name: installName });
-  expect(screen.queryByRole("button", { name: recoverName })).toBeNull();
+  await inAside().findByRole("button", { name: installName });
+  expect(inAside().queryByRole("button", { name: recoverName })).toBeNull();
 });
 
 describe("7-day stats row in the brands list", () => {

@@ -7,7 +7,7 @@ import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 import { parseRoute, routePath } from "../src/client/router";
 
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
-const LINK = "ไทม์ไลน์ (Timeline)";
+const LINK = "ไทม์ไลน์";
 
 const lifecycle = (id: string, extra: Record<string, unknown> = {}) => LifecycleBrandSummary.parse({
   brand_id: id, name: "Credit Genie", account: "test-account", hostnames: ["creditsgene.test"], status: "live", current_revision_id: `${id}_rev_1`,

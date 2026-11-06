@@ -6,8 +6,8 @@ import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
-const redeployName = "ติดตั้งใหม่ (Redeploy)";
-const latestName = "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)";
+const redeployName = "ติดตั้งใหม่";
+const latestName = "ติดตั้งใหม่พร้อมฟอร์มล่าสุด";
 const newerForm = { form_artifact_id: "fa-2", bundle_form_version: "form@abcdef2" };
 const liveBrand = LifecycleBrandSummary.parse({
   brand_id: "brand-a", account: "test-account", hostnames: ["renderable.test", "www.renderable.test"],
@@ -175,7 +175,7 @@ describe("Redeploy with the latest form in the brand detail", () => {
 
 describe("the operation label in the receipts panel", () => {
   // The first line under the Install progress heading, not the install ID line that tracks a pending operation.
-  const receiptsLine = async () => (await screen.findByRole("heading", { name: /Install progress/ })).parentElement!.querySelector("p")!;
+  const receiptsLine = async () => (await screen.findByRole("heading", { name: "ความคืบหน้าการติดตั้ง" })).parentElement!.querySelector("p")!;
   it.each([
     ["install", "ติดตั้ง (Install)"],
     ["rollback", "ย้อนกลับ (Rollback)"],

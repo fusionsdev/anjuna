@@ -159,7 +159,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     render(<BrandLifecycle me={owner} />);
     await screen.findByRole("heading", { name: /ประวัติเวอร์ชัน/ });
     await waitFor(() => expect(screen.getAllByRole("listitem").length).toBeGreaterThan(0));
-    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับ" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog.textContent).toContain("brand-cg_rev_2");
   });
@@ -182,7 +182,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     routes.set("GET /api/installs/op-1", () => json({ install_id: "op-1", brand_id: "brand-cg", revision_id: "brand-cg_rev_4", status: "ready", runtime_sync_status: "ready", receipts: [] }));
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(calls).toBe(1));
-    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับ" }));
     await answerConfirm(true);
     // The selection moved to rev_4 while the first fetch (issued for rev_3) is still pending.
     await waitFor(() => expect(calls).toBe(2));
@@ -209,7 +209,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     render(<BrandLifecycle me={owner} />);
     fireEvent.click(await copyButton());
     await waitFor(() => expect(writeText).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับ" }));
     await answerConfirm(true);
     await waitFor(() => expect(posted).toBe(true));
     reject(new Error("denied"));
@@ -222,7 +222,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
   it("says the rollback target is unknown when the revisions did not load, and keeps the confirm enabled", async () => {
     serve(lifecycle("brand-cg", "creditsgene.test"), () => json({ error: "not_found", resource: "brand" }, 404));
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับ" }));
     const dialog = await screen.findByRole("alertdialog");
     const text = dialog.textContent ?? "";
     expect(text).toContain("ยังไม่ทราบเวอร์ชันเป้าหมาย");
@@ -238,13 +238,13 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     routes.set("POST /api/brands/brand-cg/rollback", () => { posted = true; return json({ install_id: "op-1", brand_id: "brand-cg", status: "ready" }, 201); });
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(screen.getAllByRole("listitem").length).toBe(3));
-    fireEvent.click(await screen.findByRole("button", { name: /ย้อนกลับ \(Rollback\)/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับ" }));
     const dialog = await screen.findByRole("alertdialog");
     const text = dialog.textContent ?? "";
     expect(text).toContain("ไม่มีเวอร์ชันเป้าหมาย");
     expect(text).toContain("No rollback target");
     const confirmBtn = confirmButton(dialog);
-    expect(confirmBtn.textContent).toContain("Rollback");
+    expect(confirmBtn.textContent).toContain("ย้อนกลับ");
     expect(confirmBtn.disabled).toBe(true);
     // A click on the disabled button must not post: React drops it only when the disabled prop is set.
     await answerConfirm(true);
@@ -279,7 +279,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     const alert = await within(section).findByRole("alert");
     expect(alert.textContent).toContain("โหลดประวัติเวอร์ชันไม่สำเร็จ");
     expect(within(section).queryAllByRole("listitem")).toHaveLength(0);
-    fireEvent.click(within(section).getByRole("button", { name: /ลองใหม่ \(Retry\)/ }));
+    fireEvent.click(within(section).getByRole("button", { name: /^ลองใหม่/ }));
     await waitFor(() => expect(within(screen.getByRole("heading", { name: /ประวัติเวอร์ชัน/ }).closest("section")!).getAllByRole("listitem")).toHaveLength(3));
     expect(calls).toBe(2);
     expect(within(screen.getByRole("heading", { name: /ประวัติเวอร์ชัน/ }).closest("section")!).queryByRole("alert")).toBeNull();
@@ -296,7 +296,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     render(<BrandLifecycle me={owner} />);
     const heading = await screen.findByRole("heading", { name: /ประวัติเวอร์ชัน/ });
     const section = heading.closest("section")!;
-    const retry = await within(section).findByRole("button", { name: /ลองใหม่ \(Retry\)/ });
+    const retry = await within(section).findByRole("button", { name: /^ลองใหม่/ });
     retry.focus();
     fireEvent.click(retry);
     await waitFor(() => expect(calls).toBe(2));

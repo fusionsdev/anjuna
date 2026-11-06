@@ -6,7 +6,7 @@ import { api } from "../src/client/api";
 
 // The real App with the real Brands screen: the wizard entry points must go through the router.
 const employee = { id: "employee", email: "employee@example.test", role: "employee" as const };
-const newBrand = "แบรนด์ใหม่ (New brand)";
+const newBrand = "แบรนด์ใหม่";
 const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" });
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const back = () => act(async () => {
@@ -93,7 +93,7 @@ describe("a resumed draft wizard", () => {
     await screen.findByRole("heading", { name: "live.test" });
     fireEvent.click(screen.getByRole("button", { name: /Maple Cash/ }));
     expect(window.location.pathname).toBe("/brands/brand_new");
-    fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
     await back();
     expect(window.location.pathname).toBe("/brands");
@@ -110,7 +110,7 @@ describe("a resumed draft wizard", () => {
     expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
     await back();
     await waitFor(() => expect(wizard()).toBeNull());
-    fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     expect(await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" })).toBeTruthy();
     expect(window.location.pathname).toBe("/brands");
     await forward();

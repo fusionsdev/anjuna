@@ -14,8 +14,8 @@ const runtimeRow = (id: string, status: string, flow_gate_mode: string) => ({
   brand_id: id, hostnames: [`${id}.example`], status, flow_gate_mode, ab_config: null, form_version: null,
   stats_7d: { leads: 0, sold: 0, pending: 0 },
 });
-const pauseName = "หยุดชั่วคราว (Pause)";
-const resumeName = "เปิดใช้งานต่อ (Resume)";
+const pauseName = "หยุดชั่วคราว";
+const resumeName = "เปิดใช้งานต่อ";
 
 type Handler = (init?: RequestInit) => Response | Promise<Response>;
 let routes: Map<string, Handler>;
@@ -24,6 +24,17 @@ let pauseStatus: number;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const rowOf = async (domain: string) => (await screen.findByRole("button", { name: new RegExp(domain.replace(".", "\\.")) })).closest("tr")!;
 const posts = (path: string) => requests.filter((r) => r.method === "POST" && r.path === path);
+/** Pause is a menu item of the live row: Resume is the primary button of a paused row, so only a live row can pause. */
+const pauseFromMenu = async (row: HTMLElement) => {
+  fireEvent.click(within(row).getByRole("button", { name: "จัดการ" }));
+  fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: pauseName }));
+};
+const menuLabels = async (row: HTMLElement) => {
+  fireEvent.click(within(row).getByRole("button", { name: "จัดการ" }));
+  const labels = within(await screen.findByRole("menu")).getAllByRole("menuitem").map((el) => el.textContent);
+  fireEvent.mouseDown(document.body);
+  return labels;
+};
 
 beforeEach(() => {
   requests = [];
@@ -60,13 +71,13 @@ describe("brand row basics", () => {
     expect(within(await rowOf("paused.example")).getByText("Single Page Cookie")).toBeTruthy();
   });
 
-  it("pauses from the row after a confirm, without selecting the row", async () => {
+  it("pauses from the row menu after a confirm, without selecting the row", async () => {
     render(<BrandLifecycle me={owner} />);
     const live = await rowOf("live.example");
-    fireEvent.click(within(live).getByRole("button", { name: pauseName }));
+    await pauseFromMenu(live);
     await answerConfirm(false);
     expect(posts("/api/brands/b-live/pause")).toHaveLength(0);
-    fireEvent.click(within(live).getByRole("button", { name: pauseName }));
+    await pauseFromMenu(live);
     await answerConfirm(true);
     await waitFor(() => expect(posts("/api/brands/b-live/pause")).toHaveLength(1));
     expect(await screen.findByRole("status")).toHaveProperty("textContent", expect.stringContaining("หยุดแบรนด์แล้ว"));
@@ -83,42 +94,57 @@ describe("brand row basics", () => {
 
   it("lets an Employee resume a paused brand but not pause a live one", async () => {
     render(<BrandLifecycle me={{ ...owner, role: "employee" }} />);
-    expect(within(await rowOf("live.example")).queryByRole("button", { name: pauseName })).toBeNull();
+    expect(await menuLabels(await rowOf("live.example"))).not.toContain(pauseName);
     expect(within(await rowOf("paused.example")).getByRole("button", { name: resumeName })).toBeTruthy();
   });
 
   it("shows a failed pause as an error toast with the API error, after one request", async () => {
     pauseStatus = 500;
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(within(await rowOf("live.example")).getByRole("button", { name: pauseName }));
+    await pauseFromMenu(await rowOf("live.example"));
     await answerConfirm(true);
     expect(within(await screen.findByRole("alert")).getByText("เกิดข้อผิดพลาด (500)")).toBeTruthy();
     expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
   });
 
-  it("keeps the row button off while its request is in flight, so a second click sends nothing", async () => {
+  it("a second Pause chosen while its request is in flight sends nothing", async () => {
     let release!: () => void;
     routes.set("POST /api/brands/b-live/pause", () => new Promise<Response>((resolve) => { release = () => resolve(json({ ok: true })); }));
     render(<BrandLifecycle me={owner} />);
-    const button = within(await rowOf("live.example")).getByRole("button", { name: pauseName }) as HTMLButtonElement;
+    const live = await rowOf("live.example");
+    await pauseFromMenu(live);
+    await answerConfirm(true);
+    await waitFor(() => expect(posts("/api/brands/b-live/pause")).toHaveLength(1));
+    await pauseFromMenu(live);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+    release();
+    await screen.findByText("หยุดแบรนด์แล้ว");
+    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+  });
+
+  it("keeps the Resume button off while its request is in flight, so a second click sends nothing", async () => {
+    let release!: () => void;
+    routes.set("POST /api/brands/b-paused/resume", () => new Promise<Response>((resolve) => { release = () => resolve(json({ ok: true })); }));
+    render(<BrandLifecycle me={owner} />);
+    const button = within(await rowOf("paused.example")).getByRole("button", { name: resumeName }) as HTMLButtonElement;
     fireEvent.click(button);
     await answerConfirm(true);
     await waitFor(() => expect(button.disabled).toBe(true));
     fireEvent.click(button);
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+    expect(posts("/api/brands/b-paused/resume")).toHaveLength(1);
     release();
     await waitFor(() => expect(button.disabled).toBe(false));
-    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+    expect(posts("/api/brands/b-paused/resume")).toHaveLength(1);
   });
 
   it("gives a second toast with the same text its own full countdown", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     render(<BrandLifecycle me={owner} />);
-    const button = within(await rowOf("live.example")).getByRole("button", { name: pauseName }) as HTMLButtonElement;
+    const live = await rowOf("live.example");
     const pause = async (count: number) => {
-      await waitFor(() => expect(button.disabled).toBe(false));
-      fireEvent.click(button);
+      await pauseFromMenu(live);
       await answerConfirm(true);
       await waitFor(() => expect(posts("/api/brands/b-live/pause")).toHaveLength(count));
       await screen.findByText("หยุดแบรนด์แล้ว");
@@ -157,14 +183,14 @@ describe("brand table cards", () => {
     const row = await rowOf("live.example");
     const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
     expect(labels).toEqual([
-      "แบรนด์ (Brand)",
-      "สถานะ (Status)",
-      "โฟลว์ (Flow gate)",
-      "ค่าโฆษณา (Spend)",
-      "คลิก (Clicks)",
-      "ลีด (Leads)",
-      "ต้นทุน/ลีด (Cost per lead)",
-      "กำไร (Profit)",
+      "แบรนด์",
+      "สถานะ",
+      "โฟลว์",
+      "ค่าโฆษณา",
+      "คลิก",
+      "ลีด",
+      "ต้นทุน/ลีด",
+      "กำไร",
     ]);
     const stats = row.nextElementSibling!;
     expect(stats.className).toContain("stats");
@@ -176,11 +202,11 @@ describe("brand table cards", () => {
     const row = await rowOf("live.example");
     const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
     expect(labels).toEqual([
-      "แบรนด์ (Brand)",
-      "สถานะ (Status)",
-      "โฟลว์ (Flow gate)",
-      "คลิก (Clicks)",
-      "ลีด (Leads)",
+      "แบรนด์",
+      "สถานะ",
+      "โฟลว์",
+      "คลิก",
+      "ลีด",
     ]);
     expect(row.nextElementSibling!.querySelector("td")!.getAttribute("data-label")).toBe("");
   });

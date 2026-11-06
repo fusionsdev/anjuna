@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary } from "@anjuna/contracts";
@@ -85,7 +87,7 @@ afterEach(() => {
 const names = () => [...document.querySelectorAll(".brand-table button.brand-pick")].map((button) => button.querySelector("b")?.textContent);
 const sortSelect = () => screen.getByLabelText(/เรียงลำดับ/) as unknown as HTMLSelectElement;
 // Scoped to the chip group: the table rows have their own Pause and Resume buttons.
-const chipButton = (label: RegExp) => within(screen.getByRole("group", { name: /ตัวกรองแบรนด์/ })).getByRole("button", { name: label });
+const chipButton = (label: RegExp) => within(screen.getByRole("group", { name: "ตัวกรองแบรนด์" })).getByRole("button", { name: label });
 /** Waits until the list and the spend report have both landed, so the profit figures are in. */
 const loaded = (me: typeof owner | typeof employee) => waitFor(() => {
   expect(names()).toHaveLength(4);
@@ -162,33 +164,56 @@ describe("brands list filters and sort", () => {
     expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]);
   });
 
+  it("offers the chips ทั้งหมด, ต้องแก้, ใช้งาน, ยังไม่เสร็จ and หยุด, with no English in parentheses", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    const chips = within(screen.getByRole("group", { name: "ตัวกรองแบรนด์" })).getAllByRole("button");
+    expect(chips.map((chip) => chip.firstChild?.textContent?.trim())).toEqual(["ทั้งหมด", "ต้องแก้", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
+    expect(chips.every((chip) => !/\([A-Za-z]/.test(chip.textContent ?? ""))).toBe(true);
+  });
+
   it("filters to one chip and shows each chip's count", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
-    expect(chipButton(/ทั้งหมด/).textContent).toContain("4");
-    expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("1");
-    expect(chipButton(/หยุดชั่วคราว/).textContent).toContain("1");
-    expect(chipButton(/ติดตั้งล้มเหลว/).textContent).toContain("1");
-    expect(chipButton(/ยังไม่มีโดเมนใช้งาน/).textContent).toContain("1");
+    // FloatMe failed its install, Wizard Demo has no live domain (and is a draft), Alpha Loans is paused, Credit Genie is healthy.
+    expect(chipButton(/^ทั้งหมด/).textContent).toContain("4");
+    expect(chipButton(/^ต้องแก้/).textContent).toContain("2");
+    expect(chipButton(/^ใช้งาน/).textContent).toContain("1");
+    expect(chipButton(/^ยังไม่เสร็จ/).textContent).toContain("1");
+    expect(chipButton(/^หยุด/).textContent).toContain("1");
 
-    fireEvent.click(chipButton(/ติดตั้งล้มเหลว/));
-    expect(names()).toEqual(["floatsme.test"]);
-    expect(chipButton(/ติดตั้งล้มเหลว/).getAttribute("aria-pressed")).toBe("true");
-    expect(chipButton(/ทั้งหมด/).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(chipButton(/^ต้องแก้/));
+    expect(names()).toEqual(["floatsme.test", "wizard.test"]);
+    expect(chipButton(/^ต้องแก้/).getAttribute("aria-pressed")).toBe("true");
+    expect(chipButton(/^ทั้งหมด/).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(chipButton(/^ใช้งาน/));
+    expect(names()).toEqual(["creditsgene.test"]);
+    fireEvent.click(chipButton(/^ยังไม่เสร็จ/));
+    expect(names()).toEqual(["wizard.test"]);
+    fireEvent.click(chipButton(/^หยุด/));
+    expect(names()).toEqual(["alpha.test"]);
   });
 
-  it("does not count a core-only brand under No live domain, and sorts it with the healthy brands", async () => {
+  it("keeps the issues-first sort when a chip is on", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    fireEvent.click(chipButton(/^ต้องแก้/));
+    expect(sortSelect().value).toBe("issues");
+    expect(names()).toEqual(["floatsme.test", "wizard.test"]);
+  });
+
+  it("does not count a core-only brand under ต้องแก้ or ใช้งาน, and sorts it with the healthy brands", async () => {
     // A core-only row always has current_revision_id null; core is serving its domain.
     const unmanaged = lifecycle("brand-core", "Core Only", "core-only.test", { status: "unmanaged", current_revision_id: null, bundle_form_version: null, payload_version: null, latest_install: null });
     routes.set("GET /api/lifecycle/brands", () => json({ brands: [...lifecycleRows, unmanaged] }));
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(names()).toHaveLength(5));
-    expect(chipButton(/ทั้งหมด/).textContent).toContain("5");
-    expect(chipButton(/ยังไม่มีโดเมนใช้งาน/).textContent).toContain("1");
-    expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("1");
-    fireEvent.click(chipButton(/ยังไม่มีโดเมนใช้งาน/));
-    expect(names()).toEqual(["wizard.test"]);
-    fireEvent.click(chipButton(/ทั้งหมด/));
+    expect(chipButton(/^ทั้งหมด/).textContent).toContain("5");
+    expect(chipButton(/^ต้องแก้/).textContent).toContain("2");
+    expect(chipButton(/^ใช้งาน/).textContent).toContain("1");
+    fireEvent.click(chipButton(/^ต้องแก้/));
+    expect(names()).toEqual(["floatsme.test", "wizard.test"]);
+    fireEvent.click(chipButton(/^ทั้งหมด/));
     // No issue, so it follows the paused brand and the healthy one with an install, and a brand with no install goes last.
     expect(names()).toEqual(["floatsme.test", "wizard.test", "alpha.test", "creditsgene.test", "core-only.test"]);
   });
@@ -201,7 +226,7 @@ describe("brands list filters and sort", () => {
     await loaded(owner);
     expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes("Core brand list fetch failed"))).toBe(true);
     expect(names()).toEqual(["floatsme.test", "wizard.test", "alpha.test", "creditsgene.test"]);
-    expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("1");
+    expect(chipButton(/^ใช้งาน/).textContent).toContain("1");
   });
 
   it("raises sync_error when the list carries no core_error", async () => {
@@ -210,7 +235,8 @@ describe("brands list filters and sort", () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     expect(names()).toEqual(["floatsme.test", "creditsgene.test", "wizard.test", "alpha.test"]);
-    expect(chipButton(/ใช้งาน \(Live\)/).textContent).toContain("0");
+    expect(chipButton(/^ใช้งาน/).textContent).toContain("0");
+    expect(chipButton(/^ต้องแก้/).textContent).toContain("3");
   });
 
   it("offers no Download control in the brand side panel", async () => {
@@ -230,9 +256,9 @@ describe("brands list filters and sort", () => {
     fireEvent.change(screen.getByLabelText(/ค้นหาโดเมน/), { target: { value: "FLOAT" } });
     expect(names()).toEqual(["floatsme.test"]);
     // A chip count never promises rows the search has hidden.
-    expect(chipButton(/ทั้งหมด/).textContent).toContain("1");
-    expect(chipButton(/ติดตั้งล้มเหลว/).textContent).toContain("1");
-    expect(chipButton(/หยุดชั่วคราว/).textContent).toContain("0");
+    expect(chipButton(/^ทั้งหมด/).textContent).toContain("1");
+    expect(chipButton(/^ต้องแก้/).textContent).toContain("1");
+    expect(chipButton(/^หยุด/).textContent).toContain("0");
   });
 
   it("shows an empty state when a filter hides every brand and clears it", async () => {
@@ -246,7 +272,7 @@ describe("brands list filters and sort", () => {
     fireEvent.click(screen.getByRole("button", { name: /ล้างตัวกรอง/ }));
     expect(names()).toHaveLength(4);
     expect((screen.getByLabelText(/ค้นหาโดเมน/) as HTMLInputElement).value).toBe("");
-    expect(chipButton(/ทั้งหมด/).getAttribute("aria-pressed")).toBe("true");
+    expect(chipButton(/^ทั้งหมด/).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("keeps the routed brand in the side panel while a filter hides its row", async () => {
@@ -269,15 +295,78 @@ describe("brands list filters and sort", () => {
       await loaded(owner);
       expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
       // The status chips stay outside the modal.
-      expect(chipButton(/ทั้งหมด/)).toBeTruthy();
+      expect(chipButton(/^ทั้งหมด/)).toBeTruthy();
       expect(screen.queryByLabelText(/เรียงลำดับ/)).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
-      expect(screen.getByRole("dialog", { name: "ตัวกรองแบรนด์ (Brand filters)" })).toBeTruthy();
+      expect(screen.getByRole("dialog", { name: "ตัวกรองแบรนด์" })).toBeTruthy();
       expect(screen.getByLabelText(/เรียงลำดับ/)).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
       expect(screen.queryByRole("dialog")).toBeNull();
     } finally {
       window.matchMedia = original;
     }
+  });
+
+  it("hides brands named demo<digits> until แสดงแบรนด์ทดลอง is on, and counts only the shown ones", async () => {
+    const demoOne = lifecycle("brand-d1", "demo1", "demo1.test", { latest_install: install("ready", "2026-10-04T00:00:00.000Z") });
+    const demoTwo = lifecycle("brand-d2", "demo22 loans", "demo22.test", { latest_install: install("ready", "2026-10-03T00:00:00.000Z") });
+    const demoStudio = lifecycle("brand-ds", "Demo Studio", "studio.test", { latest_install: install("ready", "2026-10-02T00:00:00.000Z") });
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [demoOne, ...lifecycleRows, demoTwo, demoStudio] }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(names()).toHaveLength(5));
+    expect(names()).not.toContain("demo1.test");
+    expect(names()).not.toContain("demo22.test");
+    expect(names()).toContain("studio.test");
+    expect(chipButton(/^ทั้งหมด/).textContent).toContain("5");
+    expect(chipButton(/^ใช้งาน/).textContent).toContain("2");
+
+    const toggle = screen.getByLabelText("แสดงแบรนด์ทดลอง") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(toggle);
+    expect(toggle.checked).toBe(true);
+    expect(names()).toHaveLength(7);
+    expect(names()).toEqual(expect.arrayContaining(["demo1.test", "demo22.test"]));
+    expect(chipButton(/^ทั้งหมด/).textContent).toContain("7");
+
+    fireEvent.click(toggle);
+    expect(names()).toHaveLength(5);
+  });
+
+  it("does not open a hidden demo brand in the side panel by default", async () => {
+    const demoOne = lifecycle("brand-d1", "demo1", "demo1.test");
+    routes.set("GET /api/lifecycle/brands", () => json({ brands: [demoOne, ...lifecycleRows] }));
+    routes.set("GET /api/brands/brand-d1/checklist", () => json({ brand_id: "brand-d1", checklist: [] }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(names()).toHaveLength(4));
+    expect((await screen.findByRole("heading", { level: 2, name: /creditsgene.test/ })).closest("section")).toBeTruthy();
+    expect(within(document.querySelector(".brands-aside")!).queryByRole("heading", { level: 2, name: /demo1.test/ })).toBeNull();
+  });
+
+  it("labels the columns and the page buttons in Thai only, and each cell carries its column label for the card layout", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    const ownerHeaders = ["แบรนด์", "สถานะ", "โฟลว์", "ค่าโฆษณา", "คลิก", "ลีด", "ต้นทุน/ลีด", "กำไร"];
+    const headers = () => [...document.querySelectorAll(".brand-table th")].map((th) => th.textContent);
+    const cellLabels = () => [...document.querySelector(".brand-table tbody tr.click:not(.stats)")!.querySelectorAll("td")].map((td) => td.getAttribute("data-label"));
+    expect(headers()).toEqual(ownerHeaders);
+    expect(cellLabels()).toEqual(ownerHeaders);
+    expect(screen.getByRole("button", { name: "รีเฟรช" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "แบรนด์ใหม่" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "จัดการ" })).toHaveLength(4);
+    cleanup();
+
+    render(<BrandLifecycle me={employee} />);
+    await loaded(employee);
+    expect(headers()).toEqual(["แบรนด์", "สถานะ", "โฟลว์", "คลิก", "ลีด"]);
+    expect(cellLabels()).toEqual(["แบรนด์", "สถานะ", "โฟลว์", "คลิก", "ลีด"]);
+  });
+
+  it("turns each row into one card under 768 px with CSS alone", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/client/screens/Brands.css"), "utf8");
+    const media = css.match(/@media \(max-width: 767px\) \{([\s\S]*?)\r?\n\}/)?.[1] ?? "";
+    expect(media).toContain(".brand-table, .brand-table tbody, .brand-table tr, .brand-table td { display: block; width: 100%; }");
+    expect(media).toContain("content: attr(data-label)");
+    // The quiet 7-day stats row joins the card of its brand instead of becoming a second card.
+    expect(media).toMatch(/\.brand-table tbody tr\.stats \{[^}]*border-top: 0/);
   });
 });
