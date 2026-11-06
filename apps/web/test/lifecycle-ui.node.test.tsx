@@ -171,19 +171,20 @@ describe("lifecycle state reducer", () => {
 describe("BrandLifecycle SSR", () => {
   it("renders Thai labels with technical terms, receipts, checklist, and owner upgrade controls", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "owner", email: "owner@example.test", role: "owner" }} />);
-    expect(html).toContain("แบรนด์ใหม่ (New brand)");
-    expect(html).toContain("การทำงาน (Actions): Install · Rollback · Retry · Recover · Test sold");
-    expect(html).toContain("อัปเกรดทุกแบรนด์ (Upgrade-all, Owner เท่านั้น)");
+    expect(html).toContain("แบรนด์ใหม่");
+    expect(html).toContain("ปุ่มหลักของแต่ละแถวคือขั้นตอนถัดไปของแบรนด์ ปุ่มจัดการรวมการทำงานอื่น");
+    expect(html).toContain("อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)");
     expect(html).toContain("อัปเกรดแบบ canary ก่อน");
     // The create form moved into the wizard: the list screen holds one button that opens it.
-    expect(html.match(/New brand/g)).toHaveLength(1);
+    expect(html.match(/แบรนด์ใหม่/g)).toHaveLength(1);
+    expect(html).not.toContain("New brand");
     expect(html).not.toContain("Create draft");
     expect(html).not.toContain("Sealed template version");
   });
 
   it("does not render upgrade-all for employees", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "employee", email: "employee@example.test", role: "employee" }} />);
-    expect(html).not.toContain("Upgrade-all");
+    expect(html).not.toContain("อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)");
     expect(html).toContain("สถานะ");
   });
 
@@ -196,7 +197,7 @@ describe("BrandLifecycle SSR", () => {
     />);
     expect(html).toContain("lead_id");
     expect(html).toContain("หลักฐาน:");
-    expect(html).toContain("รายการตรวจ (Checklist)");
+    expect(html).toContain("รายการตรวจ");
   });
 
   const detailHtml = (versions: { bundle_form_version: string | null; payload_version: string | null }, status: "draft" | "live" = "draft") => renderToStaticMarkup(<LifecycleDetail
@@ -204,7 +205,7 @@ describe("BrandLifecycle SSR", () => {
     brand={{ brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status, current_revision_id: null, runtime_sync_status: "queued", ...versions }}
     checklist={{}} leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRedeploy={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={() => undefined}
   />);
-  const installButton = (html: string) => html.match(/<button[^>]*>ติดตั้ง \(Install\)<\/button>/)?.[0];
+  const installButton = (html: string) => html.match(/<button[^>]*>ติดตั้ง<\/button>/)?.[0];
   const note = "ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว";
 
   it.each([
@@ -229,14 +230,17 @@ describe("BrandLifecycle SSR", () => {
   });
 });
 
- it.each(["owner", "employee"] as const)("Recover is visible only to Owner (%s)", (role) => {
+ it.each(["owner", "employee"] as const)("Recover is enabled for the Owner and disabled with a reason for the Employee (%s)", (role) => {
    const html = renderToStaticMarkup(<LifecycleDetail
      me={{ id: role, email: `${role}@example.test`, role }}
      brand={{ brand_id: "b", account: "a", hostnames: ["brand.example"], status: "installing", current_revision_id: null, bundle_form_version: null, payload_version: null, runtime_sync_status: "failed" }}
      install={{ install_id: "i", brand_id: "b", revision_id: null, status: "failed", runtime_sync_status: "failed", receipts: [], recovery_required: true }}
      checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}}
    />);
-   expect(html.includes("กู้คืน (Recover, Owner)")).toBe(role === "owner");
+   const recover = html.match(/<button[^>]*>กู้คืน<\/button>/)?.[0] ?? "";
+   expect(recover).not.toBe("");
+   expect(recover.includes("disabled")).toBe(role === "employee");
+   expect(recover.includes('title="เฉพาะเจ้าของกู้คืนได้"')).toBe(role === "employee");
    expect(html).not.toContain(">ลองใหม่ (Retry)<");
  });
 

@@ -576,7 +576,7 @@ describe("entry points on the Lifecycle screen", () => {
     expect(screen.queryByRole("button", { name: /Create draft/ })).toBeNull();
     // The only select left on the screen is the list's sort.
     expect(screen.getAllByRole("combobox")).toEqual([screen.getByLabelText(/เรียงลำดับ/)]);
-    fireEvent.click(screen.getByRole("button", { name: "แบรนด์ใหม่ (New brand)" }));
+    fireEvent.click(screen.getByRole("button", { name: "แบรนด์ใหม่" }));
     await heading("แบรนด์ (Brand)");
     expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
   });
@@ -592,7 +592,7 @@ describe("entry points on the Lifecycle screen", () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "maple.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");
     await screen.findByText(/Zone maple.test is active/);
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }));
@@ -604,19 +604,19 @@ describe("entry points on the Lifecycle screen", () => {
   it("offers Resume in wizard for a draft only, and Duplicate for every managed brand", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: "maple.test" });
-    expect(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "ทำสำเนา (Duplicate)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "ทำสำเนา" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Live Cash/ }));
     await screen.findByRole("heading", { name: "live.test" });
-    expect(screen.queryByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" })).toBeNull();
-    expect(screen.getByRole("button", { name: "ทำสำเนา (Duplicate)" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "ทำต่อในวิซาร์ด" })).toBeNull();
+    expect(screen.getByRole("button", { name: "ทำสำเนา" })).toBeTruthy();
   });
 
   it("keeps a resumed draft wizard open while the new-brand route stays off", async () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const view = render(<BrandLifecycle me={employee} wizardRoute={false} />);
     await screen.findByRole("heading", { name: "maple.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");
     view.rerender(<BrandLifecycle me={employee} wizardRoute={false} />);
     expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
@@ -627,7 +627,7 @@ describe("entry points on the Lifecycle screen", () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const view = render(<BrandLifecycle me={employee} wizardRoute={false} />);
     await screen.findByRole("heading", { name: "maple.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");
     view.rerender(<BrandLifecycle me={employee} wizardRoute />);
     await heading("แบรนด์ (Brand)");
@@ -644,7 +644,7 @@ describe("entry points on the Lifecycle screen", () => {
     fireEvent.click(screen.getByRole("button", { name: /Maple Cash/ }));
     view.rerender(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
     await screen.findByRole("heading", { name: "maple.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");
     view.rerender(<BrandLifecycle me={employee} routeBrandId="brand_live" />);
     await waitFor(() => expect(screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeNull());
@@ -655,7 +655,7 @@ describe("entry points on the Lifecycle screen", () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const view = render(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
     await screen.findByRole("heading", { name: "maple.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");
     view.rerender(<BrandLifecycle me={employee} routeBrandId={null} />);
     await waitFor(() => expect(screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeNull());
@@ -666,7 +666,7 @@ describe("entry points on the Lifecycle screen", () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const view = render(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
     await screen.findByRole("heading", { name: "maple.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");
     view.rerender(<BrandLifecycle me={employee} routeBrandId={null} wizardRoute />);
     await heading("แบรนด์ (Brand)");
@@ -677,7 +677,7 @@ describe("entry points on the Lifecycle screen", () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const view = render(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
     await screen.findByRole("heading", { name: "maple.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด (Resume in wizard)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");
     view.rerender(<BrandLifecycle me={employee} routeBrandId="brand_new" />);
     expect(screen.getByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
@@ -692,7 +692,7 @@ describe("entry points on the Lifecycle screen", () => {
     await screen.findByRole("heading", { name: "maple.test" });
     fireEvent.click(screen.getByRole("button", { name: /Live Cash/ }));
     await screen.findByRole("heading", { name: "live.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำสำเนา (Duplicate)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำสำเนา" }));
     const dialog = await screen.findByRole("dialog", { name: "ทำสำเนาแบรนด์ (Duplicate brand)" });
 
     // A new domain is required and checked before anything is sent.
@@ -718,7 +718,7 @@ describe("entry points on the Lifecycle screen", () => {
     render(<BrandLifecycle me={employee} />);
     fireEvent.click(await screen.findByRole("button", { name: /Live Cash/ }));
     await screen.findByRole("heading", { name: "live.test" });
-    fireEvent.click(screen.getByRole("button", { name: "ทำสำเนา (Duplicate)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ทำสำเนา" }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByRole("textbox", { name: "โดเมนใหม่ (New domain)" }), { target: { value: "live.test" } });
     await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา (Duplicate)" })); });

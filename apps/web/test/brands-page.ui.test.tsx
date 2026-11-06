@@ -210,7 +210,7 @@ describe("side panel of the selected brand", () => {
     const heading = await screen.findByRole("heading", { name: "floatsme.test" });
     const panel = within(heading.closest("section")!);
     await waitFor(() => expect(requests.some((r) => r.path === "/api/brands/brand-fm/installs")).toBe(true));
-    fireEvent.click(await panel.findByRole("button", { name: "ย้อนกลับ (Rollback)" }));
+    fireEvent.click(await panel.findByRole("button", { name: "ย้อนกลับ" }));
     await answerConfirm(true);
     await waitFor(() => expect(requests.filter((r) => r.method === "POST").map((r) => r.path)).toEqual(["/api/brands/brand-fm/rollback"]));
   });
