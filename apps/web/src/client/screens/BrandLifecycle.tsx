@@ -590,7 +590,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useEffect(() => {
     const queued = queuedDeploy.current;
     if (!queued || !selected) return;
-    if (selected.brand_id !== queued.brandId) { queuedDeploy.current = null; return; }
+    // The row's own click queues and selects in one step, so an effect still pending from the previous brand's commit can run in between: keep the queue while the selection is on its way.
+    if (selected.brand_id !== queued.brandId) { if (selectedIdRef.current !== queued.brandId) queuedDeploy.current = null; return; }
     if (recoveringRef.current) return;
     if (queued.key === "rollback" && (revisions === undefined || (revisions !== null && revisions.brand_id !== queued.brandId))) return;
     queuedDeploy.current = null;
