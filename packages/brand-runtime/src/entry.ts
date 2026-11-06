@@ -1,4 +1,5 @@
-import { createBrandWorker, HttpsCoreClient, ServiceBindingCoreClient, type BrandWorkerConfig, type FetchBinding, type TransportOptions } from "./index.js";
+import { reportBotHit } from "./bot-log.js";
+import { createBrandWorker, HttpsCoreClient, ServiceBindingCoreClient, type BrandWorkerConfig, type CoreClient, type FetchBinding, type TransportOptions } from "./index.js";
 
 interface Env {
   ASSETS: FetchBinding;
@@ -9,20 +10,29 @@ interface Env {
   CORE_ANALYTICS_PATHS?: string;
 }
 
-const instances = new WeakMap<Env, ReturnType<typeof createBrandWorker>>();
+interface Instance { worker: ReturnType<typeof createBrandWorker>; core: CoreClient; brand_id: string }
+const instances = new WeakMap<Env, Instance>();
+
+/** Counts a crawler hit after the response exists. waitUntil keeps it off the request path. */
+function logBotHit(instance: Instance, request: Request, ctx?: Pick<ExecutionContext, "waitUntil">) {
+  ctx?.waitUntil(reportBotHit(instance.core, { brand_id: instance.brand_id, request }));
+}
 
 export default {
-  fetch(request: Request, env: Env) {
-    const cached = instances.get(env);
-    if (cached) return cached.fetch(request);
-    const options: TransportOptions = {
-      credential: env.CORE_TOKEN,
-      analyticsPaths: env.CORE_ANALYTICS_PATHS ? JSON.parse(env.CORE_ANALYTICS_PATHS) : undefined,
-    };
-    const core = env.CORE ? new ServiceBindingCoreClient(env.CORE, options) : new HttpsCoreClient(options);
-    const settings = typeof env.BRAND_CONFIG === "string" ? JSON.parse(env.BRAND_CONFIG) : env.BRAND_CONFIG;
-    const worker = createBrandWorker({ ...settings, core, assets: env.ASSETS });
-    instances.set(env, worker);
-    return worker.fetch(request);
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext) {
+    let instance = instances.get(env);
+    if (!instance) {
+      const options: TransportOptions = {
+        credential: env.CORE_TOKEN,
+        analyticsPaths: env.CORE_ANALYTICS_PATHS ? JSON.parse(env.CORE_ANALYTICS_PATHS) : undefined,
+      };
+      const core = env.CORE ? new ServiceBindingCoreClient(env.CORE, options) : new HttpsCoreClient(options);
+      const settings = typeof env.BRAND_CONFIG === "string" ? JSON.parse(env.BRAND_CONFIG) : env.BRAND_CONFIG;
+      instance = { worker: createBrandWorker({ ...settings, core, assets: env.ASSETS }), core, brand_id: settings.brand_id };
+      instances.set(env, instance);
+    }
+    const response = await instance.worker.fetch(request);
+    logBotHit(instance, request, ctx);
+    return response;
   },
 } satisfies ExportedHandler<Env>;

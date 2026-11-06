@@ -93,6 +93,7 @@ abstract class TransportCoreClient implements CoreClient {
   verifyHandoff: RpcMethods["verifyHandoff"] = (body) => this.call("verifyHandoff", body);
   brandSettings: RpcMethods["brandSettings"] = (body) => this.call("brandSettings", body);
   brandAsset: RpcMethods["brandAsset"] = (body) => this.call("brandAsset", body);
+  botHit: RpcMethods["botHit"] = (body) => this.call("botHit", body);
 
   async forwardAnalytics(body: AnalyticsRequest): Promise<void> {
     const validated = AnalyticsForwardRequest.parse(body);

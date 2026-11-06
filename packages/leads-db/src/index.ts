@@ -28,6 +28,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0017_suppressions_added_by.sql",
   "0018_conversion_setup.sql",
   "0019_ad_spend_currency.sql",
+  "0021_bot_hits.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */

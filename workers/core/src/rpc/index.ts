@@ -2,6 +2,7 @@ import { LeadsRpc, type LeadsRpcMethod, type LeadsRpcRequest } from "@anjuna/con
 import { ownsBrand } from "../auth.js";
 import type { RpcHandler } from "../index.js";
 import { brandAsset } from "./assets.js";
+import { botHit } from "./bot-hit.js";
 import { json } from "../http.js";
 import { recordClick, zip } from "./clicks.js";
 import { resolveContinuation } from "./continuations.js";
@@ -67,6 +68,7 @@ function handler<M extends LeadsRpcMethod>(method: M): RpcHandler {
           return json(publicSettings(brand, request.include_site_text === true, request.include_theme === true));
         }
         case "brandAsset": return await brandAsset(parsed.data as LeadsRpcRequest<"brandAsset">, env);
+        case "botHit": return await botHit(parsed.data as LeadsRpcRequest<"botHit">, env);
         default: return json({ error: "not_found" }, 404);
       }
     } catch {
