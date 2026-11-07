@@ -6,7 +6,7 @@
  * 0-23 for an hourly row and null for a whole-day row. The panel converts to USD with its own rate.
  */
 import { z } from "zod";
-import { BrandId } from "./common.js";
+import { BrandId, GoogleAdsAccount } from "./common.js";
 
 /** Most rows one ingest request may carry: 30 days x 24 hours x 6 brands, with headroom. */
 export const SPEND_INGEST_MAX_ROWS = 5000;
@@ -42,6 +42,61 @@ export const SpendIngestResponse = z.strictObject({
   upserted: Count,
 });
 export type SpendIngestResponse = z.infer<typeof SpendIngestResponse>;
+
+/** Google Ads campaign id: digits only, as `{campaignid}` substitutes it and AdKit reports it. */
+export const CampaignId = z.string().regex(/^[0-9]{1,20}$/, "Invalid campaign_id");
+export type CampaignId = z.infer<typeof CampaignId>;
+
+/** How a brand's ad_spend row was made: from mapped campaigns, or with an unmapped campaign split by click share. */
+export const SPEND_ALLOCATIONS = ["exact", "estimated"] as const;
+export const SpendAllocation = z.enum(SPEND_ALLOCATIONS);
+export type SpendAllocation = z.infer<typeof SpendAllocation>;
+
+/** Panel setting `ads_allocation_mode`. `estimated` (default) splits unmapped cost; `exact_only` keeps it off every brand. */
+export const ADS_ALLOCATION_MODES = ["estimated", "exact_only"] as const;
+export const AdsAllocationMode = z.enum(ADS_ALLOCATION_MODES);
+export type AdsAllocationMode = z.infer<typeof AdsAllocationMode>;
+
+export const CampaignSpendRow = z.strictObject({
+  /** Calendar day YYYY-MM-DD in the ad account's time zone, as AdKit reports it. */
+  date: z.iso.date(),
+  /** 0-23 for an hourly row, null or absent for a whole-day row. */
+  hour: z.number().int().min(0).max(23).nullable().optional(),
+  campaign_id: CampaignId,
+  /** Up to 6 decimals (AdKit micros). Core rounds each (date, hour) total once to 2 decimals. */
+  cost: Money.max(1e9).refine((v) => Math.round(v * 1e6) / 1e6 === v, "cost has more than 6 decimals"),
+  clicks: Count,
+  impressions: Count,
+});
+export type CampaignSpendRow = z.infer<typeof CampaignSpendRow>;
+
+/**
+ * VPS `spend-sync.mjs` -> core `POST /api/spend/campaign-ingest` (drain token, header only): campaign level
+ * cost of one Google Ads account. Core maps campaigns to the account's brands and writes `ad_spend`.
+ * Every (date, hour) in the body is rewritten for every brand of the account, so a rerun overwrites.
+ * One (date, hour, campaign_id) may appear once; a duplicate rejects the request.
+ */
+export const CampaignSpendIngestRequest = z.strictObject({
+  account: GoogleAdsAccount,
+  /** Billing currency of the account. Every row of the request is in it. */
+  currency: SpendCurrency,
+  /**
+   * Offset of the account time zone from UTC in minutes (420 for Asia/Bangkok). `date` and `hour` of
+   * every row are in that zone; core buckets click weights with the same offset.
+   */
+  utc_offset_minutes: z.number().int().min(-720).max(840),
+  rows: z.array(CampaignSpendRow).max(SPEND_INGEST_MAX_ROWS),
+});
+export type CampaignSpendIngestRequest = z.infer<typeof CampaignSpendIngestRequest>;
+
+export const CampaignSpendIngestResponse = z.strictObject({
+  status: z.literal("accepted"),
+  /** ad_spend rows written: one per brand of the account per (date, hour) in the body. */
+  upserted: Count,
+  /** Cost in the request currency that no brand got (`exact_only` mode), 2 decimals. */
+  unallocated: Money,
+});
+export type CampaignSpendIngestResponse = z.infer<typeof CampaignSpendIngestResponse>;
 
 /** today = the current UTC day; yesterday = the UTC day before it; 7d and 30d end today and include it. */
 export const SPEND_PERIODS = ["today", "yesterday", "7d", "30d"] as const;

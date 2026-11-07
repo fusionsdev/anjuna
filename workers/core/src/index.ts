@@ -10,7 +10,7 @@ import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 import { handlePostback } from "./postback.js";
 import { rpcRoutes } from "./rpc/index.js";
-import { handleSpendIngest } from "./spend.js";
+import { handleCampaignSpendIngest, handleSpendIngest } from "./spend.js";
 import { handleFactoryLifecycleRequest, handlePanelLifecycleRequest } from "./lifecycle.js";
 
 export type RpcHandler = (request: Request, env: Env, account: string) => Promise<Response>;
@@ -44,6 +44,7 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       if (pathname === "/api/adkit/jobs/pending" && request.method === "GET") return handleJobsPending(request, env);
       if (pathname === "/api/adkit/jobs/claim" && request.method === "POST") return handleJobClaim(request, env);
       if (pathname === "/api/adkit/jobs/result" && request.method === "POST") return handleJobResult(request, env);
+      if (pathname === "/api/spend/campaign-ingest" && request.method === "POST") return handleCampaignSpendIngest(request, env);
       if (pathname === "/api/spend/ingest" && request.method === "POST") {
         return handleSpendIngest(request, env);
       }

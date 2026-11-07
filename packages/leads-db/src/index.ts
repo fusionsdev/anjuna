@@ -29,6 +29,8 @@ export const LEADS_DB_MIGRATIONS = [
   "0018_conversion_setup.sql",
   "0019_ad_spend_currency.sql",
   "0020_adkit_directory_jobs.sql",
+  // 0021 is reserved by the open T12 pull request (PR 174).
+  "0022_spend_allocation.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
