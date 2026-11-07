@@ -11,7 +11,7 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   traffic_events: ["risk_score", "risk_signals"], // 0015, FUS-372
   suppressions: ["added_by"], // 0017, FUS-382
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup", "adkit_directory", "adkit_jobs"];
 
 interface ColumnInfo {
   cid: number;
@@ -117,6 +117,8 @@ describe("leads-db migrations", () => {
       [
         "account_credentials",
         "ad_spend",
+        "adkit_directory",
+        "adkit_jobs",
         "brand_runtime",
         "click_sessions",
         "client_errors",
@@ -419,6 +421,34 @@ describe("Anjuna additions", () => {
       for (const stmt of bad) await expect(stmt.run()).rejects.toThrow(/CHECK constraint failed/);
       await insert(GOOD_ACCOUNT, GOOD_NAME, "1".repeat(20), "e".repeat(500)).run();
       await env.DB.prepare("DELETE FROM conversion_setup WHERE brand_id = 'brand-cs'").run();
+    });
+  });
+
+  describe("adkit_directory and adkit_jobs", () => {
+    const directory = (kind: string, currency: string | null) =>
+      env.DB.prepare("INSERT INTO adkit_directory (kind, id, parent_id, name, currency, updated_at) VALUES (?1, 'd1', NULL, 'n', ?2, 'x')")
+        .bind(kind, currency);
+    const job = (id: string, key: string, status: string, claimId: string | null, payload = "{}") =>
+      env.DB.prepare(`INSERT INTO adkit_jobs (id, kind, payload, status, attempts, idempotency_key, requested_by, claim_id, claimed_at, created_at, updated_at)
+        VALUES (?1, 'conversion_action.create', ?2, ?3, 0, ?4, 'usr', ?5, ?6, 'x', 'x')`)
+        .bind(id, payload, status, key, claimId, claimId === null ? null : "x");
+
+    it("directory CHECKs reject an unknown kind and a bad currency", async () => {
+      for (const stmt of [directory("campaign", null), directory("account", "thb"), directory("account", "USDT")]) {
+        await expect(stmt.run()).rejects.toThrow(/CHECK constraint failed/);
+      }
+      await directory("account", "THB").run();
+      await env.DB.prepare("DELETE FROM adkit_directory").run();
+    });
+
+    it("jobs keep one row per idempotency key and a claimed row needs its claim", async () => {
+      await job("j1", "key-1", "queued", null).run();
+      await expect(job("j2", "key-1", "queued", null).run()).rejects.toThrow(/UNIQUE constraint failed/);
+      await expect(job("j3", "key-3", "claimed", null).run()).rejects.toThrow(/CHECK constraint failed/);
+      await expect(job("j4", "key-4", "running", null).run()).rejects.toThrow(/CHECK constraint failed/);
+      await expect(job("j5", "key-5", "queued", null, "not json").run()).rejects.toThrow(/CHECK constraint failed/);
+      await job("j6", "key-6", "claimed", "claim").run();
+      await env.DB.prepare("DELETE FROM adkit_jobs").run();
     });
   });
 

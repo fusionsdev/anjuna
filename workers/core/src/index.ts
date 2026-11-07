@@ -5,6 +5,7 @@ import { authenticateAccount } from "./auth.js";
 import { handleScheduled } from "./cron.js";
 import { handleConversionsAck, handleConversionsPending, handleConversionsRouting } from "./conversions.js";
 import { handleSetupClaim, handleSetupPending, handleSetupResult } from "./conversion-setup.js";
+import { handleDirectoryIngest, handleJobClaim, handleJobResult, handleJobsPending } from "./adkit.js";
 import type { Env } from "./env.js";
 import { json, notFound, unauthorized } from "./http.js";
 import { handlePostback } from "./postback.js";
@@ -39,6 +40,10 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       if (pathname === "/api/conversions/setup/pending" && request.method === "GET") return handleSetupPending(request, env);
       if (pathname === "/api/conversions/setup/claim" && request.method === "POST") return handleSetupClaim(request, env);
       if (pathname === "/api/conversions/setup/result" && request.method === "POST") return handleSetupResult(request, env);
+      if (pathname === "/api/adkit/directory/ingest" && request.method === "POST") return handleDirectoryIngest(request, env);
+      if (pathname === "/api/adkit/jobs/pending" && request.method === "GET") return handleJobsPending(request, env);
+      if (pathname === "/api/adkit/jobs/claim" && request.method === "POST") return handleJobClaim(request, env);
+      if (pathname === "/api/adkit/jobs/result" && request.method === "POST") return handleJobResult(request, env);
       if (pathname === "/api/spend/ingest" && request.method === "POST") {
         return handleSpendIngest(request, env);
       }

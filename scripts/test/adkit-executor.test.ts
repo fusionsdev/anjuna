@@ -1,0 +1,216 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// Fixture CLI output only. PATH is empty for the whole file, so a real `adkit` can never be found,
+// and every job test injects runAdkit and fetchImpl: nothing spawns adkit or reaches core.
+const script = fileURLToPath(new URL("../drain/adkit-executor.mjs", import.meta.url));
+const fixture = (name: string) => readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), "utf8");
+
+interface Payload { brand_draft_id: string; account: string; project: string | null; name: string }
+interface Job { id: string; kind: string; payload: Payload; attempts: number }
+interface Executor {
+  ALLOWED_COMMANDS: readonly string[];
+  assertAllowed(args: string[]): void;
+  guardAdkit(run: (args: string[]) => Promise<string>): (args: string[]) => Promise<string>;
+  runAdkitCli(args: string[]): Promise<string>;
+  makeAdkitCli(execImpl: (file: string, args: string[], options: object) => Promise<{ stdout: string }>): (args: string[]) => Promise<string>;
+  executeJobs(options: {
+    baseUrl: string; token: string; fallbackProject?: string;
+    runAdkit?: (args: string[]) => Promise<string>; fetchImpl: typeof fetch;
+    log?: (line: string) => void; error?: (line: string) => void;
+  }): Promise<number>;
+}
+
+let x: Executor;
+let savedPath: string | undefined;
+beforeAll(async () => {
+  savedPath = process.env.PATH;
+  process.env.PATH = "";
+  x = await import(pathToFileURL(script).href) as Executor;
+});
+afterAll(() => { process.env.PATH = savedPath; });
+
+const NAME = "cv-aaaaaaaaaaaaaaaa";
+const JOB_ID = "11111111-1111-4111-8111-111111111111";
+const CLAIM_ID = "22222222-2222-4222-8222-222222222222";
+const job = (over: Partial<Job> = {}): Job => ({
+  id: JOB_ID, kind: "conversion_action.create", attempts: 0,
+  payload: { brand_draft_id: "brand-a", account: "4811219623", project: "proj_a", name: NAME }, ...over,
+});
+
+function fakeCore(jobs: Job[], claimStatus = 200) {
+  const results: Array<Record<string, unknown>> = [];
+  const claims: string[] = [];
+  const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer tok");
+    expect(String(url)).not.toContain("tok");
+    const path = new URL(String(url)).pathname;
+    if (path === "/api/adkit/jobs/pending") return Response.json({ jobs });
+    if (path === "/api/adkit/jobs/claim") {
+      const { job_id } = JSON.parse(String(init?.body)) as { job_id: string };
+      claims.push(job_id);
+      const claimed = jobs.find((j) => j.id === job_id)!;
+      return claimStatus === 200
+        ? Response.json({ status: "claimed", claim_id: CLAIM_ID, job: claimed })
+        : Response.json({ status: "busy" }, { status: claimStatus });
+    }
+    if (path === "/api/adkit/jobs/result") {
+      results.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ status: "done" });
+    }
+    return new Response("Not Found", { status: 404 });
+  });
+  return { results, claims, fetchImpl: fetchImpl as unknown as typeof fetch };
+}
+
+const quiet = { log: () => {}, error: () => {} };
+
+describe("allowlist", () => {
+  it("allows exactly four commands", () => {
+    expect([...x.ALLOWED_COMMANDS].sort()).toEqual(["accounts list", "conversions create", "conversions list", "results list"]);
+  });
+
+  it("rejects campaigns update and every other command before spawning", async () => {
+    const spawn = vi.fn(async () => "{}");
+    const run = x.guardAdkit(spawn);
+    for (const args of [
+      ["manage", "google", "campaigns", "update", "--account", "4811219623"],
+      ["manage", "google", "campaigns", "create"],
+      ["manage", "google", "conversions", "delete"],
+      ["manage", "meta", "accounts", "list"],
+      ["login"],
+      [],
+    ]) {
+      await expect(run(args), args.join(" ")).rejects.toThrow(/not allowed/);
+    }
+    expect(spawn).not.toHaveBeenCalled();
+    await expect(run(["manage", "google", "accounts", "list", "--json"])).resolves.toBe("{}");
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("the runner passes an allowed argv to execFile unchanged and never calls it for a rejected one", async () => {
+    const execFile = vi.fn(async () => ({ stdout: '{"accounts":[]}' }));
+    const run = x.makeAdkitCli(execFile);
+    await expect(run(["manage", "google", "campaigns", "update"])).rejects.toThrow(/not allowed/);
+    expect(execFile).not.toHaveBeenCalled();
+    await expect(run(["manage", "google", "accounts", "list", "--json", "--project", "proj_a"])).resolves.toBe('{"accounts":[]}');
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile).toHaveBeenCalledWith("adkit", ["manage", "google", "accounts", "list", "--json", "--project", "proj_a"],
+      expect.objectContaining({ timeout: 120_000 }));
+    // The exported real runner rejects before it reaches its execFile.
+    await expect(x.runAdkitCli(["manage", "google", "campaigns", "update"])).rejects.toThrow(/not allowed/);
+  });
+
+  it("rejects an extra flag, a missing argument and an option-like value on an allowed command", async () => {
+    const spawn = vi.fn(async () => "{}");
+    const run = x.guardAdkit(spawn);
+    const list = ["manage", "google", "conversions", "list", "--account", "4811219623", "--limit", "500", "--json"];
+    const create = ["manage", "google", "conversions", "create", "--account", "4811219623", "--data", '{"conversions":[]}', "--publish", "--json"];
+    const swap = (args: string[], index: number, arg: string) => args.map((a, i) => (i === index ? arg : a));
+    for (const args of [
+      [...list, "--help"],
+      [...list, "--project", "--help"],
+      [...list, "--project", "-x"],
+      [...list, "--project"],
+      [...list, "--project", "proj_a", "--json"],
+      ["manage", "google", "accounts", "list", "--json", "--all"],
+      ["manage", "google", "accounts", "list"],
+      swap(list, 5, "--help"),
+      swap(list, 7, "5000"),
+      swap(create, 7, "--publish"),
+      swap(create, 7, "[1]"),
+      create.filter((a) => a !== "--publish"),
+      ["manage", "google", "results", "list", "--account", "4811219623", "--breakdown", "week", "--from", "2026-11-01", "--to", "2026-11-01", "--json"],
+    ]) {
+      await expect(run(args), args.join(" ")).rejects.toThrow(/not allowed/);
+    }
+    expect(spawn).not.toHaveBeenCalled();
+    for (const args of [list, [...list, "--project", "proj_a"], create,
+      ["manage", "google", "results", "list", "--account", "4811219623", "--breakdown", "hour", "--from", "2026-11-01", "--to", "2026-11-01", "--json"]]) {
+      await expect(run(args), args.join(" ")).resolves.toBe("{}");
+    }
+  });
+
+  it("refuses an option-like fallback project or payload project before any adkit call", async () => {
+    const spawn = vi.fn(async () => "{}");
+    const core = fakeCore([job()]);
+    await expect(x.executeJobs({ baseUrl: "https://core.test", token: "tok", fallbackProject: "--help", runAdkit: spawn, fetchImpl: core.fetchImpl, ...quiet }))
+      .rejects.toThrow(/invalid adkit project/);
+    const bad = fakeCore([job({ payload: { ...job().payload, project: "--help" } })]);
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, fetchImpl: bad.fetchImpl, ...quiet })).toBe(1);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(bad.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "invalid conversion_action.create payload", retryable: false }]);
+  });
+});
+
+describe("conversion_action.create jobs", () => {
+  it("creates the action with --publish and posts result.conversion_action_id", async () => {
+    const core = fakeCore([job()]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => {
+      calls.push(args);
+      return args[3] === "list" ? fixture("adkit-conversions-list.txt") : fixture("adkit-conversion-create.txt");
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test/", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(calls.map((a) => a.slice(2, 4).join(" "))).toEqual(["conversions list", "conversions create"]);
+    const create = calls[1]!;
+    expect(create).toContain("--publish");
+    expect(create.slice(create.indexOf("--account"), create.indexOf("--account") + 2)).toEqual(["--account", "4811219623"]);
+    expect(create.slice(-2)).toEqual(["--project", "proj_a"]);
+    expect((JSON.parse(create[create.indexOf("--data") + 1]!) as { conversions: Array<{ name: string }> }).conversions[0]!.name).toBe(NAME);
+    expect(core.results).toEqual([
+      { job_id: JOB_ID, claim_id: CLAIM_ID, result: { conversion_action_id: "7300000099", name: NAME, adopted: false } },
+    ]);
+  });
+
+  it("adopts the existing action on a duplicate-name error", async () => {
+    const core = fakeCore([job()]);
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] === "list") {
+        lists++;
+        return lists === 1 ? '{"conversions":[]}' : JSON.stringify({ conversions: [{ platformId: "7300000123", name: NAME, status: "ENABLED" }] });
+      }
+      throw Object.assign(new Error("Command failed"), { stderr: "Error: DUPLICATE_NAME conversion action already exists" });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(lists).toBe(2);
+    expect(core.results).toEqual([
+      { job_id: JOB_ID, claim_id: CLAIM_ID, result: { conversion_action_id: "7300000123", name: NAME, adopted: true } },
+    ]);
+  });
+
+  it("adopts a name already in the account without creating (crashed earlier run)", async () => {
+    const core = fakeCore([job({ payload: { ...job().payload, name: "cv-0123456789abcdef" } })]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => { calls.push(args); return fixture("adkit-conversions-list.txt"); };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(calls.map((a) => a[3])).toEqual(["list"]);
+    expect(core.results[0]).toMatchObject({ result: { conversion_action_id: "7300000002", name: "cv-0123456789abcdef", adopted: true } });
+  });
+
+  it("posts a retryable error when adkit fails, and skips a job another run claimed", async () => {
+    const failing = fakeCore([job()]);
+    const errors: string[] = [];
+    const runAdkit = async () => { throw Object.assign(new Error("Command failed: adkit ..."), { stderr: "rate limited" }); };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: failing.fetchImpl, log: () => {}, error: (l) => errors.push(l) })).toBe(1);
+    expect(failing.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "rate limited" }]);
+    expect(errors.join("\n")).toContain("rate limited");
+
+    const busy = fakeCore([job()], 409);
+    const spawn = vi.fn(async () => "{}");
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, fetchImpl: busy.fetchImpl, ...quiet })).toBe(0);
+    expect(busy.claims).toEqual([JOB_ID]);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(busy.results).toEqual([]);
+  });
+
+  it("fails an unknown job kind for good without running adkit", async () => {
+    const core = fakeCore([job({ kind: "campaign.enable" })]);
+    const spawn = vi.fn(async () => "{}");
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: expect.stringContaining("campaign.enable"), retryable: false }]);
+  });
+});
