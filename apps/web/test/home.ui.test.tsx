@@ -924,6 +924,17 @@ describe("Home screen, work queue", () => {
     expect(order.slice(0, 2).sort()).toEqual(["d6", "dr"]);
   });
 
+  it("keeps a broken brand among the 10 rows when 11 healthy brands sort after it", async () => {
+    const healthy = Array.from({ length: 11 }, (_, i) => lifecycleBrand(`ok${i}`, `Healthy${i}`, "live"));
+    brandsReply = () => json({ brands: [...healthy, lifecycleBrand("bad", "Broken", "live", { runtime_sync_status: "sync_error" })] });
+    checklistsReply = () => json({ brands: {} });
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("bad")).toBeTruthy());
+    expect(brandsRegion().querySelectorAll("[data-brand-id]")).toHaveLength(10);
+    expect(brandsRegion().querySelector("[data-brand-id]")!.getAttribute("data-brand-id")).toBe("bad");
+    expect(rowButton("bad")!.textContent).toBe("ตรวจสอบ");
+  });
+
   it("shows each brand's leads, spend in baht and cost per lead in baht", async () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(rowCell("cg", "spend")).toBe("฿62,300"));

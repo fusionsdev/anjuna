@@ -105,6 +105,15 @@ describe("Brands screen reads the checklists in one request", () => {
     expect(primary("a.test")!.title).toBe("เฉพาะเจ้าของตั้งเส้นทางได้");
   });
 
+  it("opens approve-template on the template version that waits", async () => {
+    serve(["a"], { a: { checklist: everything, template_approved: false, template_waiting_id: "tv-7" } });
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(primary("a.test")!.dataset.nextAction).toBe("approve-template"));
+    primary("a.test")!.click();
+    expect(window.location.pathname).toBe("/templates/tv-7");
+    window.history.replaceState(null, "", "/");
+  });
+
   it("offers test-sold when the drain route is set and the test sale is not confirmed", async () => {
     serve(["a"], { a: { checklist: rows(["drain_route", "leadsgate_postbacks", "final_url"]), template_approved: true } });
     render(<BrandLifecycle me={employee} />);

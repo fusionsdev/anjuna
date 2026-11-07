@@ -639,15 +639,16 @@ const CORE_READ_CONCURRENCY = 6;
  * GET /api/brands/checklists: the rows of every live brand in one read, keyed by brand id, so Home and the Brands screen do not
  * ask once per brand. Each entry holds the same rows as GET /api/brands/:id/checklist.
  * - `unknown` is true when core did not answer for a brand that needs it: the client raises nothing and offers no step for it.
- * - `template_approved` is false while a version of the brand's template at or above the deployed one waits for approval
- *   (status certified). `template_waiting_id` is that version, so the Templates screen can open it.
+ * - `template_approved` is false while the newest version of the brand's template (highest `version`) waits for approval
+ *   (status certified) and is not older than the deployed one. A later sealed version supersedes an older certified one.
+ *   `template_waiting_id` is that version, so the Templates screen can open it.
  * The D1 reads of all brands run as one batch; only the core getBrand reads remain one per brand, capped at 6 in flight.
  */
 export async function readBrandChecklists(env: Env, ctx: AdminRequestContext): Promise<Response> {
   const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
   const [brandRows, storedRows, smokeRows] = await env.FACTORY.batch([
     env.FACTORY.prepare(`SELECT b.brand_id,
-      (SELECT w.template_version_id FROM template_versions w WHERE w.template_id = v.template_id AND w.status = 'certified' AND w.version >= v.version ORDER BY w.version DESC LIMIT 1) AS template_waiting_id
+      (SELECT n.template_version_id FROM template_versions n WHERE n.template_id = v.template_id AND n.status = 'certified' AND n.version >= v.version AND n.version = (SELECT MAX(m.version) FROM template_versions m WHERE m.template_id = v.template_id)) AS template_waiting_id
       FROM brands b
       LEFT JOIN brand_revisions r ON r.revision_id = COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1))
       LEFT JOIN template_versions v ON v.template_version_id = r.template_version_id

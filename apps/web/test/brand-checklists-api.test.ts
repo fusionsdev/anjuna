@@ -90,6 +90,21 @@ describe("GET /api/brands/checklists", () => {
     expect(entry.template_waiting_id).toBe("tv-cert");
   });
 
+  it("offers no approval when a later sealed version supersedes the certified one", async () => {
+    // tpl-4: v1 sealed (deployed), v2 certified, v3 sealed. The newest version is sealed, so nothing waits.
+    await env.FACTORY.batch([
+      env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-4','Newest','astro','owner','2026-10-01T00:00:00Z')"),
+      env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-4a','tpl-4',1,'sha-4a','templates/4a','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
+      env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES ('tv-4b','tpl-4',2,'sha-4b','templates/4b','certified','owner','2026-10-02T00:00:00Z')"),
+      env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-4c','tpl-4',3,'sha-4c','templates/4c','sealed','owner','2026-10-03T00:00:00Z','owner','2026-10-03T00:00:00Z')"),
+    ]);
+    const id = await draft("batch-superseded.example", "tv-4a");
+    await goLive(id);
+    const entry = (await batch(owner)).brands[id]!;
+    expect(entry.template_approved).toBe(true);
+    expect(entry.template_waiting_id).toBeNull();
+  });
+
   it("approves a brand whose template has no certified version waiting", async () => {
     const quiet = await draft("batch-quiet.example", "tv-3");
     await goLive(quiet);
@@ -138,6 +153,31 @@ describe("GET /api/brands/checklists", () => {
     expect(calls).toBe(needCore);
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(6);
+  });
+
+  it("reads D1 in one batch whatever the number of live brands", async () => {
+    const real = env.FACTORY;
+    const counts = { prepare: 0, batch: 0 };
+    const counted = new Proxy(real, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target) as unknown;
+        if (key === "prepare") return (query: string) => { counts.prepare++; return target.prepare(query); };
+        if (key === "batch") return (statements: D1PreparedStatement[]) => { counts.batch++; return target.batch(statements); };
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const measure = async () => {
+      counts.prepare = 0; counts.batch = 0;
+      await batch(owner, makeEnv({ FACTORY: counted, CORE: { fetch: async () => new Response("{}", { status: 502 }) } as unknown as Fetcher, MOCK_CORE: "0" }));
+      return { ...counts };
+    };
+    const before = await measure();
+    for (let i = 0; i < 5; i++) await goLive(await draft(`batch-count-${i}.example`, "tv-3"));
+    const after = await measure();
+    // One batch of three statements. No statement per brand: a new live brand adds none.
+    expect(after).toEqual(before);
+    expect(after.batch).toBe(1);
+    expect(after.prepare).toBeLessThanOrEqual(3);
   });
 
   it("sends an employee no money field", async () => {

@@ -14,8 +14,19 @@ const STATUS_TEXT: Record<string, string> = {
   installing: "กำลังติดตั้ง", queued: "รอติดตั้ง", running: "กำลังติดตั้ง", unmanaged: "ไม่มีในระบบสร้าง",
 };
 
-/** Open actions rank first, the plain open button last: the brands that need a person sit on top. */
-const needsPerson = (action: NextAction) => action.kind !== "open";
+/**
+ * A brand that needs nothing: retired, or live with a sound runtime and no install in progress or failed.
+ * Every other brand ranks first, keyed by state and never by button text, so a broken brand never drops below the row limit.
+ */
+function isHealthy(brand: LifecycleBrandSummary): boolean {
+  if (brand.status === "retired") return true;
+  const install = brand.latest_install?.status;
+  return brand.status === "live" && brand.runtime_sync_status !== "failed" && brand.runtime_sync_status !== "sync_error"
+    && install !== "failed" && install !== "queued" && install !== "running" && install !== "rolled_back";
+}
+
+/** A brand needs a person when its action is a step to take or its state is not healthy. Those rows rank first. */
+const needsPerson = (action: NextAction, brand: LifecycleBrandSummary) => action.kind !== "open" || !isHealthy(brand);
 
 /** The state `nextAction` reads. Checklist facts are passed only for a brand the batch lists; for any other brand they are unknown and never block. */
 function rowOf(brand: LifecycleBrandSummary, entry: BrandChecklistEntry | undefined, paused: boolean): LifecycleRow {
@@ -74,7 +85,7 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend }: {
   const rows = (brands ?? [])
     .filter((brand) => brand.status !== "retired" && !isDemoBrand(brand))
     .map((brand) => ({ brand, action: nextAction(rowOf(brand, checklists?.brands[brand.brand_id], paused?.has(brand.brand_id) === true), role) }))
-    .sort((a, b) => Number(needsPerson(b.action)) - Number(needsPerson(a.action)));
+    .sort((a, b) => Number(needsPerson(b.action, b.brand)) - Number(needsPerson(a.action, a.brand)));
   return (
     <section className="panel" aria-label="แบรนด์">
       <div className="home-ptitle">
@@ -96,7 +107,7 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend }: {
               <span data-col="leads" data-label="ลีด">{funnel === undefined ? "…" : leads === null ? "—" : num(leads)}</span>
               {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : byCurrencyText(cost)}</span>}
               {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : byCurrencyText(perLead)}</span>}
-              <button type="button" className={`btn${needsPerson(action) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => open(action, brand.brand_id, checklists?.brands[brand.brand_id]?.template_waiting_id ?? null)}>{action.label}</button>
+              <button type="button" className={`btn${needsPerson(action, brand) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => open(action, brand.brand_id, checklists?.brands[brand.brand_id]?.template_waiting_id ?? null)}>{action.label}</button>
             </li>
           );
         })}

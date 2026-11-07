@@ -717,7 +717,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       case "open":
       case "test-sold": setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); break;
       case "set-route": setConfigBrandId(brand.brand_id); break;
-      case "approve-template": navigate(routePath({ view: "templates", templateId: null })); break;
+      case "approve-template": navigate(routePath({ view: "templates", templateId: checklists?.brands[brand.brand_id]?.template_waiting_id ?? null })); break;
     }
   }
   /**
