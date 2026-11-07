@@ -11,6 +11,10 @@
 -- 'claimed', so a held row is never claimable, whatever the clock; only the recheck moves it to queued or failed.
 -- status 'unknown': a claimed enable or budget job whose outcome never reached core. Its budget stays counted until
 -- a campaign.status_check job or a confirmed pause resolves it.
+--
+-- Rollback (no down migration): stop the executor, then rebuild adkit_jobs the same way with the 0020 CHECKs after
+-- deleting or archiving every row whose kind starts with campaign. or whose status is held or unknown. D1 Time Travel
+-- restore to before 0023 is the other way back; it also drops any lead data written since.
 
 CREATE TABLE adkit_jobs_0023 (
   id              TEXT PRIMARY KEY,
