@@ -3,7 +3,7 @@
  * Core never calls AdKit.
  *
  * Admin routes (dispatched from admin/index.ts):
- *   POST /admin/adkit/campaign-jobs  queue campaign.draft.create, campaign.enable, campaign.pause or campaign.update_budget
+ *   POST /admin/adkit/campaign-jobs  queue campaign.draft.create, .enable, .pause, .update_budget or .status_check
  *   GET  /admin/adkit/campaigns      panel campaigns derived from their jobs, with the caps
  *
  * Money rules:
@@ -11,7 +11,9 @@
  *   - Who may queue what: CAMPAIGN_JOB_ROLES (an employee may draft; enable, pause and budget are owner only).
  *   - Caps: ads_cap_total_thb_day and ads_cap_brand_thb_day (factory panel_settings, default 3000). checkBudget runs
  *     when the draft is made and again when it is enabled or its budget changes. "Enabled" counts every panel campaign
- *     whose last status job is a done enable, plus every enable or budget job still queued or claimed.
+ *     whose last status job is a done enable, every enable job still held, queued or claimed, and every enable whose
+ *     outcome is unknown until a status check or a confirmed pause resolves it. A budget counts at the largest of the
+ *     done budget and any pending or unknown budget job.
  *   - A budget is in the account currency (adkit_directory). THB counts as is, USD is converted with fx_thb_per_usd,
  *     any other or unknown currency is refused.
  *   - Two owner requests at the same moment could each pass the check before the other's row exists. An enable or
