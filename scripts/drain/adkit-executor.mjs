@@ -55,6 +55,7 @@ const PROJECT = value(PROJECT_ARG);
 const DATE = value(/^\d{4}-\d{2}-\d{2}$/);
 const BREAKDOWN = value(/^(hour|day)$/);
 const CAMPAIGN = value(/^\d{1,20}$/);
+const PAGE_TOKEN = value(/^[A-Za-z0-9_=.~+/-]{1,512}$/);
 const parseObject = (arg) => {
   if (!value(/^\{/)(arg)) return null;
   try {
@@ -76,7 +77,10 @@ const SHAPES = {
   "conversions list": [["manage", "google", "conversions", "list", "--account", ACCOUNT, "--limit", "500", "--json"]],
   "results list": [["manage", "google", "results", "list", "--account", ACCOUNT, "--breakdown", BREAKDOWN, "--from", DATE, "--to", DATE, "--json"]],
   "conversions create": [["manage", "google", "conversions", "create", "--account", ACCOUNT, "--data", DATA, "--publish", "--json"]],
-  "campaigns list": [["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--json"]],
+  "campaigns list": [
+    ["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--json"],
+    ["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", PAGE_TOKEN, "--json"],
+  ],
   "campaigns create": [["manage", "google", "campaigns", "create", "--account", ACCOUNT, "--data", DATA, "--json"]],
   "campaigns update": [
     ["manage", "google", "campaigns", "update", "--account", ACCOUNT, "--campaign", CAMPAIGN, "--data", DATA, "--publish", "--json"],
@@ -243,18 +247,6 @@ const withRoute = (args, payload, fallbackProject) => {
   return args;
 };
 
-/** Map of campaign name -> id from `campaigns list`; removed campaigns and rows without both are skipped. */
-export function campaignsByName(out) {
-  const list = Array.isArray(out) ? out : Array.isArray(out?.campaigns) ? out.campaigns : Array.isArray(out?.data) ? out.data : [];
-  const map = new Map();
-  for (const item of list) {
-    if (String(item?.status ?? "").toLowerCase() === "removed") continue;
-    const raw = item?.platformId ?? item?.campaignId ?? item?.id;
-    const id = raw === undefined || raw === null ? "" : String(raw);
-    if (typeof item?.name === "string" && CAMPAIGN_ID.test(id)) map.set(item.name, id);
-  }
-  return map;
-}
 
 /** Upper-case status AdKit reports for a campaign row (ENABLED, PAUSED, DRAFT, REMOVED), or "" when absent. */
 const rowStatus = (item) => String(item?.status ?? "").trim().toUpperCase();
@@ -280,16 +272,42 @@ export function campaignRows(out) {
 }
 
 const LIST_LIMIT = 500;
+/** Most `campaigns list` pages one lookup reads (10,000 campaigns). Past it the lookup is incomplete. */
+export const LIST_MAX_PAGES = 20;
+
+const nextToken = (out) => {
+  const t = out?.nextPageToken ?? out?.next_page_token ?? out?.pagination?.nextPageToken ?? out?.pageInfo?.nextPageToken;
+  return typeof t === "string" && t !== "" ? t : null;
+};
+
+/**
+ * Every campaign of the account across pages: `--limit 500`, then `--page-token <t>` while the output names a next
+ * page. `complete` is true only when the last page has no next token and fewer than 500 rows, so a full page without
+ * a token (AdKit may not page) or more than LIST_MAX_PAGES pages counts as incomplete.
+ */
+export async function listAllCampaigns(run, payload, fallbackProject) {
+  const rows = [];
+  let token = null;
+  for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    const out = checked(await run(withRoute([
+      "manage", "google", "campaigns", "list", "--account", payload.account, "--limit", String(LIST_LIMIT),
+      ...(token ? ["--page-token", token] : []), "--json",
+    ], payload, fallbackProject)));
+    const pageRows = campaignRows(out);
+    rows.push(...pageRows);
+    token = nextToken(out);
+    if (!token) return { rows, complete: pageRows.length < LIST_LIMIT };
+  }
+  return { rows, complete: false };
+}
 
 /** campaign.status_check: report what AdKit lists for the campaign id. NOT_FOUND only when the listing is complete. */
-export async function runCampaignStatusCheck(payload, run, fallbackProject) {
+export async function runCampaignStatusCheck(payload, run, fallbackProject, { listCampaigns = listAllCampaigns } = {}) {
   if (!refOk(payload)) throw new JobFailure("invalid campaign.status_check payload", false);
-  const rows = campaignRows(checked(await run(withRoute(
-    ["manage", "google", "campaigns", "list", "--account", payload.account, "--limit", String(LIST_LIMIT), "--json"], payload, fallbackProject,
-  ))));
+  const { rows, complete } = await listCampaigns(run, payload, fallbackProject);
   const row = rows.find((r) => r.id === payload.campaign_id);
   if (!row) {
-    if (rows.length >= LIST_LIMIT) throw new JobFailure("lookup_incomplete", false);
+    if (!complete) throw new JobFailure("lookup_incomplete", false);
     return { campaign_id: payload.campaign_id, observed_status: "NOT_FOUND", daily_budget: null };
   }
   const observed = ["ENABLED", "PAUSED", "DRAFT", "REMOVED"].includes(row.status) ? row.status : null;
@@ -320,23 +338,37 @@ const checked = (stdout) => {
 };
 
 /** Create (or adopt) the job's draft campaign. Never sends --publish. */
-export async function runCampaignDraftCreate(payload, run, fallbackProject) {
+/**
+ * Create (or adopt) the job's draft campaign. Never sends --publish. The name is looked up across every page first;
+ * when the lookup cannot prove the name is absent, the job fails for good instead of risking a second campaign.
+ */
+export async function runCampaignDraftCreate(payload, run, fallbackProject, { listCampaigns = listAllCampaigns } = {}) {
   const data = draftData(payload);
   if (!data) throw new JobFailure("invalid campaign.draft.create payload", false);
-  const listArgs = () => withRoute(["manage", "google", "campaigns", "list", "--account", payload.account, "--limit", "500", "--json"], payload, fallbackProject);
-  const list = async () => campaignsByName(checked(await run(listArgs())));
-  const known = (await list()).get(payload.name);
-  if (known) return { campaign_id: known, name: payload.name, adopted: true };
+  const lookup = async () => {
+    const { rows, complete } = await listCampaigns(run, payload, fallbackProject);
+    const row = rows.find((r) => r.name === payload.name && r.status !== "REMOVED");
+    if (!row && !complete) throw new JobFailure("lookup_incomplete", false);
+    return row ?? null;
+  };
+  const known = await lookup();
+  if (known) return { campaign_id: known.id, name: payload.name, adopted: true };
+  let out;
   try {
-    const out = checked(await run(withRoute([
+    out = checked(await run(withRoute([
       "manage", "google", "campaigns", "create", "--account", payload.account, "--data", JSON.stringify(data), "--json",
     ], payload, fallbackProject)));
+  } catch (e) {
+    if (e instanceof CommandNotAllowedError || e instanceof JobFailure || !DUPLICATE.test(errorFull(e))) throw e;
+    const adopted = await lookup();
+    if (!adopted) throw e;
+    return { campaign_id: adopted.id, name: payload.name, adopted: true };
+  }
+  try {
     return { campaign_id: createdCampaignId(out), name: payload.name, adopted: false };
   } catch (e) {
-    if (e instanceof CommandNotAllowedError || !DUPLICATE.test(errorFull(e))) throw e;
-    const adopted = (await list()).get(payload.name);
-    if (!adopted) throw e;
-    return { campaign_id: adopted, name: payload.name, adopted: true };
+    // The create may have succeeded: a retry must adopt by name, never create again blindly.
+    throw new JobFailure(`created_without_id: ${String(e?.message ?? e).slice(0, 200)}`, false);
   }
 }
 
@@ -377,6 +409,7 @@ const KINDS = {
  */
 export async function executeJobs({
   baseUrl, token, fallbackProject, runAdkit = runAdkitCli, fetchImpl = fetch, log = console.log, error = console.error,
+  listCampaigns = listAllCampaigns,
 }) {
   assertProject(fallbackProject);
   const run = guardAdkit(runAdkit);
@@ -414,7 +447,7 @@ export async function executeJobs({
       try {
         const handler = Object.hasOwn(KINDS, job.kind) ? KINDS[job.kind] : undefined;
         if (!handler) throw new JobFailure(`unknown job kind: ${String(job.kind).slice(0, 60)}`, false);
-        outcome = await handler(job.payload, (args) => run(args, job.kind), fallbackProject);
+        outcome = await handler(job.payload, (args) => run(args, job.kind), fallbackProject, { listCampaigns });
       } catch (e) {
         failure = e instanceof JobFailure ? e : new JobFailure(errorText(e), !(e instanceof CommandNotAllowedError));
       }

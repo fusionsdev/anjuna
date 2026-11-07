@@ -366,3 +366,73 @@ describe("campaign.status_check (T13-4 F2)", () => {
     expect((await runWith({ campaigns: [] })).results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND", daily_budget: null } });
   });
 });
+
+describe("F3: a draft retry never creates a second campaign", () => {
+  const ACCOUNT = "4811219623";
+  const draftPayload = {
+    brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1", daily_budget: 500,
+    bid_strategy: "maximize_conversions", geo: { country: "US" }, keywords: ["personal loans"], final_url: "https://petvet.example/",
+  };
+  const filler = (from: number, n: number) => Array.from({ length: n }, (_, i) => ({ id: String(30000000000 + from + i), name: `other-search-${from + i}`, status: "PAUSED", dailyBudget: 10 }));
+  const draftJob = () => job({ kind: "campaign.draft.create", payload: draftPayload, attempts: 1 });
+
+  it("finds the campaign on page 2 (row 750) through --page-token and adopts it without a create", async () => {
+    const core = fakeCore([draftJob()]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => {
+      calls.push(args);
+      if (args[3] !== "list") return JSON.stringify({ campaign: { id: "9002" } });
+      if (!args.includes("--page-token")) return JSON.stringify({ campaigns: filler(0, 500), nextPageToken: "tok-2" });
+      expect(args[args.indexOf("--page-token") + 1]).toBe("tok-2");
+      return JSON.stringify({ campaigns: [...filler(500, 249), { id: "9001", name: "petvet-search-1", status: "PAUSED", dailyBudget: 500 }] });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(calls.map((a) => a[3])).toEqual(["list", "list"]);
+    expect(core.results[0]).toMatchObject({ result: { campaign_id: "9001", adopted: true } });
+  });
+
+  it("a full page with no next token cannot prove the name is absent: fails for good without a create", async () => {
+    const core = fakeCore([draftJob()]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => { calls.push(args); return JSON.stringify({ campaigns: filler(0, 500) }); };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(calls.map((a) => a[3])).toEqual(["list"]);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "lookup_incomplete", retryable: false }]);
+  });
+
+  it("stops after the page bound and fails without a create", async () => {
+    const core = fakeCore([draftJob()]);
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] !== "list") throw new Error("create must not run");
+      lists++;
+      return JSON.stringify({ campaigns: filler(lists * 500, 500), nextPageToken: `tok-${lists + 1}` });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(lists).toBe(20);
+    expect(core.results[0]).toMatchObject({ error: "lookup_incomplete", retryable: false });
+  });
+
+  it("an injected lookup that cannot confirm completeness blocks the create", async () => {
+    const core = fakeCore([draftJob()]);
+    const spawn = vi.fn(async () => "{}");
+    const listCampaigns = vi.fn(async () => ({ rows: [], complete: false }));
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, listCampaigns, fetchImpl: core.fetchImpl, ...quiet } as never)).toBe(1);
+    expect(listCampaigns).toHaveBeenCalledTimes(1);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(core.results[0]).toMatchObject({ error: "lookup_incomplete", retryable: false });
+  });
+
+  it("a create that returns no campaign id fails for good, so the next run cannot create again", async () => {
+    const core = fakeCore([draftJob()]);
+    const runAdkit = async (args: string[]) => (args[3] === "list" ? JSON.stringify({ campaigns: [] }) : JSON.stringify({ ok: true }));
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(core.results[0]).toMatchObject({ error: expect.stringContaining("created_without_id"), retryable: false });
+  });
+
+  it("a page token that looks like a flag is refused by the allowlist", async () => {
+    const guarded = x.guardAdkit(vi.fn(async () => "{}"));
+    await expect(guarded(["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", "--publish", "--json"]))
+      .rejects.toThrow(/not allowed/);
+  });
+});
