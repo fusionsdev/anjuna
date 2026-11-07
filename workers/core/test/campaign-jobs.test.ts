@@ -1,7 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdkitJob, PanelCampaignsResponse, type AdminRequestContext } from "@anjuna/contracts";
-import { handleJobResult } from "../src/adkit.js";
+import { handleJobClaim, handleJobResult, handleJobsPending } from "../src/adkit.js";
+import { createCampaignJob, type CampaignJobHooks } from "../src/campaign-jobs.js";
 import { recordCampaignBrand } from "../src/campaign-brand-map.js";
 import type { Env } from "../src/env.js";
 import { createHarness, DRAIN_TOKEN, type Harness } from "./helpers.js";
@@ -342,5 +343,87 @@ describe("campaign_brand_map write (source = 'create')", () => {
     await recordCampaignBrand(h.db, { account: THB_ACCOUNT, campaign_id: "31000000002", brand_id: "petvet" });
     expect(await mapRow("31000000001")).toEqual({ brand_id: "petvet", source: "create" });
     expect(await mapRow("31000000002")).toEqual({ brand_id: "bison", source: "manual" });
+  });
+});
+
+describe("F1: an enable that has not passed the cap recheck is never claimable", () => {
+  const NOW = Date.parse(PINNED_NOW);
+  const LATER = NOW + 10 * 60_000;
+  const coreEnv = () => ({ LEADS: h.db, FACTORY: h.factory, DRAIN_TOKEN }) as unknown as Env;
+  const inProc = (env: Env, body: Record<string, unknown>, hooks: CampaignJobHooks = {}) => createCampaignJob(
+    new Request("https://core.aduplift.ai/admin/adkit/campaign-jobs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }), env, owner, NOW, hooks,
+  );
+  const pendingAt = async (env: Env, nowMs: number) => {
+    const response = await handleJobsPending(new Request("https://core.aduplift.ai/api/adkit/jobs/pending", { headers: auth }), env, nowMs);
+    return ((await response.json()) as { jobs: Array<{ id: string }> }).jobs.map((j) => j.id);
+  };
+  const claimAt = (env: Env, jobId: string, nowMs: number) => handleJobClaim(new Request("https://core.aduplift.ai/api/adkit/jobs/claim", {
+    method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ job_id: jobId }),
+  }), env, nowMs);
+  const enableRows = async () => (await h.db.prepare("SELECT id, status FROM adkit_jobs WHERE kind = 'campaign.enable' ORDER BY created_at, id")
+    .all<{ id: string; status: string }>()).results;
+  const crash = async () => { throw new Error("worker died"); };
+
+  it("two enables that both pass the first check: the later recheck refuses one", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const env = coreEnv();
+    let bResponse: Response | undefined;
+    const aResponse = await inProc(env, { kind: "campaign.enable", campaign_id: a }, {
+      afterPrecheck: async () => { bResponse = await inProc(env, { kind: "campaign.enable", campaign_id: b }); },
+    });
+    expect(bResponse!.status).toBe(201);
+    expect(aResponse.status).toBe(422);
+    const rows = await enableRows();
+    expect(rows.map((r) => r.status).sort()).toEqual(["failed", "queued"]);
+    expect(await pendingAt(env, LATER)).toEqual(rows.filter((r) => r.status === "queued").map((r) => r.id));
+  });
+
+  it("a crash between insert and recheck on both: neither is claimable after 10 minutes until a recheck, then one is", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const env = coreEnv();
+    await expect(inProc(env, { kind: "campaign.enable", campaign_id: a }, {
+      afterPrecheck: async () => {
+        await expect(inProc(env, { kind: "campaign.enable", campaign_id: b }, { beforeRecheck: crash })).rejects.toThrow("worker died");
+      },
+      beforeRecheck: crash,
+    })).rejects.toThrow("worker died");
+    const held = await enableRows();
+    expect(held.map((r) => r.status)).toEqual(["held", "held"]);
+    for (const row of held) expect((await claimAt(env, row.id, LATER)).status).toBe(409);
+
+    const listed = await pendingAt(env, LATER);
+    const after = await enableRows();
+    expect(after.map((r) => r.status).sort()).toEqual(["failed", "queued"]);
+    expect(listed).toEqual(after.filter((r) => r.status === "queued").map((r) => r.id));
+    const failed = after.find((r) => r.status === "failed")!;
+    expect((await claimAt(env, failed.id, LATER + 60 * 60_000)).status).toBe(409);
+  });
+
+  it("a D1 error inside the recheck leaves the row held and unclaimable; the next pending poll releases it", async () => {
+    const a = await draftDone("petvet", 1, 500);
+    const env = coreEnv();
+    const realFactory = env.FACTORY;
+    const broken = { prepare: () => { throw new Error("D1_ERROR: network"); } } as unknown as D1Database;
+    const response = await inProc(env, { kind: "campaign.enable", campaign_id: a }, {
+      beforeRecheck: async () => { (env as { FACTORY: D1Database }).FACTORY = broken; },
+    });
+    expect(response.status).toBe(201);
+    const job = AdkitJob.parse(((await response.json()) as { job: unknown }).job);
+    expect(job.status).toBe("held");
+    (env as { FACTORY: D1Database }).FACTORY = realFactory;
+    expect((await claimAt(env, job.id, LATER)).status).toBe(409);
+    expect(await pendingAt(env, LATER)).toEqual([job.id]);
+  });
+
+  it("a held enable counts toward the caps of the next request", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const env = coreEnv();
+    await expect(inProc(env, { kind: "campaign.enable", campaign_id: a }, { beforeRecheck: crash })).rejects.toThrow();
+    expect((await inProc(env, { kind: "campaign.enable", campaign_id: b })).status).toBe(422);
   });
 });

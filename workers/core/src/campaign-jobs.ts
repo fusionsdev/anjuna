@@ -15,8 +15,11 @@
  *   - A budget is in the account currency (adkit_directory). THB counts as is, USD is converted with fx_thb_per_usd,
  *     any other or unknown currency is refused.
  *   - Two owner requests at the same moment could each pass the check before the other's row exists. An enable or
- *     budget job is therefore inserted on hold (not claimable), the caps are checked again over every row, and only
- *     then is the hold released. A row that breaks a cap is failed at once and the caller gets 422.
+ *     budget job is therefore inserted with status 'held'. The claim query only matches 'queued' and 'claimed', so a
+ *     held row is never claimable, whatever the clock says. Only a cap recheck releases it ('queued') or refuses it
+ *     ('failed'). The recheck of a held row counts every non-held row plus the held rows created before it, so of
+ *     two rows the later recheck always sees both. A crash or a D1 error before the recheck leaves the row held; the
+ *     next GET /api/adkit/jobs/pending rechecks every held row (recheckHeldJobs) before it lists anything.
  *
  * Idempotency key: sha256(kind|brand_id|account|name) in hex. Enable, pause and budget append |n when the campaign
  * already has n finished jobs of that kind, so a second enable after a pause is a new job while a repeated post of
@@ -46,8 +49,13 @@ import { JOB_BODY_LIMIT, adminError, audit, parseBody, publicJob, type JobRow } 
 import type { Env } from "./env.js";
 import { json } from "./http.js";
 
-/** An enable or budget job stays unclaimable this long while core re-checks the caps; a crash in between ends it. */
-export const CAMPAIGN_HOLD_MS = 5 * 60 * 1000;
+/** Test seams around the insert of a held row. Production passes none. */
+export interface CampaignJobHooks {
+  /** After the first cap check, before the INSERT. */
+  afterPrecheck?: () => Promise<void>;
+  /** After the INSERT of a held row, before its recheck. A throw here is a crash between the two. */
+  beforeRecheck?: () => Promise<void>;
+}
 
 export interface AdsCaps { total_thb_day: number; brand_thb_day: number }
 
@@ -116,8 +124,9 @@ interface Campaign {
   finished: Record<string, number>;
 }
 
-const pending = (row: JobRow) => row.status === "queued" || row.status === "claimed";
-const byCreated = (a: JobRow, b: JobRow) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : 1);
+const pending = (row: JobRow) => row.status === "queued" || row.status === "claimed" || row.status === "held";
+const byCreated = (a: JobRow, b: JobRow) =>
+  (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const byUpdated = (a: JobRow, b: JobRow) => (a.updated_at < b.updated_at ? -1 : a.updated_at > b.updated_at ? 1 : byCreated(a, b));
 
 async function loadCampaignJobs(env: Env): Promise<JobRow[]> {
@@ -125,8 +134,13 @@ async function loadCampaignJobs(env: Env): Promise<JobRow[]> {
   return results;
 }
 
-/** Every panel campaign, one per draft job, from the job rows alone. */
-export function deriveCampaigns(rows: JobRow[]): Campaign[] {
+/**
+ * Every panel campaign, one per draft job, from the job rows alone. `heldUpTo` is the held row being rechecked:
+ * held rows created after it are left out, so the recheck order is the creation order.
+ */
+export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow } = {}): Campaign[] {
+  const cutoff = options.heldUpTo;
+  const rows = cutoff ? allRows.filter((r) => r.status !== "held" || byCreated(r, cutoff) <= 0) : allRows;
   const campaigns: Campaign[] = [];
   const byId = new Map<string, Campaign>();
   for (const row of rows.filter((r) => r.kind === "campaign.draft.create").sort(byCreated)) {
@@ -218,7 +232,9 @@ export async function listPanelCampaigns(env: Env): Promise<PanelCampaignsRespon
 }
 
 /** POST /admin/adkit/campaign-jobs. 201 with the new row, 200 with the row the key already holds. */
-export async function createCampaignJob(request: Request, env: Env, context: AdminRequestContext, nowMs = Date.now()): Promise<Response> {
+export async function createCampaignJob(
+  request: Request, env: Env, context: AdminRequestContext, nowMs = Date.now(), hooks: CampaignJobHooks = {},
+): Promise<Response> {
   const body = await parseBody(request, CampaignJobCreateRequest, JOB_BODY_LIMIT);
   if (!body.ok) return adminError(context, { error: "invalid", issues: body.issues ?? [{ path: "body", message: body.message }] });
   const req = body.data;
@@ -257,7 +273,7 @@ export async function createCampaignJob(request: Request, env: Env, context: Adm
       enabledTotalToday: enabled.total, enabledBrandToday: enabled.brand,
     });
     if (!check.ok) return capRefusal(context, check.reason, caps, payload.daily_budget * rate);
-    return insertJob(env, context, req.kind, payload, key, at, null);
+    return insertJob(env, context, req.kind, payload, key, at, false);
   }
 
   const c = campaigns.find((x) => x.campaign_id === req.campaign_id);
@@ -271,7 +287,7 @@ export async function createCampaignJob(request: Request, env: Env, context: Adm
 
   if (req.kind === "campaign.pause") {
     if (c.state !== "enabled") return conflict(context, c, "Only an enabled campaign can be paused");
-    return insertJob(env, context, req.kind, ref, key, at, null);
+    return insertJob(env, context, req.kind, ref, key, at, false);
   }
   if (req.kind === "campaign.enable" && (c.state === "enabled" || c.state === "enabling")) {
     return conflict(context, c, "The campaign is already enabled");
@@ -288,7 +304,8 @@ export async function createCampaignJob(request: Request, env: Env, context: Adm
     enabledTotalToday: enabled.total, enabledBrandToday: enabled.brand,
   });
   if (!check.ok) return capRefusal(context, check.reason, caps, requested * rate);
-  return insertJob(env, context, req.kind, payload, key, at, new Date(nowMs + CAMPAIGN_HOLD_MS).toISOString(), ref.brand_id);
+  await hooks.afterPrecheck?.();
+  return insertJob(env, context, req.kind, payload, key, at, true, hooks);
 }
 
 function conflict(context: AdminRequestContext, c: Campaign, message: string): Response {
@@ -299,41 +316,77 @@ async function findByKey(env: Env, key: string): Promise<JobRow | null> {
   return env.LEADS.prepare("SELECT * FROM adkit_jobs WHERE idempotency_key = ?1").bind(key).first<JobRow>();
 }
 
+type Recheck = { outcome: "released" } | { outcome: "refused"; reason: "brand_cap" | "total_cap"; caps: AdsCaps; enabledThb: number } | { outcome: "gone" };
+
 /**
- * Insert one row (ON CONFLICT DO NOTHING keeps one per key). With `holdUntil`, the row is not claimable until the
- * caps are checked again over every row; a row that breaks a cap is failed before any executor sees it.
+ * Recheck one held row: every non-held row plus the held rows created up to it must stay within both caps. The
+ * UPDATE only moves a row that is still held, so two rechecks of one row cannot both act.
+ */
+async function recheckHeldJob(env: Env, jobId: string, at: string): Promise<Recheck> {
+  const [rows, caps, rates] = await Promise.all([loadCampaignJobs(env), readAdsCaps(env.FACTORY), loadRates(env)]);
+  const job = rows.find((r) => r.id === jobId);
+  if (!job || job.status !== "held") return { outcome: "gone" };
+  const brandId = (JSON.parse(job.payload) as { brand_id: string }).brand_id;
+  const enabled = enabledThb(deriveCampaigns(rows, { heldUpTo: job }), rates, brandId);
+  const check = enabled
+    ? checkBudget({ requested: 0, capBrand: caps.brand_thb_day, capTotal: caps.total_thb_day, enabledTotalToday: enabled.total, enabledBrandToday: enabled.brand })
+    : ({ ok: false, reason: "total_cap" } as const);
+  if (check.ok) {
+    await env.LEADS.prepare("UPDATE adkit_jobs SET status = 'queued', updated_at = ?2 WHERE id = ?1 AND status = 'held'").bind(jobId, at).run();
+    return { outcome: "released" };
+  }
+  await env.LEADS.prepare(`
+    UPDATE adkit_jobs SET status = 'failed', result = json_object('error', ?2), updated_at = ?3
+    WHERE id = ?1 AND status = 'held'`)
+    .bind(jobId, `refused: ${check.reason} on the cap recheck`, at).run();
+  await audit(env, { id: "core", role: "system" }, "adkit.job.refused", jobId, { kind: job.kind, reason: check.reason }, at);
+  return { outcome: "refused", reason: check.reason, caps, enabledThb: enabled?.total ?? 0 };
+}
+
+/**
+ * Recheck every held row, oldest first. GET /api/adkit/jobs/pending calls it before listing, so a row left held by
+ * a crash is decided before any executor can see it. A D1 error leaves the rest held for the next call.
+ */
+export async function recheckHeldJobs(env: Env, nowMs = Date.now()): Promise<void> {
+  const { results } = await env.LEADS.prepare("SELECT id FROM adkit_jobs WHERE status = 'held' ORDER BY created_at, id").all<{ id: string }>();
+  const at = new Date(nowMs).toISOString();
+  for (const { id } of results) await recheckHeldJob(env, id, at);
+}
+
+/**
+ * Insert one row (ON CONFLICT DO NOTHING keeps one per key). A `held` row is not claimable until its cap recheck
+ * releases it; a row that breaks a cap is failed before any executor sees it, and the caller gets 422.
  */
 async function insertJob(
   env: Env, context: AdminRequestContext, kind: CampaignJobKind, payload: object, key: string, at: string,
-  holdUntil: string | null, recheckBrand?: string,
+  held: boolean, hooks: CampaignJobHooks = {},
 ): Promise<Response> {
   const id = crypto.randomUUID();
   await env.LEADS.prepare(`
     INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, next_attempt_at, created_at, updated_at)
-    VALUES (?1, ?2, ?3, 'queued', NULL, 0, ?4, ?5, ?6, ?7, ?7)
+    VALUES (?1, ?2, ?3, ?4, NULL, 0, ?5, ?6, NULL, ?7, ?7)
     ON CONFLICT (idempotency_key) DO NOTHING`)
-    .bind(id, kind, JSON.stringify(payload), key, context.actor_id, holdUntil, at).run();
+    .bind(id, kind, JSON.stringify(payload), held ? "held" : "queued", key, context.actor_id, at).run();
   let row = await findByKey(env, key);
   if (!row) throw new Error("campaign job row missing after insert");
   if (row.id !== id) return json(AdkitJobCreateResponse.parse({ job: publicJob(row), created: false }), 200);
+  await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.job.create", id, { kind, ...payload }, at);
 
-  if (holdUntil !== null && recheckBrand !== undefined) {
-    const [rows, caps, rates] = await Promise.all([loadCampaignJobs(env), readAdsCaps(env.FACTORY), loadRates(env)]);
-    const enabled = enabledThb(deriveCampaigns(rows), rates, recheckBrand);
-    const check = enabled
-      ? checkBudget({ requested: 0, capBrand: caps.brand_thb_day, capTotal: caps.total_thb_day, enabledTotalToday: enabled.total, enabledBrandToday: enabled.brand })
-      : ({ ok: false, reason: "total_cap" } as const);
-    if (!check.ok) {
-      await env.LEADS.prepare(`
-        UPDATE adkit_jobs SET status = 'failed', result = json_object('error', ?2), next_attempt_at = NULL, updated_at = ?3
-        WHERE id = ?1 AND status = 'queued'`)
-        .bind(id, `refused: ${check.reason} after a concurrent job`, at).run();
-      await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.job.refused", id, { kind, reason: check.reason }, at);
-      return capRefusal(context, check.reason, caps, enabled?.total ?? 0);
+  if (held) {
+    await hooks.beforeRecheck?.();
+    let recheck: Recheck | null = null;
+    try {
+      recheck = await recheckHeldJob(env, id, at);
+    } catch (e) {
+      // The row stays held and unclaimable; the next pending poll rechecks it.
+      console.error(`cap recheck failed for job ${id}: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
     }
-    await env.LEADS.prepare("UPDATE adkit_jobs SET next_attempt_at = NULL WHERE id = ?1 AND status = 'queued'").bind(id).run();
+    if (recheck?.outcome === "refused") {
+      return invalid(context, "daily_budget",
+        `${recheck.reason}: the campaigns already enabled or queued hold ${round2(recheck.enabledThb)} THB/day, above `
+        + `${ADS_CAP_TOTAL_KEY} ${recheck.caps.total_thb_day} or ${ADS_CAP_BRAND_KEY} ${recheck.caps.brand_thb_day}`);
+    }
     row = (await findByKey(env, key))!;
   }
-  await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.job.create", id, { kind, ...payload }, at);
   return json(AdkitJobCreateResponse.parse({ job: publicJob(row), created: true }), 201);
 }

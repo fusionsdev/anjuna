@@ -6,6 +6,9 @@
 -- Campaign jobs use the same queue rules as conversion_action.create (lease, attempts, backoff, claim_id).
 -- The executor (scripts/drain/adkit-executor.mjs) is the only code that runs them; a draft is created
 -- without --publish and only campaign.enable may publish ENABLED.
+--
+-- status 'held': an enable or budget job waiting for its cap recheck. The claim query matches only 'queued' and
+-- 'claimed', so a held row is never claimable, whatever the clock; only the recheck moves it to queued or failed.
 
 CREATE TABLE adkit_jobs_0023 (
   id              TEXT PRIMARY KEY,
@@ -13,7 +16,7 @@ CREATE TABLE adkit_jobs_0023 (
                     'conversion_action.create',
                     'campaign.draft.create', 'campaign.update_budget', 'campaign.pause', 'campaign.enable')),
   payload         TEXT NOT NULL CHECK (json_valid(payload)),
-  status          TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'done', 'failed')),
+  status          TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'done', 'failed', 'held')),
   result          TEXT CHECK (result IS NULL OR json_valid(result)),
   attempts        INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 160),

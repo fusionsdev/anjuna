@@ -84,7 +84,8 @@ export type CampaignJobKind = z.infer<typeof CampaignJobKind>;
 export const AdkitJobKind = z.enum([...ConversionJobKind.options, ...CampaignJobKind.options]);
 export type AdkitJobKind = z.infer<typeof AdkitJobKind>;
 
-export const AdkitJobStatus = z.enum(["queued", "claimed", "done", "failed"]);
+/** `held`: a campaign enable or budget job waiting for its cap recheck; never claimable. */
+export const AdkitJobStatus = z.enum(["queued", "claimed", "done", "failed", "held"]);
 export type AdkitJobStatus = z.infer<typeof AdkitJobStatus>;
 
 /** What the executor needs to create the action. The name is opaque and fixed per job, so a retry adopts it. */

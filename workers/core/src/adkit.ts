@@ -36,6 +36,7 @@ import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
 import { recordCampaignBrand, type RecordCampaignBrand } from "./campaign-brand-map.js";
+import { recheckHeldJobs } from "./campaign-jobs.js";
 
 export const JOB_BODY_LIMIT = 4096;
 const INGEST_BODY_LIMIT = 512 * 1024;
@@ -102,7 +103,7 @@ export function publicJob(row: JobRow): AdkitJob {
     id: row.id, kind: row.kind, status: row.status, payload: JSON.parse(row.payload),
     result: row.result === null ? null : JSON.parse(row.result), attempts: row.attempts,
     idempotency_key: row.idempotency_key, requested_by: row.requested_by,
-    next_attempt_at: row.status === "queued" ? row.next_attempt_at : null,
+    next_attempt_at: row.status === "queued" ? row.next_attempt_at : null, // never set on a held row
     created_at: row.created_at, updated_at: row.updated_at,
   });
 }
@@ -145,10 +146,15 @@ export async function handleDirectoryIngest(request: Request, env: Env): Promise
 }
 
 /** GET /api/adkit/jobs/pending: fails crashed claims that used their last attempt, then lists claimable jobs. */
-export async function handleJobsPending(request: Request, env: Env): Promise<Response> {
+export async function handleJobsPending(request: Request, env: Env, nowMs = Date.now()): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
-  const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
+  try {
+    // A campaign job left held by a crash between its insert and its cap recheck is decided here, before listing.
+    await recheckHeldJobs(env, nowMs);
+  } catch (e) {
+    console.error(`held job recheck failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+  }
   await env.LEADS.prepare(`
     UPDATE adkit_jobs SET status = 'failed', result = json_object('error', 'claim lease expired on the last attempt'), updated_at = ?1
     WHERE status = 'claimed' AND claimed_at <= ?2 AND attempts >= ?3`)
@@ -164,11 +170,10 @@ export async function handleJobsPending(request: Request, env: Env): Promise<Res
 }
 
 /** POST /api/adkit/jobs/claim: one UPDATE takes the job only while it is eligible, so a concurrent claim gets 409. */
-export async function handleJobClaim(request: Request, env: Env): Promise<Response> {
+export async function handleJobClaim(request: Request, env: Env, nowMs = Date.now()): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
   const body = await parseBody(request, AdkitJobClaimRequest, JOB_BODY_LIMIT);
   if (!body.ok) return vpsError(body);
-  const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
   const claimId = crypto.randomUUID();
   const claimed = await env.LEADS.prepare(`
