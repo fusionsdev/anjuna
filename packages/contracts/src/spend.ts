@@ -63,7 +63,8 @@ export const CampaignSpendRow = z.strictObject({
   /** 0-23 for an hourly row, null or absent for a whole-day row. */
   hour: z.number().int().min(0).max(23).nullable().optional(),
   campaign_id: CampaignId,
-  cost: Money,
+  /** Up to 6 decimals (AdKit micros). Core rounds each (date, hour) total once to 2 decimals. */
+  cost: Money.max(1e9),
   clicks: Count,
   impressions: Count,
 });

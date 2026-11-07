@@ -5,8 +5,8 @@
  * A brand alone on its account gets every campaign of the account as `exact`, in both modes.
  * Otherwise an unmapped campaign is split across the account's brands by their paid click counts: `estimated`.
  * In `exact_only` mode the unmapped cost goes to no brand and comes back as `unallocated`.
- * All money math runs on integer hundredths (satang or cents) with largest remainder rounding, so the
- * parts of a split add up to the whole exactly.
+ * The slot total is the raw campaign sum rounded once to hundredths (satang or cents). All later money
+ * math runs on integer hundredths with largest remainder rounding, so the stored parts add up to it exactly.
  */
 import type { AdsAllocationMode, SpendAllocation } from "@anjuna/contracts";
 
@@ -44,6 +44,24 @@ export function splitCost(cost: number, weights: readonly number[]): number[] {
   return splitUnits(Math.round(cost * 100), weights).map((u) => u / 100);
 }
 
+/**
+ * Hundredths per campaign for one slot. AdKit costs carry up to 6 decimals (micros), so the slot total
+ * is the exact raw sum rounded ONCE to hundredths (half up). That total is then spread over the
+ * campaigns by largest remainder on their micros, ties to the lower index: the parts sum to it exactly.
+ * BigInt keeps the sum exact for any row count (5000 x 1e9 x 1e6 passes 2^53).
+ */
+export function slotUnits(costs: readonly number[]): number[] {
+  const micros = costs.map((c) => BigInt(Math.round(c * 1_000_000)));
+  const sum = micros.reduce((a, b) => a + b, 0n);
+  const total = (sum + 5_000n) / 10_000n;
+  const parts = micros.map((m) => m / 10_000n);
+  const order = micros.map((m, i) => ({ i, rest: m % 10_000n }))
+    .sort((a, b) => (a.rest === b.rest ? a.i - b.i : a.rest > b.rest ? -1 : 1));
+  let left = Number(total - parts.reduce((a, b) => a + b, 0n));
+  for (let k = 0; left > 0; k++, left--) parts[order[k]!.i]! += 1n;
+  return parts.map(Number);
+}
+
 export interface CampaignCost { campaign_id: string; cost: number; clicks: number; impressions: number }
 export interface AllocatedRow { brand_id: string; cost: number; clicks: number; impressions: number; allocation: SpendAllocation }
 
@@ -72,8 +90,9 @@ export function allocateSpend(input: {
     s.cost += cost; s.clicks += clicks; s.impressions += impressions;
     into.set(brand, s);
   };
-  for (const c of input.campaigns) {
-    const cost = Math.round(c.cost * 100);
+  const campaignUnits = slotUnits(input.campaigns.map((c) => c.cost));
+  for (const [index, c] of input.campaigns.entries()) {
+    const cost = campaignUnits[index]!;
     const owner = input.map.get(c.campaign_id);
     if (owner !== undefined && Object.hasOwn(input.brandClicks, owner)) {
       add(exact, owner, cost, c.clicks, c.impressions);

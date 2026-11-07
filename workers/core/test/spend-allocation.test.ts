@@ -141,6 +141,30 @@ describe("allocateSpend", () => {
     });
   });
 
+  it("rounds the slot total once: two campaigns of 1.004 make 2.01", () => {
+    const result = allocateSpend({
+      campaigns: [
+        { campaign_id: "111", cost: 1.004, clicks: 0, impressions: 0 },
+        { campaign_id: "222", cost: 1.004, clicks: 0, impressions: 0 },
+      ],
+      map: new Map([["111", "a"], ["222", "b"]]),
+      brandClicks: { a: 0, b: 0 },
+      mode: "estimated",
+    });
+    expect(result.rows.map((r) => [r.brand_id, r.cost])).toEqual([["a", 1.01], ["b", 1]]);
+    const exactOnly = allocateSpend({
+      campaigns: [
+        { campaign_id: "111", cost: 0.333333, clicks: 0, impressions: 0 },
+        { campaign_id: "222", cost: 0.333333, clicks: 0, impressions: 0 },
+        { campaign_id: "333", cost: 0.333334, clicks: 0, impressions: 0 },
+      ],
+      map: new Map([["111", "a"]]),
+      brandClicks: { a: 0, b: 0 },
+      mode: "exact_only",
+    });
+    expect(sumUnits(exactOnly.rows.map((r) => r.cost)) + units(exactOnly.unallocated)).toBe(100);
+  });
+
   it("returns nothing for no campaigns", () => {
     expect(allocateSpend({ campaigns: [], map: new Map(), brandClicks, mode: "estimated" })).toEqual({ rows: [], unallocated: 0 });
   });
@@ -165,14 +189,17 @@ describe("allocateSpend", () => {
     for (let run = 0; run < 200; run++) {
       const brandIds = Array.from({ length: 1 + int(4) }, (_, i) => `brand-${i}`);
       const brandClicks = Object.fromEntries(brandIds.map((id) => [id, random() < 0.3 ? 0 : int(500)]));
+      // AdKit reports micros: costs carry up to 6 decimals.
       const campaigns = Array.from({ length: int(8) }, (_, i) => ({
-        campaign_id: String(1000 + i), cost: int(5_000_000) / 100, clicks: int(1000), impressions: int(100_000),
+        campaign_id: String(1000 + i), cost: int(50_000_000_000) / 1_000_000, clicks: int(1000), impressions: int(100_000),
       }));
+      // round2 of the exact raw sum, on integer micros (half up).
+      const rawUnits = Math.round(campaigns.reduce((t, c) => t + Math.round(c.cost * 1_000_000), 0) / 10_000);
       const map = new Map(campaigns.filter(() => random() < 0.4).map((c) => [c.campaign_id, brandIds[int(brandIds.length - 1)]!]));
       const mode = random() < 0.5 ? "estimated" as const : "exact_only" as const;
       const result = allocateSpend({ campaigns, map, brandClicks, mode });
       const context = JSON.stringify({ run, brandClicks, campaigns, map: [...map], mode });
-      expect(sumUnits(result.rows.map((r) => r.cost)) + units(result.unallocated), context).toBe(sumUnits(campaigns.map((c) => c.cost)));
+      expect(sumUnits(result.rows.map((r) => r.cost)) + units(result.unallocated), context).toBe(rawUnits);
       expect(result.rows.reduce((t, r) => t + r.clicks, 0), context)
         .toBe(campaigns.filter((c) => mode === "estimated" || brandIds.length === 1 || map.has(c.campaign_id)).reduce((t, c) => t + c.clicks, 0));
       if (brandIds.length === 1) expect(result.unallocated, context).toBe(0);

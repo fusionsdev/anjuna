@@ -317,6 +317,7 @@ describe("POST /api/spend/campaign-ingest", () => {
     ["a fractional utc_offset_minutes", body([], { utc_offset_minutes: 420.5 })],
     ["a non-numeric campaign id", body([{ date: DATE, hour: 1, campaign_id: "summer", cost: 1, clicks: 1, impressions: 1 }])],
     ["a negative cost", body([{ date: DATE, hour: 1, campaign_id: "222", cost: -1, clicks: 1, impressions: 1 }])],
+    ["a cost above 1e9", body([{ date: DATE, hour: 1, campaign_id: "222", cost: 1e14, clicks: 1, impressions: 1 }])],
     ["a brand_id field", body([{ brand_id: "petvetpay", date: DATE, hour: 1, campaign_id: "222", cost: 1, clicks: 1, impressions: 1 }])],
   ])("rejects %s with 400 and writes nothing", async (_name, payload) => {
     const response = await campaignIngest(payload);
@@ -359,6 +360,16 @@ describe("POST /api/spend/campaign-ingest", () => {
       { brand_id: "petvetpay", date: DATE, hour: 11, cost: 0, currency: "THB", clicks: 0, impressions: 0, allocation: "exact" },
     ]);
     expect((await unallocatedRows()).results).toEqual([]);
+  });
+
+  it("rounds a slot once: two campaigns of 1.004 store a total of 2.01", async () => {
+    await campaignIngest(body([
+      { date: DATE, hour: 10, campaign_id: "111", cost: 1.004, clicks: 0, impressions: 0 },
+      { date: DATE, hour: 10, campaign_id: "222", cost: 1.004, clicks: 0, impressions: 0 },
+    ]));
+    const costs = (await allocationRows()).results.map((r) => Number(r.cost));
+    expect(costs.reduce((t, c) => t + Math.round(c * 100), 0)).toBe(201);
+    for (const cost of costs) expect(Math.round(cost * 100) / 100).toBe(cost);
   });
 
   it("leaves the same rows when the same hour is posted twice", async () => {
