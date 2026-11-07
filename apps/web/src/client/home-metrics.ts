@@ -57,6 +57,15 @@ export function isStale(updatedAt: string, now: Date, maxHours = 2): boolean {
 }
 
 /**
+ * True when the report holds spend rows for the brand and every one was synced within `maxHours`.
+ * No report, no rows, or one stale currency row gives false: the brand page then shows "—" and never a number of unknown age.
+ */
+export function brandSpendFresh(report: PanelSpendReportResponse | null, brandId: string, now: Date, maxHours = 2): boolean {
+  const rows = report?.brands.filter((row) => row.brand_id === brandId) ?? [];
+  return rows.length > 0 && rows.every((row) => !isStale(row.updated_at, now, maxHours));
+}
+
+/**
  * True when fewer than 5 percent of the paid clicks reached the site, judged only from 20 paid clicks up:
  * a handful of clicks says nothing. `reachedSite` is the count of visitors the brands' funnel recorded.
  */

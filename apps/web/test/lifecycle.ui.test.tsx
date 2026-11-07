@@ -259,7 +259,10 @@ describe("mounted lifecycle UI with API responses", () => {
     await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findAllByRole("textbox");
-    expect(within(panel).queryByRole("button", { name: pauseName })).toBeNull();
+    // Pause shows disabled with its reason instead of being hidden.
+    const pause = within(panel).getByRole("button", { name: pauseName }) as HTMLButtonElement;
+    expect(pause.disabled).toBe(true);
+    expect(pause.title).toBe("เฉพาะเจ้าของหยุดแบรนด์ได้");
     expect(section(panel, keywordSection).getByRole("textbox")).toBeDefined();
     expect(within(panel).queryByRole("heading", { name: abSummarySection })).toBeNull();
     expect(within(panel).queryByRole("textbox", { name: bucketsLabel })).toBeNull();
@@ -716,6 +719,42 @@ describe("lifecycle detail header", () => {
   });
 });
 
+describe("AdKit numbers on the brand detail", () => {
+  const spendBody = (updatedAt: string) => ({
+    period: "7d", from: "2026-10-01", to: "2026-10-07",
+    totals: { cost_by_currency: { THB: 3500, USD: 0 }, clicks: 25, impressions: 100 },
+    brands: [{ brand_id: "brand-a", currency: "THB", cost: 3500, clicks: 25, impressions: 100, updated_at: updatedAt, cost_usd: 100 }],
+    total_cost_usd: 100, fx: { thbPerUsd: 35 },
+  });
+  const block = async () => screen.findByRole("region", { name: "ตัวเลขโฆษณา" });
+
+  it("shows baht spend and USD profit for the owner when the sync is fresh", async () => {
+    routes.set("GET /api/spend?period=7d", () => json(spendBody(new Date().toISOString())));
+    render(<BrandLifecycle me={owner} />);
+    const adkit = await block();
+    await waitFor(() => expect(adkit.textContent).toContain("฿3,500"));
+    // Revenue 0 in the funnel fixture minus 100 USD cost.
+    expect(adkit.textContent).toContain("−$100");
+  });
+
+  it("shows — for spend and profit when the sync is older than 2 hours", async () => {
+    routes.set("GET /api/spend?period=7d", () => json(spendBody(new Date(Date.now() - 3 * 3_600_000).toISOString())));
+    render(<BrandLifecycle me={owner} />);
+    const adkit = await block();
+    await waitFor(() => expect(requests.some((r) => r.path === "/api/spend?period=7d")).toBe(true));
+    expect(adkit.textContent).not.toContain("฿");
+    expect(adkit.textContent).not.toContain("$");
+    expect(adkit.textContent?.match(/—/g)).toHaveLength(2);
+  });
+
+  it("has no block and no spend request for an employee", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    expect(screen.queryByRole("region", { name: "ตัวเลขโฆษณา" })).toBeNull();
+    expect(requests.some((r) => r.path.startsWith("/api/spend"))).toBe(false);
+  });
+});
+
 describe("checklist auto-refresh (FUS-385)", () => {
   const evidence = (item: string) => ({ brand_id: "brand-a", item, actor_id: "system", verified_at: "2026-10-26T00:00:00Z" });
   const allComputed = () => ["drain_route", "leadsgate_postbacks", "final_url"].map((item) => ({ item, evidence: evidence(item) }));
@@ -784,16 +823,14 @@ describe("checklist auto-refresh (FUS-385)", () => {
   const deferred = () => { let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); return { gate, release }; };
   const boxChecked = (name: RegExp) => (screen.getByRole("checkbox", { name }) as HTMLInputElement).checked;
 
-  it("keeps a typed lead_id when a poll completes every computed item, then stops requesting", async () => {
+  it("stops requesting once a poll completes every computed item", async () => {
     let reads = 0;
     routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: ++reads === 1 ? [] : allComputed() }));
     render(<BrandLifecycle me={owner} />);
-    const input = await screen.findByLabelText("lead_id");
+    await screen.findByRole("button", { name: "ยืนยัน Test sold" });
     await waitFor(() => expect(checklistReads()).toBe(1));
-    fireEvent.change(input, { target: { value: "lead-typed" } });
     await tick(60_000);
     await waitFor(() => expect(boxChecked(/final_url/)).toBe(true));
-    expect((screen.getByLabelText("lead_id") as HTMLInputElement).value).toBe("lead-typed");
     const before = checklistReads();
     await tick(240_000);
     expect(checklistReads()).toBe(before);
@@ -842,18 +879,23 @@ describe("checklist auto-refresh (FUS-385)", () => {
 
   it("keeps test_sold checked when a poll that began before the attest resolves after it", async () => {
     const hold = deferred();
+    let attested = false;
     routes.set("GET /api/brands/brand-a/checklist", async () => {
-      if (checklistReads() >= 2) { await hold.gate; return json({ brand_id: "brand-a", checklist: allComputed() }); }
+      if (attested) return json({ brand_id: "brand-a", checklist: [...allComputed(), { item: "test_sold", evidence: { ...evidence("test_sold"), event_id: "ev-1" } }] });
+      if (checklistReads() === 2) { await hold.gate; return json({ brand_id: "brand-a", checklist: allComputed() }); }
       return json({ brand_id: "brand-a", checklist: [] });
     });
-    routes.set("POST /api/brands/brand-a/checklist", () => json({ evidence: { ...evidence("test_sold"), event_id: "ev-1" } }));
+    routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({ evidence: { ...evidence("test_sold"), event_id: "ev-1" } }); });
     render(<BrandLifecycle me={owner} />);
-    const input = await screen.findByLabelText("lead_id");
+    const fix = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
     await waitFor(() => expect(checklistReads()).toBe(1));
     await tick(60_000);
     await waitFor(() => expect(checklistReads()).toBe(2));
-    fireEvent.change(input, { target: { value: "lead-1" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: /test_sold/ }));
+    fireEvent.click(fix);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("renderable.test");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/brands/brand-a/checklist")).toBe(true));
     await waitFor(() => expect(boxChecked(/test_sold/)).toBe(true));
     await act(async () => { hold.release(); });
