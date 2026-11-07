@@ -36,11 +36,11 @@ import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
 
-const JOB_BODY_LIMIT = 4096;
+export const JOB_BODY_LIMIT = 4096;
 const INGEST_BODY_LIMIT = 512 * 1024;
 const PENDING_LIMIT = 50;
 
-interface JobRow {
+export interface JobRow {
   id: string;
   kind: string;
   payload: string;
@@ -65,7 +65,7 @@ const issuesOf = (issues: Array<{ path: PropertyKey[]; message: string }>) =>
 
 type Parsed<T> = { ok: true; data: T } | { ok: false; status: number; message: string; issues?: Array<{ path: string; message: string }> };
 
-async function parseBody<T>(request: Request, schema: Schema<T>, limit: number): Promise<Parsed<T>> {
+export async function parseBody<T>(request: Request, schema: Schema<T>, limit: number): Promise<Parsed<T>> {
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > limit) return { ok: false, status: 413, message: "Request body is too large" };
   const text = await request.text();
@@ -85,7 +85,7 @@ async function parseBody<T>(request: Request, schema: Schema<T>, limit: number):
 const vpsError = (failure: Extract<Parsed<unknown>, { ok: false }>) =>
   json({ status: "invalid", message: failure.message, ...(failure.issues ? { issues: failure.issues } : {}) }, failure.status);
 
-function adminError(context: AdminRequestContext, error: AdminError): Response {
+export function adminError(context: AdminRequestContext, error: AdminError): Response {
   return json({ ...error, request_id: context.request_id }, ADMIN_ERROR_STATUS[error.error]);
 }
 
@@ -96,7 +96,7 @@ const ELIGIBLE = `((status = 'queued' AND (next_attempt_at IS NULL OR next_attem
 
 const leaseCutoff = (nowMs: number) => new Date(nowMs - ADKIT_JOB_LEASE_MS).toISOString();
 
-function publicJob(row: JobRow): AdkitJob {
+export function publicJob(row: JobRow): AdkitJob {
   return AdkitJob.parse({
     id: row.id, kind: row.kind, status: row.status, payload: JSON.parse(row.payload),
     result: row.result === null ? null : JSON.parse(row.result), attempts: row.attempts,
@@ -106,7 +106,7 @@ function publicJob(row: JobRow): AdkitJob {
   });
 }
 
-async function audit(
+export async function audit(
   env: Env, actor: { id: string; role: string }, action: string, jobId: string, after: Record<string, unknown>, at: string,
 ): Promise<void> {
   await env.FACTORY.prepare(
@@ -197,7 +197,10 @@ export async function handleJobResult(request: Request, env: Env): Promise<Respo
   const data = body.data;
   const at = new Date().toISOString();
 
-  if ("result" in data) {
+  if ("result" in data && !("conversion_action_id" in data.result)) {
+    return handleCampaignResult(env, data.job_id, data.claim_id, data.result, at);
+  }
+  if ("result" in data && "conversion_action_id" in data.result) {
     const outcome = data.result;
     const resultJson = JSON.stringify(outcome);
     // The name check keeps a result from another job's action out of this one. The directory row lands in the same
@@ -232,6 +235,7 @@ export async function handleJobResult(request: Request, env: Env): Promise<Respo
     return stale();
   }
 
+  if (!("error" in data)) return stale();
   const row = await loadJob(env, data.job_id);
   if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
   if (row.status !== "claimed" || row.claim_id !== data.claim_id) return stale();
@@ -247,6 +251,50 @@ export async function handleJobResult(request: Request, env: Env): Promise<Respo
   if (!update.meta.changes) return stale();
   if (!retry) await audit(env, DRAIN_ACTOR, "adkit.job.failed", data.job_id, { error: data.error, attempts: row.attempts }, at);
   return json({ status: retry ? "queued" : "failed" });
+}
+
+type CampaignOutcome = Exclude<Extract<AdkitJobResultRequest, { result: unknown }>["result"], { conversion_action_id: string }>;
+
+/**
+ * A campaign job's result. The kind the result shape implies and the payload must match the claimed row: a draft
+ * result carries the job's campaign name, a status or budget result the job's campaign id (and budget). So a
+ * result meant for another job, or an ENABLED result on a pause job, never marks this row done.
+ */
+async function handleCampaignResult(env: Env, jobId: string, claimId: string, outcome: CampaignOutcome, at: string): Promise<Response> {
+  const resultJson = JSON.stringify(outcome);
+  let kind: string;
+  let guard: string;
+  let guardValue: string | number;
+  if ("name" in outcome) {
+    kind = "campaign.draft.create";
+    guard = "json_extract(payload, '$.name') = ?6";
+    guardValue = outcome.name;
+  } else if ("status" in outcome) {
+    kind = outcome.status === "ENABLED" ? "campaign.enable" : "campaign.pause";
+    guard = "json_extract(payload, '$.campaign_id') = ?6";
+    guardValue = outcome.campaign_id;
+  } else {
+    kind = "campaign.update_budget";
+    guard = "json_extract(payload, '$.campaign_id') = ?6 AND json_extract(payload, '$.daily_budget') = ?7";
+    guardValue = outcome.campaign_id;
+  }
+  const write = await env.LEADS.prepare(`
+    UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4
+    WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND kind = ?5 AND ${guard}
+    RETURNING payload`)
+    .bind(jobId, claimId, resultJson, at, kind, guardValue, ...("daily_budget" in outcome ? [outcome.daily_budget] : []))
+    .first<{ payload: string }>();
+  if (write) {
+    await writeDoneAudit(env, jobId, outcome, at);
+    return json({ status: "done" });
+  }
+  const row = await loadJob(env, jobId);
+  if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
+  if (row.status === "done" && row.result === resultJson) {
+    if (row.claim_id === claimId) await writeDoneAudit(env, jobId, outcome, row.updated_at, true);
+    return json({ status: "done", already: true });
+  }
+  return stale();
 }
 
 async function loadJob(env: Env, id: string): Promise<JobRow | null> {
@@ -343,7 +391,7 @@ export async function createAdkitJob(request: Request, env: Env, context: AdminR
 /** The row an idempotency key already holds: 200 with `created: false`, or 409 when the key names another job. */
 function existingJob(context: AdminRequestContext, row: JobRow, kind: string, brandId: string): Response {
   const job = publicJob(row);
-  if (job.kind !== kind || job.payload.brand_draft_id !== brandId) {
+  if (job.kind !== kind || !("brand_draft_id" in job.payload) || job.payload.brand_draft_id !== brandId) {
     return adminError(context, { error: "conflict", current_updated_at: job.updated_at, message: "idempotency_key belongs to another job" });
   }
   return json(AdkitJobCreateResponse.parse({ job, created: false }), 200);

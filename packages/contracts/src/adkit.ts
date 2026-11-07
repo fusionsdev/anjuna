@@ -123,6 +123,10 @@ export const ADS_CAP_TOTAL_KEY = "ads_cap_total_thb_day";
 export const ADS_CAP_BRAND_KEY = "ads_cap_brand_thb_day";
 /** Owner decision 2026-11-08: 3,000 baht per day for both. */
 export const DEFAULT_ADS_CAP_THB_DAY = 3000;
+/** Baht per US dollar (panel_settings). Core converts a USD budget with it before the cap check. */
+export const FX_THB_PER_USD_KEY = "fx_thb_per_usd";
+/** The owner confirmed 35 as the starting rate. */
+export const DEFAULT_THB_PER_USD = 35;
 
 /** PUT /api/settings/ads-caps. A brand cap above the total cap is refused. */
 export const AdsCapsSettingRequest = z.strictObject({ total_thb_day: ThbPerDay, brand_thb_day: ThbPerDay })
