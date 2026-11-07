@@ -8,11 +8,11 @@ const script = fileURLToPath(new URL("../drain/adkit-executor.mjs", import.meta.
 const fixture = (name: string) => readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), "utf8");
 
 interface Payload { brand_draft_id: string; account: string; project: string | null; name: string }
-interface Job { id: string; kind: string; payload: Payload; attempts: number }
+interface Job { id: string; kind: string; payload: Payload | Record<string, unknown>; attempts: number }
 interface Executor {
   ALLOWED_COMMANDS: readonly string[];
-  assertAllowed(args: string[]): void;
-  guardAdkit(run: (args: string[]) => Promise<string>): (args: string[]) => Promise<string>;
+  assertAllowed(args: string[], kind?: string): void;
+  guardAdkit(run: (args: string[], kind?: string) => Promise<string>): (args: string[], kind?: string) => Promise<string>;
   runAdkitCli(args: string[]): Promise<string>;
   makeAdkitCli(execImpl: (file: string, args: string[], options: object) => Promise<{ stdout: string }>): (args: string[]) => Promise<string>;
   executeJobs(options: {
@@ -67,8 +67,10 @@ function fakeCore(jobs: Job[], claimStatus = 200) {
 const quiet = { log: () => {}, error: () => {} };
 
 describe("allowlist", () => {
-  it("allows exactly four commands", () => {
-    expect([...x.ALLOWED_COMMANDS].sort()).toEqual(["accounts list", "conversions create", "conversions list", "results list"]);
+  it("allows exactly seven commands", () => {
+    expect([...x.ALLOWED_COMMANDS].sort()).toEqual([
+      "accounts list", "campaigns create", "campaigns list", "campaigns update", "conversions create", "conversions list", "results list",
+    ]);
   });
 
   it("rejects campaigns update and every other command before spawning", async () => {
@@ -207,10 +209,137 @@ describe("conversion_action.create jobs", () => {
   });
 
   it("fails an unknown job kind for good without running adkit", async () => {
-    const core = fakeCore([job({ kind: "campaign.enable" })]);
+    const core = fakeCore([job({ kind: "campaign.delete" })]);
     const spawn = vi.fn(async () => "{}");
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
     expect(spawn).not.toHaveBeenCalled();
-    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: expect.stringContaining("campaign.enable"), retryable: false }]);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: expect.stringContaining("campaign.delete"), retryable: false }]);
+  });
+});
+
+describe("campaign jobs (T13 Part B)", () => {
+  const ACCOUNT = "4811219623";
+  const CAMPAIGN = "22000000001";
+  const draftPayload = {
+    brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1", daily_budget: 500,
+    bid_strategy: "maximize_conversions", geo: { country: "US" }, keywords: ["personal loans"], final_url: "https://petvet.example/",
+  };
+  const ref = { campaign_id: CAMPAIGN, brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1" };
+  const create = (data: unknown, extra: string[] = []) =>
+    ["manage", "google", "campaigns", "create", "--account", ACCOUNT, "--data", JSON.stringify(data), ...extra, "--json"];
+  const update = (data: unknown, publish: boolean) => ["manage", "google", "campaigns", "update", "--account", ACCOUNT,
+    "--campaign", CAMPAIGN, "--data", JSON.stringify(data), ...(publish ? ["--publish"] : []), "--json"];
+  const guard = () => {
+    const spawn = vi.fn(async () => "{}");
+    return { spawn, guarded: x.guardAdkit(spawn) };
+  };
+
+  it("rejects campaigns create --publish, campaigns delete and raw passthroughs before spawning", async () => {
+    const { spawn, guarded } = guard();
+    for (const [args, kind] of [
+      [create({ campaigns: [{ name: "petvet-search-1" }] }, ["--publish"]), "campaign.draft.create"],
+      [["manage", "google", "campaigns", "delete", "--account", ACCOUNT, "--campaign", CAMPAIGN, "--json"], "campaign.pause"],
+      [["manage", "google", "platform-api-request", "--data", "{}", "--json"], "campaign.enable"],
+      [["manage", "google", "campaigns", "remove", "--account", ACCOUNT, "--json"], "campaign.pause"],
+    ] as Array<[string[], string]>) {
+      await expect(guarded(args, kind), args.join(" ")).rejects.toThrow(/not allowed/);
+    }
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("checks the job kind, not only the argv", async () => {
+    const { spawn, guarded } = guard();
+    const draft = create({ campaigns: [{ name: "petvet-search-1", dailyBudget: 5 }] });
+    for (const [args, kind] of [
+      [draft, undefined],
+      [draft, "campaign.enable"],
+      [create({ campaigns: [{ name: "petvet-search-1", status: "ENABLED" }] }), "campaign.draft.create"],
+      [update({ status: "ENABLED" }, true), undefined],
+      [update({ status: "ENABLED" }, true), "campaign.pause"],
+      [update({ status: "ENABLED" }, true), "campaign.draft.create"],
+      [update({ status: "ENABLED" }, true), "campaign.update_budget"],
+      [update({ status: "ENABLED" }, false), "campaign.enable"],
+      [update({ status: "PAUSED" }, true), "campaign.enable"],
+      [update({ status: "ENABLED", dailyBudget: 5 }, true), "campaign.enable"],
+      [update({ dailyBudget: 5 }, true), "campaign.update_budget"],
+      [update({ dailyBudget: -5 }, false), "campaign.update_budget"],
+      [update({ dailyBudget: 5, status: "ENABLED" }, false), "campaign.update_budget"],
+      [update({ dailyBudget: 5 }, false), "campaign.enable"],
+    ] as Array<[string[], string | undefined]>) {
+      await expect(guarded(args, kind), `${kind} ${args.join(" ")}`).rejects.toThrow(/not allowed/);
+    }
+    expect(spawn).not.toHaveBeenCalled();
+    for (const [args, kind] of [
+      [draft, "campaign.draft.create"],
+      [update({ status: "ENABLED" }, true), "campaign.enable"],
+      [update({ status: "PAUSED" }, true), "campaign.pause"],
+      [update({ dailyBudget: 5 }, false), "campaign.update_budget"],
+    ] as Array<[string[], string]>) {
+      await expect(guarded(args, kind), `${kind} ${args.join(" ")}`).resolves.toBe("{}");
+    }
+  });
+
+  it("creates a draft without --publish after listing, and posts the campaign id", async () => {
+    const core = fakeCore([job({ kind: "campaign.draft.create", payload: draftPayload })]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => {
+      calls.push(args);
+      const created = { campaign: { resourceName: `customers/${ACCOUNT}/campaigns/${CAMPAIGN}` } };
+      return args[3] === "list" ? JSON.stringify({ campaigns: [] }) : `notice\n${JSON.stringify(created)}`;
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(calls.map((a) => a.slice(2, 4).join(" "))).toEqual(["campaigns list", "campaigns create"]);
+    const created = calls[1]!;
+    expect(created).not.toContain("--publish");
+    expect(created.slice(-2)).toEqual(["--project", "proj_a"]);
+    const data = JSON.parse(created[created.indexOf("--data") + 1]!) as { campaigns: Array<Record<string, unknown>> };
+    expect(data.campaigns[0]).toMatchObject({ name: "petvet-search-1", dailyBudget: 500, biddingStrategy: "MAXIMIZE_CONVERSIONS" });
+    expect(JSON.stringify(data)).not.toMatch(/status|publish/);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, result: { campaign_id: CAMPAIGN, name: "petvet-search-1", adopted: false } }]);
+  });
+
+  it("a retried draft adopts the campaign a crashed run created, so there is one campaign", async () => {
+    const core = fakeCore([job({ kind: "campaign.draft.create", payload: draftPayload, attempts: 1 })]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => {
+      calls.push(args);
+      return JSON.stringify({ campaigns: [{ id: CAMPAIGN, name: "petvet-search-1", status: "PAUSED" }] });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(calls.map((a) => a[3])).toEqual(["list"]);
+    expect(core.results[0]).toMatchObject({ result: { campaign_id: CAMPAIGN, adopted: true } });
+  });
+
+  it("enable sends exactly {status: ENABLED} with --publish; pause PAUSED; budget without --publish", async () => {
+    for (const [kind, payload, data, publish, result] of [
+      ["campaign.enable", ref, { status: "ENABLED" }, true, { campaign_id: CAMPAIGN, status: "ENABLED" }],
+      ["campaign.pause", ref, { status: "PAUSED" }, true, { campaign_id: CAMPAIGN, status: "PAUSED" }],
+      ["campaign.update_budget", { ...ref, daily_budget: 750.5 }, { dailyBudget: 750.5 }, false, { campaign_id: CAMPAIGN, daily_budget: 750.5 }],
+    ] as const) {
+      const core = fakeCore([job({ kind, payload })]);
+      const calls: string[][] = [];
+      const runAdkit = async (args: string[]) => { calls.push(args); return "{}"; };
+      expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+      expect(calls).toHaveLength(1);
+      expect(JSON.parse(calls[0]![calls[0]!.indexOf("--data") + 1]!)).toEqual(data);
+      expect(calls[0]!.includes("--publish"), kind).toBe(publish);
+      expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, result }]);
+    }
+  });
+
+  it("fails a malformed campaign payload for good without running adkit", async () => {
+    for (const [kind, payload] of [
+      ["campaign.draft.create", { ...draftPayload, name: "--publish" }],
+      ["campaign.draft.create", { ...draftPayload, final_url: "http://petvet.example/" }],
+      ["campaign.draft.create", { ...draftPayload, daily_budget: Number.NaN }],
+      ["campaign.enable", { ...ref, campaign_id: "--all" }],
+      ["campaign.update_budget", { ...ref, daily_budget: -1 }],
+    ] as const) {
+      const core = fakeCore([job({ kind, payload })]);
+      const spawn = vi.fn(async () => "{}");
+      expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: `invalid ${kind} payload`, retryable: false }]);
+    }
   });
 });
