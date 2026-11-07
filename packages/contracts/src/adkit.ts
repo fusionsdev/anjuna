@@ -73,7 +73,15 @@ export const AdkitDirectoryResponse = z.strictObject({
 });
 export type AdkitDirectoryResponse = z.infer<typeof AdkitDirectoryResponse>;
 
-export const AdkitJobKind = z.enum(["conversion_action.create"]);
+/** Jobs POST /admin/adkit/jobs queues (wizard step 4). */
+export const ConversionJobKind = z.enum(["conversion_action.create"]);
+export type ConversionJobKind = z.infer<typeof ConversionJobKind>;
+
+/** Jobs POST /admin/adkit/campaign-jobs queues (T13 Part B). Only campaign.enable spends money. */
+export const CampaignJobKind = z.enum(["campaign.draft.create", "campaign.update_budget", "campaign.pause", "campaign.enable"]);
+export type CampaignJobKind = z.infer<typeof CampaignJobKind>;
+
+export const AdkitJobKind = z.enum([...ConversionJobKind.options, ...CampaignJobKind.options]);
 export type AdkitJobKind = z.infer<typeof AdkitJobKind>;
 
 export const AdkitJobStatus = z.enum(["queued", "claimed", "done", "failed"]);
@@ -97,22 +105,151 @@ export type ConversionActionCreateResult = z.infer<typeof ConversionActionCreate
 
 export const AdkitJobError = z.strictObject({ error: z.string().min(1).max(500) });
 
+// --- campaign jobs (T13 Part B) ---------------------------------------------------------------------
+
+/** Largest baht amount a cap or a daily budget may hold. */
+export const THB_PER_DAY_MAX = 1_000_000;
+const twoDecimals = (n: number) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6;
+
+/** Baht per day: finite, 0 to 1,000,000, at most 2 decimals. */
+export const ThbPerDay = z.number().finite().min(0).max(THB_PER_DAY_MAX)
+  .refine(twoDecimals, "At most 2 decimals");
+/** A campaign daily budget in the account currency: like ThbPerDay but above 0. */
+export const DailyBudget = z.number().finite().positive().max(THB_PER_DAY_MAX)
+  .refine(twoDecimals, "At most 2 decimals");
+
+/** panel_settings keys (factory D1). Owner edit only. */
+export const ADS_CAP_TOTAL_KEY = "ads_cap_total_thb_day";
+export const ADS_CAP_BRAND_KEY = "ads_cap_brand_thb_day";
+/** Owner decision 2026-11-08: 3,000 baht per day for both. */
+export const DEFAULT_ADS_CAP_THB_DAY = 3000;
+
+/** PUT /api/settings/ads-caps. A brand cap above the total cap is refused. */
+export const AdsCapsSettingRequest = z.strictObject({ total_thb_day: ThbPerDay, brand_thb_day: ThbPerDay })
+  .refine((caps) => caps.brand_thb_day <= caps.total_thb_day, { path: ["brand_thb_day"], message: "brand cap is above the total cap" });
+export type AdsCapsSettingRequest = z.infer<typeof AdsCapsSettingRequest>;
+
+/** `<brand_slug>-search-<n>`: the campaign name carries the brand. Core also checks the prefix is the job's brand_id. */
+export const CAMPAIGN_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}-search-[1-9][0-9]{0,3}$/;
+export const CampaignName = z.string().regex(CAMPAIGN_NAME_PATTERN, "Invalid campaign name");
+export const GoogleCampaignId = z.string().regex(/^\d{1,20}$/, "Invalid campaign_id");
+export const BidStrategy = z.enum(["maximize_conversions", "maximize_clicks"]);
+export const CampaignGeo = z.union([
+  z.strictObject({ country: z.string().regex(/^[A-Z]{2}$/, "Invalid country") }),
+  z.strictObject({ city_code: z.string().regex(/^\d{1,10}$/, "Invalid city_code") }),
+]);
+// Printable text only: keywords go into the --data JSON argument, never into argv on their own.
+const Keyword = z.string().trim().min(1).max(80).regex(/^[^\p{Cc}]+$/u, "Invalid keyword");
+export const CampaignKeywords = z.array(Keyword).min(1).max(200);
+export const CampaignFinalUrl = z.url({ protocol: /^https$/ }).max(2048);
+
+/** campaign.draft.create as stored: account and project come from the brand, never from the request. */
+export const CampaignDraftPayload = z.strictObject({
+  brand_id: BrandId,
+  account: GoogleAdsAccount,
+  project: AdkitProject.nullable(),
+  name: CampaignName,
+  daily_budget: DailyBudget,
+  bid_strategy: BidStrategy,
+  geo: CampaignGeo,
+  keywords: CampaignKeywords,
+  final_url: CampaignFinalUrl,
+});
+export type CampaignDraftPayload = z.infer<typeof CampaignDraftPayload>;
+
+/** campaign.enable and campaign.pause as stored: the campaign plus where it lives, copied from its draft job. */
+export const CampaignRefPayload = z.strictObject({
+  campaign_id: GoogleCampaignId,
+  brand_id: BrandId,
+  account: GoogleAdsAccount,
+  project: AdkitProject.nullable(),
+  name: CampaignName,
+});
+export type CampaignRefPayload = z.infer<typeof CampaignRefPayload>;
+
+/** campaign.update_budget as stored. */
+export const CampaignBudgetPayload = z.strictObject({ ...CampaignRefPayload.shape, daily_budget: DailyBudget });
+export type CampaignBudgetPayload = z.infer<typeof CampaignBudgetPayload>;
+
+export const CampaignDraftResult = z.strictObject({ campaign_id: GoogleCampaignId, name: CampaignName, adopted: z.boolean() });
+export type CampaignDraftResult = z.infer<typeof CampaignDraftResult>;
+export const CampaignStatusResult = z.strictObject({ campaign_id: GoogleCampaignId, status: z.enum(["ENABLED", "PAUSED"]) });
+export type CampaignStatusResult = z.infer<typeof CampaignStatusResult>;
+export const CampaignBudgetResult = z.strictObject({ campaign_id: GoogleCampaignId, daily_budget: DailyBudget });
+export type CampaignBudgetResult = z.infer<typeof CampaignBudgetResult>;
+
+/** POST /admin/adkit/campaign-jobs. Core derives the idempotency key; the client never sends one. */
+export const CampaignJobCreateRequest = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("campaign.draft.create"),
+    brand_id: BrandId,
+    name: CampaignName,
+    daily_budget: DailyBudget,
+    bid_strategy: BidStrategy,
+    geo: CampaignGeo,
+    keywords: CampaignKeywords,
+    final_url: CampaignFinalUrl,
+  }),
+  z.strictObject({ kind: z.literal("campaign.enable"), campaign_id: GoogleCampaignId }),
+  z.strictObject({ kind: z.literal("campaign.pause"), campaign_id: GoogleCampaignId }),
+  z.strictObject({ kind: z.literal("campaign.update_budget"), campaign_id: GoogleCampaignId, daily_budget: DailyBudget }),
+]);
+export type CampaignJobCreateRequest = z.infer<typeof CampaignJobCreateRequest>;
+
+/**
+ * Who may queue each campaign job. Core enforces it. An employee may make drafts; every job that changes what a
+ * live campaign spends or does is owner only. `ads:enable` API keys (T13-7) map onto the enableCampaign action.
+ */
+export const CAMPAIGN_JOB_ROLES = {
+  "campaign.draft.create": { action: "createCampaignDraft", min_role: "employee" },
+  "campaign.enable": { action: "enableCampaign", min_role: "owner" },
+  "campaign.pause": { action: "pauseCampaign", min_role: "owner" },
+  "campaign.update_budget": { action: "updateCampaignBudget", min_role: "owner" },
+} as const satisfies Record<CampaignJobKind, { action: string; min_role: "employee" | "owner" }>;
+
+/** The state core derives for one panel campaign from its jobs. */
+export const CampaignState = z.enum(["drafting", "draft", "enabling", "enabled", "paused", "failed"]);
+export const PanelCampaign = z.strictObject({
+  draft_job_id: z.string().uuid(),
+  campaign_id: GoogleCampaignId.nullable(),
+  brand_id: BrandId,
+  account: GoogleAdsAccount,
+  name: CampaignName,
+  daily_budget: DailyBudget,
+  currency: CurrencyCode.nullable(),
+  daily_budget_thb: z.number().nullable(),
+  state: CampaignState,
+  updated_at: Timestamp,
+});
+export type PanelCampaign = z.infer<typeof PanelCampaign>;
+
+/** GET /admin/adkit/campaigns: panel campaigns, the caps and what is already enabled, in baht per day. */
+export const PanelCampaignsResponse = z.strictObject({
+  campaigns: z.array(PanelCampaign),
+  caps: z.strictObject({ total_thb_day: ThbPerDay, brand_thb_day: ThbPerDay }),
+  enabled_total_thb_day: z.number().min(0),
+});
+export type PanelCampaignsResponse = z.infer<typeof PanelCampaignsResponse>;
+
 export const IdempotencyKey = z.string().regex(/^[A-Za-z0-9:._-]{8,160}$/, "Invalid idempotency_key");
 
 /** POST /admin/adkit/jobs. Without a key, core derives `<kind>:<brand_draft_id>`. */
 export const AdkitJobCreateRequest = z.strictObject({
-  kind: AdkitJobKind,
+  kind: ConversionJobKind,
   brand_draft_id: BrandId,
   idempotency_key: IdempotencyKey.optional(),
 });
 export type AdkitJobCreateRequest = z.infer<typeof AdkitJobCreateRequest>;
 
+export const AdkitJobPayload = z.union([ConversionActionCreatePayload, CampaignDraftPayload, CampaignBudgetPayload, CampaignRefPayload]);
+export const AdkitJobOutcome = z.union([ConversionActionCreateResult, CampaignDraftResult, CampaignStatusResult, CampaignBudgetResult]);
+
 export const AdkitJob = z.strictObject({
   id: z.string().uuid(),
   kind: AdkitJobKind,
   status: AdkitJobStatus,
-  payload: ConversionActionCreatePayload,
-  result: z.union([ConversionActionCreateResult, AdkitJobError]).nullable(),
+  payload: AdkitJobPayload,
+  result: z.union([AdkitJobOutcome, AdkitJobError]).nullable(),
   attempts: z.number().int().min(0),
   idempotency_key: z.string(),
   requested_by: z.string(),
@@ -126,12 +263,15 @@ export type AdkitJob = z.infer<typeof AdkitJob>;
 export const AdkitJobCreateResponse = z.strictObject({ job: AdkitJob, created: z.boolean() });
 export type AdkitJobCreateResponse = z.infer<typeof AdkitJobCreateResponse>;
 
-const ExecutorJob = z.strictObject({
-  id: z.string().uuid(),
-  kind: AdkitJobKind,
-  payload: ConversionActionCreatePayload,
-  attempts: z.number().int().min(0),
-});
+const executorJob = <K extends z.ZodType, P extends z.ZodType>(kind: K, payload: P) =>
+  z.strictObject({ id: z.string().uuid(), kind, payload, attempts: z.number().int().min(0) });
+const ExecutorJob = z.discriminatedUnion("kind", [
+  executorJob(z.literal("conversion_action.create"), ConversionActionCreatePayload),
+  executorJob(z.literal("campaign.draft.create"), CampaignDraftPayload),
+  executorJob(z.literal("campaign.update_budget"), CampaignBudgetPayload),
+  executorJob(z.literal("campaign.pause"), CampaignRefPayload),
+  executorJob(z.literal("campaign.enable"), CampaignRefPayload),
+]);
 
 export const AdkitJobsPendingResponse = z.strictObject({ jobs: z.array(ExecutorJob) });
 export type AdkitJobsPendingResponse = z.infer<typeof AdkitJobsPendingResponse>;
@@ -151,7 +291,7 @@ export type AdkitJobClaimResponse = z.infer<typeof AdkitJobClaimResponse>;
  * the executor allowlist); otherwise it is queued again after the backoff while attempts are left.
  */
 export const AdkitJobResultRequest = z.union([
-  z.strictObject({ job_id: z.string().uuid(), claim_id: z.string().uuid(), result: ConversionActionCreateResult }),
+  z.strictObject({ job_id: z.string().uuid(), claim_id: z.string().uuid(), result: AdkitJobOutcome }),
   z.strictObject({
     job_id: z.string().uuid(), claim_id: z.string().uuid(), error: z.string().min(1).max(500), retryable: z.boolean().optional(),
   }),
