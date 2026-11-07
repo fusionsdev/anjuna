@@ -167,14 +167,15 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
   if ("response" in body) return body.response;
   const { account, currency, utc_offset_minutes: offset, rows } = body.data;
 
-  const slots = new Map<string, { date: string; hour: number | null; campaigns: CampaignSpendRow[] }>();
+  const slots = new Map<string, { date: string; hour: number | null; campaigns: CampaignSpendRow[]; ids: Set<string> }>();
   for (const row of rows) {
     const hour = row.hour ?? null;
     const key = slotKey(row.date, hour);
-    const slot = slots.get(key) ?? { date: row.date, hour, campaigns: [] };
-    if (slot.campaigns.some((c) => c.campaign_id === row.campaign_id)) {
+    const slot = slots.get(key) ?? { date: row.date, hour, campaigns: [], ids: new Set<string>() };
+    if (slot.ids.has(row.campaign_id)) {
       return invalid("Duplicate campaign row", { date: row.date, hour, campaign_id: row.campaign_id });
     }
+    slot.ids.add(row.campaign_id);
     slot.campaigns.push(row);
     slots.set(key, slot);
   }
