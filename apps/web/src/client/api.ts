@@ -37,6 +37,11 @@ import type {
   TemplateZipImportRequest,
 } from "@anjuna/contracts";
 
+/** GET /api/brands/checklists. `template_approved` is false while the brand's newest template version waits for approval. */
+export interface BrandChecklists {
+  brands: Record<string, { checklist: Array<{ item: ChecklistItemName; evidence: unknown }>; template_approved: boolean }>;
+}
+
 export interface Me {
   id: string;
   email: string;
@@ -225,6 +230,8 @@ export const api = {
   retryInstall: (installId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/installs/${encodeURIComponent(installId)}/retry`, {}),
   installDetail: (installId: string) => request<InstallWithReceipts>("GET", `/api/installs/${encodeURIComponent(installId)}`),
   checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }> }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
+  /** Every live brand's checklist rows in one read, keyed by brand id. A brand that is not live has no entry. */
+  checklists: () => request<BrandChecklists>("GET", "/api/brands/checklists"),
   attestChecklist: (brandId: string, item: ChecklistItemName, lead_id?: string) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/checklist`, { item, ...(lead_id ? { lead_id } : {}) }),
   upgradeAll: (body: Omit<UpgradeAllCommand, "started_by" | "started_role">) => request<unknown>("POST", "/api/upgrade-all", body),
   latestUpgrade: () => request<unknown>("GET", "/api/upgrade-all/latest").then((body) => LatestUpgradeResponse.parse(body)),

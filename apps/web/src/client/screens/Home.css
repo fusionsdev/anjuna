@@ -42,3 +42,18 @@
   .home-grid2 { grid-template-columns: 1fr; }
   .home-flow, .home-drops { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+/* Incident banner: shown only while something is urgent. */
+.home-banner { border: 1px solid var(--bad); border-radius: var(--radius, 16px); padding: 12px 16px; background: color-mix(in srgb, var(--bad) 8%, var(--card, #fff)); }
+.home-banner b { font-weight: 500; }
+.home-banner ul { margin: 6px 0 0; padding-inline-start: 18px; font-size: 13px; }
+/* Brand rows: name, state, numbers, then the one button. Cell labels come from data-label so the text of a cell is only its value. */
+.home-brands { list-style: none; margin: 8px 0 0; padding: 0; }
+.home-brand { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) repeat(3, minmax(0, 1fr)) auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.home-brand:first-child { border-top: 0; }
+.home-brand [data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); }
+.home-brand .n b { font-weight: 500; }
+@media (max-width: 760px) {
+  .home-brand { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-brand .n { grid-column: 1 / -1; }
+  .home-brand button { grid-column: 1 / -1; }
+}
