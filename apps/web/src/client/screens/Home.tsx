@@ -11,6 +11,7 @@ import { HumanTasks, type HumanTask } from "./home/HumanTasks";
 import { IncidentBanner } from "./home/IncidentBanner";
 import { NeedsFixList, fixItems, type HomePeriod } from "./home/NeedsFixList";
 import { inApp, mark, num, type Value } from "./home/shared";
+import { useBrandActions, type ActionBrand } from "../useBrandActions";
 import "./Home.css";
 
 export type { HomePeriod };
@@ -119,12 +120,17 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [conversions, setConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
   const [daily, setDaily] = useState<DailyCount[] | null | undefined>(undefined);
   const [templates, setTemplates] = useState<Value>(undefined);
+  // "name vN" by template version id, for the approve dialog. A sealed version is shared by every brand on it.
+  const [templateLabels, setTemplateLabels] = useState<Record<string, string>>({});
   const [brands, setBrands] = useState<LifecycleBrandSummary[] | null | undefined>(undefined);
   const [checklists, setChecklists] = useState<BrandChecklists | null | undefined>(undefined);
   const [paused, setPaused] = useState<ReadonlySet<string> | null | undefined>(undefined);
   // The whole reports feed the brand rows; the totals above feed the tiles. Both come from the same answer.
   const [funnelReport, setFunnelReport] = useState<FunnelReportResponse | null | undefined>(undefined);
   const [spendReport, setSpendReport] = useState<PanelSpendReportResponse | null | undefined>(undefined);
+  // An action that changed a brand raises this, so the brand list and the batch checklist are read again.
+  const [reloadKey, setReloadKey] = useState(0);
+  const actions = useBrandActions({ onDone: () => setReloadKey((value) => value + 1) });
 
   // Funnel counts, spend, conversions and the daily bars follow the period switch. A late answer for an old period is dropped.
   useEffect(() => {
@@ -154,7 +160,11 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     let current = true;
     api.alerts().then((report) => current && setAlerts(report), () => current && setAlerts(null));
     api.templates().then(
-      (list) => current && setTemplates(list.templates.filter((t) => t.status === "awaiting_approval").length),
+      (list) => {
+        if (!current) return;
+        setTemplates(list.templates.filter((t) => t.status === "awaiting_approval").length);
+        setTemplateLabels(Object.fromEntries(list.templates.map((t) => [t.template_version_id, `${t.name} v${t.version}`])));
+      },
       () => current && setTemplates(null),
     );
     // The brand list and one batch read of every live brand's checklist. The batch replaces one read per brand.
@@ -163,7 +173,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     // Core pauses a brand while its factory status still reads live, so the paused set comes from core's brand list like on the Brands screen.
     api.brands().then((list) => current && setPaused(new Set(list.brands.filter((b) => b.status === "paused").map((b) => b.brand_id))), () => current && setPaused(null));
     return () => { current = false; };
-  }, []);
+  }, [reloadKey]);
 
   const leads = funnel === undefined ? undefined : funnel?.leads ?? null;
   // Spend and cost per lead stay in baht. Profit subtracts the server's USD spend from USD revenue, never baht.
@@ -197,12 +207,14 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const deadPath = conversionsPath({ period, status: "dead", brand: null });
 
   // Test sold is open for a live brand whose checklist lacks the row. Demo brands and brands the batch does not list are not counted.
-  const testSold: Value = brands === undefined || checklists === undefined ? undefined
+  const testSoldBrands: LifecycleBrandSummary[] | null | undefined = brands === undefined || checklists === undefined ? undefined
     : brands === null || checklists === null ? null
-      : brands.filter((b) => b.status === "live" && !isDemoBrand(b) && checklists.brands[b.brand_id] && !checklists.brands[b.brand_id]!.checklist.some((row) => row.item === "test_sold")).length;
+      : brands.filter((b) => b.status === "live" && !isDemoBrand(b) && checklists.brands[b.brand_id] && !checklists.brands[b.brand_id]!.checklist.some((row) => row.item === "test_sold"));
+  const testSold: Value = testSoldBrands === undefined ? undefined : testSoldBrands === null ? null : testSoldBrands.length;
+  const actionBrand = (b: LifecycleBrandSummary): ActionBrand => ({ id: b.brand_id, name: b.name ?? b.brand_id, domain: b.hostnames[0] ?? b.brand_id });
   const drafts: Value = brands === undefined ? undefined : brands === null ? null : brands.filter((b) => b.status === "draft").length;
   const tasks: HumanTask[] = [
-    { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", show: true, onOpen: go("brands") },
+    { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", show: true, onOpen: () => { if (testSoldBrands) void actions.runBatch("test-sold", testSoldBrands.map(actionBrand)); else go("brands")(); } },
     { id: "templates", title: "อนุมัติเทมเพลต", count: templates, unit: "รายการ", show: owner, onOpen: go("templates") },
     { id: "drafts", title: "ร่างที่ยังไม่กดสร้าง", count: drafts, unit: "ร่าง", show: true, onOpen: go("new-brand") },
   ];
@@ -258,7 +270,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </>
           )}
         </div>
-        <BrandRows role={me.role} brands={brands} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} />
+        <BrandRows role={me.role} brands={brands} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
         <section className="panel" aria-label="เงินไหลไปถึงไหน">
           <div className="home-ptitle">
             <h2>{owner ? "เงินไหลไปถึงไหน" : "คนไหลไปถึงไหน"}</h2>
@@ -305,6 +317,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
           </div>
         </section>
       </div>
+      {actions.view}
     </>
   );
 }

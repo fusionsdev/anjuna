@@ -3,6 +3,7 @@ import { isDemoBrand } from "../../brand-health";
 import { checklistFlags, isStale } from "../../home-metrics";
 import { nextAction, type LifecycleRow, type NextAction, type Role } from "../../lifecycle-state";
 import { navigate, routePath } from "../../router";
+import type { ActionBrand, BrandAction } from "../../useBrandActions";
 import type { BrandChecklistEntry, BrandChecklists } from "../../api";
 import { byCurrencyText, type ByCurrency } from "../BrandStatsRow";
 import { num } from "./shared";
@@ -63,14 +64,14 @@ function brandLeads(funnel: FunnelReportResponse | null | undefined, brand: Life
   return funnel.rows.filter((row) => row.brand === brand.brand_id).reduce((sum, row) => sum + row.submits, 0);
 }
 
-/** The button only navigates: a template goes to Templates, every other action to the brand. The dialog actions belong to Task 5. */
-const open = (action: NextAction, brandId: string, templateVersionId: string | null) => navigate(action.kind === "approve-template" ? routePath({ view: "templates", templateId: templateVersionId }) : routePath({ view: "brands", brandId }));
+/** The actions that change something go through the named dialog. Every other button opens the brand. */
+const DIALOG_ACTION: Partial<Record<NextAction["kind"], BrandAction>> = { "test-sold": "test-sold", retry: "retry-install", "approve-template": "approve-template", "set-route": "set-route" };
 
 /**
  * One row per brand with the numbers of the period and the one button `nextAction` picks. Spend and cost per lead are owner only
  * and come from the server's baht rows. `undefined` is loading, `null` is failed.
  */
-export function BrandRows({ role, brands, checklists, paused, funnel, spend }: {
+export function BrandRows({ role, brands, checklists, paused, funnel, spend, onAction }: {
   role: Role;
   brands: LifecycleBrandSummary[] | null | undefined;
   checklists: BrandChecklists | null | undefined;
@@ -79,6 +80,8 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend }: {
   funnel: FunnelReportResponse | null | undefined;
   /** Owner only. `undefined` while loading, `null` when it failed or the period has no rows. */
   spend: PanelSpendReportResponse | null | undefined;
+  /** Runs a dialog action on one brand. Without it the row button opens the brand. */
+  onAction?: (action: BrandAction, brand: ActionBrand) => void;
 }) {
   const owner = role === "owner";
   const now = new Date();
@@ -86,6 +89,17 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend }: {
     .filter((brand) => brand.status !== "retired" && !isDemoBrand(brand))
     .map((brand) => ({ brand, action: nextAction(rowOf(brand, checklists?.brands[brand.brand_id], paused?.has(brand.brand_id) === true), role) }))
     .sort((a, b) => Number(needsPerson(b.action, b.brand)) - Number(needsPerson(a.action, a.brand)));
+  const click = (action: NextAction, brand: LifecycleBrandSummary) => {
+    const dialog = DIALOG_ACTION[action.kind];
+    if (dialog && onAction) {
+      onAction(dialog, {
+        id: brand.brand_id, name: brand.name ?? brand.brand_id, domain: brand.hostnames[0] ?? brand.brand_id,
+        installId: brand.latest_install?.install_id ?? null, templateId: checklists?.brands[brand.brand_id]?.template_waiting_id ?? null,
+      });
+      return;
+    }
+    navigate(routePath({ view: "brands", brandId: brand.brand_id }));
+  };
   return (
     <section className="panel" aria-label="แบรนด์">
       <div className="home-ptitle">
@@ -107,7 +121,7 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend }: {
               <span data-col="leads" data-label="ลีด">{funnel === undefined ? "…" : leads === null ? "—" : num(leads)}</span>
               {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : byCurrencyText(cost)}</span>}
               {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : byCurrencyText(perLead)}</span>}
-              <button type="button" className={`btn${needsPerson(action, brand) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => open(action, brand.brand_id, checklists?.brands[brand.brand_id]?.template_waiting_id ?? null)}>{action.label}</button>
+              <button type="button" className={`btn${needsPerson(action, brand) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => click(action, brand)}>{action.label}</button>
             </li>
           );
         })}

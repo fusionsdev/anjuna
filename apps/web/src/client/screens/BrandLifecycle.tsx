@@ -13,6 +13,7 @@ import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { EmptyState } from "../components/EmptyState";
 import { finalUrl, siteUrl } from "../final-url";
 import { isPlainLeftClick, navigate, routePath } from "../router";
+import { useBrandActions } from "../useBrandActions";
 import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
 import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandFilters } from "./BrandFilters";
@@ -177,6 +178,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   // A failed row-menu copy on another brand selects that brand first; the URL rides along and lands in its detail field.
   const pendingManualCopy = useRef<{ brandId: string; url: string } | null>(null);
   const [confirm, confirmDialog, cancelConfirm] = useConfirm();
+  // Set route opens the brand's runtime config through the shared action path. Install tracking keeps its own handlers below: they need the selected brand's state.
+  const brandActions = useBrandActions({ onSetRoute: (brand) => setConfigBrandId(brand.id) });
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
   // View preferences, not routes: /brands/:id is the only deep link.
@@ -716,7 +719,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       case "resume": if (runtime) void toggleStatus(runtime); break;
       case "open":
       case "test-sold": setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); break;
-      case "set-route": setConfigBrandId(brand.brand_id); break;
+      case "set-route": void brandActions.run("set-route", { id: brand.brand_id, name: brand.name ?? brand.brand_id, domain: brand.hostnames[0] ?? brand.brand_id }); break;
       case "approve-template": navigate(routePath({ view: "templates", templateId: checklists?.brands[brand.brand_id]?.template_waiting_id ?? null })); break;
     }
   }
@@ -864,6 +867,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
     {toast && <Toast key={toast.id} kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
     {confirmDialog}
+    {brandActions.view}
   </div>;
 }
 
