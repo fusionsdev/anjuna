@@ -124,7 +124,7 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
         const detail = await api.installDetail(brand.installId);
         if (stale()) return;
         if (detail.recovery_required === true) {
-          show("ok", `${brand.domain} ต้องกู้คืนก่อน เปิดหน้าแบรนด์เพื่อกู้คืน`);
+          // The brand page offers Recover. A toast here would be gone before that page renders, so none is shown.
           navigate(routePath({ view: "brands", brandId: brand.id }));
           return;
         }
@@ -155,6 +155,8 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
   const runBatch = useCallback(async (action: "test-sold", brands: ActionBrand[]): Promise<void> => {
     const todo = brands.filter((brand) => !inFlight.current.has(keyOf(action, brand)));
     if (todo.length === 0) return;
+    // A run still reading an install must not open its dialog over this batch dialog.
+    generation.current += 1;
     const leads: Record<string, string> = {};
     const copy = COPY[action];
     const ok = await askLeads(`ยืนยัน Test sold ${todo.length} แบรนด์?`, "กรอก lead_id ที่ตรวจแล้วของแต่ละแบรนด์ ระบบส่งทีละแบรนด์และหยุดเมื่อมีแบรนด์ที่ไม่สำเร็จ", todo, leads, copy.confirm);

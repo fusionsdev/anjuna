@@ -204,6 +204,25 @@ describe("useBrandActions", () => {
     expect(attest).not.toHaveBeenCalled();
   });
 
+  it("drops a late Retry install read once a batch Test sold dialog is open", async () => {
+    const gate = deferred<unknown>();
+    vi.spyOn(api, "installDetail").mockReturnValue(gate.promise as never);
+    act(() => { void actions.run("retry-install", brandA); });
+    act(() => { void actions.runBatch("test-sold", [brandB, brandC]); });
+    await waitFor(() => expect(dialog().textContent).toContain("beta.test"));
+    await act(async () => { gate.resolve({ install_id: "inst-a", recovery_required: false }); });
+    expect(dialog().textContent).toContain("beta.test");
+    expect(dialog().textContent).not.toContain("alpha.test");
+  });
+
+  it("opens the brand page without a toast when the install needs recovery", async () => {
+    vi.spyOn(api, "installDetail").mockResolvedValue({ install_id: "inst-a", recovery_required: true } as never);
+    await act(async () => { await actions.run("retry-install", brandA); });
+    expect(window.location.pathname).toBe("/brands/a");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("calls onDone after a successful request", async () => {
     cleanup();
     const onDone = vi.fn();
