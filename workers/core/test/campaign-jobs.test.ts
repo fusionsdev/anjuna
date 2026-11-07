@@ -83,7 +83,7 @@ let nextCampaignId = 22000000001;
 async function draftDone(brand: string, n: number, budget: number) {
   const job = await queued(await post(draftBody(brand, n, budget), employee));
   const campaignId = String(nextCampaignId++);
-  const done = await finish(job.id, { campaign_id: campaignId, name: `${brand}-search-${n}`, adopted: false });
+  const done = await finish(job.id, { campaign_id: campaignId, name: `${brand}-search-${n}`, adopted: false, status: "DRAFT", daily_budget: budget });
   expect(done.status).toBe(200);
   return campaignId;
 }
@@ -258,9 +258,9 @@ describe("results", () => {
     const job = await queued(await post(draftBody("petvet", 1, 500), employee));
     const claim = await vps("jobs/claim", { job_id: job.id });
     const { claim_id } = await claim.json() as { claim_id: string };
-    const wrong = { campaign_id: "22000000999", name: "petvet-search-2", adopted: false };
+    const wrong = { campaign_id: "22000000999", name: "petvet-search-2", adopted: false, status: "DRAFT", daily_budget: 500 };
     expect((await vps("jobs/result", { job_id: job.id, claim_id, result: wrong })).status).toBe(409);
-    const right = { campaign_id: "22000000999", name: "petvet-search-1", adopted: true };
+    const right = { campaign_id: "22000000999", name: "petvet-search-1", adopted: true, status: "PAUSED", daily_budget: 500 };
     expect((await vps("jobs/result", { job_id: job.id, claim_id, result: right })).status).toBe(200);
     const repeat = await vps("jobs/result", { job_id: job.id, claim_id, result: right });
     expect(await repeat.json()).toEqual({ status: "done", already: true });
@@ -303,7 +303,7 @@ describe("campaign_brand_map on a done draft (injected writer)", () => {
   it("records account, campaign id and brand once when the draft is done, and again on a repeated done result", async () => {
     const { job, claimId } = await claimedDraft();
     const record = vi.fn(async () => {});
-    const result = { campaign_id: "22000000777", name: "petvet-search-1", adopted: false };
+    const result = { campaign_id: "22000000777", name: "petvet-search-1", adopted: false, status: "DRAFT", daily_budget: 500 };
     expect((await inProcess({ job_id: job.id, claim_id: claimId, result }, record)).status).toBe(200);
     expect(record).toHaveBeenCalledTimes(1);
     expect((record.mock.calls[0] as unknown[])[1]).toEqual({ account: THB_ACCOUNT, campaign_id: "22000000777", brand_id: "petvet" });
@@ -314,7 +314,7 @@ describe("campaign_brand_map on a done draft (injected writer)", () => {
   it("records nothing for a stale result, and a failing writer still answers done", async () => {
     const { job, claimId } = await claimedDraft();
     const record = vi.fn(async () => { throw new Error("no such table: campaign_brand_map"); });
-    const wrong = { campaign_id: "22000000777", name: "petvet-search-2", adopted: false };
+    const wrong = { campaign_id: "22000000777", name: "petvet-search-2", adopted: false, status: "DRAFT", daily_budget: 500 };
     expect((await inProcess({ job_id: job.id, claim_id: claimId, result: wrong }, record)).status).toBe(409);
     expect(record).not.toHaveBeenCalled();
     const right = { ...wrong, name: "petvet-search-1" };
@@ -509,5 +509,35 @@ describe("F2: a lost enable result keeps the budget counted", () => {
     await lostEnable(a);
     expect((await post({ kind: "campaign.enable", campaign_id: a })).status).toBe(409);
     expect((await post({ kind: "campaign.status_check", campaign_id: a }, employee)).status).toBeLessThan(300);
+  });
+});
+
+describe("F4: core stores a draft only when the result matches the job's budget and a draft or paused status", () => {
+  async function claimedDraft(budget: number) {
+    const job = await queued(await post(draftBody("petvet", 1, budget), employee));
+    const claim = await vps("jobs/claim", { job_id: job.id });
+    return { job, claim_id: ((await claim.json()) as { claim_id: string }).claim_id };
+  }
+
+  it("a result with another budget is stale and the job stays claimed", async () => {
+    const { job, claim_id } = await claimedDraft(500);
+    const result = { campaign_id: "9001", name: "petvet-search-1", adopted: true, status: "PAUSED", daily_budget: 9000 };
+    expect((await vps("jobs/result", { job_id: job.id, claim_id, result })).status).toBe(409);
+    expect((await h.db.prepare("SELECT status FROM adkit_jobs WHERE id = ?1").bind(job.id).first<{ status: string }>())!.status).toBe("claimed");
+  });
+
+  it("a result that says ENABLED is refused at the contract", async () => {
+    const { job, claim_id } = await claimedDraft(500);
+    const result = { campaign_id: "9001", name: "petvet-search-1", adopted: true, status: "ENABLED", daily_budget: 500 };
+    expect((await vps("jobs/result", { job_id: job.id, claim_id, result })).status).toBe(400);
+  });
+
+  it("a matching paused adopt is stored with its status and budget", async () => {
+    const { job, claim_id } = await claimedDraft(500);
+    const result = { campaign_id: "9001", name: "petvet-search-1", adopted: true, status: "PAUSED", daily_budget: 500 };
+    expect((await vps("jobs/result", { job_id: job.id, claim_id, result })).status).toBe(200);
+    const row = await h.db.prepare("SELECT status, result FROM adkit_jobs WHERE id = ?1").bind(job.id).first<{ status: string; result: string }>();
+    expect(row!.status).toBe("done");
+    expect(JSON.parse(row!.result)).toEqual(result);
   });
 });

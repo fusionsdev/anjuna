@@ -295,7 +295,7 @@ describe("campaign jobs (T13 Part B)", () => {
     const data = JSON.parse(created[created.indexOf("--data") + 1]!) as { campaigns: Array<Record<string, unknown>> };
     expect(data.campaigns[0]).toMatchObject({ name: "petvet-search-1", dailyBudget: 500, biddingStrategy: "MAXIMIZE_CONVERSIONS" });
     expect(JSON.stringify(data)).not.toMatch(/status|publish/);
-    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, result: { campaign_id: CAMPAIGN, name: "petvet-search-1", adopted: false } }]);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, result: { campaign_id: CAMPAIGN, name: "petvet-search-1", adopted: false, status: "DRAFT", daily_budget: 500 } }]);
   });
 
   it("a retried draft adopts the campaign a crashed run created, so there is one campaign", async () => {
@@ -303,7 +303,7 @@ describe("campaign jobs (T13 Part B)", () => {
     const calls: string[][] = [];
     const runAdkit = async (args: string[]) => {
       calls.push(args);
-      return JSON.stringify({ campaigns: [{ id: CAMPAIGN, name: "petvet-search-1", status: "PAUSED" }] });
+      return JSON.stringify({ campaigns: [{ id: CAMPAIGN, name: "petvet-search-1", status: "PAUSED", dailyBudget: 500 }] });
     };
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
     expect(calls.map((a) => a[3])).toEqual(["list"]);
@@ -388,7 +388,7 @@ describe("F3: a draft retry never creates a second campaign", () => {
     };
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
     expect(calls.map((a) => a[3])).toEqual(["list", "list"]);
-    expect(core.results[0]).toMatchObject({ result: { campaign_id: "9001", adopted: true } });
+    expect(core.results[0]).toMatchObject({ result: { campaign_id: "9001", adopted: true, status: "PAUSED", daily_budget: 500 } });
   });
 
   it("a full page with no next token cannot prove the name is absent: fails for good without a create", async () => {
@@ -434,5 +434,42 @@ describe("F3: a draft retry never creates a second campaign", () => {
     const guarded = x.guardAdkit(vi.fn(async () => "{}"));
     await expect(guarded(["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", "--publish", "--json"]))
       .rejects.toThrow(/not allowed/);
+  });
+});
+
+describe("F4: adopting by name needs name, budget and a paused or draft status", () => {
+  const ACCOUNT = "4811219623";
+  const draftPayload = {
+    brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1", daily_budget: 500,
+    bid_strategy: "maximize_conversions", geo: { country: "US" }, keywords: ["personal loans"], final_url: "https://petvet.example/",
+  };
+  const runWith = async (existing: Record<string, unknown>) => {
+    const core = fakeCore([job({ kind: "campaign.draft.create", payload: draftPayload, attempts: 1 })]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => {
+      calls.push(args);
+      if (args[3] !== "list") throw new Error("create must not run");
+      return JSON.stringify({ campaigns: [{ id: "9001", name: "petvet-search-1", ...existing }] });
+    };
+    const failures = await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet });
+    return { failures, calls, results: core.results };
+  };
+
+  it.each([
+    ["a different budget", { status: "PAUSED", dailyBudget: 9000 }, "adopt_budget_mismatch"],
+    ["no readable budget", { status: "PAUSED" }, "adopt_budget_mismatch"],
+    ["an ENABLED campaign", { status: "ENABLED", dailyBudget: 500 }, "adopt_status_enabled"],
+    ["an ENABLED campaign with another budget", { status: "ENABLED", dailyBudget: 9000 }, "adopt_status_enabled"],
+  ])("refuses %s for good, without a create", async (_label, existing, code) => {
+    const { failures, calls, results } = await runWith(existing);
+    expect(failures).toBe(1);
+    expect(calls.map((a) => a[3])).toEqual(["list"]);
+    expect(results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: code, retryable: false }]);
+  });
+
+  it.each(["PAUSED", "draft"])("adopts a matching %s campaign and reports its status and budget", async (status) => {
+    const { failures, results } = await runWith({ status, dailyBudget: 500 });
+    expect(failures).toBe(0);
+    expect(results[0]).toMatchObject({ result: { campaign_id: "9001", adopted: true, status: status.toUpperCase(), daily_budget: 500 } });
   });
 });

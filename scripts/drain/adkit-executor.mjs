@@ -351,8 +351,18 @@ export async function runCampaignDraftCreate(payload, run, fallbackProject, { li
     if (!row && !complete) throw new JobFailure("lookup_incomplete", false);
     return row ?? null;
   };
+  // Adopt only a full match: a campaign with this name but another status or budget is not this job's draft.
+  const adopt = (row) => {
+    if (row.status !== "PAUSED" && row.status !== "DRAFT") {
+      throw new JobFailure(`adopt_status_${row.status.toLowerCase().replace(/[^a-z]/g, "") || "unreadable"}`, false);
+    }
+    if (row.dailyBudget === null || Math.round(row.dailyBudget * 100) !== Math.round(payload.daily_budget * 100)) {
+      throw new JobFailure("adopt_budget_mismatch", false);
+    }
+    return { campaign_id: row.id, name: payload.name, adopted: true, status: row.status, daily_budget: payload.daily_budget };
+  };
   const known = await lookup();
-  if (known) return { campaign_id: known.id, name: payload.name, adopted: true };
+  if (known) return adopt(known);
   let out;
   try {
     out = checked(await run(withRoute([
@@ -362,10 +372,10 @@ export async function runCampaignDraftCreate(payload, run, fallbackProject, { li
     if (e instanceof CommandNotAllowedError || e instanceof JobFailure || !DUPLICATE.test(errorFull(e))) throw e;
     const adopted = await lookup();
     if (!adopted) throw e;
-    return { campaign_id: adopted.id, name: payload.name, adopted: true };
+    return adopt(adopted);
   }
   try {
-    return { campaign_id: createdCampaignId(out), name: payload.name, adopted: false };
+    return { campaign_id: createdCampaignId(out), name: payload.name, adopted: false, status: "DRAFT", daily_budget: payload.daily_budget };
   } catch (e) {
     // The create may have succeeded: a retry must adopt by name, never create again blindly.
     throw new JobFailure(`created_without_id: ${String(e?.message ?? e).slice(0, 200)}`, false);

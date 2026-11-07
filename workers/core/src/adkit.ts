@@ -300,8 +300,9 @@ type CampaignOutcome = Exclude<Extract<AdkitJobResultRequest, { result: unknown 
 
 /**
  * A campaign job's result. The kind the result shape implies and the payload must match the claimed row: a draft
- * result carries the job's campaign name, a status or budget result the job's campaign id (and budget). So a
- * result meant for another job, or an ENABLED result on a pause job, never marks this row done.
+ * result carries the job's campaign name and budget, a status or budget result the job's campaign id (and budget).
+ * So a result meant for another job, an adopt of a campaign with another budget, or an ENABLED result on a pause
+ * job never marks this row done.
  */
 async function handleCampaignResult(
   env: Env, jobId: string, claimId: string, outcome: CampaignOutcome, at: string, deps: JobResultDeps,
@@ -323,7 +324,7 @@ async function handleCampaignResult(
   let guardValue: string | number;
   if ("name" in outcome) {
     kind = "campaign.draft.create";
-    guard = "json_extract(payload, '$.name') = ?6";
+    guard = "json_extract(payload, '$.name') = ?6 AND json_extract(payload, '$.daily_budget') = ?7";
     guardValue = outcome.name;
   } else if ("observed_status" in outcome) {
     kind = "campaign.status_check";
@@ -342,7 +343,8 @@ async function handleCampaignResult(
     UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4
     WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND kind = ?5 AND ${guard}
     RETURNING payload`)
-    .bind(jobId, claimId, resultJson, at, kind, guardValue, ...(kind === "campaign.update_budget" && "daily_budget" in outcome ? [outcome.daily_budget] : []))
+    .bind(jobId, claimId, resultJson, at, kind, guardValue,
+      ...((kind === "campaign.update_budget" || kind === "campaign.draft.create") && "daily_budget" in outcome ? [outcome.daily_budget] : []))
     .first<{ payload: string }>();
   if (write) {
     await writeDoneAudit(env, jobId, outcome, at);

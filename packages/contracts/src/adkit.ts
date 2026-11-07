@@ -182,7 +182,14 @@ export type CampaignRefPayload = z.infer<typeof CampaignRefPayload>;
 export const CampaignBudgetPayload = z.strictObject({ ...CampaignRefPayload.shape, daily_budget: DailyBudget });
 export type CampaignBudgetPayload = z.infer<typeof CampaignBudgetPayload>;
 
-export const CampaignDraftResult = z.strictObject({ campaign_id: GoogleCampaignId, name: CampaignName, adopted: z.boolean() });
+/**
+ * A draft result carries what AdKit holds: a new draft, or an adopted campaign whose name, budget and status
+ * (PAUSED or DRAFT) all matched the job. An ENABLED campaign is never recorded as a draft.
+ */
+export const CampaignDraftResult = z.strictObject({
+  campaign_id: GoogleCampaignId, name: CampaignName, adopted: z.boolean(),
+  status: z.enum(["PAUSED", "DRAFT"]), daily_budget: DailyBudget,
+});
 export type CampaignDraftResult = z.infer<typeof CampaignDraftResult>;
 export const CampaignStatusResult = z.strictObject({ campaign_id: GoogleCampaignId, status: z.enum(["ENABLED", "PAUSED"]) });
 export type CampaignStatusResult = z.infer<typeof CampaignStatusResult>;
