@@ -33,8 +33,9 @@ import { handleTimelineRoute } from "./timeline.js";
 import { handleAuditRoute } from "./audit-route.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
+import { handleApiKeyRoute, handleApiV1 } from "./api-v1.js";
 import { handleLeadsRoute } from "./leads.js";
-import { handleFxSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
+import { handleFxSettingRoute, handleMicrosoftAdsSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
 import { withUsd } from "./money.js";
 import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
@@ -87,6 +88,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (!AUTH_ALLOWED.has(path)) return notFound("route");
     return auth.handler(request);
   }
+
+  // API v1: a bearer key or the session, with scopes (api-v1.ts).
+  if (path === "/api/v1" || path.startsWith("/api/v1/")) return handleApiV1(request, env, url, path, auth);
 
   const session = await auth.api.getSession({ headers: request.headers });
   const role = AdminRole.safeParse(session?.user.role);
@@ -143,6 +147,12 @@ async function route(
 
   const builderKeys = await handleBuilderKeyRoute(request, env, path, ctx);
   if (builderKeys) return builderKeys;
+
+  const apiKeys = await handleApiKeyRoute(request, env, path, ctx);
+  if (apiKeys) return apiKeys;
+
+  const microsoftAds = await handleMicrosoftAdsSettingRoute(request, env, path, ctx);
+  if (microsoftAds) return microsoftAds;
 
   const brandEdit = await handleBrandEditRoute(request, env, path, ctx);
   if (brandEdit) return brandEdit;

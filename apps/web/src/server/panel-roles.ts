@@ -53,6 +53,15 @@ export const PANEL_ROLE_TABLE = {
   /** Builder keys for the template MCP: list and create are employee and owner; revoke is owner only. */
   viewBuilderKeys: "employee",
   manageBuilderKeys: "owner",
+  /** Scoped keys for /api/v1: mint, list and revoke. Owner only, because a key acts with the owner role inside its scopes. */
+  manageApiKeys: "owner",
+  /**
+   * Wizard step 4 from the AdKit directory: project and account selects and the conversion action job. Core serves
+   * the directory and queues jobs for an owner only, so an employee sees the tracking step read-only.
+   */
+  useAdkit: "owner",
+  /** The global Microsoft Ads account in Settings (moved out of the wizard). */
+  setMicrosoftAdsSetting: "owner",
   /** The Settings page: every brand's money routing and A/B config in one table, Owner only. */
   viewSettings: "owner",
   /** The per-brand timeline of changes and Ads account events: employee and owner. */

@@ -191,7 +191,7 @@ type ActiveOperation = { install_id: string; kind: string; status: string };
 const operationActive = (active: ActiveOperation): Response =>
   json(409, { error: "lifecycle_operation_active", active_install_id: active.install_id, active_kind: active.kind, active_status: active.status });
 
-async function updateDraft(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
+export async function updateDraft(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
   const parsed = UpdateBrandDraftRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
   const body = parsed.data;
@@ -283,6 +283,11 @@ async function startInstall(request: Request, env: Env, ctx: AdminRequestContext
 }
 
 // Shared by rollback() and GET /api/brands/:id/revisions so the panel never shows a target the rollback would not pick.
+/** Generate for a draft: the checks of generate.ts, then the install path. Shared by /api and /api/v1. */
+export function generateDraft(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
+  return generateBrand(request, env, ctx, brandId, startInstall);
+}
+
 export async function rollbackTargetRevisionId(db: D1Database, brandId: string, currentRevisionId: string | null): Promise<string | null> {
   if (!currentRevisionId) return null;
   const previous = await db.prepare("SELECT to_revision_id FROM installs WHERE brand_id = ?1 AND kind IN ('install','upgrade','rollback') AND status = 'ready' AND to_revision_id IS NOT ?2 ORDER BY julianday(finished_at) DESC LIMIT 1").bind(brandId, currentRevisionId).first<{ to_revision_id: string | null }>();
@@ -712,7 +717,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   if (m && method === "POST") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
-    return generateBrand(request, env, ctx, brandId, startInstall);
+    return generateDraft(request, env, ctx, brandId);
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/(install|rollback|recover|redeploy|checklist)$/);
   if (m && method === "POST") {
