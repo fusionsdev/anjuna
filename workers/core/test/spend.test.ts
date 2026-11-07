@@ -318,6 +318,7 @@ describe("POST /api/spend/campaign-ingest", () => {
     ["a non-numeric campaign id", body([{ date: DATE, hour: 1, campaign_id: "summer", cost: 1, clicks: 1, impressions: 1 }])],
     ["a negative cost", body([{ date: DATE, hour: 1, campaign_id: "222", cost: -1, clicks: 1, impressions: 1 }])],
     ["a cost above 1e9", body([{ date: DATE, hour: 1, campaign_id: "222", cost: 1e14, clicks: 1, impressions: 1 }])],
+    ["a cost with 7 decimals (rounding before the slot sum would drift)", body([{ date: DATE, hour: 1, campaign_id: "222", cost: 0.0049996, clicks: 0, impressions: 0 }])],
     ["a brand_id field", body([{ brand_id: "petvetpay", date: DATE, hour: 1, campaign_id: "222", cost: 1, clicks: 1, impressions: 1 }])],
   ])("rejects %s with 400 and writes nothing", async (_name, payload) => {
     const response = await campaignIngest(payload);

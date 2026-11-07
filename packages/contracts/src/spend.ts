@@ -64,7 +64,7 @@ export const CampaignSpendRow = z.strictObject({
   hour: z.number().int().min(0).max(23).nullable().optional(),
   campaign_id: CampaignId,
   /** Up to 6 decimals (AdKit micros). Core rounds each (date, hour) total once to 2 decimals. */
-  cost: Money.max(1e9),
+  cost: Money.max(1e9).refine((v) => Math.round(v * 1e6) / 1e6 === v, "cost has more than 6 decimals"),
   clicks: Count,
   impressions: Count,
 });
