@@ -310,11 +310,10 @@ describe("campaign jobs (T13 Part B)", () => {
     expect(core.results[0]).toMatchObject({ result: { campaign_id: CAMPAIGN, adopted: true } });
   });
 
-  it("enable sends exactly {status: ENABLED} with --publish; pause PAUSED; budget without --publish", async () => {
+  it("enable sends exactly {status: ENABLED} with --publish; pause PAUSED", async () => {
     for (const [kind, payload, data, publish, result] of [
       ["campaign.enable", ref, { status: "ENABLED" }, true, { campaign_id: CAMPAIGN, status: "ENABLED" }],
       ["campaign.pause", ref, { status: "PAUSED" }, true, { campaign_id: CAMPAIGN, status: "PAUSED" }],
-      ["campaign.update_budget", { ...ref, daily_budget: 750.5 }, { dailyBudget: 750.5 }, false, { campaign_id: CAMPAIGN, daily_budget: 750.5 }],
     ] as const) {
       const core = fakeCore([job({ kind, payload })]);
       const calls: string[][] = [];
@@ -325,6 +324,45 @@ describe("campaign jobs (T13 Part B)", () => {
       expect(calls[0]!.includes("--publish"), kind).toBe(publish);
       expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, result }]);
     }
+  });
+
+  describe("budget update is verified through campaigns list", () => {
+    const budgetJob = () => job({ kind: "campaign.update_budget", payload: { ...ref, daily_budget: 750.5 } });
+    const runWith = async (listed: unknown) => {
+      const core = fakeCore([budgetJob()]);
+      const calls: string[][] = [];
+      const runAdkit = async (args: string[]) => { calls.push(args); return args[3] === "list" ? JSON.stringify(listed) : "{}"; };
+      const failures = await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet });
+      return { failures, calls, results: core.results };
+    };
+
+    it("sends exactly {dailyBudget} without --publish, then reports done only when AdKit lists the new budget", async () => {
+      const { failures, calls, results } = await runWith({ campaigns: [{ id: CAMPAIGN, name: "petvet-search-1", status: "ENABLED", dailyBudget: 750.5 }] });
+      expect(failures).toBe(0);
+      expect(calls.map((a) => a[3])).toEqual(["update", "list"]);
+      expect(JSON.parse(calls[0]![calls[0]!.indexOf("--data") + 1]!)).toEqual({ dailyBudget: 750.5 });
+      expect(calls[0]).not.toContain("--publish");
+      expect(results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, result: { campaign_id: CAMPAIGN, daily_budget: 750.5 } }]);
+    });
+
+    it("an old budget in the listing is budget_not_applied with what AdKit reports, never done", async () => {
+      const { results } = await runWith({ campaigns: [{ id: CAMPAIGN, name: "petvet-search-1", status: "ENABLED", dailyBudget: 300 }] });
+      expect(results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "budget_not_applied: AdKit reports 300", retryable: false }]);
+    });
+
+    it("a listing that cannot show the campaign is budget_unverified, never done", async () => {
+      expect((await runWith({ campaigns: [] })).results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "budget_unverified", retryable: false }]);
+    });
+  });
+
+  it("a spend job that failed before any write says wrote: false; after a write it does not", async () => {
+    const before = fakeCore([job({ kind: "campaign.enable", payload: { ...ref, campaign_id: "--all" } })]);
+    await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: vi.fn(async () => "{}"), fetchImpl: before.fetchImpl, ...quiet });
+    expect(before.results[0]).toMatchObject({ retryable: false, wrote: false });
+    const after = fakeCore([job({ kind: "campaign.enable", payload: ref })]);
+    const failing = async () => { throw Object.assign(new Error("Command failed"), { stderr: "timeout" }); };
+    await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: failing, fetchImpl: after.fetchImpl, ...quiet });
+    expect(after.results[0]).toEqual({ job_id: JOB_ID, claim_id: CLAIM_ID, error: "timeout" });
   });
 
   it("fails a malformed campaign payload for good without running adkit", async () => {
@@ -339,7 +377,7 @@ describe("campaign jobs (T13 Part B)", () => {
       const spawn = vi.fn(async () => "{}");
       expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
       expect(spawn).not.toHaveBeenCalled();
-      expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: `invalid ${kind} payload`, retryable: false }]);
+      expect(core.results[0]).toMatchObject({ job_id: JOB_ID, claim_id: CLAIM_ID, error: `invalid ${kind} payload`, retryable: false });
     }
   });
 });

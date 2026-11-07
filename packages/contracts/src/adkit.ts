@@ -325,6 +325,8 @@ export const AdkitJobResultRequest = z.union([
   z.strictObject({ job_id: z.string().uuid(), claim_id: z.string().uuid(), result: AdkitJobOutcome }),
   z.strictObject({
     job_id: z.string().uuid(), claim_id: z.string().uuid(), error: z.string().min(1).max(500), retryable: z.boolean().optional(),
+    /** false: the executor failed before any campaigns create or update ran. Absent counts as a possible write. */
+    wrote: z.boolean().optional(),
   }),
 ]);
 export type AdkitJobResultRequest = z.infer<typeof AdkitJobResultRequest>;

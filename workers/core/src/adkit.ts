@@ -254,9 +254,9 @@ export async function handleJobResult(request: Request, env: Env, deps: JobResul
   if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
   if (row.status !== "claimed" || row.claim_id !== data.claim_id) return stale();
   const retry = data.retryable !== false && row.attempts < ADKIT_JOB_MAX_ATTEMPTS;
-  // `retryable: false` means the executor never changed anything (refused command, invalid payload, verified no-op).
-  // A retryable error on the last attempt of a spend job leaves the remote outcome open: 'unknown', still counted.
-  const final = data.retryable !== false && SPEND_KIND_LIST.includes(row.kind) ? "unknown" : "failed";
+  // A spend job (enable, budget) that may have written remotely ends 'unknown' and stays counted. Only `wrote: false`
+  // from the executor (it failed before any create or update ran) lets it end 'failed'.
+  const final = SPEND_KIND_LIST.includes(row.kind) && data.wrote !== false ? "unknown" : "failed";
   const nextAttemptAt = retry ? new Date(Date.now() + adkitJobBackoffMs(row.attempts)).toISOString() : null;
   const update = await env.LEADS.prepare(`
     UPDATE adkit_jobs

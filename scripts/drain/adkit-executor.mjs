@@ -397,11 +397,25 @@ export const runCampaignEnable = statusJob("campaign.enable", "ENABLED");
 export const runCampaignPause = statusJob("campaign.pause", "PAUSED");
 
 /** Set the daily budget. No --publish: the guard refuses a budget change that publishes. */
-export async function runCampaignUpdateBudget(payload, run, fallbackProject) {
+/**
+ * Set the daily budget, then read it back from `campaigns list`. Done only when AdKit lists the new budget.
+ * Without --publish AdKit may keep the change unapplied, so a mismatch or an unreadable listing fails the job
+ * (non-retryable, after a write: core keeps the larger budget counted and queues a status check).
+ */
+export async function runCampaignUpdateBudget(payload, run, fallbackProject, { listCampaigns = listAllCampaigns } = {}) {
   if (!refOk(payload) || !budgetOk(payload?.daily_budget)) throw new JobFailure("invalid campaign.update_budget payload", false);
   checked(await run(updateArgs(payload, { dailyBudget: payload.daily_budget }, false, fallbackProject)));
+  const { rows } = await listCampaigns(run, payload, fallbackProject);
+  const row = rows.find((r) => r.id === payload.campaign_id);
+  if (!row || row.dailyBudget === null) throw new JobFailure("budget_unverified", false);
+  if (Math.round(row.dailyBudget * 100) !== Math.round(payload.daily_budget * 100)) {
+    throw new JobFailure(`budget_not_applied: AdKit reports ${row.dailyBudget}`, false);
+  }
   return { campaign_id: payload.campaign_id, daily_budget: payload.daily_budget };
 }
+
+/** Jobs whose lost outcome may have changed what a live campaign spends (core marks them unknown, not failed). */
+const SPEND_KINDS = new Set(["campaign.enable", "campaign.update_budget"]);
 
 const KINDS = {
   "conversion_action.create": runConversionActionCreate,
@@ -454,17 +468,29 @@ export async function executeJobs({
       // After a successful claim every path posts exactly one result, so nothing below may escape this try.
       let outcome;
       let failure;
+      // Set once a campaigns create or update is about to run: from then on the remote outcome is open.
+      let wrote = false;
+      const jobRun = (args) => {
+        assertAllowed(args, job.kind);
+        if (args[2] === "campaigns" && (args[3] === "create" || args[3] === "update")) wrote = true;
+        return run(args, job.kind);
+      };
       try {
         const handler = Object.hasOwn(KINDS, job.kind) ? KINDS[job.kind] : undefined;
         if (!handler) throw new JobFailure(`unknown job kind: ${String(job.kind).slice(0, 60)}`, false);
-        outcome = await handler(job.payload, (args) => run(args, job.kind), fallbackProject, { listCampaigns });
+        outcome = await handler(job.payload, jobRun, fallbackProject, { listCampaigns });
       } catch (e) {
         failure = e instanceof JobFailure ? e : new JobFailure(errorText(e), !(e instanceof CommandNotAllowedError));
       }
 
       const body = outcome
         ? { job_id: id, claim_id: claim.claim_id, result: outcome }
-        : { job_id: id, claim_id: claim.claim_id, error: failure.message.slice(0, ERROR_MAX), ...(failure.retryable ? {} : { retryable: false }) };
+        : {
+          job_id: id, claim_id: claim.claim_id, error: failure.message.slice(0, ERROR_MAX),
+          ...(failure.retryable ? {} : { retryable: false }),
+          // Core keeps a spend job's budget counted unless the executor says no write ran.
+          ...(SPEND_KINDS.has(job.kind) && !wrote ? { wrote: false } : {}),
+        };
       const result = await post("/api/adkit/jobs/result", body);
       if (!result.ok) {
         error(`adkit-executor: ${id} result HTTP ${result.status}: ${(await result.text()).slice(0, 300)}`

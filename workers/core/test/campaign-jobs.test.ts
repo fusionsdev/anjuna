@@ -475,8 +475,20 @@ describe("F2: a lost enable result keeps the budget counted", () => {
     const never = await queued(await post({ kind: "campaign.enable", campaign_id: c }));
     const claim2 = await vps("jobs/claim", { job_id: never.id });
     const { claim_id: claim2Id } = await claim2.json() as { claim_id: string };
-    await vps("jobs/result", { job_id: never.id, claim_id: claim2Id, error: "adkit command not allowed", retryable: false });
+    await vps("jobs/result", { job_id: never.id, claim_id: claim2Id, error: "adkit command not allowed", retryable: false, wrote: false });
     expect(await status(never.id)).toBe("failed");
+  });
+
+  it("a non-retryable budget error after the write (budget_not_applied) is unknown and keeps the larger budget counted", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 600);
+    await enabled(a);
+    const budget = await queued(await post({ kind: "campaign.update_budget", campaign_id: a, daily_budget: 2500 }));
+    const claim = await vps("jobs/claim", { job_id: budget.id });
+    const { claim_id } = await claim.json() as { claim_id: string };
+    await vps("jobs/result", { job_id: budget.id, claim_id, error: "budget_not_applied: AdKit reports 1000", retryable: false });
+    expect(await status(budget.id)).toBe("unknown");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2500 + 600 > 3000
   });
 
   it.each([
