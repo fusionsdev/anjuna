@@ -15,9 +15,10 @@
  *
  * Auth: `Authorization: Bearer <key>` only. A key in the query string is refused with 400 before any lookup.
  * Without the header the panel session applies: an owner holds every scope, an employee only brand:draft, so
- * generate needs an owner session or a brand:generate key. Only an owner mints keys, and a key acts with the
- * owner role inside its scopes; its key_id is the actor in audit rows. The key is hashed with SHA-256 like the
- * builder keys and never logged, echoed or written to an audit row.
+ * generate needs an owner session or a brand:generate key. A cookie write must come from the panel origin
+ * (sessionWriteAllowed). Only an owner mints keys, and a key acts with the owner role inside its scopes; its key_id
+ * is the actor in audit rows. A key stops working when its creator is no longer an owner or is banned. The key is
+ * hashed with SHA-256 like the builder keys and never logged, echoed or written to an audit row.
  */
 import { AdkitJobCreateRequest, roleAtLeast, type AdminRequestContext } from "@anjuna/contracts";
 import { z } from "zod";
@@ -79,6 +80,7 @@ export async function handleApiKeyRoute(request: Request, env: Env, path: string
   if (path !== "/api/api-keys" && !revoke) return undefined;
   const gate = authorizePanel("manageApiKeys", ctx.actor_role);
   if (!gate.ok) return json(403, gate.error);
+  if (!sessionWriteAllowed(request, env)) return json(403, { error: "cross_origin" });
 
   if (path === "/api/api-keys" && request.method === "GET") {
     const { results } = await env.FACTORY.prepare(`SELECT ${SUMMARY_COLUMNS} FROM api_keys ORDER BY created_at DESC, key_id`).all<ApiKeyRow>();
@@ -110,6 +112,23 @@ export async function handleApiKeyRoute(request: Request, env: Env, path: string
   return json(405, { error: "method_not_allowed" });
 }
 
+/**
+ * CSRF guard for cookie-authenticated writes. A GET or HEAD passes. A write passes when the browser marks it
+ * `Sec-Fetch-Site: same-origin`, or, without that header, when `Origin` is the panel origin (the request URL or
+ * BETTER_AUTH_URL). A same-site or cross-site write and a write with neither header are refused. Bearer-key
+ * requests never reach this check.
+ */
+export function sessionWriteAllowed(request: Request, env: Env): boolean {
+  if (request.method === "GET" || request.method === "HEAD") return true;
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin";
+  const origin = request.headers.get("origin");
+  if (origin === null) return false;
+  const panel = new Set([new URL(request.url).origin]);
+  try { panel.add(new URL(env.BETTER_AUTH_URL).origin); } catch { /* an unset URL adds nothing */ }
+  return panel.has(origin);
+}
+
 interface Principal { ctx: AdminRequestContext; scopes: readonly ApiKeyScope[] }
 
 /** The caller of a /api/v1 request, or the response that refuses it. */
@@ -123,8 +142,11 @@ async function principal(request: Request, env: Env, url: URL, auth: Auth): Prom
     const match = header.match(/^Bearer ([A-Za-z0-9_-]{1,200})$/);
     if (!match) return json(401, { error: "unauthorized" });
     const hash = await sha256Hex(match[1]!);
-    const row = await env.FACTORY.prepare("SELECT key_id, scopes_json FROM api_keys WHERE key_hash = ?1 AND revoked_at IS NULL").bind(hash).first<{ key_id: string; scopes_json: string }>();
+    const row = await env.FACTORY.prepare("SELECT key_id, scopes_json, created_by FROM api_keys WHERE key_hash = ?1 AND revoked_at IS NULL").bind(hash).first<{ key_id: string; scopes_json: string; created_by: string }>();
     if (!row) return json(401, { error: "unauthorized" });
+    // A key acts with the owner role, so it stops working when its creator is no longer an owner or is banned.
+    const creator = await env.AUTH.prepare(`SELECT "role", "banned" FROM "user" WHERE "id" = ?1`).bind(row.created_by).first<{ role: string; banned: number | null }>();
+    if (!creator || creator.role !== "owner" || creator.banned) return json(401, { error: "unauthorized" });
     await env.FACTORY.prepare("UPDATE api_keys SET last_used_at = ?2 WHERE key_id = ?1").bind(row.key_id, new Date().toISOString()).run();
     const scopes = z.array(ApiKeyScope).catch([]).parse(JSON.parse(row.scopes_json));
     return { ctx: { actor_id: row.key_id, actor_role: "owner", request_id: requestId }, scopes };
@@ -132,6 +154,7 @@ async function principal(request: Request, env: Env, url: URL, auth: Auth): Prom
   const session = await auth.api.getSession({ headers: request.headers });
   const role = session?.user.role;
   if (!session || (role !== "owner" && role !== "employee")) return json(401, { error: "unauthorized" });
+  if (!sessionWriteAllowed(request, env)) return json(403, { error: "cross_origin" });
   return {
     ctx: { actor_id: session.user.id, actor_role: role, request_id: requestId },
     scopes: roleAtLeast(role, "owner") ? API_KEY_SCOPES : EMPLOYEE_SCOPES,

@@ -715,7 +715,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   }
   m = path.match(/^\/api\/brands\/([^/]+)\/generate$/);
   if (m && method === "POST") {
-    const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+    const g = authorizePanel("generateBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
     return generateDraft(request, env, ctx, brandId);
   }

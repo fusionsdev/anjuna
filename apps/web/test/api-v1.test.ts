@@ -123,6 +123,54 @@ describe("/api/v1 auth", () => {
     expect(core.seen).toHaveLength(0);
   });
 
+  it("refuses a cookie write from another origin before any change; a bearer key from any origin still works", async () => {
+    const domainCount = async (domain: string) => (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM brands WHERE domain = ?1").bind(domain).first<{ n: number }>())!.n;
+    const evil = await call("/api/v1/brands/drafts", { cookie: owner, method: "POST", headers: { origin: "https://evil.test" }, body: { ...FULL_DRAFT, domain: "csrf-a-v1.example" } });
+    expect(evil.status).toBe(403);
+    expect(await evil.json()).toEqual({ error: "cross_origin" });
+    expect(await domainCount("csrf-a-v1.example")).toBe(0);
+
+    const crossSite = await call("/api/v1/brands/drafts", { cookie: owner, method: "POST", headers: { "sec-fetch-site": "cross-site" }, body: { ...FULL_DRAFT, domain: "csrf-b-v1.example" } });
+    expect(crossSite.status).toBe(403);
+    const sameSite = await call("/api/v1/brands/drafts", { cookie: owner, method: "POST", headers: { "sec-fetch-site": "same-site" }, body: { ...FULL_DRAFT, domain: "csrf-b-v1.example" } });
+    expect(sameSite.status).toBe(403);
+    expect(await domainCount("csrf-b-v1.example")).toBe(0);
+
+    const core = adkitCore();
+    expect((await call("/api/v1/adkit/conversion-actions", { cookie: owner, method: "POST", headers: { origin: "https://evil.test" }, body: { brand_draft_id: "brand_0123456789abcdef" }, env: core.env })).status).toBe(403);
+    expect(core.seen).toHaveLength(0);
+
+    const before = (await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM api_keys").first<{ n: number }>())!.n;
+    expect((await call("/api/api-keys", { cookie: owner, method: "POST", headers: { origin: "https://evil.test" }, body: { label: "x", scopes: ["brand:draft"] } })).status).toBe(403);
+    expect((await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM api_keys").first<{ n: number }>())!.n).toBe(before);
+
+    // The panel page itself: same-origin header, or the panel Origin without it. A cookie GET needs neither.
+    expect((await call("/api/v1/brands/drafts", { cookie: owner, method: "POST", headers: { "sec-fetch-site": "same-origin" }, body: { ...FULL_DRAFT, domain: "csrf-c-v1.example" } })).status).toBe(201);
+    expect((await call("/api/v1/brands/drafts", { cookie: owner, method: "POST", body: { ...FULL_DRAFT, domain: "csrf-d-v1.example" } })).status).toBe(201);
+    expect((await call("/api/v1/adkit/projects", { cookie: owner, headers: { origin: "https://evil.test" }, env: core.env })).status).toBe(200);
+
+    const key = await mintKey(["brand:draft"]);
+    expect((await call("/api/v1/brands/drafts", { headers: { ...bearer(key.secret), origin: "https://evil.test" }, method: "POST", body: { ...FULL_DRAFT, domain: "csrf-e-v1.example" } })).status).toBe(201);
+  });
+
+  it("refuses a key whose creator is no longer an owner or is banned", async () => {
+    const key = await mintKey(["adkit:read"]);
+    const core = adkitCore();
+    const { created_by } = (await env.FACTORY.prepare("SELECT created_by FROM api_keys WHERE key_id = ?1").bind(key.key_id).first<{ created_by: string }>())!;
+    const projects = () => call("/api/v1/adkit/projects", { headers: bearer(key.secret), env: core.env });
+    try {
+      expect((await projects()).status).toBe(200);
+      await env.AUTH.prepare(`UPDATE "user" SET "role" = 'employee' WHERE "id" = ?1`).bind(created_by).run();
+      expect((await projects()).status).toBe(401);
+      await env.AUTH.prepare(`UPDATE "user" SET "role" = 'owner', "banned" = 1 WHERE "id" = ?1`).bind(created_by).run();
+      expect((await projects()).status).toBe(401);
+    } finally {
+      await env.AUTH.prepare(`UPDATE "user" SET "role" = 'owner', "banned" = 0 WHERE "id" = ?1`).bind(created_by).run();
+    }
+    expect((await projects()).status).toBe(200);
+    expect(core.seen).toHaveLength(2);
+  });
+
   it("records last_used_at and never echoes the key in a response", async () => {
     const key = await mintKey(["adkit:read"]);
     const core = adkitCore();
@@ -195,6 +243,14 @@ describe("/api/v1 generate", () => {
     const forKey = await draftId("gen-key-v1.example");
     const key = await mintKey(["brand:generate"]);
     expect((await call(`/api/v1/brands/${forKey}/generate`, { headers: bearer(key.secret), method: "POST", body: {}, env: factoryEnv() })).status).toBe(201);
+  });
+
+  it("the panel generate route is owner only too and refuses an employee before any install", async () => {
+    const brandId = await draftId("gen-panel-v1.example");
+    const denied = await call(`/api/brands/${brandId}/generate`, { cookie: employee, method: "POST", body: {}, env: factoryEnv() });
+    expect(denied.status).toBe(403);
+    expect((await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM installs WHERE brand_id = ?1").bind(brandId).first<{ n: number }>())!.n).toBe(0);
+    expect((await call(`/api/brands/${brandId}/generate`, { cookie: owner, method: "POST", body: {}, env: factoryEnv() })).status).toBe(201);
   });
 });
 

@@ -26,6 +26,11 @@ export const PANEL_ROLE_TABLE = {
   /** Plan: "Install a brand" is employee and owner. */
   installBrand: "employee",
   /**
+   * Generate (wizard Review step, POST /api/brands/:id/generate): spec "Only an owner or a key with scope
+   * brand:generate may run generate". The other install actions keep installBrand.
+   */
+  generateBrand: "owner",
+  /**
    * Tracking ids on a draft (profile.ads: Google Ads account, conversion action, AdKit project, Microsoft Ads account).
    * An employee may set them before install. Raise this to "owner" and the wizard shows them read-only to an
    * employee and the draft routes refuse an employee who changes them. A live brand's money routing stays owner only.
