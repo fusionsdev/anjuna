@@ -1,6 +1,7 @@
 import { type BrandRevisionsResponse, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
 import { Fragment, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api, type Me } from "../api";
+import { ApiError, api, type BrandChecklists, type Me } from "../api";
+import { checklistFlags } from "../home-metrics";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, nextAction, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleRow, type LifecycleState, type NextAction } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
@@ -135,6 +136,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [runtimeBrands, setRuntimeBrands] = useState<BrandSummary[]>([]);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [coreListError, setCoreListError] = useState<CoreListError | null>(null);
+  // Every live brand's checklist in one read. Null while loading or when the read failed: unknown, so nothing is raised and no step is offered.
+  const [checklists, setChecklists] = useState<BrandChecklists | null>(null);
   const [upgradeRefresh, setUpgradeRefresh] = useState(0);
   const [configBrandId, setConfigBrandId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -210,13 +213,14 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
 
   const load = useCallback(async (token = { selectedId, generation: operationGeneration.current }) => {
     try {
-      const [lifecycle, runtime] = await Promise.allSettled([api.lifecycleBrands(), api.brands()]);
+      const [lifecycle, runtime, batch] = await Promise.allSettled([api.lifecycleBrands(), api.brands(), api.checklists()]);
       if (!isCurrentRefresh(token.selectedId, token.generation, selectedId, operationGeneration.current)) return;
       if (lifecycle.status === "rejected") throw lifecycle.reason;
       const result = lifecycle.value;
       setBrands(result.brands);
       setListLoaded(true);
       setCoreListError(result.core_error ?? null);
+      setChecklists(batch.status === "fulfilled" ? batch.value : null);
       if (runtime.status === "fulfilled") {
         setRuntimeBrands(runtime.value.brands);
         setRuntimeError(null);
@@ -665,6 +669,16 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     }));
   }
 
+  /**
+   * What the batch read says about one brand: template_approved, drain_route and test_sold for nextAction, checklistFailing for the chip.
+   * A brand the batch does not list (not live) or a failed read gives nothing, so it never raises an issue and never blocks.
+   */
+  function checklistFacts(brandId: string): Pick<LifecycleRow, "template_approved" | "drain_route" | "test_sold"> {
+    const entry = checklists?.brands[brandId];
+    if (!entry) return {};
+    const flags = checklistFlags(entry);
+    return { template_approved: entry.template_approved, drain_route: flags.drain_route, test_sold: flags.test_sold };
+  }
   /** What nextAction reads for a row. The selected brand adds what only its install detail knows: the newest install status and recovery_required. */
   function rowModel(brand: LifecycleBrandSummary, runtime: BrandSummary | undefined): LifecycleRow {
     const isSelected = brand.brand_id === selectedId;
@@ -677,6 +691,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       latest_install: isSelected && install ? { status: install.status } : brand.latest_install,
       paused: runtime?.status === "paused",
       recovery_required: isSelected && install?.recovery_required === true,
+      ...checklistFacts(brand.brand_id),
     };
   }
   /** The row's one primary button. Install and Retry wait while an operation or the history read of the selected brand is running; Resume waits for its own request. */
@@ -702,7 +717,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       case "open":
       case "test-sold": setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); break;
       case "set-route": setConfigBrandId(brand.brand_id); break;
-      case "approve-template": navigate(routePath({ view: "templates", templateId: null })); break;
+      case "approve-template": navigate(routePath({ view: "templates", templateId: checklists?.brands[brand.brand_id]?.template_waiting_id ?? null })); break;
     }
   }
   /**
@@ -748,7 +763,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const tableRows = brands.map((brand) => ({
     brand,
     name: brand.hostnames[0] ?? brand.name ?? brand.brand_id,
-    health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id), { coreListFailed: coreListError !== null }),
+    health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id), { coreListFailed: coreListError !== null, ...(checklists?.brands[brand.brand_id] ? { checklistFailing: checklistFlags(checklists.brands[brand.brand_id]).checklistFailing } : {}) }),
     money: brandMoney(brand.brand_id, runtimeList, periodFunnel, spend),
     stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
   }));

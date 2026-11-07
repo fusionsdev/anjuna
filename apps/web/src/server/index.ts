@@ -26,7 +26,7 @@ import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
 import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
-import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
+import { decodePathSegment, handleLifecycleRoute, readBrandChecklists } from "./lifecycle.js";
 import { withMockBindings } from "./mock-bindings.js"; // spec polish
 import { handleDeployRoute } from "./deploys.js";
 import { handleTimelineRoute } from "./timeline.js";
@@ -112,6 +112,9 @@ async function route(
   const { method } = request;
   const rid = ctx.request_id;
   let m: RegExpMatchArray | null;
+
+  // Panel redesign (Task 4): every live brand's checklist in one read, for Home and the Brands screen.
+  if (path === "/api/brands/checklists" && method === "GET") return readBrandChecklists(env, ctx);
 
   const lifecycle = await handleLifecycleRoute(request, env, url, path, ctx);
   if (lifecycle) return lifecycle;
