@@ -169,12 +169,12 @@ describe("lifecycle state reducer", () => {
 });
 
 describe("BrandLifecycle SSR", () => {
-  it("renders Thai labels with technical terms, receipts, checklist, and owner upgrade controls", () => {
+  it("renders Thai labels and no upgrade-all card (it moved to Settings)", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "owner", email: "owner@example.test", role: "owner" }} />);
     expect(html).toContain("แบรนด์ใหม่");
     expect(html).toContain("ปุ่มหลักของแต่ละแถวคือขั้นตอนถัดไปของแบรนด์ ปุ่มจัดการรวมการทำงานอื่น");
-    expect(html).toContain("อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)");
-    expect(html).toContain("อัปเกรดแบบ canary ก่อน");
+    expect(html).not.toContain("อัปเกรดทุกแบรนด์");
+    expect(html).not.toContain("อัปเกรดแบบ canary ก่อน");
     // The create form moved into the wizard: the list screen holds one button that opens it.
     expect(html.match(/แบรนด์ใหม่/g)).toHaveLength(1);
     expect(html).not.toContain("New brand");
