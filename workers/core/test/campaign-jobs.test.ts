@@ -12,6 +12,7 @@ const employee: AdminRequestContext = { actor_id: "usr_emp_01", actor_role: "emp
 const THB_ACCOUNT = "4811219623";
 const USD_ACCOUNT = "1234567890";
 const NO_CURRENCY_ACCOUNT = "5555555555";
+const PINNED_NOW = "2026-11-08T00:00:00.000Z";
 
 let h: Harness;
 beforeAll(async () => {
@@ -40,7 +41,8 @@ beforeEach(async () => {
   await seedBrand("usdbrand", USD_ACCOUNT);
   await seedBrand("nocur", NO_CURRENCY_ACCOUNT);
   await seedBrand("noads", null);
-  const at = new Date().toISOString();
+  // Fixed clock: core reads the account currency whatever the row age, so no assertion depends on today.
+  const at = PINNED_NOW;
   await h.db.batch([
     [THB_ACCOUNT, "THB"], [USD_ACCOUNT, "USD"], [NO_CURRENCY_ACCOUNT, null],
   ].map(([id, currency]) => h.db.prepare(`INSERT INTO adkit_directory (kind, id, parent_id, name, currency, updated_at)
