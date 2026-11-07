@@ -75,7 +75,7 @@ async function readThbPerUsd(db: D1Database): Promise<number | null> {
 }
 
 /** Baht per one unit of the account currency, or null when core cannot convert it. */
-type Rates = (account: string) => number | null;
+type Rates = ((account: string) => number | null) & { currency: (account: string) => string | null };
 
 async function loadRates(env: Env): Promise<Rates> {
   const [usd, { results }] = await Promise.all([
@@ -83,12 +83,13 @@ async function loadRates(env: Env): Promise<Rates> {
     env.LEADS.prepare("SELECT id, currency FROM adkit_directory WHERE kind = 'account'").all<{ id: string; currency: string | null }>(),
   ]);
   const currency = new Map(results.map((r) => [r.id, r.currency]));
-  return (account) => {
+  const rate = (account: string) => {
     const c = currency.get(account);
     if (c === "THB") return 1;
     if (c === "USD") return usd;
     return null;
   };
+  return Object.assign(rate, { currency: (account: string) => currency.get(account) ?? null });
 }
 
 export async function campaignIdempotencyKey(kind: CampaignJobKind, brandId: string, account: string, name: string, generation = 0): Promise<string> {
@@ -209,7 +210,7 @@ export async function listPanelCampaigns(env: Env): Promise<PanelCampaignsRespon
     if (c.spending && rate !== null) enabledTotal += c.committedBudget * rate;
     return {
       draft_job_id: c.draft.id, campaign_id: c.campaign_id, brand_id: c.payload.brand_id, account: c.payload.account,
-      name: c.payload.name, daily_budget: c.budget, currency: rate === 1 ? "THB" : rate === null ? null : "USD",
+      name: c.payload.name, daily_budget: c.budget, currency: rates.currency(c.payload.account),
       daily_budget_thb: thb, state: c.state, updated_at: c.updated_at,
     };
   });
