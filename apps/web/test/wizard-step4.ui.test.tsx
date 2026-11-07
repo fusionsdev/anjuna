@@ -12,7 +12,10 @@ const TEMPLATE = {
   created_at: NOW, sealed_at: NOW, thumbnail_url: null, brands_using: 0,
 };
 const PROJECTS = { items: [{ id: "proj_a", name: "Project A", currency: null, updated_at: NOW }, { id: "proj_b", name: "Project B", currency: null, updated_at: NOW }], synced_at: NOW };
-const ACCOUNTS = { items: [{ id: "1234567890", name: "Main account", currency: "THB", updated_at: NOW }], synced_at: NOW };
+const ACCOUNTS = { items: [{ id: "1234567890", name: "Main account", currency: "THB", updated_at: NOW }, { id: "2222222222", name: "Second account", currency: "USD", updated_at: NOW }], synced_at: NOW };
+/** The key the wizard sends for draft brand_new, project proj_a and the given account. */
+const KEY_A = "conversion_action.create:brand_new:proj_a:1234567890";
+const KEY_B = "conversion_action.create:brand_new:proj_a:2222222222";
 const EMPTY = { items: [], synced_at: null };
 
 let held: { profile: Record<string, unknown> };
@@ -21,11 +24,11 @@ const draftBody = () => ({
   revision: { revision_id: "brand_new_rev_1", revision: 1, template_version_id: "tv-1", form_artifact_id: "fa-1" },
   profile: held.profile,
 });
-const job = (status: "queued" | "claimed" | "done" | "failed", key = "conversion_action.create:brand_new", result: object | null = null) => ({
+const job = (status: "queued" | "claimed" | "done" | "failed", key = KEY_A, result: object | null = null, account = "1234567890") => ({
   created: status === "queued",
   job: {
     id: "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", kind: "conversion_action.create", status,
-    payload: { brand_draft_id: "brand_new", account: "1234567890", project: "proj_a", name: "cv-0123456789abcdef" },
+    payload: { brand_draft_id: "brand_new", account, project: "proj_a", name: "cv-0123456789abcdef" },
     result, attempts: status === "queued" ? 0 : 1, idempotency_key: key, requested_by: "owner",
     next_attempt_at: null, created_at: NOW, updated_at: NOW,
   },
@@ -66,7 +69,7 @@ beforeEach(() => {
     return handler(init);
   }));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); ADKIT_POLL.ms = 5000; });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); Object.assign(ADKIT_POLL, { ms: 5000, backoffMaxMs: 60_000, maxMs: 30 * 60_000 }); });
 
 const atTracking = async (me: typeof owner | typeof employee = owner) => {
   render(<BrandWizard me={me} brandId="brand_new" initialStep={3} onClose={vi.fn()} onGenerated={vi.fn()} />);
@@ -87,7 +90,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     expect(select("บัญชี Google Ads").disabled).toBe(true);
 
     choose("โปรเจกต์ AdKit", "proj_a");
-    await waitFor(() => expect(options("บัญชี Google Ads")).toEqual([["", "เลือกบัญชี"], ["1234567890", "Main account · 1234567890 · THB"]]));
+    await waitFor(() => expect(options("บัญชี Google Ads")).toEqual([["", "เลือกบัญชี"], ["1234567890", "Main account · 1234567890 · THB"], ["2222222222", "Second account · 2222222222 · USD"]]));
     choose("บัญชี Google Ads", "1234567890");
     expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("—");
     next();
@@ -104,7 +107,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     await waitFor(() => expect(options("โปรเจกต์ AdKit")).toHaveLength(3));
     expect(createButton().hasAttribute("disabled")).toBe(true);
     choose("โปรเจกต์ AdKit", "proj_a");
-    await waitFor(() => expect(options("บัญชี Google Ads")).toHaveLength(2));
+    await waitFor(() => expect(options("บัญชี Google Ads")).toHaveLength(3));
     choose("บัญชี Google Ads", "1234567890");
     fireEvent.click(createButton());
 
@@ -112,7 +115,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     await waitFor(() => expect(jobPosts()).toHaveLength(1));
     expect(patches()).toHaveLength(1);
     expect((patches()[0]!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: "1234567890", adkit_project: "proj_a" });
-    expect(jobPosts()[0]!.body).toEqual({ brand_draft_id: "brand_new" });
+    expect(jobPosts()[0]!.body).toEqual({ brand_draft_id: "brand_new", idempotency_key: KEY_A });
     expect(await screen.findByText("รอคิว")).toBeTruthy();
     stage = 1;
     expect(await screen.findByText("กำลังสร้าง")).toBeTruthy();
@@ -120,7 +123,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     expect(await screen.findByText("สร้างแล้ว")).toBeTruthy();
     expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("7300000001");
     // Polling repeats the same idempotent request and stops at done.
-    expect(jobPosts().every((p) => JSON.stringify(p.body) === JSON.stringify({ brand_draft_id: "brand_new" }))).toBe(true);
+    expect(jobPosts().every((p) => JSON.stringify(p.body) === JSON.stringify({ brand_draft_id: "brand_new", idempotency_key: KEY_A }))).toBe(true);
     const polls = jobPosts().length;
     await new Promise((r) => setTimeout(r, 80));
     expect(jobPosts()).toHaveLength(polls);
@@ -133,18 +136,96 @@ describe("wizard step 4 from the AdKit directory", () => {
   it("shows a failed job with its error and retries with a new idempotency key", async () => {
     routes.set("POST /api/v1/adkit/conversion-actions", (init) => {
       const body = JSON.parse(String(init?.body)) as { idempotency_key?: string };
-      return body.idempotency_key ? json(job("queued", body.idempotency_key), 201) : json(job("failed", undefined, { error: "duplicate name" }));
+      return body.idempotency_key?.includes(":retry-") ? json(job("queued", body.idempotency_key), 201) : json(job("failed", undefined, { error: "duplicate name" }));
     });
     held = { profile: { contact: CONTACT, copy: {}, ads: { google_ads_account: "1234567890", adkit_project: "proj_a" } } };
     await atTracking();
-    await waitFor(() => expect(options("บัญชี Google Ads")).toHaveLength(2));
+    await waitFor(() => expect(options("บัญชี Google Ads")).toHaveLength(3));
     expect(select("บัญชี Google Ads").value).toBe("1234567890");
     fireEvent.click(createButton());
     expect(await screen.findByText("สร้างไม่สำเร็จ: duplicate name")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "ลองสร้างใหม่" }));
     expect(await screen.findByText("รอคิว")).toBeTruthy();
     const key = jobPosts().at(-1)!.body.idempotency_key as string;
-    expect(key).toMatch(/^conversion_action\.create:brand_new:retry-[0-9a-z]+$/);
+    expect(key).toMatch(/^conversion_action\.create:brand_new:proj_a:1234567890:retry-[0-9a-z]+$/);
+  });
+
+  it("gives a new account its own job and never applies the old account's action id", async () => {
+    const done = { conversion_action_id: "7300000001", name: "cv-0123456789abcdef", adopted: false };
+    let holdB: ((r: Response) => void) | null = null;
+    routes.set("POST /api/v1/adkit/conversion-actions", (init) => {
+      const body = JSON.parse(String(init?.body)) as { idempotency_key: string };
+      if (body.idempotency_key === KEY_A) return json(job("done", KEY_A, done));
+      // B's first answer is held, so the test can switch back to A while it is in flight.
+      return new Promise<Response>((resolve) => { holdB = resolve; });
+    });
+    held = { profile: { contact: CONTACT, copy: {}, ads: { google_ads_account: "1234567890", adkit_project: "proj_a" } } };
+    await atTracking();
+    await waitFor(() => expect(options("บัญชี Google Ads")).toHaveLength(3));
+    fireEvent.click(createButton());
+    expect(await screen.findByText("สร้างแล้ว")).toBeTruthy();
+    expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("7300000001");
+
+    choose("บัญชี Google Ads", "2222222222");
+    expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("—");
+    expect(createButton().hasAttribute("disabled")).toBe(false);
+    fireEvent.click(createButton());
+    await waitFor(() => expect(jobPosts()).toHaveLength(2));
+    expect(jobPosts()[1]!.body).toEqual({ brand_draft_id: "brand_new", idempotency_key: KEY_B });
+    expect((patches().at(-1)!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: "2222222222", adkit_project: "proj_a" });
+
+    // An answer for A that lands while B is on screen is dropped.
+    holdB!(json(job("done", KEY_B, done, "1234567890")));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("—");
+    expect(screen.queryByText("สร้างแล้ว")).toBeNull();
+    next();
+    await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" });
+    expect((patches().at(-1)!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: "2222222222", adkit_project: "proj_a" });
+  });
+
+  it("keeps polling after a failed read with a backoff, and shows a note meanwhile", async () => {
+    let reads = 0;
+    routes.set("POST /api/v1/adkit/conversion-actions", () => {
+      reads += 1;
+      if (reads === 1) return json(job("queued"), 201);
+      if (reads === 2) return json({ error: "core_unavailable" }, 502);
+      return json(job("done", KEY_A, { conversion_action_id: "7300000009", name: "cv-0123456789abcdef", adopted: false }));
+    });
+    held = { profile: { contact: CONTACT, copy: {}, ads: { google_ads_account: "1234567890", adkit_project: "proj_a" } } };
+    await atTracking();
+    await waitFor(() => expect(options("บัญชี Google Ads")).toHaveLength(3));
+    fireEvent.click(createButton());
+    expect(await screen.findByText("ตรวจสถานะงานไม่สำเร็จ จะลองใหม่อัตโนมัติ")).toBeTruthy();
+    expect(await screen.findByText("สร้างแล้ว")).toBeTruthy();
+    expect(screen.queryByText("ตรวจสถานะงานไม่สำเร็จ จะลองใหม่อัตโนมัติ")).toBeNull();
+    expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("7300000009");
+  });
+
+  it("stops polling after the cap with a Thai message, and Check again resumes", async () => {
+    ADKIT_POLL.maxMs = 60;
+    let finish = false;
+    routes.set("POST /api/v1/adkit/conversion-actions", () => json(finish ? job("done", KEY_A, { conversion_action_id: "7300000002", name: "cv-0123456789abcdef", adopted: false }) : job("queued"), 201));
+    held = { profile: { contact: CONTACT, copy: {}, ads: { google_ads_account: "1234567890", adkit_project: "proj_a" } } };
+    await atTracking();
+    await waitFor(() => expect(options("บัญชี Google Ads")).toHaveLength(3));
+    fireEvent.click(createButton());
+    expect(await screen.findByText("หยุดตรวจสถานะแล้ว งานรอนานเกิน 30 นาที")).toBeTruthy();
+    const polls = jobPosts().length;
+    await new Promise((r) => setTimeout(r, 80));
+    expect(jobPosts()).toHaveLength(polls);
+    finish = true;
+    fireEvent.click(screen.getByRole("button", { name: "ตรวจสถานะอีกครั้ง" }));
+    expect(await screen.findByText("สร้างแล้ว")).toBeTruthy();
+    expect(screen.queryByText("หยุดตรวจสถานะแล้ว งานรอนานเกิน 30 นาที")).toBeNull();
+  });
+
+  it("keeps the key within the 160-character contract for a 64-character project id", async () => {
+    const { conversionJobKey } = await import("../src/client/wizard/StepPanels");
+    const long = conversionJobKey("b".repeat(64), "p".repeat(64), "1234567890");
+    expect(long.length).toBeLessThanOrEqual(140);
+    expect(long).toMatch(/^conversion_action\.create:b{64}:p[0-9a-f]{8}:1234567890$/);
+    expect(conversionJobKey("brand_new", "", "1234567890")).toBe("conversion_action.create:brand_new:none:1234567890");
   });
 
   it("shows — and a note when the directory is stale or empty, and keeps the select off", async () => {

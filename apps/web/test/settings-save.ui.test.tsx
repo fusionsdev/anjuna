@@ -38,6 +38,7 @@ beforeEach(() => {
   onGetBrand = () => json({ brand: alpha });
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
+    if (method === "GET" && input === "/api/settings/microsoft-ads") return json({ microsoft_ads_account: null, updated_at: null });
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     sent.push({ method, url: input, body });
     if (method === "GET" && input === "/api/settings/brands") return json({ rows: [ok(alpha), ok(beta)], generated_at: "2026-10-25T00:00:00.000Z" });

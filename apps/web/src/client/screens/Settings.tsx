@@ -23,6 +23,7 @@ import {
   type SettingsDraft,
 } from "../settings-draft";
 import { UpgradeWizard } from "./UpgradeWizard";
+import { MicrosoftAdsSetting } from "./MicrosoftAdsSetting";
 import { SettingsEditor, type EditorBanner } from "./SettingsEditor";
 import type { SettingsRow } from "../../shared/settings";
 import "./Settings.css";
@@ -250,6 +251,7 @@ export function SettingsScreen({ me }: { me?: { id: string; email: string; role:
           empty={<p className="hint">ยังไม่มีแบรนด์ (No brands yet)</p>}
         />
       </section>}
+    <MicrosoftAdsSetting />
     {editBrand && draft && (
       <SettingsEditor brand={editBrand} draft={draft} onDraft={(d) => { if (!saving) setDraft(d); }} onReview={review} onClose={requestClose} banner={banner} saving={saving} />
     )}

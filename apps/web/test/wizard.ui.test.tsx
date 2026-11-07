@@ -255,7 +255,7 @@ describe("five-step flow to Generate", () => {
   it("shows the first Generate issue when the server finds the draft incomplete", async () => {
     routes.set("POST /api/brands/brand_new/generate", () => json({ error: "draft_incomplete", issues: [{ field: "profile.contact.email", message: "ต้องระบุอีเมล (Email is required)" }] }, 422));
     hold({ contact: CONTACT, copy: {}, ads: {} });
-    const { onGenerated } = setup(employee, { brandId: "brand_new" });
+    const { onGenerated } = setup(owner, { brandId: "brand_new" });
     await heading("ตรวจสอบ (Review)");
     await screen.findByText(/Zone maple.test is active/);
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }));
@@ -263,10 +263,24 @@ describe("five-step flow to Generate", () => {
     expect(onGenerated).not.toHaveBeenCalled();
   });
 
+  it("keeps Generate off for an employee with the Thai reason and sends no generate request", async () => {
+    hold({ contact: CONTACT, copy: {}, ads: {} });
+    const { onGenerated } = setup(employee, { brandId: "brand_new" });
+    await heading("ตรวจสอบ (Review)");
+    await screen.findByText(/Zone maple.test is active/);
+    const button = screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    const reason = document.getElementById(button.getAttribute("aria-describedby")!)!;
+    expect(reason.textContent).toBe("เฉพาะ Owner สร้างเว็บไซต์ได้ ฉบับร่างบันทึกแล้ว ให้ Owner กดสร้าง");
+    fireEvent.click(button);
+    expect(sent("POST", "/api/brands/brand_new/generate")).toHaveLength(0);
+    expect(onGenerated).not.toHaveBeenCalled();
+  });
+
   it("reports a refused install, stays on Review and allows a retry", async () => {
     routes.set("POST /api/brands/brand_new/generate", () => json({ error: "lifecycle_operation_active", active_install_id: "ins_0" }, 409));
     hold({ contact: CONTACT, copy: {}, ads: {} });
-    const { onGenerated } = setup(employee, { brandId: "brand_new" });
+    const { onGenerated } = setup(owner, { brandId: "brand_new" });
     await heading("ตรวจสอบ (Review)");
     await screen.findByText(/Zone maple.test is active/);
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }));
@@ -397,9 +411,10 @@ describe("tracking step roles", () => {
 });
 
 describe("zone pre-check", () => {
+  // Generate is owner only, so the zone gate is read on an owner session.
   const atReview = async () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
-    setup(employee, { brandId: "brand_new" });
+    setup(owner, { brandId: "brand_new" });
     await heading("ตรวจสอบ (Review)");
   };
   const generate = () => screen.getByRole("button", { name: "สร้างเว็บไซต์ (Generate)" }) as HTMLButtonElement;
@@ -592,7 +607,7 @@ describe("entry points on the Lifecycle screen", () => {
 
   it("starts the install from Generate and returns to the list with the brand selected", async () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
-    render(<BrandLifecycle me={employee} />);
+    render(<BrandLifecycle me={owner} />);
     await screen.findByRole("heading", { name: "maple.test" });
     fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจสอบ (Review)");

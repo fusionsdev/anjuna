@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WizardDefaultsResponse, WizardDraft } from "../../shared/wizard";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import { api, type Me } from "../api";
-import { wizardErrorText } from "../wizard/messages";
+import { GENERATE_OWNER_ONLY, wizardErrorText } from "../wizard/messages";
 import { BrandPanel, CopyPanel, TemplatePanel, TrackingPanel, ZoneStatus, zoneBlocks, type ZoneState } from "../wizard/StepPanels";
 import {
   STEPS, STEP_LABEL, adsOf, contactOf, copyOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep,
@@ -29,6 +29,8 @@ export interface BrandWizardProps {
 export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: BrandWizardProps) {
   // Step 4 reads the AdKit directory and queues jobs, which core serves to an owner only (useAdkit).
   const canEditTracking = roleAtLeast(me.role, PANEL_ROLE_TABLE.setDraftTracking) && roleAtLeast(me.role, PANEL_ROLE_TABLE.useAdkit);
+  // Generate is owner only (spec); an employee fills and saves the draft, and the Owner presses Generate.
+  const canGenerate = roleAtLeast(me.role, PANEL_ROLE_TABLE.generateBrand);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -176,7 +178,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
   }
 
   async function generate() {
-    if (!draft) return;
+    if (!draft || !canGenerate) return;
     const found = validateStep("review", form, ctx);
     if (Object.keys(found).length > 0) {
       setErrors(found);
@@ -224,8 +226,9 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
           <button type="button" className="btn" disabled={busy || step === 0} onClick={() => { setErrors({}); setNotice(null); setStep(step - 1); }} aria-label="ย้อนกลับ (Back)">ย้อนกลับ</button>
           {stepId !== "review"
             ? <button type="button" className="btn pri" disabled={busy || (stepId === "template" && templates.length === 0)} onClick={() => void next()} aria-label="ถัดไป (Next)">ถัดไป</button>
-            : <button type="button" className="btn pri" disabled={busy || blocked} onClick={() => void generate()} aria-label="สร้างเว็บไซต์ (Generate)">สร้างเว็บไซต์</button>}
+            : <button type="button" className="btn pri" disabled={busy || blocked || !canGenerate} aria-describedby={canGenerate ? undefined : "generate-owner-only"} onClick={() => void generate()} aria-label="สร้างเว็บไซต์ (Generate)">สร้างเว็บไซต์</button>}
         </div>
+        {stepId === "review" && !canGenerate && <p id="generate-owner-only" role="note" className="hint">{GENERATE_OWNER_ONLY}</p>}
       </>}
     </section>
   );

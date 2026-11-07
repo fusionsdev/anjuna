@@ -5,7 +5,7 @@ import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressi
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
-import { SettingsBrandsResponse } from "../shared/settings";
+import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
 import type { TimelineRequestQuery } from "./timeline";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
@@ -208,6 +208,8 @@ export const api = {
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
   brands: () => request<{ brands: BrandSummary[]; generated_at: string }>("GET", "/api/brands"),
   settingsBrands: () => request<unknown>("GET", "/api/settings/brands").then((body) => SettingsBrandsResponse.parse(body)), // spec settings
+  microsoftAdsSetting: () => request<unknown>("GET", "/api/settings/microsoft-ads").then((body) => MicrosoftAdsSettingResponse.parse(body)),
+  putMicrosoftAdsSetting: (account: string | null) => request<unknown>("PUT", "/api/settings/microsoft-ads", { microsoft_ads_account: account }).then((body) => MicrosoftAdsSettingResponse.parse(body)),
   brand: (id: string) => request<{ brand: BrandConfig }>("GET", `/api/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   conversionSetup: (id: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(id)}/conversion-setup`).then((body) => ConversionSetupStateResponse.parse(body).conversion_setup),
   siteTextDefaults: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/site-text`).then((body) => SiteTextDefaultsResponse.parse(body)),

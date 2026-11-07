@@ -27,6 +27,7 @@ beforeEach(() => {
   vi.spyOn(api, "me").mockResolvedValue(owner);
   vi.spyOn(api, "alerts").mockRejectedValue(new Error("alerts are not under test"));
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    if (input === "/api/settings/microsoft-ads") return json({ microsoft_ads_account: null, updated_at: null });
     if (input === "/api/settings/brands") {
       return json({ rows: [{ brand_id: alpha.brand_id, hostname: "alpha.example.test", brand: alpha, error: null }], generated_at: "2026-10-25T00:00:00.000Z" });
     }

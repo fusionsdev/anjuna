@@ -3,7 +3,7 @@
  * also holds its AdKit directory reads and the conversion action job.
  */
 import { COPY_KEYWORD_MARKER, COPY_LIMITS, COPY_TEXT_MAX, SITE_TEXT_LIMITS, type AdkitDirectoryResponse, type AdkitJob, type BrandTheme, type CopyField, type TemplateTextDefaults, type TemplateThemeVars, type TemplateVersionSummary } from "@anjuna/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ZoneCheckResponse } from "../../shared/wizard";
 import { api } from "../api";
 import { ColorPair } from "../components/ColorPair";
@@ -134,8 +134,29 @@ export function CopyPanel({ form, errors, set, templateText }: FieldsProps & { t
   );
 }
 
-/** How often a pending conversion action job is read again. Tests lower it. */
-export const ADKIT_POLL = { ms: 5000 };
+/**
+ * Polling of a pending conversion action job: every `ms`, doubled after each failed read up to `backoffMaxMs`,
+ * and stopped `maxMs` after the job started (the step then offers a manual check). Tests lower them.
+ */
+export const ADKIT_POLL = { ms: 5000, backoffMaxMs: 60_000, maxMs: 30 * 60_000 };
+
+/** FNV-1a 32-bit, hex: shortens a long project id so the key fits the 160-character IdempotencyKey contract. */
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193) >>> 0;
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * One job per draft, project and account. Core keys jobs by this string, so a changed account or project gets a
+ * new job and the same selection finds its earlier job. Max 140 characters, leaving room for a retry suffix.
+ */
+export function conversionJobKey(draftId: string, project: string, account: string): string {
+  const key = `conversion_action.create:${draftId}:${project || "none"}:${account}`;
+  return key.length <= 140 ? key : `conversion_action.create:${draftId}:p${fnv1a(project)}:${account}`;
+}
+
+const POLL_START = { since: 0, failures: 0, stopped: false };
 
 type Directory = { state: "idle" } | { state: "loading" } | { state: "ready"; data: AdkitDirectoryResponse } | { state: "error" };
 type DirectoryItem = AdkitDirectoryResponse["items"][number];
@@ -198,23 +219,37 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
   const [jobKey, setJobKey] = useState<string | undefined>(undefined);
   const [jobError, setJobError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [poll, setPoll] = useState(POLL_START);
   const pending = job !== null && (job.status === "queued" || job.status === "claimed");
+  // The selection on screen now: an answer that arrives after the owner picked another project or account is dropped.
+  const selection = useRef({ project, account: form.google_ads_account });
+  selection.current = { project, account: form.google_ads_account };
 
-  /** The job's latest state; a done job's action id goes into the form in the same update. */
-  const take = (next: AdkitJob) => {
+  /**
+   * The job's latest state; a done job's action id goes into the form in the same update. A job for another
+   * account or project than the one on screen is ignored, so its action id never lands in this selection.
+   */
+  const take = (next: AdkitJob): void => {
+    if (next.payload.account !== selection.current.account || (next.payload.project ?? "") !== selection.current.project) return;
     setJob(next);
     if (next.status === "done" && next.result && "conversion_action_id" in next.result) set("google_conversion_action", next.result.conversion_action_id);
   };
 
   useEffect(() => {
-    if (!job || !draftId || (job.status !== "queued" && job.status !== "claimed")) return;
+    if (!job || !draftId || !jobKey || (job.status !== "queued" && job.status !== "claimed") || poll.stopped) return;
+    if (Date.now() - poll.since >= ADKIT_POLL.maxMs) { setPoll((p) => ({ ...p, stopped: true })); return; }
     let active = true;
+    const delay = Math.min(ADKIT_POLL.ms * 2 ** poll.failures, ADKIT_POLL.backoffMaxMs);
     const timer = setTimeout(() => {
-      api.createConversionAction(draftId, jobKey).then((r) => { if (active) take(r.job); }, (e: unknown) => { if (active) setJobError(wizardErrorText(e)); });
-    }, ADKIT_POLL.ms);
+      api.createConversionAction(draftId, jobKey).then((r) => {
+        if (!active) return;
+        setPoll((p) => (p.failures ? { ...p, failures: 0 } : p));
+        take(r.job);
+      }, () => { if (active) setPoll((p) => ({ ...p, failures: p.failures + 1 })); });
+    }, delay);
     return () => { active = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job, jobKey, draftId]);
+  }, [job, jobKey, draftId, poll]);
 
   if (!canEdit) {
     return (
@@ -225,9 +260,11 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
     );
   }
 
-  const resetJob = () => { setJob(null); setJobKey(undefined); setJobError(null); };
-  async function start(key?: string) {
+  const resetJob = () => { setJob(null); setJobKey(undefined); setJobError(null); setPoll(POLL_START); };
+  async function start(retry = false) {
     if (!draftId) return;
+    const base = conversionJobKey(draftId, project, form.google_ads_account);
+    const key = retry ? `${base}:retry-${Date.now().toString(36)}` : base;
     setStarting(true);
     setJobError(null);
     try {
@@ -235,6 +272,7 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
       await saveAds();
       const r = await api.createConversionAction(draftId, key);
       setJobKey(key);
+      setPoll({ ...POLL_START, since: Date.now() });
       take(r.job);
     } catch (e) {
       setJobError(wizardErrorText(e));
@@ -262,9 +300,14 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
           {job && job.status !== "failed" && <span role="status" className="pill">{TRACKING_TEXT.job[job.status]}</span>}
           {failed !== null && <>
             <span role="status" className="neg">{failed ? `${TRACKING_TEXT.job.failed}: ${failed}` : TRACKING_TEXT.job.failed}</span>
-            <button type="button" className="btn" disabled={starting} onClick={() => void start(`conversion_action.create:${draftId}:retry-${Date.now().toString(36)}`)}>{TRACKING_TEXT.retry}</button>
+            <button type="button" className="btn" disabled={starting} onClick={() => void start(true)}>{TRACKING_TEXT.retry}</button>
+          </>}
+          {pending && poll.stopped && <>
+            <span role="status" className="neg">{TRACKING_TEXT.pollStopped}</span>
+            <button type="button" className="btn" onClick={() => setPoll({ ...POLL_START, since: Date.now() })}>{TRACKING_TEXT.checkAgain}</button>
           </>}
         </div>
+        {pending && !poll.stopped && poll.failures > 0 && <p role="status" className="note">{TRACKING_TEXT.pollFailed}</p>}
         {!form.google_ads_account && <small className="hint">{TRACKING_TEXT.needAccount}</small>}
         {errors.google_conversion_action && <p className="neg" role="alert">{errors.google_conversion_action}</p>}
         {jobError && <p className="neg" role="alert">{jobError}</p>}

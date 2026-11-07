@@ -41,9 +41,15 @@ export const TRACKING_TEXT = {
   needAccount: "เลือกบัญชี Google Ads ก่อนสร้าง conversion action",
   readOnly: "Owner กำหนดค่านี้ · แสดงอย่างเดียว",
   job: { queued: "รอคิว", claimed: "กำลังสร้าง", done: "สร้างแล้ว", failed: "สร้างไม่สำเร็จ" },
+  pollFailed: "ตรวจสถานะงานไม่สำเร็จ จะลองใหม่อัตโนมัติ",
+  pollStopped: "หยุดตรวจสถานะแล้ว งานรอนานเกิน 30 นาที",
+  checkAgain: "ตรวจสถานะอีกครั้ง",
 } as const;
 
-export const requiredText =(field: FieldKey): string => `${FIELD_LABEL[field]}: จำเป็นต้องกรอก (Required)`;
+/** Why the Generate button is off for an employee: generate is owner only (spec). */
+export const GENERATE_OWNER_ONLY = "เฉพาะ Owner สร้างเว็บไซต์ได้ ฉบับร่างบันทึกแล้ว ให้ Owner กดสร้าง";
+
+export const requiredText = (field: FieldKey): string => `${FIELD_LABEL[field]}: จำเป็นต้องกรอก (Required)`;
 
 export interface IssueLike {
   code: string;

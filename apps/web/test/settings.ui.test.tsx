@@ -33,6 +33,8 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/settings");
   reply = () => json({ rows: [ok(alpha), ok(beta), ghost], generated_at: "2026-10-25T00:00:00.000Z" });
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    // The Microsoft Ads field (its own test file) loads beside the table.
+    if (input === "/api/settings/microsoft-ads") return json({ microsoft_ads_account: null, updated_at: null });
     requests.push(input);
     if (input === "/api/settings/brands") return reply();
     throw new Error(`Unexpected test HTTP request: ${input}`);
