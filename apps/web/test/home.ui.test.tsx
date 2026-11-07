@@ -825,6 +825,17 @@ describe("Home screen, work queue", () => {
     expect(requests.some((r) => /^\/api\/brands\/[^/]+\/checklist$/.test(r))).toBe(false);
   });
 
+  it("the Test sold task opens one dialog that names every open brand", async () => {
+    render(<HomeScreen me={owner} />);
+    const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
+    await todo.findByText("1 แบรนด์");
+    fireEvent.click(todo.getAllByRole("button", { name: "เปิด" })[0]!);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("Sixpack");
+    expect(dialog.textContent).toContain("sixpack.test");
+    expect(window.location.pathname).toBe("/");
+  });
+
   it("shows — for the test sold count when the checklist read fails, and keeps the rest", async () => {
     checklistsReply = () => json({ error: "core_unavailable" }, 502);
     render(<HomeScreen me={owner} />);
@@ -845,11 +856,15 @@ describe("Home screen, work queue", () => {
     expect(brandsRegion().querySelectorAll("button[data-next-action]")).toHaveLength(3);
   });
 
-  it("the row button only navigates: a brand opens its page, a template goes to Templates", async () => {
+  it("a row button that changes something opens a dialog naming the brand and its domain, and does not navigate", async () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(rowButton("d6")).toBeTruthy());
     fireEvent.click(rowButton("d6")!);
-    expect(window.location.pathname).toBe("/brands/d6");
+    const first = await screen.findByRole("alertdialog");
+    expect(first.textContent).toContain("Sixpack");
+    expect(first.textContent).toContain("sixpack.test");
+    expect(window.location.pathname).toBe("/");
+    fireEvent.click(screen.getByRole("button", { name: /ยกเลิก/ }));
     cleanup();
     window.history.replaceState(null, "", "/");
 
@@ -858,8 +873,18 @@ describe("Home screen, work queue", () => {
     await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("approve-template"));
     expect(rowButton("cg")!.textContent).toBe("อนุมัติเทมเพลต");
     fireEvent.click(rowButton("cg")!);
-    // The Templates screen opens on the version that waits.
-    expect(window.location.pathname).toBe("/templates/tv-2");
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("Creditgenie");
+    expect(dialog.textContent).toContain("creditgenie.test");
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("a paused brand's resume button still opens its page", async () => {
+    runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "paused" }, { brand_id: "d6", status: "live" }] });
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("resume"));
+    fireEvent.click(rowButton("cg")!);
+    expect(window.location.pathname).toBe("/brands/cg");
   });
 
   it("offers set-route when the brand has no drain route, and leaves owner-only actions disabled for an employee", async () => {
