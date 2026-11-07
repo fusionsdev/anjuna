@@ -63,6 +63,7 @@ describe("factory-db migrations", () => {
     expect(await userTables(env.DB)).toEqual(
       [
         "ads_account_events",
+        "api_keys",
         "audit_log",
         "brand_assets",
         "brand_revisions",
@@ -316,6 +317,14 @@ describe("factory-db constraints", () => {
     await expect(run("INSERT INTO template_category_map (template_id, category_id) VALUES ('t-cat', 'cat-1')")).rejects.toThrow(/UNIQUE|PRIMARY KEY/);
     await expect(run("INSERT INTO template_category_map (template_id, category_id) VALUES ('missing', 'cat-1')")).rejects.toThrow(/FOREIGN KEY/);
     await expect(run("UPDATE template_category_map SET category_id = 'missing' WHERE template_id = 't-cat'")).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("migration 0014 adds api_keys with a unique 64-character hash and a JSON array of scopes", async () => {
+    const hash = "a".repeat(64);
+    await run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_1', 'Bot', ?1, '[\"brand:draft\"]', 'owner1', ?2)", hash, NOW);
+    await expect(run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_2', 'Bot', ?1, '[]', 'owner1', ?2)", hash, NOW)).rejects.toThrow(/UNIQUE/);
+    await expect(run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_3', 'Bot', 'short', '[]', 'owner1', ?1)", NOW)).rejects.toThrow(/CHECK/);
+    await expect(run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_4', 'Bot', ?1, '{}', 'owner1', ?2)", "b".repeat(64), NOW)).rejects.toThrow(/CHECK/);
   });
 
   it("effectiveThemeVarsSql prefers the backfill row", async () => {
