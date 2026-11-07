@@ -28,16 +28,18 @@ const INGEST_BODY_LIMIT = 1_000_000;
  * `WHERE true` is SQLite's required disambiguation for INSERT ... SELECT ... ON CONFLICT.
  * The conflict target is the ad_spend_key unique index expression (NULL hour = whole day).
  * A row without `allocation` is exact: the account level path writes brands alone on their account.
+ * A row without `account` stores NULL: only the campaign level path names the account it split.
  */
 const UPSERT_SQL = `
-  INSERT INTO ad_spend (brand_id, date, hour, cost, currency, clicks, impressions, source, allocation, updated_at)
+  INSERT INTO ad_spend (brand_id, date, hour, cost, currency, clicks, impressions, source, allocation, account, updated_at)
   SELECT json_extract(value, '$.brand_id'), json_extract(value, '$.date'), json_extract(value, '$.hour'),
          json_extract(value, '$.cost'), json_extract(value, '$.currency'), json_extract(value, '$.clicks'),
-         json_extract(value, '$.impressions'), 'google', COALESCE(json_extract(value, '$.allocation'), 'exact'), ?2
+         json_extract(value, '$.impressions'), 'google', COALESCE(json_extract(value, '$.allocation'), 'exact'),
+         json_extract(value, '$.account'), ?2
   FROM json_each(?1) WHERE true
   ON CONFLICT (brand_id, date, COALESCE(hour, -1), source) DO UPDATE SET
     cost = excluded.cost, currency = excluded.currency, clicks = excluded.clicks, impressions = excluded.impressions,
-    allocation = excluded.allocation, updated_at = excluded.updated_at`;
+    allocation = excluded.allocation, account = excluded.account, updated_at = excluded.updated_at`;
 
 const invalid = (message: string, extra: Record<string, unknown> = {}, status = 400) =>
   json({ status: "invalid", message, ...extra }, status);
@@ -117,6 +119,18 @@ const UNALLOCATED_CLEAR_SQL = `
     SELECT 1 FROM json_each(?1) j
     WHERE json_extract(j.value, '$.date') = ad_spend_unallocated.date
       AND COALESCE(json_extract(j.value, '$.hour'), -1) = COALESCE(ad_spend_unallocated.hour, -1))`;
+
+/**
+ * A brand that left the account keeps no share: in every posted slot (?3), delete this account's google
+ * rows of brands not in the current list (?2). Rows with account NULL never match `account = ?1`.
+ */
+const STALE_BRAND_CLEAR_SQL = `
+  DELETE FROM ad_spend
+  WHERE account = ?1 AND source = 'google' AND brand_id NOT IN (SELECT value FROM json_each(?2))
+    AND EXISTS (
+      SELECT 1 FROM json_each(?3) j
+      WHERE json_extract(j.value, '$.date') = ad_spend.date
+        AND COALESCE(json_extract(j.value, '$.hour'), -1) = COALESCE(ad_spend.hour, -1))`;
 
 /**
  * Paid clicks (a Google click id) of the given brands per local day and hour of the ad account, with
@@ -207,7 +221,7 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
     for (const brand of brands) {
       const parts = result.rows.filter((r) => r.brand_id === brand);
       spend.push({
-        brand_id: brand, date, hour, currency,
+        brand_id: brand, date, hour, currency, account,
         // Each part already has 2 decimals; the sum is rebuilt on hundredths so no float drift is stored.
         cost: parts.reduce((t, p) => t + Math.round(p.cost * 100), 0) / 100,
         clicks: parts.reduce((t, p) => t + p.clicks, 0),
@@ -229,6 +243,9 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
   const chunks = Array.from({ length: Math.ceil(spend.length / 2000) }, (_, i) => spend.slice(i * 2000, (i + 1) * 2000));
   await env.LEADS.batch([
     ...chunks.map((chunk) => env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(chunk), stamp)),
+    env.LEADS.prepare(STALE_BRAND_CLEAR_SQL).bind(
+      account, JSON.stringify(brands), JSON.stringify([...slots.values()].map(({ date, hour }) => ({ date, hour }))),
+    ),
     env.LEADS.prepare(UNALLOCATED_UPSERT_SQL).bind(JSON.stringify(unallocated), stamp, account, currency),
     env.LEADS.prepare(UNALLOCATED_CLEAR_SQL).bind(JSON.stringify(cleared), account, currency),
   ]);

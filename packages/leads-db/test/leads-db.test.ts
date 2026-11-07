@@ -386,14 +386,15 @@ describe("Anjuna additions", () => {
       ["unknown source", "INSERT INTO ad_spend (brand_id, date, hour, cost, source, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'bing', 'x')"],
       ["unknown currency", "INSERT INTO ad_spend (brand_id, date, hour, cost, currency, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'EUR', 'x')"],
       ["unknown allocation", "INSERT INTO ad_spend (brand_id, date, hour, cost, allocation, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'guess', 'x')"],
+      ["short account", "INSERT INTO ad_spend (brand_id, date, hour, cost, account, updated_at) VALUES ('b', '2026-10-21', 1, 1, '538116393', 'x')"],
     ])("rejects %s", async (_name, sql) => {
       await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
     });
 
-    it("stores exact for a row written without an allocation (0022: earlier rows are exact)", async () => {
+    it("stores exact and a NULL account for a row written without them (0022: earlier rows are exact)", async () => {
       await env.DB.prepare("INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('brand-alloc', '2026-10-21', 7, 1, 'x')").run();
-      const row = await env.DB.prepare("SELECT allocation FROM ad_spend WHERE brand_id = 'brand-alloc'").first();
-      expect(row).toEqual({ allocation: "exact" });
+      const row = await env.DB.prepare("SELECT allocation, account FROM ad_spend WHERE brand_id = 'brand-alloc'").first();
+      expect(row).toEqual({ allocation: "exact", account: null });
     });
   });
 

@@ -391,6 +391,21 @@ describe("POST /api/spend/campaign-ingest", () => {
     ]);
   });
 
+  it("drops the share of a brand that left the account and keeps rows without an account", async () => {
+    const payload = body([{ date: DATE, hour: 10, campaign_id: "222", cost: 10, clicks: 0, impressions: 0 }]);
+    await campaignIngest(payload);
+    // brand-a wrote this slot through the account level ingest: account stays NULL.
+    await ingest({ rows: [{ brand_id: "brand-a", date: DATE, hour: 10, cost: 4, clicks: 1, impressions: 1 }] });
+    expect(pick((await allocationRows()).results, "brand_id", "cost")).toEqual([["bisoncash", 5], ["brand-a", 4], ["petvetpay", 5]]);
+    await h.db.prepare("UPDATE brand_runtime SET google_ads_account = '2222222222' WHERE brand_id = 'bisoncash'").run();
+    await campaignIngest(payload);
+    expect(pick((await allocationRows()).results, "brand_id", "cost", "allocation")).toEqual([
+      ["brand-a", 4, "exact"], ["petvetpay", 10, "exact"],
+    ]);
+    const accounts = await h.db.prepare("SELECT brand_id, account FROM ad_spend ORDER BY brand_id").all();
+    expect(accounts.results).toEqual([{ brand_id: "brand-a", account: null }, { brand_id: "petvetpay", account: ACCOUNT }]);
+  });
+
   it("uses the day's clicks when the hour has none, then an equal split", async () => {
     await h.db.batch([paidClick("petvetpay", `${DATE}T02:00:00.000Z`), paidClick("bisoncash", `${DATE}T03:00:00.000Z`),
       paidClick("bisoncash", `${DATE}T04:00:00.000Z`), paidClick("bisoncash", `${DATE}T05:00:00.000Z`)]);

@@ -17,6 +17,11 @@
 
 ALTER TABLE ad_spend ADD COLUMN allocation TEXT NOT NULL DEFAULT 'exact' CHECK (allocation IN ('exact', 'estimated'));
 
+-- ad_spend.account: the Google Ads account a campaign level ingest split the row from. A rerun of a slot
+-- deletes that account's rows of brands no longer on it. NULL = account level ingest or a row from before
+-- 0022; core never deletes those for a brand that left an account.
+ALTER TABLE ad_spend ADD COLUMN account TEXT CHECK (account IS NULL OR (length(account) = 10 AND account NOT GLOB '*[^0-9]*'));
+
 CREATE TABLE campaign_brand_map (
   account     TEXT NOT NULL CHECK (length(account) = 10 AND account NOT GLOB '*[^0-9]*'),
   campaign_id TEXT NOT NULL CHECK (length(campaign_id) BETWEEN 1 AND 20 AND campaign_id NOT GLOB '*[^0-9]*'),
