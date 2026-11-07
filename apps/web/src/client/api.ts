@@ -3,9 +3,9 @@ import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contr
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
-import { ConversionSetupStateResponse } from "@anjuna/contracts";
+import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
-import { SettingsBrandsResponse } from "../shared/settings";
+import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
 import type { TimelineRequestQuery } from "./timeline";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
@@ -208,6 +208,8 @@ export const api = {
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
   brands: () => request<{ brands: BrandSummary[]; generated_at: string }>("GET", "/api/brands"),
   settingsBrands: () => request<unknown>("GET", "/api/settings/brands").then((body) => SettingsBrandsResponse.parse(body)), // spec settings
+  microsoftAdsSetting: () => request<unknown>("GET", "/api/settings/microsoft-ads").then((body) => MicrosoftAdsSettingResponse.parse(body)),
+  putMicrosoftAdsSetting: (account: string | null) => request<unknown>("PUT", "/api/settings/microsoft-ads", { microsoft_ads_account: account }).then((body) => MicrosoftAdsSettingResponse.parse(body)),
   brand: (id: string) => request<{ brand: BrandConfig }>("GET", `/api/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   conversionSetup: (id: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(id)}/conversion-setup`).then((body) => ConversionSetupStateResponse.parse(body).conversion_setup),
   siteTextDefaults: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/site-text`).then((body) => SiteTextDefaultsResponse.parse(body)),
@@ -235,6 +237,11 @@ export const api = {
   updateDraft: (brandId: string, body: UpdateBrandDraftRequest) => request<unknown>("PATCH", `/api/brands/${encodeURIComponent(brandId)}/draft`, body).then((result) => UpdateBrandDraftResponse.parse(result)),
   wizardDraft: (brandId: string) => request<unknown>("GET", `/api/wizard/drafts/${encodeURIComponent(brandId)}`).then((result) => WizardDraft.parse(result)),
   wizardDefaults: () => request<unknown>("GET", "/api/wizard/defaults").then((result) => WizardDefaultsResponse.parse(result)),
+  /** Wizard step 4: the AdKit directory (fresh rows only) and the conversion action job, through /api/v1 with the session. */
+  adkitProjects: () => request<unknown>("GET", "/api/v1/adkit/projects").then((result) => AdkitDirectoryResponse.parse(result)),
+  adkitAccounts: (project: string) => request<unknown>("GET", `/api/v1/adkit/projects/${encodeURIComponent(project)}/accounts`).then((result) => AdkitDirectoryResponse.parse(result)),
+  /** Idempotent: the same key answers the same job, so the wizard polls by repeating the call. */
+  createConversionAction: (brandDraftId: string, idempotencyKey?: string) => request<unknown>("POST", "/api/v1/adkit/conversion-actions", { brand_draft_id: brandDraftId, ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}) }).then((result) => AdkitJobCreateResponse.parse(result)),
   zoneCheck: (domain: string, brandId?: string) => request<unknown>("POST", "/api/wizard/zone-check", { domain, ...(brandId ? { brand_id: brandId } : {}) }).then((result) => ZoneCheckResponse.parse(result)),
   duplicateBrand: (brandId: string, body: DuplicateBrandRequest) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/duplicate`, body).then((result) => DuplicateBrandResponse.parse(result)),
   /** Checks the draft, then starts the install; a second call while it runs answers with the same install id. */

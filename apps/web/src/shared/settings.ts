@@ -1,7 +1,7 @@
 /**
  * Shape of GET /api/settings/brands (src/server/settings.ts) shared with the SPA. Panel-only: not a core admin contract.
  */
-import { BrandConfig, BrandId, Hostname } from "@anjuna/contracts";
+import { BrandConfig, BrandId, Hostname, MicrosoftAdsAccount } from "@anjuna/contracts";
 import { z } from "zod";
 
 /** One brand of the Settings table. `unavailable` = core listed the brand but its getBrand failed. */
@@ -16,3 +16,10 @@ export const SettingsBrandsResponse = z.strictObject({
   generated_at: z.iso.datetime(),
 });
 export type SettingsBrandsResponse = z.infer<typeof SettingsBrandsResponse>;
+
+/** GET and PUT /api/settings/microsoft-ads: the one Microsoft Ads account for every brand, null when unset. */
+export const MicrosoftAdsSettingResponse = z.strictObject({
+  microsoft_ads_account: MicrosoftAdsAccount.nullable(),
+  updated_at: z.iso.datetime().nullable(),
+});
+export type MicrosoftAdsSettingResponse = z.infer<typeof MicrosoftAdsSettingResponse>;

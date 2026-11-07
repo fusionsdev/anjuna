@@ -35,6 +35,7 @@ export interface WizardForm {
   google_ads_account: string;
   google_conversion_action: string;
   adkit_project: string;
+  /** Not shown: it moved to the global settings. A value an older draft holds is carried so a save keeps it. */
   microsoft_ads_account: string;
 }
 export type FieldKey = keyof WizardForm;
