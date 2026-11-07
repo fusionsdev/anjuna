@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SettingsScreen } from "../src/client/screens/Settings";
 import { UpgradeWizard } from "../src/client/screens/UpgradeWizard";
 import { answerConfirm } from "./confirm";
 
@@ -11,15 +12,19 @@ const version = (id: string, name: string, v: number, archived = false) => ({
 });
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 let calls: { method: string; path: string; body: unknown }[] = [];
+let latestFails = 0;
+const latestGets = () => calls.filter((c) => c.method === "GET" && c.path === "/api/upgrade-all/latest").length;
 
 beforeEach(() => {
   calls = [];
+  latestFails = 0;
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     calls.push({ method, path: input, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     if (input === "/api/templates?include_archived=1") return json({ templates: [version("tv-1", "old", 1, true), version("tv-2", "new", 2)], categories: [] });
     if (input === "/api/templates") return json({ templates: [version("tv-2", "new", 2)], categories: [] });
-    if (input === "/api/upgrade-all/latest") return json({ upgrade: null });
+    if (input === "/api/settings/brands") return json({ rows: [], generated_at: "2026-10-01T00:00:00Z" });
+    if (input === "/api/upgrade-all/latest") return latestFails-- > 0 ? json({ error: "boom" }, 500) : json({ upgrade: null });
     if (input === "/api/upgrade-all" && method === "POST") return json({ instance_id: "u1" }, 201);
     throw new Error(`Unexpected test HTTP request: ${input}`);
   }));
@@ -32,8 +37,10 @@ describe("UpgradeWizard", () => {
     await screen.findByRole("option", { name: /old v1/ });
     fireEvent.change(screen.getByLabelText("เวอร์ชันเดิม"), { target: { value: "tv-1" } });
     fireEvent.change(screen.getByLabelText("เวอร์ชันใหม่"), { target: { value: "tv-2" } });
-    fireEvent.change(screen.getByLabelText("form_artifact_id"), { target: { value: "fa-1" } });
-    fireEvent.change(screen.getByLabelText("canary_brand_id"), { target: { value: "brand-c" } });
+    fireEvent.change(screen.getByLabelText("รหัสอาร์ติแฟกต์ฟอร์ม"), { target: { value: "fa-1" } });
+    fireEvent.change(screen.getByLabelText("รหัสแบรนด์ทดลอง"), { target: { value: "brand-c" } });
+    await screen.findByText(/ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง/);
+    const before = latestGets();
     fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์" }));
     const dialog = await answerConfirm(true);
     expect(dialog.textContent).toContain("tv-1");
@@ -41,6 +48,7 @@ describe("UpgradeWizard", () => {
     expect(calls.find((c) => c.method === "POST")!.body).toEqual({
       from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "brand-c",
     });
+    await waitFor(() => expect(latestGets()).toBeGreaterThan(before));
   });
 
   it("offers an archived sealed version as from but not as to", async () => {
@@ -52,8 +60,10 @@ describe("UpgradeWizard", () => {
   it("sends nothing when the dialog is cancelled", async () => {
     render(<UpgradeWizard me={owner} />);
     await screen.findAllByRole("option", { name: /new v2/ });
+    fireEvent.change(screen.getByLabelText("เวอร์ชันใหม่"), { target: { value: "tv-2" } });
     fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์" }));
-    await answerConfirm(false);
+    const dialog = await answerConfirm(false);
+    expect(dialog.textContent).toContain("tv-2");
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
@@ -66,5 +76,23 @@ describe("UpgradeWizard", () => {
   it("shows upgrade outcomes under the wizard", async () => {
     render(<UpgradeWizard me={owner} />);
     await screen.findByText(/ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง/);
+  });
+
+  it("recovers failed outcomes with the refresh button and no new upgrade", async () => {
+    latestFails = 1;
+    render(<UpgradeWizard me={owner} />);
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "รีเฟรช" }));
+    await screen.findByText(/ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง/);
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("shows the wizard on Settings for the owner only", async () => {
+    const view = render(<SettingsScreen me={owner} />);
+    await screen.findByLabelText("เวอร์ชันเดิม");
+    view.unmount();
+    render(<SettingsScreen me={employee} />);
+    await screen.findByText(/ยังไม่มีแบรนด์/);
+    expect(screen.queryByLabelText("เวอร์ชันเดิม")).toBeNull();
   });
 });

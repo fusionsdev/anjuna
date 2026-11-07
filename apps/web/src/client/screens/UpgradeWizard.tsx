@@ -63,7 +63,7 @@ export function UpgradeWizard({ me }: { me: Me }) {
 
   return <section className="panel upgrade-card">
     <h2>อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)</h2>
-    <p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p>
+    <p className="muted">อัปเกรดแบรนด์ทดลองก่อน; อาร์ติแฟกต์ปลายทางต้องมีข้อมูลรุ่น <code>2026-01</code> และชื่อชุดไฟล์แยกเป็น <code>form@…</code></p>
     {loadError && <p role="alert">{loadError}</p>}
     <div className="form-inline">
       <select aria-label="เวอร์ชันเดิม" value={form.from_template_version_id} onChange={set("from_template_version_id")}>
@@ -74,9 +74,12 @@ export function UpgradeWizard({ me }: { me: Me }) {
         <option value="">เลือกเวอร์ชันใหม่</option>
         {toList.map((t) => <option key={t.template_version_id} value={t.template_version_id}>{optionLabel(t)}</option>)}
       </select>
-      <input aria-label="form_artifact_id" placeholder="form_artifact_id" value={form.form_artifact_id} onChange={set("form_artifact_id")} />
-      <input aria-label="canary_brand_id" placeholder="canary_brand_id" value={form.canary_brand_id} onChange={set("canary_brand_id")} />
+      <input aria-label="รหัสอาร์ติแฟกต์ฟอร์ม" placeholder="รหัสอาร์ติแฟกต์ฟอร์ม" value={form.form_artifact_id} onChange={set("form_artifact_id")} />
+      <input aria-label="รหัสแบรนด์ทดลอง" placeholder="รหัสแบรนด์ทดลอง" value={form.canary_brand_id} onChange={set("canary_brand_id")} />
       <button type="button" className="btn danger" disabled={busy} onClick={() => void start()}>เริ่มอัปเกรดทุกแบรนด์</button>
+    </div>
+    <div className="form-inline">
+      <button type="button" className="btn" onClick={() => setRefresh((n) => n + 1)}>รีเฟรช</button>
     </div>
     <UpgradeOutcomes refresh={refresh} />
     {confirmDialog}
