@@ -306,6 +306,14 @@ export async function createCampaignJob(
   });
   const key = await campaignIdempotencyKey(req.kind, ref.brand_id, ref.account, ref.name, c.finished[req.kind] ?? 0);
   const known = await findByKey(env, key);
+  if (known && req.kind === "campaign.update_budget"
+    && (JSON.parse(known.payload) as { daily_budget: number }).daily_budget !== req.daily_budget) {
+    // The key holds a pending budget job with another amount: answering it with 200 would drop the new amount.
+    return adminError(context, {
+      error: "conflict", current_updated_at: known.updated_at,
+      message: `A budget change is still pending (job ${known.id}, status ${known.status}); wait for it before another amount`,
+    });
+  }
   if (known) return json(AdkitJobCreateResponse.parse({ job: publicJob(known), created: false }), 200);
 
   if (req.kind === "campaign.status_check") return insertJob(env, context, req.kind, ref, key, at, false);

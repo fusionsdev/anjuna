@@ -235,6 +235,17 @@ describe("campaign.enable and the other jobs", () => {
     expect(job.payload).toMatchObject({ campaign_id: campaignId, daily_budget: 2500 });
   });
 
+  it("a second budget change with another amount while the first is pending is 409 naming the pending job", async () => {
+    const campaignId = await draftDone("petvet", 1, 1000);
+    await enabled(campaignId);
+    const first = await queued(await post({ kind: "campaign.update_budget", campaign_id: campaignId, daily_budget: 1500 }));
+    const same = await post({ kind: "campaign.update_budget", campaign_id: campaignId, daily_budget: 1500 });
+    expect(same.status).toBe(200);
+    const other = await post({ kind: "campaign.update_budget", campaign_id: campaignId, daily_budget: 1800 });
+    expect(other.status).toBe(409);
+    expect(await other.json()).toMatchObject({ error: "conflict", message: expect.stringContaining(first.id) });
+  });
+
   it("pause of a campaign that is not enabled is 409; an unknown campaign is 404", async () => {
     const campaignId = await draftDone("petvet", 1, 500);
     expect((await post({ kind: "campaign.pause", campaign_id: campaignId })).status).toBe(409);
