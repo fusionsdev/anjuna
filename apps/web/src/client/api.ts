@@ -37,9 +37,21 @@ import type {
   TemplateZipImportRequest,
 } from "@anjuna/contracts";
 
-/** GET /api/brands/checklists. `template_approved` is false while the brand's newest template version waits for approval. */
+/**
+ * One brand in GET /api/brands/checklists. `template_approved` is false while a version of its template at or above the deployed one
+ * waits for approval, and `template_waiting_id` is that version. `unknown` is true when core did not answer, so the computed rows
+ * cannot be trusted: read nothing from the checklist and offer no step.
+ */
+export interface BrandChecklistEntry {
+  checklist: Array<{ item: ChecklistItemName; evidence: unknown }>;
+  template_approved: boolean;
+  template_waiting_id: string | null;
+  unknown?: boolean;
+}
+
+/** GET /api/brands/checklists, keyed by brand id. */
 export interface BrandChecklists {
-  brands: Record<string, { checklist: Array<{ item: ChecklistItemName; evidence: unknown }>; template_approved: boolean }>;
+  brands: Record<string, BrandChecklistEntry>;
 }
 
 export interface Me {

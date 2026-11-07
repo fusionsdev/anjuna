@@ -22,7 +22,8 @@ let requests: string[];
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 /** Serves the given live brands and a batch checklist read; every brand also gets the detail routes the selected one asks for. */
-function serve(brandIds: string[], batch: Record<string, { checklist: Array<{ item: string; evidence: unknown }>; template_approved: boolean }> | "fail") {
+type Entry = { checklist: Array<{ item: string; evidence: unknown }>; template_approved: boolean; template_waiting_id?: string | null; unknown?: boolean };
+function serve(brandIds: string[], batch: Record<string, Entry> | "fail") {
   const list = brandIds.map((id) => lifecycle(id, `${id}.test`));
   routes.set("GET /api/lifecycle/brands", () => json({ brands: list }));
   routes.set("GET /api/brands", () => json({ brands: brandIds.map(runtimeRow), generated_at: "2026-10-06T00:00:00Z" }));
@@ -121,6 +122,15 @@ describe("Brands screen reads the checklists in one request", () => {
     render(<BrandLifecycle me={employee} />);
     await waitFor(() => expect(primary("a.test")!.dataset.nextAction).toBe("approve-template"));
     expect(primary("a.test")!.disabled).toBe(true);
+  });
+
+  it("raises nothing and offers no step for a brand whose checklist is unknown", async () => {
+    serve(["a", "b"], { a: { checklist: [], template_approved: true, unknown: true }, b: { checklist: everything, template_approved: true } });
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(names()).toHaveLength(2));
+    expect(chipButton(/^ต้องแก้/).textContent).toContain("0");
+    expect(primary("a.test")!.dataset.nextAction).toBe("open");
+    expect(primary("a.test")!.disabled).toBe(false);
   });
 
   it("shows the plain open button for a brand with every item done", async () => {

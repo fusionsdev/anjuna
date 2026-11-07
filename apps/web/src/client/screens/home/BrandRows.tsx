@@ -3,7 +3,7 @@ import { isDemoBrand } from "../../brand-health";
 import { checklistFlags, isStale } from "../../home-metrics";
 import { nextAction, type LifecycleRow, type NextAction, type Role } from "../../lifecycle-state";
 import { navigate, routePath } from "../../router";
-import type { BrandChecklists } from "../../api";
+import type { BrandChecklistEntry, BrandChecklists } from "../../api";
 import { byCurrencyText, type ByCurrency } from "../BrandStatsRow";
 import { num } from "./shared";
 
@@ -15,17 +15,19 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 /** Open actions rank first, the plain open button last: the brands that need a person sit on top. */
-const needsPerson = (action: NextAction) => !(action.kind === "open" && action.label === "ดูแบรนด์");
+const needsPerson = (action: NextAction) => action.kind !== "open";
 
 /** The state `nextAction` reads. Checklist facts are passed only for a brand the batch lists; for any other brand they are unknown and never block. */
-function rowOf(brand: LifecycleBrandSummary, entry: BrandChecklists["brands"][string] | undefined): LifecycleRow {
-  const flags = checklistFlags(entry?.checklist);
+function rowOf(brand: LifecycleBrandSummary, entry: BrandChecklistEntry | undefined, paused: boolean): LifecycleRow {
+  const flags = checklistFlags(entry);
   return {
     status: brand.status,
     runtime_sync_status: brand.runtime_sync_status,
     bundle_form_version: brand.bundle_form_version,
     payload_version: brand.payload_version,
     latest_install: brand.latest_install ?? null,
+    // Core pauses a brand while its factory status still reads live, so the pause comes from the runtime list, as on the Brands screen.
+    paused,
     ...(entry ? { template_approved: entry.template_approved } : {}),
     ...(flags.drain_route !== undefined ? { drain_route: flags.drain_route } : {}),
     ...(flags.test_sold !== undefined ? { test_sold: flags.test_sold } : {}),
@@ -51,16 +53,18 @@ function brandLeads(funnel: FunnelReportResponse | null | undefined, brand: Life
 }
 
 /** The button only navigates: a template goes to Templates, every other action to the brand. The dialog actions belong to Task 5. */
-const open = (action: NextAction, brandId: string) => navigate(action.kind === "approve-template" ? routePath({ view: "templates", templateId: null }) : routePath({ view: "brands", brandId }));
+const open = (action: NextAction, brandId: string, templateVersionId: string | null) => navigate(action.kind === "approve-template" ? routePath({ view: "templates", templateId: templateVersionId }) : routePath({ view: "brands", brandId }));
 
 /**
  * One row per brand with the numbers of the period and the one button `nextAction` picks. Spend and cost per lead are owner only
  * and come from the server's baht rows. `undefined` is loading, `null` is failed.
  */
-export function BrandRows({ role, brands, checklists, funnel, spend }: {
+export function BrandRows({ role, brands, checklists, paused, funnel, spend }: {
   role: Role;
   brands: LifecycleBrandSummary[] | null | undefined;
   checklists: BrandChecklists | null | undefined;
+  /** Ids of the brands core has paused. Null while loading or when the runtime list failed: nothing is known, so no brand reads as paused. */
+  paused: ReadonlySet<string> | null | undefined;
   funnel: FunnelReportResponse | null | undefined;
   /** Owner only. `undefined` while loading, `null` when it failed or the period has no rows. */
   spend: PanelSpendReportResponse | null | undefined;
@@ -69,7 +73,7 @@ export function BrandRows({ role, brands, checklists, funnel, spend }: {
   const now = new Date();
   const rows = (brands ?? [])
     .filter((brand) => brand.status !== "retired" && !isDemoBrand(brand))
-    .map((brand) => ({ brand, action: nextAction(rowOf(brand, checklists?.brands[brand.brand_id]), role) }))
+    .map((brand) => ({ brand, action: nextAction(rowOf(brand, checklists?.brands[brand.brand_id], paused?.has(brand.brand_id) === true), role) }))
     .sort((a, b) => Number(needsPerson(b.action)) - Number(needsPerson(a.action)));
   return (
     <section className="panel" aria-label="แบรนด์">
@@ -92,7 +96,7 @@ export function BrandRows({ role, brands, checklists, funnel, spend }: {
               <span data-col="leads" data-label="ลีด">{funnel === undefined ? "…" : leads === null ? "—" : num(leads)}</span>
               {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : byCurrencyText(cost)}</span>}
               {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : byCurrencyText(perLead)}</span>}
-              <button type="button" className={`btn${needsPerson(action) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => open(action, brand.brand_id)}>{action.label}</button>
+              <button type="button" className={`btn${needsPerson(action) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => open(action, brand.brand_id, checklists?.brands[brand.brand_id]?.template_waiting_id ?? null)}>{action.label}</button>
             </li>
           );
         })}

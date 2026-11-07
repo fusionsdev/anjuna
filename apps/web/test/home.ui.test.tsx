@@ -59,9 +59,9 @@ const BRANDS = [lifecycleBrand("cg", "Creditgenie", "live"), lifecycleBrand("d6"
 const evidence = (item: string) => ({ item, evidence: {} });
 // cg: test sold and drain route done. d6: drain route done, test sold still open.
 const checklistsBody = (templateApproved = true) => ({ brands: {
-  cg: { checklist: [evidence("test_sold"), evidence("drain_route")], template_approved: templateApproved },
-  d6: { checklist: [evidence("drain_route")], template_approved: true },
-  demo01: { checklist: [], template_approved: true },
+  cg: { checklist: [evidence("test_sold"), evidence("drain_route")], template_approved: templateApproved, template_waiting_id: templateApproved ? null : "tv-2" },
+  d6: { checklist: [evidence("drain_route")], template_approved: true, template_waiting_id: null },
+  demo01: { checklist: [], template_approved: true, template_waiting_id: null },
 } });
 
 let funnel: (from: string) => Response | Promise<Response>;
@@ -71,6 +71,7 @@ let alertsBody: unknown;
 let alertsReply: () => Response | Promise<Response>;
 let brandsReply: () => Response | Promise<Response>;
 let checklistsReply: () => Response | Promise<Response>;
+let runtimeReply: () => Response | Promise<Response>;
 let spend: ReturnType<typeof vi.fn>;
 const realSpend = api.spend;
 let requests: string[];
@@ -86,6 +87,7 @@ beforeEach(() => {
   alertsReply = () => json(alertsBody);
   brandsReply = () => json({ brands: BRANDS });
   checklistsReply = () => json(checklistsBody());
+  runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "live" }, { brand_id: "d6", status: "live" }] });
   spend = vi.fn(async (period: string) => (period === "30d" ? spendReport(84000, 1200) : spendReport(62300, 402)));
   (api as unknown as { spend: unknown }).spend = spend;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
@@ -98,6 +100,7 @@ beforeEach(() => {
     if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
     if (url.pathname === "/api/lifecycle/brands") return brandsReply();
     if (url.pathname === "/api/brands/checklists") return checklistsReply();
+    if (url.pathname === "/api/brands") return runtimeReply();
     throw new Error(`Unexpected test HTTP request: ${input}`);
   }));
 });
@@ -855,11 +858,12 @@ describe("Home screen, work queue", () => {
     await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("approve-template"));
     expect(rowButton("cg")!.textContent).toBe("อนุมัติเทมเพลต");
     fireEvent.click(rowButton("cg")!);
-    expect(window.location.pathname).toBe("/templates");
+    // The Templates screen opens on the version that waits.
+    expect(window.location.pathname).toBe("/templates/tv-2");
   });
 
   it("offers set-route when the brand has no drain route, and leaves owner-only actions disabled for an employee", async () => {
-    checklistsReply = () => json({ brands: { cg: { checklist: [evidence("test_sold")], template_approved: true }, d6: { checklist: [evidence("drain_route")], template_approved: false } } });
+    checklistsReply = () => json({ brands: { cg: { checklist: [evidence("test_sold")], template_approved: true, template_waiting_id: null }, d6: { checklist: [evidence("drain_route")], template_approved: false, template_waiting_id: "tv-9" } } });
     const { unmount } = render(<HomeScreen me={owner} />);
     await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("set-route"));
     expect(rowButton("cg")).toMatchObject({ textContent: "ตั้งเส้นทาง", disabled: false });
@@ -879,6 +883,45 @@ describe("Home screen, work queue", () => {
     await waitFor(() => expect(rowButton("cg")).toBeTruthy());
     expect(rowButton("cg")!.dataset.nextAction).toBe("open");
     expect(rowButton("d6")!.dataset.nextAction).toBe("open");
+  });
+
+  it("gives a brand core has paused the same next step as the Brands screen: resume", async () => {
+    runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "paused" }, { brand_id: "d6", status: "live" }] });
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("resume"));
+    expect(rowButton("cg")).toMatchObject({ textContent: "เปิดใช้งานต่อ", disabled: false });
+    expect(rowButton("d6")!.dataset.nextAction).toBe("test-sold");
+    fireEvent.click(rowButton("cg")!);
+    expect(window.location.pathname).toBe("/brands/cg");
+  });
+
+  it("treats a failed runtime list as no pause, never inventing one", async () => {
+    runtimeReply = () => json({ error: "core_unavailable" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(rowButton("d6")!.dataset.nextAction).toBe("test-sold"));
+    expect(rowButton("cg")!.dataset.nextAction).toBe("open");
+  });
+
+  it("offers no fix button for a brand whose checklist is unknown because core did not answer", async () => {
+    checklistsReply = () => json({ brands: {
+      cg: { checklist: [], template_approved: true, template_waiting_id: null, unknown: true },
+      d6: { checklist: [evidence("drain_route"), evidence("test_sold")], template_approved: true, template_waiting_id: null },
+    } });
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")).toBeTruthy());
+    // No drain route row and no test sold row, yet nothing is offered: the open button shows.
+    expect(rowButton("cg")!.dataset.nextAction).toBe("open");
+    expect(rowButton("cg")!.disabled).toBe(false);
+    expect(rowButton("d6")!.dataset.nextAction).toBe("open");
+  });
+
+  it("ranks the brands that need a person first by the kind of the action", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(rowButton("d6")).toBeTruthy());
+    const order = [...brandsRegion().querySelectorAll<HTMLElement>("[data-brand-id]")].map((li) => li.dataset.brandId);
+    // d6 (test-sold) and dr (install) need a person; cg only opens.
+    expect(order.at(-1)).toBe("cg");
+    expect(order.slice(0, 2).sort()).toEqual(["d6", "dr"]);
   });
 
   it("shows each brand's leads, spend in baht and cost per lead in baht", async () => {

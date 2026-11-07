@@ -32,7 +32,7 @@ import { DraftDomain } from "../shared/wizard.js";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
 import { callCore } from "./core.js";
-import { drainRouteRow, smokeFinalUrlRow } from "./drain-route-checklist.js";
+import { drainRouteRow, smokeFinalUrlRow, smokeFinalUrlRows, smokeFinalUrlStatement } from "./drain-route-checklist.js";
 import { generateBrand } from "./generate.js";
 import { authorizePanel } from "./panel-roles.js";
 import { queueInstallRetry } from "./retry-install.js";
@@ -585,15 +585,25 @@ async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{
   return { brands: merged, core_error: coreError };
 }
 
-/** The checklist rows of one brand: the stored attestations plus the computed rows, sorted by item. */
-async function checklistRows(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Array<Record<string, unknown>>> {
-  const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all();
-  const rows: Array<Record<string, unknown>> = results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined }));
+type StoredRow = Record<string, unknown> & { brand_id?: string };
+
+/** Parses a stored checklist row. The brand id is only a grouping key of the batch read, so it is dropped from the row. */
+const storedRow = (r: Record<string, unknown>): Record<string, unknown> => ({
+  item: r.item, confirmed_by: r.confirmed_by, confirmed_role: r.confirmed_role, confirmed_at: r.confirmed_at,
+  evidence: JSON.parse(r.evidence_json as string),
+});
+
+/**
+ * One brand's rows: the stored attestations plus the computed rows, sorted by item. `unknown` is true when a computed row
+ * needs core and core did not answer, so the rows cannot tell a missing setting from an outage.
+ */
+async function assembleChecklist(env: Env, ctx: AdminRequestContext, brandId: string, stored: StoredRow[], finalUrl: Record<string, unknown> | null): Promise<{ rows: Array<Record<string, unknown>>; unknown: boolean }> {
+  const rows = stored.map(storedRow);
   const open = (item: string) => !rows.some((r) => r.item === item);
-  const finalUrl = open("final_url") ? await smokeFinalUrlRow(env.FACTORY, brandId) : null;
-  if (finalUrl) rows.push(finalUrl);
+  if (open("final_url") && finalUrl) rows.push(finalUrl);
   // One getBrand read serves every computed row; a stored attestation always wins.
-  const brand = open("leadsgate_postbacks") || open("drain_route") ? await coreBrand(env, ctx, brandId) : null;
+  const needsCore = open("leadsgate_postbacks") || open("drain_route");
+  const brand = needsCore ? await coreBrand(env, ctx, brandId) : null;
   if (brand) {
     const computed = [
       open("leadsgate_postbacks") ? globalPostbackRow(brand, brandId) : null,
@@ -602,22 +612,57 @@ async function checklistRows(env: Env, ctx: AdminRequestContext, brandId: string
     rows.push(...computed);
   }
   rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
-  return rows;
+  return { rows, unknown: needsCore && brand === null };
 }
+
+/** The rows of one brand for GET /api/brands/:id/checklist. */
+async function checklistRows(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Array<Record<string, unknown>>> {
+  const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all<StoredRow>();
+  const finalUrl = results.some((r) => r.item === "final_url") ? null : await smokeFinalUrlRow(env.FACTORY, brandId);
+  return (await assembleChecklist(env, ctx, brandId, results, finalUrl)).rows;
+}
+
+/** Runs `fn` over `items` with at most `limit` calls in flight. Results keep the order of `items`. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i]!); }
+  }));
+  return out;
+}
+
+/** Core getBrand reads cannot be batched, so the batch checklist runs at most this many at once. */
+const CORE_READ_CONCURRENCY = 6;
 
 /**
  * GET /api/brands/checklists: the rows of every live brand in one read, keyed by brand id, so Home and the Brands screen do not
- * ask once per brand. Each entry holds the same rows as GET /api/brands/:id/checklist. `template_approved` is false while the
- * brand's newest template version still waits for approval (status certified).
+ * ask once per brand. Each entry holds the same rows as GET /api/brands/:id/checklist.
+ * - `unknown` is true when core did not answer for a brand that needs it: the client raises nothing and offers no step for it.
+ * - `template_approved` is false while a version of the brand's template at or above the deployed one waits for approval
+ *   (status certified). `template_waiting_id` is that version, so the Templates screen can open it.
+ * The D1 reads of all brands run as one batch; only the core getBrand reads remain one per brand, capped at 6 in flight.
  */
 export async function readBrandChecklists(env: Env, ctx: AdminRequestContext): Promise<Response> {
   const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
-  const { results } = await env.FACTORY.prepare(`SELECT b.brand_id, v.status AS template_status
-    FROM brands b
-    LEFT JOIN brand_revisions r ON r.revision_id = COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1))
-    LEFT JOIN template_versions v ON v.template_version_id = r.template_version_id
-    WHERE b.status = 'live' ORDER BY b.brand_id`).all<{ brand_id: string; template_status: string | null }>();
-  const entries = await Promise.all(results.map(async (row) => [row.brand_id, { checklist: await checklistRows(env, ctx, row.brand_id), template_approved: row.template_status !== "certified" }] as const));
+  const [brandRows, storedRows, smokeRows] = await env.FACTORY.batch([
+    env.FACTORY.prepare(`SELECT b.brand_id,
+      (SELECT w.template_version_id FROM template_versions w WHERE w.template_id = v.template_id AND w.status = 'certified' AND w.version >= v.version ORDER BY w.version DESC LIMIT 1) AS template_waiting_id
+      FROM brands b
+      LEFT JOIN brand_revisions r ON r.revision_id = COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1))
+      LEFT JOIN template_versions v ON v.template_version_id = r.template_version_id
+      WHERE b.status = 'live' ORDER BY b.brand_id`),
+    env.FACTORY.prepare("SELECT brand_id,item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id IN (SELECT brand_id FROM brands WHERE status = 'live') ORDER BY item"),
+    smokeFinalUrlStatement(env.FACTORY, null),
+  ]);
+  const brands = brandRows!.results as Array<{ brand_id: string; template_waiting_id: string | null }>;
+  const stored = new Map<string, StoredRow[]>();
+  for (const row of storedRows!.results as StoredRow[]) stored.set(row.brand_id!, [...(stored.get(row.brand_id!) ?? []), row]);
+  const finalUrls = smokeFinalUrlRows(smokeRows!.results as Array<{ brand_id: string; status: string; created_at: string }>);
+  const entries = await mapLimit(brands, CORE_READ_CONCURRENCY, async (brand) => {
+    const read = await assembleChecklist(env, ctx, brand.brand_id, stored.get(brand.brand_id) ?? [], finalUrls.get(brand.brand_id) ?? null);
+    return [brand.brand_id, { checklist: read.rows, template_approved: brand.template_waiting_id === null, template_waiting_id: brand.template_waiting_id, ...(read.unknown ? { unknown: true } : {}) }] as const;
+  });
   return json(200, { brands: Object.fromEntries(entries) });
 }
 

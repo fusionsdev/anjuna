@@ -69,11 +69,13 @@ const CHECKLIST_ITEMS = ["drain_route", "leadsgate_postbacks", "test_sold", "fin
 
 /**
  * What one brand's checklist rows say, in the three fields the brand screens read.
- * `rows` is the brand's entry of GET /api/brands/checklists, or undefined when the brand is not in it
- * (not live) or the read failed: then nothing is known and every field is undefined, so nothing is raised.
+ * `entry` is the brand's entry of GET /api/brands/checklists, or undefined when the brand is not in it (not live) or the read failed.
+ * An `unknown` entry means core did not answer, so the rows cannot tell a missing setting from an outage.
+ * In both cases nothing is known and every field is undefined: nothing is raised and no step is offered.
  */
-export function checklistFlags(rows: ReadonlyArray<{ item: string }> | undefined): { checklistFailing?: boolean; drain_route?: boolean; test_sold?: boolean } {
-  if (!rows) return {};
+export function checklistFlags(entry: { checklist: ReadonlyArray<{ item: string }>; unknown?: boolean } | undefined): { checklistFailing?: boolean; drain_route?: boolean; test_sold?: boolean } {
+  if (!entry || entry.unknown) return {};
+  const rows = entry.checklist;
   const has = (item: string) => rows.some((row) => row.item === item);
   return { checklistFailing: CHECKLIST_ITEMS.some((item) => !has(item)), drain_route: has("drain_route"), test_sold: has("test_sold") };
 }

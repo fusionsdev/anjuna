@@ -676,7 +676,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   function checklistFacts(brandId: string): Pick<LifecycleRow, "template_approved" | "drain_route" | "test_sold"> {
     const entry = checklists?.brands[brandId];
     if (!entry) return {};
-    const flags = checklistFlags(entry.checklist);
+    const flags = checklistFlags(entry);
     return { template_approved: entry.template_approved, drain_route: flags.drain_route, test_sold: flags.test_sold };
   }
   /** What nextAction reads for a row. The selected brand adds what only its install detail knows: the newest install status and recovery_required. */
@@ -763,7 +763,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const tableRows = brands.map((brand) => ({
     brand,
     name: brand.hostnames[0] ?? brand.name ?? brand.brand_id,
-    health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id), { coreListFailed: coreListError !== null, ...(checklists?.brands[brand.brand_id] ? { checklistFailing: checklistFlags(checklists.brands[brand.brand_id]!.checklist).checklistFailing } : {}) }),
+    health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id), { coreListFailed: coreListError !== null, ...(checklists?.brands[brand.brand_id] ? { checklistFailing: checklistFlags(checklists.brands[brand.brand_id]).checklistFailing } : {}) }),
     money: brandMoney(brand.brand_id, runtimeList, periodFunnel, spend),
     stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
   }));

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import brandFixture from "@anjuna/contracts/fixtures/admin/brand.get.response.json";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let owner: string;
@@ -17,6 +18,8 @@ beforeEach(async () => {
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,created_by,created_at) VALUES ('tv-cert','tpl-1',2,'sha-2','templates/tv-2','certified','owner','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-3','Quiet','astro','owner','2026-10-01T00:00:00Z')"),
+    env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-3','tpl-3',1,'sha-3','templates/tv-3','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO form_artifacts (form_artifact_id,git_sha,r2_key,manifest_sha256,payload_version,bundle_form_version,created_at) VALUES ('fa-1','abcdef1','forms/fa-1','manifest','2026-01','form@abcdef1','2026-10-01T00:00:00Z')"),
   ]);
 });
@@ -35,7 +38,8 @@ const attest = (brandId: string, item: string) => env.FACTORY.prepare(
   "INSERT INTO brand_checklist (brand_id,item,evidence_json,confirmed_by,confirmed_role,confirmed_at) VALUES (?1,?2,?3,'owner','owner','2026-10-20T00:00:00.000Z')",
 ).bind(brandId, item, JSON.stringify({ brand_id: brandId, item, actor_id: "owner", verified_at: "2026-10-20T00:00:00.000Z" })).run();
 
-type Batch = { brands: Record<string, { checklist: Array<Record<string, unknown>>; template_approved: boolean }> };
+type Entry = { checklist: Array<Record<string, unknown>>; template_approved: boolean; template_waiting_id: string | null; unknown?: boolean };
+type Batch = { brands: Record<string, Entry> };
 const batch = async (cookie: string, testEnv = coreDown) => {
   const response = await call("/api/brands/checklists", { cookie, env: testEnv });
   expect(response.status).toBe(200);
@@ -68,15 +72,83 @@ describe("GET /api/brands/checklists", () => {
     }
   });
 
-  it("marks a brand whose template still waits for approval", async () => {
+  it("marks a brand whose own template version waits for approval", async () => {
     const waiting = await draft("batch-waiting.example");
-    const approved = await draft("batch-approved.example");
     await goLive(waiting);
-    await goLive(approved);
     await env.FACTORY.prepare("UPDATE brand_revisions SET template_version_id='tv-cert' WHERE brand_id=?1").bind(waiting).run();
+    const entry = (await batch(owner)).brands[waiting]!;
+    expect(entry.template_approved).toBe(false);
+    expect(entry.template_waiting_id).toBe("tv-cert");
+  });
+
+  it("marks a brand on sealed v1 while v2 of the same template is certified and waiting", async () => {
+    const upgrading = await draft("batch-upgrade.example", "tv-1");
+    await goLive(upgrading);
+    const entry = (await batch(owner)).brands[upgrading]!;
+    // tv-1 is sealed v1 of tpl-1; tv-cert is v2 of tpl-1 and certified.
+    expect(entry.template_approved).toBe(false);
+    expect(entry.template_waiting_id).toBe("tv-cert");
+  });
+
+  it("approves a brand whose template has no certified version waiting", async () => {
+    const quiet = await draft("batch-quiet.example", "tv-3");
+    await goLive(quiet);
+    const entry = (await batch(owner)).brands[quiet]!;
+    expect(entry.template_approved).toBe(true);
+    expect(entry.template_waiting_id).toBeNull();
+  });
+
+  it("marks a brand unknown when core is down and a computed row is open, and only that brand", async () => {
+    const known = await draft("batch-known.example", "tv-3");
+    const open = await draft("batch-open.example", "tv-3");
+    await goLive(known);
+    await goLive(open);
+    // known has both core-computed rows attested in D1, so it never needs core.
+    await attest(known, "drain_route");
+    await attest(known, "leadsgate_postbacks");
     const body = await batch(owner);
-    expect(body.brands[waiting]!.template_approved).toBe(false);
-    expect(body.brands[approved]!.template_approved).toBe(true);
+    expect(body.brands[known]!.unknown).toBeUndefined();
+    expect(body.brands[open]!.unknown).toBe(true);
+    // The rows are still the stored ones: the outage adds no row and removes none.
+    expect(body.brands[open]!.checklist).toEqual([]);
+  });
+
+  it("does not mark a brand unknown when core answers", async () => {
+    const id = await draft("batch-core-up.example", "tv-3");
+    await goLive(id);
+    const coreUp = makeEnv({ CORE: { fetch: async () => Response.json({ brand: { ...brandFixture.brand, brand_id: id } }) } as unknown as Fetcher, MOCK_CORE: "0" });
+    const body = await batch(owner, coreUp);
+    expect(body.brands[id]!.unknown).toBeUndefined();
+  });
+
+  it("keeps at most 6 core reads in flight and still reads every live brand once", async () => {
+    for (let i = 0; i < 8; i++) await goLive(await draft(`batch-cap-${i}.example`, "tv-3"));
+    let inFlight = 0;
+    let peak = 0;
+    let calls = 0;
+    const slowCore = makeEnv({ CORE: { fetch: async () => {
+      calls++; inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      inFlight--;
+      return new Response("{}", { status: 502 });
+    } } as unknown as Fetcher, MOCK_CORE: "0" });
+    const body = await batch(owner, slowCore);
+    const needCore = Object.values(body.brands).filter((entry) => entry.unknown).length;
+    expect(needCore).toBeGreaterThanOrEqual(8);
+    expect(calls).toBe(needCore);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(6);
+  });
+
+  it("sends an employee no money field", async () => {
+    const id = await draft("batch-redact.example", "tv-3");
+    await goLive(id);
+    await attest(id, "test_sold");
+    const response = await call("/api/brands/checklists", { cookie: employee, env: coreDown });
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain(id);
+    expect(text).not.toMatch(/revenue|profit|cost_usd|payout/);
   });
 
   it("answers an empty map when no brand is live", async () => {

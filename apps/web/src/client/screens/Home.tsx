@@ -121,6 +121,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [templates, setTemplates] = useState<Value>(undefined);
   const [brands, setBrands] = useState<LifecycleBrandSummary[] | null | undefined>(undefined);
   const [checklists, setChecklists] = useState<BrandChecklists | null | undefined>(undefined);
+  const [paused, setPaused] = useState<ReadonlySet<string> | null | undefined>(undefined);
   // The whole reports feed the brand rows; the totals above feed the tiles. Both come from the same answer.
   const [funnelReport, setFunnelReport] = useState<FunnelReportResponse | null | undefined>(undefined);
   const [spendReport, setSpendReport] = useState<PanelSpendReportResponse | null | undefined>(undefined);
@@ -159,6 +160,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     // The brand list and one batch read of every live brand's checklist. The batch replaces one read per brand.
     api.lifecycleBrands().then(({ brands: list }) => current && setBrands(list), () => current && setBrands(null));
     api.checklists().then((batch) => current && setChecklists(batch), () => current && setChecklists(null));
+    // Core pauses a brand while its factory status still reads live, so the paused set comes from core's brand list like on the Brands screen.
+    api.brands().then((list) => current && setPaused(new Set(list.brands.filter((b) => b.status === "paused").map((b) => b.brand_id))), () => current && setPaused(null));
     return () => { current = false; };
   }, []);
 
@@ -255,7 +258,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </>
           )}
         </div>
-        <BrandRows role={me.role} brands={brands} checklists={checklists} funnel={funnelReport} spend={spendReport} />
+        <BrandRows role={me.role} brands={brands} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} />
         <section className="panel" aria-label="เงินไหลไปถึงไหน">
           <div className="home-ptitle">
             <h2>{owner ? "เงินไหลไปถึงไหน" : "คนไหลไปถึงไหน"}</h2>
