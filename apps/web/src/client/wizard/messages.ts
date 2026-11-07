@@ -26,7 +26,24 @@ export const FIELD_LABEL: Record<FieldKey, string> = {
   microsoft_ads_account: "บัญชี Microsoft Ads (Microsoft Ads account)",
 };
 
-export const requiredText = (field: FieldKey): string => `${FIELD_LABEL[field]}: จำเป็นต้องกรอก (Required)`;
+/** Wizard step 4 (AdKit directory and the conversion action job). Thai only. */
+export const TRACKING_TEXT = {
+  project: "โปรเจกต์ AdKit",
+  account: "บัญชี Google Ads",
+  conversion: "conversion action",
+  pickProject: "เลือกโปรเจกต์",
+  pickAccount: "เลือกบัญชี",
+  notListed: "ไม่อยู่ในรายการล่าสุด",
+  stale: "ยังไม่มีข้อมูลจาก AdKit หรือข้อมูลเก่ากว่า 2 ชั่วโมง",
+  loadFailed: "โหลดข้อมูล AdKit ไม่สำเร็จ",
+  create: "สร้าง conversion action",
+  retry: "ลองสร้างใหม่",
+  needAccount: "เลือกบัญชี Google Ads ก่อนสร้าง conversion action",
+  readOnly: "Owner กำหนดค่านี้ · แสดงอย่างเดียว",
+  job: { queued: "รอคิว", claimed: "กำลังสร้าง", done: "สร้างแล้ว", failed: "สร้างไม่สำเร็จ" },
+} as const;
+
+export const requiredText =(field: FieldKey): string => `${FIELD_LABEL[field]}: จำเป็นต้องกรอก (Required)`;
 
 export interface IssueLike {
   code: string;

@@ -61,6 +61,8 @@ beforeEach(() => {
     }],
     ["GET /api/wizard/drafts/brand_new", () => json(heldBody())],
     ["POST /api/brands/brand_new/generate", () => json({ install_id: "ins_1", brand_id: "brand_new", status: "running" }, 201)],
+    ["GET /api/v1/adkit/projects", () => json({ items: [{ id: ADS.adkit_project, name: "Maple ads", currency: null, updated_at: new Date().toISOString() }], synced_at: new Date().toISOString() })],
+    [`GET /api/v1/adkit/projects/${ADS.adkit_project}/accounts`, () => json({ items: [{ id: ADS.google_ads_account, name: "Main", currency: "THB", updated_at: new Date().toISOString() }], synced_at: new Date().toISOString() })],
   ]);
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -136,7 +138,7 @@ describe("per-step validation", () => {
 
 describe("five-step flow to Generate", () => {
   it("creates the draft on the first Next, PATCHes on every later Next, then installs the saved revision", async () => {
-    const { onGenerated } = setup();
+    const { onGenerated } = setup(owner);
     await fillBrand();
     next();
 
@@ -174,16 +176,18 @@ describe("five-step flow to Generate", () => {
     await heading("ติดตามผล (Tracking)");
     expect(patches()).toHaveLength(2);
     expect(patches()[1]!.body).toEqual({ profile: { contact: CONTACT, copy: { site_title: "Maple Cash | Quick Funding", h1: "{{keyword}} in minutes", cta: "Check my rate" } } });
-    fill("บัญชี Google Ads (Google Ads account)", ADS.google_ads_account);
-    fill("รหัส conversion action (Conversion action)", ADS.google_conversion_action);
-    fill("โปรเจกต์ AdKit (AdKit project)", ADS.adkit_project);
-    fill("บัญชี Microsoft Ads (Microsoft Ads account)", ADS.microsoft_ads_account);
+    // Step 4 has selects from the AdKit directory and no text input (wizard-step4.ui.test.tsx covers the job).
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }) as HTMLSelectElement).options).toHaveLength(2));
+    fireEvent.change(screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }), { target: { value: ADS.adkit_project } });
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "บัญชี Google Ads" }) as HTMLSelectElement).options).toHaveLength(2));
+    fireEvent.change(screen.getByRole("combobox", { name: "บัญชี Google Ads" }), { target: { value: ADS.google_ads_account } });
     next();
 
     // Step 4 -> Review: summary, zone pre-check and the preview iframe.
     await heading("ตรวจสอบ (Review)");
     expect(patches()).toHaveLength(3);
-    expect((patches()[2]!.body.profile as { ads: object }).ads).toEqual(ADS);
+    expect((patches()[2]!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: ADS.google_ads_account, adkit_project: ADS.adkit_project });
     expect(patches().every((patch) => !JSON.stringify(patch.body).includes("disclosures"))).toBe(true);
     // The tenant values stay read-only in the summary, which lists no term, APR or state row.
     expect(await screen.findByText("100, 200, 300")).toBeTruthy();
@@ -292,7 +296,7 @@ describe("resume", () => {
   it.each<[string, object | undefined, string]>([
     ["contact saved", { contact: CONTACT }, "เทมเพลต (Template)"],
     ["contact and the disclosures of an older draft saved", { contact: CONTACT, disclosures: OLD_DISCLOSURES }, "เทมเพลต (Template)"],
-    ["copy saved", { contact: CONTACT, copy: {} }, "ติดตามผล (Tracking)"],
+    ["copy saved, for an employee who cannot set tracking ids", { contact: CONTACT, copy: {} }, "ตรวจสอบ (Review)"],
     ["everything saved", { contact: CONTACT, copy: {}, ads: {} }, "ตรวจสอบ (Review)"],
   ])("opens at the first incomplete step when %s", async (_name, profile, expected) => {
     resume(profile);
@@ -335,9 +339,16 @@ describe("resume", () => {
     next();
     await heading("ตรวจสอบ (Review)");
     // The later PATCHes replace the profile with the saved groups kept. The older draft's disclosures are not shown and not dropped.
-    expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, disclosures: { ...OLD_DISCLOSURES, term_max_months: 48 }, copy: {}, ads: {} } });
+    // The Tracking step is read-only to an employee (owner only, useAdkit) and saves nothing, so the Copy step's PATCH is the last.
+    expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, disclosures: { ...OLD_DISCLOSURES, term_max_months: 48 }, copy: {} } });
     expect(screen.queryByText(/Max APR|Term, months|Unsupported states/)).toBeNull();
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(0);
+  });
+
+  it("opens an owner at the Tracking step when the copy is saved", async () => {
+    hold({ contact: CONTACT, copy: {} });
+    setup(owner, { brandId: "brand_new" });
+    await heading("ติดตามผล (Tracking)");
   });
 
   it("opens at a given step, as a duplicate does at the Brand step", async () => {
@@ -363,34 +374,25 @@ describe("tracking step roles", () => {
     setup(me, { brandId: "brand_new", initialStep: 3 });
   };
 
-  it("lets an employee type tracking ids today, because panel-roles allows it", async () => {
+  it("shows them read-only to an employee, because the AdKit directory and jobs are owner only, and does not send ads", async () => {
     atTracking(employee);
     await heading("ติดตามผล (Tracking)");
-    expect(text("บัญชี Google Ads (Google Ads account)").value).toBe(ADS.google_ads_account);
-    expect(screen.queryByText(/Owner กำหนดค่านี้/)).toBeNull();
-  });
-
-  it("shows them read-only with 'Owner sets this' to an employee once panel-roles requires the owner, and does not send ads", async () => {
-    (PANEL_ROLE_TABLE as Record<string, string>).setDraftTracking = "owner";
-    atTracking(employee);
-    await heading("ติดตามผล (Tracking)");
-    expect(screen.getByRole("note").textContent).toBe("Owner กำหนดค่านี้ (The Owner sets this) · แสดงอย่างเดียว (Read-only)");
+    expect(screen.getByRole("note").textContent).toBe("Owner กำหนดค่านี้ · แสดงอย่างเดียว");
     expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.getByText(ADS.google_ads_account)).toBeTruthy();
     next();
     await heading("ตรวจสอบ (Review)");
     expect(patches()).toHaveLength(0);
   });
 
-  it("keeps the inputs for an owner under the same rule", async () => {
+  it("keeps the selects for an owner when panel-roles requires the owner for tracking ids", async () => {
     (PANEL_ROLE_TABLE as Record<string, string>).setDraftTracking = "owner";
     atTracking(owner);
     await heading("ติดตามผล (Tracking)");
-    expect(text("บัญชี Google Ads (Google Ads account)").value).toBe(ADS.google_ads_account);
-    fill("บัญชี Google Ads (Google Ads account)", "123-456-7890");
-    next();
-    expect((await screen.findByRole("alert")).textContent).toBe("บัญชี Google Ads (Google Ads account): ต้องเป็นเลข 10 หลักไม่มีขีด (10 digits, no dashes)");
-    expect(patches()).toHaveLength(0);
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "บัญชี Google Ads" }) as HTMLSelectElement).value).toBe(ADS.google_ads_account));
+    expect((screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }) as HTMLSelectElement).value).toBe(ADS.adkit_project);
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 });
 

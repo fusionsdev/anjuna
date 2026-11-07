@@ -228,3 +228,24 @@ describe("/api/v1 adkit", () => {
     expect(core.seen).toHaveLength(1);
   });
 });
+
+describe("global Microsoft Ads account setting", () => {
+  it("is owner only, validates the id, clears with null and writes an audit row", async () => {
+    expect((await call("/api/settings/microsoft-ads", { cookie: employee })).status).toBe(403);
+    expect((await call("/api/settings/microsoft-ads", { cookie: employee, method: "PUT", body: { microsoft_ads_account: "123456" } })).status).toBe(403);
+    expect(await (await call("/api/settings/microsoft-ads", { cookie: owner })).json()).toEqual({ microsoft_ads_account: null, updated_at: null });
+    expect((await call("/api/settings/microsoft-ads", { cookie: owner, method: "PUT", body: { microsoft_ads_account: "12-34" } })).status).toBe(422);
+
+    const saved = await call("/api/settings/microsoft-ads", { cookie: owner, method: "PUT", body: { microsoft_ads_account: "123456" } });
+    expect(saved.status).toBe(200);
+    expect(await (await call("/api/settings/microsoft-ads", { cookie: owner })).json()).toMatchObject({ microsoft_ads_account: "123456", updated_at: expect.any(String) });
+    expect((await call("/api/settings/microsoft-ads", { cookie: owner, method: "PUT", body: { microsoft_ads_account: null } })).status).toBe(200);
+    expect(await (await call("/api/settings/microsoft-ads", { cookie: owner })).json()).toMatchObject({ microsoft_ads_account: null });
+
+    const audit = await env.FACTORY.prepare("SELECT before_json, after_json FROM audit_log WHERE action = 'settings.microsoft_ads_account' ORDER BY id").all<{ before_json: string; after_json: string }>();
+    expect(audit.results.map((r) => [JSON.parse(r.before_json), JSON.parse(r.after_json)])).toEqual([
+      [{ microsoft_ads_account: null }, { microsoft_ads_account: "123456" }],
+      [{ microsoft_ads_account: "123456" }, { microsoft_ads_account: null }],
+    ]);
+  });
+});

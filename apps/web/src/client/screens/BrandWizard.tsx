@@ -27,7 +27,8 @@ export interface BrandWizardProps {
 }
 
 export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: BrandWizardProps) {
-  const canEditTracking = roleAtLeast(me.role, PANEL_ROLE_TABLE.setDraftTracking);
+  // Step 4 reads the AdKit directory and queues jobs, which core serves to an owner only (useAdkit).
+  const canEditTracking = roleAtLeast(me.role, PANEL_ROLE_TABLE.setDraftTracking) && roleAtLeast(me.role, PANEL_ROLE_TABLE.useAdkit);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -216,7 +217,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
         {stepId === "brand" && <BrandPanel form={form} errors={errors} set={set} hasDraft={draft !== null} zone={zone} onCheckZone={() => void checkZone()} />}
         {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} theme={theme} onTheme={setTheme} themeVars={themeVars} />}
         {stepId === "copy" && <CopyPanel form={form} errors={errors} set={set} templateText={templateText} />}
-        {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} />}
+        {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} draftId={draft?.brand.brand_id ?? null} saveAds={() => patch({ profile: { ...(draft?.profile ?? {}), ads: adsOf(form) } })} />}
         {stepId === "review" && <ReviewPanel form={form} templateName={chosen ? `${chosen.name} v${chosen.version}` : templateId} defaults={defaults} zone={zone} onCheckZone={() => void checkZone()} previewSrc={draft ? `/api/wizard/preview/${encodeURIComponent(draft.brand.brand_id)}?r=${previewNonce}` : null} canEditTracking={canEditTracking} />}
         {notice && <p className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{notice}</p>}
         <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginTop: 18 }}>
@@ -257,7 +258,6 @@ function ReviewPanel({ form, templateName, defaults, zone, onCheckZone, previewS
         <Row label="บัญชี Google Ads (Google Ads account)" value={form.google_ads_account} />
         <Row label="conversion action" value={form.google_conversion_action} />
         <Row label="โปรเจกต์ AdKit (AdKit project)" value={form.adkit_project} />
-        <Row label="บัญชี Microsoft Ads (Microsoft Ads account)" value={form.microsoft_ads_account} />
       </div>
       {!canEditTracking && <p className="hint">Owner กำหนดค่าติดตามผล (The Owner sets the tracking ids)</p>}
       <h3>โซน Cloudflare (Cloudflare zone)</h3>
