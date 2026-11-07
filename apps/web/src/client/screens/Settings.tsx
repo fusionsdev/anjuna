@@ -22,6 +22,7 @@ import {
   touchesMoney,
   type SettingsDraft,
 } from "../settings-draft";
+import { UpgradeWizard } from "./UpgradeWizard";
 import { SettingsEditor, type EditorBanner } from "./SettingsEditor";
 import type { SettingsRow } from "../../shared/settings";
 import "./Settings.css";
@@ -32,7 +33,7 @@ const NONE = "—";
 
 const CONFLICT_TEXT = "มีคนแก้ไขแบรนด์นี้หลังจากคุณเปิด โหลดค่าล่าสุดแล้ว ตรวจการแก้ไขแล้วบันทึกอีกครั้ง (Someone changed this brand after you opened it. The latest values are loaded; review your edits and save again.)";
 
-export function SettingsScreen() {
+export function SettingsScreen({ me }: { me?: { id: string; email: string; role: string } } = {}) {
   const [rows, setRows] = useState<SettingsRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The brand id whose row drawer is open.
@@ -252,6 +253,7 @@ export function SettingsScreen() {
     {editBrand && draft && (
       <SettingsEditor brand={editBrand} draft={draft} onDraft={(d) => { if (!saving) setDraft(d); }} onReview={review} onClose={requestClose} banner={banner} saving={saving} />
     )}
+    {me && <UpgradeWizard me={me} />}
     {confirmDialog}
     {toast && <Toast kind={toast.kind} text={toast.text} onDismiss={() => setToast(null)} />}
   </div>;

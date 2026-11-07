@@ -19,7 +19,6 @@ import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, usePeriodFunnel, 
 import { BrandFilters } from "./BrandFilters";
 import { BrandWizard } from "./BrandWizard";
 import { ConfigPanel } from "./ConfigPanel";
-import { UpgradeOutcomes } from "./UpgradeOutcomes";
 import "./Brands.css";
 
 type InstallHistoryRow = { install_id: string; status: string; error: string | null };
@@ -152,7 +151,6 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [coreListError, setCoreListError] = useState<CoreListError | null>(null);
   // Every live brand's checklist in one read. Null while loading or when the read failed: unknown, so nothing is raised and no step is offered.
   const [checklists, setChecklists] = useState<BrandChecklists | null>(null);
-  const [upgradeRefresh, setUpgradeRefresh] = useState(0);
   const [configBrandId, setConfigBrandId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [state, setState] = useState<LifecycleState>();
@@ -230,7 +228,6 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const periodFunnel = usePeriodFunnel(period, refresh, weekFunnel);
   // The spend API answers 403 to an Employee, so only the Owner asks, and only the Owner sees money columns.
   const spend = useSpendReport(period, owner, refresh);
-  const [upgrade, setUpgrade] = useState({ from_template_version_id: "", to_template_version_id: "", form_artifact_id: "", canary_brand_id: "" });
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
   // The wizard replaces this screen's JSX, which hides {confirmDialog}; close an open question so it cannot come back later.
@@ -583,7 +580,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   async function retryFor(brand: LifecycleBrandSummary, installId?: string) {
     const id = installId ?? (brand.brand_id === selectedIdRef.current ? install?.install_id : brand.latest_install?.install_id);
     if (!id) return;
-    await dispatchOperation(async () => { const accepted = await api.retryInstall(id); setUpgradeRefresh((value) => value + 1); return accepted; }, id);
+    await dispatchOperation(async () => { const accepted = await api.retryInstall(id); return accepted; }, id);
   }
   async function recover(target: LifecycleBrandSummary | undefined = selected) {
     if (!target) return;
@@ -777,17 +774,6 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     return items;
   }
 
-  async function startUpgradeAll() {
-    const ok = await confirm({
-      title: "เริ่มอัปเกรดทุกแบรนด์?",
-      body: `Upgrade every brand from ${upgrade.from_template_version_id || "—"} to ${upgrade.to_template_version_id || "—"}, canary ${upgrade.canary_brand_id || "—"} first.`,
-      confirmLabel: "เริ่มอัปเกรด",
-      tone: "danger",
-    });
-    if (!ok) return;
-    await act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); });
-  }
-
   /** A fix button in the checklist runs its action through the shared dialog path. */
   function fixStep(item: ChecklistItemName) {
     if (!selected) return;
@@ -912,8 +898,6 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     </div>
     {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); onSelectBrand?.(brandId); }} />}
     {configBrandId && configBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={brands.find((brand) => brand.brand_id === configBrandId)?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
-    {owner && <section className="panel upgrade-card"><h2>อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)</h2><p className="muted">อัปเกรดแบบ canary ก่อน; target artifact ต้องมี payload <code>2026-01</code> และ bundle identity แยกเป็น <code>form@…</code></p><div className="form-inline">{Object.entries(upgrade).map(([key, value]) => <input key={key} aria-label={key} placeholder={key} value={value} onChange={(e) => setUpgrade({ ...upgrade, [key]: e.target.value })} />)}<button className="btn danger" onClick={() => void startUpgradeAll()}>เริ่มอัปเกรดทุกแบรนด์</button></div></section>}
-    {owner && <UpgradeOutcomes refresh={refresh + upgradeRefresh} />}
     {toast && <Toast key={toast.id} kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
     {confirmDialog}
     {brandActions.view}
