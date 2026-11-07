@@ -68,12 +68,12 @@ Rule: the spend of every account is split so that the brand rows add up to the a
 
 Performance Max, keyword research, creative generation, Microsoft Ads, automatic budget optimisation, splitting spend inside one campaign across brands (a campaign belongs to one brand).
 
-## Decisions for the owner
+## Decisions (owner, 2026-11-08)
 
-1. Default `ads_allocation_mode`: `estimated` (every brand always has a number, marked "~") or `exact_only` (no number until the campaign is mapped). Recommended: `estimated`.
-2. Add `utm_campaign={campaignid}` to the account level Final URL suffix of every Google Ads account (one AdKit write per account, 2 accounts today)? It is the cheapest way to make the mapping exact. Recommended: yes, as a job through Part C, after the first AdKit write is approved.
-3. Starting caps: total per day and per brand per day in baht.
-4. Terminal and campaign enable stay owner only; employee gets read only mode. Recommended: yes.
+1. Default `ads_allocation_mode` is `estimated`. Every brand always has a number, marked "~" while its campaigns are unmapped.
+2. Yes: add `utm_campaign={campaignid}` to the account level Final URL suffix of the two Google Ads accounts. It is an AdKit write, done as a Part C job after the first AdKit write is approved by the owner in the panel.
+3. Caps: 3,000 baht. Applied as `ads_cap_total_thb_day = 3000` and `ads_cap_brand_thb_day = 3000` (a brand cap above the total cap is refused). Both are editable by the owner in Settings. A cap limits what can be enabled, it is not a spend target. To be confirmed by the owner if a lower per brand cap is wanted.
+4. Yes: Terminal and campaign enable are owner only. Employees get read only mode.
 
 ## Facts to verify while building
 
