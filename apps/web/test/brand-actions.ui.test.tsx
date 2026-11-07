@@ -158,6 +158,52 @@ describe("useBrandActions", () => {
     expect(attest).toHaveBeenCalledTimes(2);
   });
 
+  it("drops a late install read: Beta's dialog stays when Alpha's read returns after it", async () => {
+    const alpha = deferred<unknown>();
+    const beta = deferred<unknown>();
+    vi.spyOn(api, "installDetail").mockImplementation((id: string) => (id === "inst-a" ? alpha.promise : beta.promise) as never);
+    const retry = vi.spyOn(api, "retryInstall").mockResolvedValue({ install_id: "n", brand_id: "b", status: "queued" });
+    act(() => { void actions.run("retry-install", brandA); });
+    act(() => { void actions.run("retry-install", { ...brandB, installId: "inst-b" }); });
+    await act(async () => { beta.resolve({ install_id: "inst-b", recovery_required: false }); });
+    await waitFor(() => expect(dialog().textContent).toContain("beta.test"));
+    // Alpha's read needs recovery and returns late: it must not navigate, toast or replace the dialog.
+    await act(async () => { alpha.resolve({ install_id: "inst-a", recovery_required: true }); });
+    expect(dialog().textContent).toContain("beta.test");
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.click(confirmButton("ลองใหม่"));
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+    expect(retry).toHaveBeenCalledWith("inst-b");
+  });
+
+  it("does nothing when the hook unmounts during the install read", async () => {
+    const gate = deferred<unknown>();
+    vi.spyOn(api, "installDetail").mockReturnValue(gate.promise as never);
+    const retry = vi.spyOn(api, "retryInstall").mockResolvedValue({ install_id: "n", brand_id: "a", status: "queued" });
+    act(() => { void actions.run("retry-install", brandA); });
+    cleanup();
+    await act(async () => { gate.resolve({ install_id: "inst-a", recovery_required: true }); });
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("batch test sold keeps typed lead ids after an empty-lead reopen, and Cancel after the reopen sends nothing", async () => {
+    const attest = vi.spyOn(api, "attestChecklist").mockResolvedValue({});
+    act(() => { void actions.runBatch("test-sold", [brandA, brandB]); });
+    await waitFor(() => expect(dialog()).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("lead_id alpha.test"), { target: { value: "l1" } });
+    fireEvent.click(confirmButton("ยืนยัน"));
+    await waitFor(() => expect(dialog().textContent).toContain("กรอก lead_id ของ beta.test"));
+    expect((screen.getByLabelText("lead_id alpha.test") as HTMLInputElement).value).toBe("l1");
+    fireEvent.click(screen.getByRole("button", { name: /ยกเลิก/ }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(attest).not.toHaveBeenCalled();
+  });
+
   it("calls onDone after a successful request", async () => {
     cleanup();
     const onDone = vi.fn();

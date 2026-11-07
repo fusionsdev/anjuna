@@ -1,4 +1,4 @@
-import { createElement, Fragment, type ReactNode, useCallback, useRef, useState } from "react";
+import { createElement, Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api";
 import { Toast } from "./components/Toast";
 import { useConfirm } from "./components/ConfirmDialog";
@@ -59,6 +59,12 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const [toast, setToast] = useState<{ id: number; kind: "ok" | "err"; text: string } | null>(null);
   const seq = useRef(0);
+  // Bumped by every new run and by unmount. An answer that arrives for an older generation is dropped, so a late read cannot open a dialog, toast or navigate.
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current += 1;
+    return () => { generation.current += 1; };
+  }, []);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const show = useCallback((kind: "ok" | "err", text: string) => setToast({ id: (seq.current += 1), kind, text }), []);
@@ -107,6 +113,8 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
     }
     const key = keyOf(action, brand);
     if (inFlight.current.has(key)) return;
+    const mine = (generation.current += 1);
+    const stale = () => generation.current !== mine;
     const leads: Record<string, string> = {};
     const copy = COPY[action];
     if (action === "retry-install") {
@@ -114,13 +122,14 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
       if (!brand.installId) { show("err", "ไม่พบการติดตั้งที่จะลองใหม่"); return; }
       try {
         const detail = await api.installDetail(brand.installId);
+        if (stale()) return;
         if (detail.recovery_required === true) {
           show("ok", `${brand.domain} ต้องกู้คืนก่อน เปิดหน้าแบรนด์เพื่อกู้คืน`);
           navigate(routePath({ view: "brands", brandId: brand.id }));
           return;
         }
       } catch (error) {
-        show("err", failureText(error));
+        if (!stale()) show("err", failureText(error));
         return;
       }
     }
