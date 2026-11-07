@@ -120,6 +120,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [conversions, setConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
   const [daily, setDaily] = useState<DailyCount[] | null | undefined>(undefined);
   const [templates, setTemplates] = useState<Value>(undefined);
+  // "name vN" by template version id, for the approve dialog. A sealed version is shared by every brand on it.
+  const [templateLabels, setTemplateLabels] = useState<Record<string, string>>({});
   const [brands, setBrands] = useState<LifecycleBrandSummary[] | null | undefined>(undefined);
   const [checklists, setChecklists] = useState<BrandChecklists | null | undefined>(undefined);
   const [paused, setPaused] = useState<ReadonlySet<string> | null | undefined>(undefined);
@@ -158,7 +160,11 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     let current = true;
     api.alerts().then((report) => current && setAlerts(report), () => current && setAlerts(null));
     api.templates().then(
-      (list) => current && setTemplates(list.templates.filter((t) => t.status === "awaiting_approval").length),
+      (list) => {
+        if (!current) return;
+        setTemplates(list.templates.filter((t) => t.status === "awaiting_approval").length);
+        setTemplateLabels(Object.fromEntries(list.templates.map((t) => [t.template_version_id, `${t.name} v${t.version}`])));
+      },
       () => current && setTemplates(null),
     );
     // The brand list and one batch read of every live brand's checklist. The batch replaces one read per brand.
@@ -208,7 +214,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const actionBrand = (b: LifecycleBrandSummary): ActionBrand => ({ id: b.brand_id, name: b.name ?? b.brand_id, domain: b.hostnames[0] ?? b.brand_id });
   const drafts: Value = brands === undefined ? undefined : brands === null ? null : brands.filter((b) => b.status === "draft").length;
   const tasks: HumanTask[] = [
-    { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", show: true, onOpen: () => { if (testSoldBrands) void actions.runBatch("test-sold", testSoldBrands.map(actionBrand)); } },
+    { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", show: true, onOpen: () => { if (testSoldBrands) void actions.runBatch("test-sold", testSoldBrands.map(actionBrand)); else go("brands")(); } },
     { id: "templates", title: "อนุมัติเทมเพลต", count: templates, unit: "รายการ", show: owner, onOpen: go("templates") },
     { id: "drafts", title: "ร่างที่ยังไม่กดสร้าง", count: drafts, unit: "ร่าง", show: true, onOpen: go("new-brand") },
   ];
@@ -264,7 +270,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </>
           )}
         </div>
-        <BrandRows role={me.role} brands={brands} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, brand)} />
+        <BrandRows role={me.role} brands={brands} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
         <section className="panel" aria-label="เงินไหลไปถึงไหน">
           <div className="home-ptitle">
             <h2>{owner ? "เงินไหลไปถึงไหน" : "คนไหลไปถึงไหน"}</h2>

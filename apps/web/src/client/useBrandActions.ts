@@ -7,7 +7,7 @@ import { navigate, routePath } from "./router";
 export type BrandAction = "test-sold" | "retry-install" | "approve-template" | "set-route";
 
 /** The brand a dialog names. `installId` is the install Retry repeats; `templateId` is the template version Approve certifies. */
-export interface ActionBrand { id: string; name: string; domain: string; installId?: string | null; templateId?: string | null }
+export interface ActionBrand { id: string; name: string; domain: string; installId?: string | null; templateId?: string | null; templateLabel?: string | null }
 
 const keyOf = (action: BrandAction, brand: ActionBrand) => `${action}:${brand.id}`;
 const label = (brand: ActionBrand) => `${brand.name} · ${brand.domain}`;
@@ -27,7 +27,7 @@ const COPY: Record<Exclude<BrandAction, "set-route">, { title: (b: ActionBrand) 
   },
   "approve-template": {
     title: (b) => `อนุมัติเทมเพลตของ ${label(b)}?`,
-    body: (b) => `เทมเพลตที่ ${label(b)} รออยู่จะถูกอนุมัติ เฉพาะเจ้าของทำได้`,
+    body: (b) => `เทมเพลต ${b.templateLabel ?? "ที่รออนุมัติ"} ของ ${label(b)} จะถูกอนุมัติ เวอร์ชันที่ปิดผนึกแล้วใช้ร่วมกันทุกแบรนด์ที่ใช้เวอร์ชันนี้ เฉพาะเจ้าของทำได้`,
     confirm: "อนุมัติเทมเพลต",
     done: (b) => `อนุมัติเทมเพลตของ ${b.domain} แล้ว`,
   },
@@ -42,7 +42,7 @@ function leadRows(brands: ActionBrand[], leads: Record<string, string>): ReactNo
     createElement("input", {
       "aria-label": `lead_id ${brand.domain}`,
       placeholder: "lead_id",
-      defaultValue: "",
+      defaultValue: leads[brand.id] ?? "",
       onChange: (event: { target: { value: string } }) => { leads[brand.id] = event.target.value; },
     }),
   )));
@@ -82,6 +82,22 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
     }
   };
 
+  /** Asks for a lead_id per brand. An empty field keeps the dialog open with a message; only Cancel or a full set ends it. */
+  const askLeads = useCallback(async (title: string, intro: string, brands: ActionBrand[], leads: Record<string, string>, confirmLabel: string): Promise<boolean> => {
+    let problem: string | null = null;
+    for (;;) {
+      const ok = await confirm({
+        title,
+        body: createElement(Fragment, null, createElement("p", null, intro), problem ? createElement("p", { role: "alert", className: "error" }, problem) : null, leadRows(brands, leads)),
+        confirmLabel,
+      });
+      if (!ok) return false;
+      const missing = brands.find((brand) => !leads[brand.id]?.trim());
+      if (!missing) return true;
+      problem = `กรอก lead_id ของ ${missing.domain} ก่อนยืนยัน Test sold`;
+    }
+  }, [confirm]);
+
   const run = useCallback(async (action: BrandAction, brand: ActionBrand): Promise<void> => {
     if (action === "set-route") {
       // Opening the route form changes nothing, so it needs no question.
@@ -93,15 +109,27 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
     if (inFlight.current.has(key)) return;
     const leads: Record<string, string> = {};
     const copy = COPY[action];
-    const ok = await confirm({
-      title: copy.title(brand),
-      body: action === "test-sold" ? createElement(Fragment, null, createElement("p", null, copy.body(brand)), leadRows([brand], leads)) : copy.body(brand),
-      confirmLabel: copy.confirm,
-    });
+    if (action === "retry-install") {
+      // A failed install that holds recovery evidence is refused by Retry (409). Brands offers Recover for it, so the brand page opens instead.
+      if (!brand.installId) { show("err", "ไม่พบการติดตั้งที่จะลองใหม่"); return; }
+      try {
+        const detail = await api.installDetail(brand.installId);
+        if (detail.recovery_required === true) {
+          show("ok", `${brand.domain} ต้องกู้คืนก่อน เปิดหน้าแบรนด์เพื่อกู้คืน`);
+          navigate(routePath({ view: "brands", brandId: brand.id }));
+          return;
+        }
+      } catch (error) {
+        show("err", failureText(error));
+        return;
+      }
+    }
+    const ok = action === "test-sold"
+      ? await askLeads(copy.title(brand), copy.body(brand), [brand], leads, copy.confirm)
+      : await confirm({ title: copy.title(brand), body: copy.body(brand), confirmLabel: copy.confirm });
     // The same action may have been confirmed while this dialog was open.
     if (!ok || inFlight.current.has(key)) return;
     const lead = leads[brand.id]?.trim();
-    if (action === "test-sold" && !lead) { show("err", `กรอก lead_id ของ ${brand.domain} ก่อนยืนยัน Test sold`); return; }
     hold([key]);
     try {
       await send(action, brand, lead);
@@ -112,7 +140,7 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
     } finally {
       release([key]);
     }
-  }, [confirm, show]);
+  }, [confirm, show, askLeads]);
 
   /** One request per brand, in order. The first failure stops the rest and names its brand. */
   const runBatch = useCallback(async (action: "test-sold", brands: ActionBrand[]): Promise<void> => {
@@ -120,14 +148,8 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
     if (todo.length === 0) return;
     const leads: Record<string, string> = {};
     const copy = COPY[action];
-    const ok = await confirm({
-      title: `ยืนยัน Test sold ${todo.length} แบรนด์?`,
-      body: createElement(Fragment, null, createElement("p", null, "กรอก lead_id ที่ตรวจแล้วของแต่ละแบรนด์ ระบบส่งทีละแบรนด์และหยุดเมื่อมีแบรนด์ที่ไม่สำเร็จ"), leadRows(todo, leads)),
-      confirmLabel: copy.confirm,
-    });
+    const ok = await askLeads(`ยืนยัน Test sold ${todo.length} แบรนด์?`, "กรอก lead_id ที่ตรวจแล้วของแต่ละแบรนด์ ระบบส่งทีละแบรนด์และหยุดเมื่อมีแบรนด์ที่ไม่สำเร็จ", todo, leads, copy.confirm);
     if (!ok) return;
-    const missing = todo.find((brand) => !leads[brand.id]?.trim());
-    if (missing) { show("err", `กรอก lead_id ของ ${missing.domain} ก่อนยืนยัน Test sold`); return; }
     const keys = todo.map((brand) => keyOf(action, brand));
     if (keys.some((key) => inFlight.current.has(key))) return;
     hold(keys);
@@ -149,7 +171,7 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
       release(keys);
       if (done > 0) optionsRef.current.onDone?.();
     }
-  }, [confirm, show]);
+  }, [confirm, show, askLeads]);
 
   const view = createElement(Fragment, null, dialog, toast ? createElement(Toast, { key: toast.id, kind: toast.kind, text: toast.text, onDismiss: dismiss }) : null);
   return { run, runBatch, pending, view };

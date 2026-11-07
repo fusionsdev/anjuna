@@ -844,6 +844,17 @@ describe("Home screen, work queue", () => {
     expect(await todo.findByText("2 รายการ")).toBeTruthy();
   });
 
+  it("opens Brands from the Test sold task when the checklist read failed", async () => {
+    checklistsReply = () => json({ error: "core_unavailable" }, 502);
+    const onGo = vi.fn();
+    render(<HomeScreen me={owner} onGo={onGo} />);
+    const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
+    await todo.findByText("— แบรนด์");
+    fireEvent.click(todo.getAllByRole("button", { name: "เปิด" })[0]!);
+    expect(onGo).toHaveBeenCalledWith("brands");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
   it("lists the brands but not demo brands, one button each from nextAction", async () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(rowButton("cg")).toBeTruthy());
