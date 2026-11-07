@@ -79,6 +79,11 @@ export const CampaignSpendIngestRequest = z.strictObject({
   account: GoogleAdsAccount,
   /** Billing currency of the account. Every row of the request is in it. */
   currency: SpendCurrency,
+  /**
+   * Offset of the account time zone from UTC in minutes (420 for Asia/Bangkok). `date` and `hour` of
+   * every row are in that zone; core buckets click weights with the same offset.
+   */
+  utc_offset_minutes: z.number().int().min(-720).max(840),
   rows: z.array(CampaignSpendRow).max(SPEND_INGEST_MAX_ROWS),
 });
 export type CampaignSpendIngestRequest = z.infer<typeof CampaignSpendIngestRequest>;

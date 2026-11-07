@@ -280,7 +280,8 @@ describe("POST /api/spend/campaign-ingest", () => {
   const setMode = (mode: string) => h.factory.prepare(`INSERT INTO panel_settings (key, value_json, updated_by, updated_at)
     VALUES ('ads_allocation_mode', ?1, 'usr_owner_01', '2026-11-01T00:00:00.000Z')
     ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json`).bind(JSON.stringify(mode)).run();
-  const body = (rows: unknown[], extra: Record<string, unknown> = {}) => ({ account: ACCOUNT, currency: "THB", rows, ...extra });
+  const body = (rows: unknown[], extra: Record<string, unknown> = {}) =>
+    ({ account: ACCOUNT, currency: "THB", utc_offset_minutes: 0, rows, ...extra });
   const pick = (rows: Record<string, unknown>[], ...keys: string[]) => rows.map((r) => keys.map((k) => r[k]));
 
   beforeEach(async () => {
@@ -309,7 +310,11 @@ describe("POST /api/spend/campaign-ingest", () => {
   it.each([
     ["malformed JSON", "{rows:"],
     ["a bad account", body([], { account: "538-116-3935" })],
-    ["a missing currency", { account: ACCOUNT, rows: [] }],
+    ["a missing currency", { account: ACCOUNT, utc_offset_minutes: 0, rows: [] }],
+    ["a missing utc_offset_minutes", { account: ACCOUNT, currency: "THB", rows: [] }],
+    ["a utc_offset_minutes above 840", body([], { utc_offset_minutes: 841 })],
+    ["a utc_offset_minutes below -720", body([], { utc_offset_minutes: -721 })],
+    ["a fractional utc_offset_minutes", body([], { utc_offset_minutes: 420.5 })],
     ["a non-numeric campaign id", body([{ date: DATE, hour: 1, campaign_id: "summer", cost: 1, clicks: 1, impressions: 1 }])],
     ["a negative cost", body([{ date: DATE, hour: 1, campaign_id: "222", cost: -1, clicks: 1, impressions: 1 }])],
     ["a brand_id field", body([{ brand_id: "petvetpay", date: DATE, hour: 1, campaign_id: "222", cost: 1, clicks: 1, impressions: 1 }])],
@@ -386,6 +391,36 @@ describe("POST /api/spend/campaign-ingest", () => {
       [DATE, "bisoncash", 6, "estimated"], [DATE, "petvetpay", 2, "estimated"],
       ["2026-11-06", "bisoncash", 0.03, "estimated"], ["2026-11-06", "petvetpay", 0.02, "estimated"],
     ]);
+  });
+
+  it("buckets clicks by the account's local hour with utc_offset_minutes 420", async () => {
+    // 03:10Z is 10:10 in Bangkok; 10:10Z is 17:10 in Bangkok.
+    await h.db.batch([
+      paidClick("petvetpay", `${DATE}T03:10:00.000Z`), paidClick("petvetpay", `${DATE}T03:20:00.000Z`),
+      paidClick("petvetpay", `${DATE}T03:30:00.000Z`), paidClick("bisoncash", `${DATE}T10:10:00.000Z`),
+    ]);
+    await campaignIngest(body([{ date: DATE, hour: 10, campaign_id: "222", cost: 100, clicks: 0, impressions: 0 }], { utc_offset_minutes: 420 }));
+    expect(pick((await allocationRows()).results, "brand_id", "cost", "allocation")).toEqual([
+      ["bisoncash", 0, "estimated"], ["petvetpay", 100, "estimated"],
+    ]);
+  });
+
+  it("counts a click before UTC midnight in the next local day and hour 0", async () => {
+    // 2026-11-04T17:30Z is 00:30 on 2026-11-05 in Bangkok; 2026-11-05T00:30Z is 07:30 there.
+    await h.db.batch([paidClick("petvetpay", "2026-11-04T17:30:00.000Z"), paidClick("bisoncash", `${DATE}T00:30:00.000Z`)]);
+    await campaignIngest(body([
+      { date: DATE, hour: 0, campaign_id: "222", cost: 100, clicks: 0, impressions: 0 },
+      { date: DATE, hour: null, campaign_id: "222", cost: 30, clicks: 0, impressions: 0 },
+    ], { utc_offset_minutes: 420 }));
+    expect(pick((await allocationRows()).results, "hour", "brand_id", "cost")).toEqual([
+      [null, "bisoncash", 15], [null, "petvetpay", 15], [0, "bisoncash", 0], [0, "petvetpay", 100],
+    ]);
+  });
+
+  it("buckets by UTC with utc_offset_minutes 0", async () => {
+    await h.db.batch([paidClick("petvetpay", "2026-11-04T17:30:00.000Z"), paidClick("bisoncash", `${DATE}T00:30:00.000Z`)]);
+    await campaignIngest(body([{ date: DATE, hour: 0, campaign_id: "222", cost: 100, clicks: 0, impressions: 0 }]));
+    expect(pick((await allocationRows()).results, "brand_id", "cost")).toEqual([["bisoncash", 100], ["petvetpay", 0]]);
   });
 
   it("counts only paid clicks of the account's brands as weights", async () => {

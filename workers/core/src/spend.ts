@@ -119,11 +119,13 @@ const UNALLOCATED_CLEAR_SQL = `
       AND COALESCE(json_extract(j.value, '$.hour'), -1) = COALESCE(ad_spend_unallocated.hour, -1))`;
 
 /**
- * Paid clicks (a Google click id) of the given brands per UTC day and hour inside [from, to].
- * click_seen_at is UTC ISO 8601, so the day is its first 10 characters and the hour the next 2 digits.
+ * Paid clicks (a Google click id) of the given brands per local day and hour of the ad account, with
+ * click_seen_at (UTC ISO 8601) inside [?2, ?3). ?4 is the SQLite modifier that moves UTC to the account
+ * zone, for example '+420 minutes'.
  */
 const PAID_CLICKS_SQL = `
-  SELECT brand_id, substr(click_seen_at, 1, 10) AS date, CAST(substr(click_seen_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS n
+  SELECT brand_id, strftime('%Y-%m-%d', click_seen_at, ?4) AS date,
+         CAST(strftime('%H', click_seen_at, ?4) AS INTEGER) AS hour, COUNT(*) AS n
   FROM click_sessions
   WHERE brand_id IN (SELECT value FROM json_each(?1))
     AND (gclid IS NOT NULL OR gbraid IS NOT NULL OR wbraid IS NOT NULL)
@@ -131,21 +133,25 @@ const PAID_CLICKS_SQL = `
   GROUP BY brand_id, date, hour`;
 
 const slotKey = (date: string, hour: number | null) => `${date}|${hour ?? -1}`;
-const nextDay = (date: string) => new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10);
+const DAY_MS = 86_400_000;
+/** UTC instant of local midnight at the start of `date` (plus `days`) in a zone `offsetMinutes` ahead of UTC. */
+const localMidnightUtc = (date: string, offsetMinutes: number, days = 0) =>
+  new Date(Date.parse(`${date}T00:00:00.000Z`) + days * DAY_MS - offsetMinutes * 60_000).toISOString();
 
 /**
  * POST /api/spend/campaign-ingest (drain token, header only). Body: one account's campaign level cost.
  * Core first refreshes `click` map rows, then allocates each (date, hour) slot to the account's brands
  * (see spend-allocation.ts) and writes one ad_spend row per brand per slot, 0 included, so a rerun or a
  * changed mapping overwrites every earlier share. Weights for unmapped campaigns are the brands' paid
- * clicks in the same UTC hour, else that UTC day, else equal. All writes run in one D1 batch.
+ * clicks in the same local hour of the account (utc_offset_minutes), else that local day, else equal.
+ * All writes run in one D1 batch.
  */
 export async function handleCampaignSpendIngest(request: Request, env: Env): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
 
   const body = await readBody(request, CampaignSpendIngestRequest);
   if ("response" in body) return body.response;
-  const { account, currency, rows } = body.data;
+  const { account, currency, utc_offset_minutes: offset, rows } = body.data;
 
   const slots = new Map<string, { date: string; hour: number | null; campaigns: CampaignSpendRow[] }>();
   for (const row of rows) {
@@ -170,7 +176,10 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
   const dates = [...new Set(rows.map((r) => r.date))].sort();
   const [mapResult, clickResult] = await env.LEADS.batch([
     env.LEADS.prepare("SELECT campaign_id, brand_id FROM campaign_brand_map WHERE account = ?1").bind(account),
-    env.LEADS.prepare(PAID_CLICKS_SQL).bind(JSON.stringify(brands), `${dates[0]}T00:00:00.000Z`, `${nextDay(dates.at(-1)!)}T00:00:00.000Z`),
+    env.LEADS.prepare(PAID_CLICKS_SQL).bind(
+      JSON.stringify(brands), localMidnightUtc(dates[0]!, offset), localMidnightUtc(dates.at(-1)!, offset, 1),
+      `${offset < 0 ? "-" : "+"}${Math.abs(offset)} minutes`,
+    ),
   ]);
   const map = new Map((mapResult as D1Result<{ campaign_id: string; brand_id: string }>).results.map((r) => [r.campaign_id, r.brand_id]));
   const hourClicks = new Map<string, Record<string, number>>();
