@@ -4,8 +4,8 @@ import type { CoreClient } from "./core-client.js";
 export type UserAgentKind = "human" | BotKind;
 
 const ADSBOT = /AdsBot-Google|Mediapartners-Google/i;
-const GOOGLEBOT = /Googlebot|Google-InspectionTool|GoogleOther/i;
-const OTHER_BOT = /\b(?:bingbot|duckduckbot|yandexbot|baiduspider|applebot|ahrefsbot|semrushbot|facebookexternalhit|crawler|spider)\b/i;
+const GOOGLEBOT = /Googlebot|Google-InspectionTool/i;
+const OTHER_BOT = /GoogleOther|\b(?:bingbot|duckduckbot|yandexbot|baiduspider|applebot|ahrefsbot|semrushbot|facebookexternalhit|crawler|spider)\b/i;
 
 /**
  * Pure classifier. It only decides what gets logged: no response, header or status ever

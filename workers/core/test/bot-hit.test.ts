@@ -86,6 +86,19 @@ describe("bot_hits in the alerts report", () => {
     });
   });
 
+  it("omits bot_hits and keeps the report 200 when the counter read fails", async () => {
+    await h.db.prepare("ALTER TABLE bot_hits RENAME TO bot_hits_gone").run();
+    try {
+      const response = await h.admin(`/admin/alerts?now=${now}`, employee);
+      expect(response.status).toBe(200);
+      const body = AlertsReportResponse.parse(await response.json());
+      expect(body.bot_hits).toBeUndefined();
+      expect(body.conversion_stalled.state).toBe("ok");
+    } finally {
+      await h.db.prepare("ALTER TABLE bot_hits_gone RENAME TO bot_hits").run();
+    }
+  });
+
   it("stays ok when only Googlebot visited", async () => {
     await seed("brand-a", "2026-11-07T10:00:00Z", "googlebot", 3);
     expect((await report()).bot_hits?.state).toBe("ok");

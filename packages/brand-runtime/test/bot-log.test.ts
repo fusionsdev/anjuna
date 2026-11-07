@@ -14,6 +14,7 @@ describe("classifyUserAgent", () => {
     ["AdsBot-Google (+http://www.google.com/adsbot.html)", "adsbot"],
     [ADSBOT, "adsbot"],
     ["Mediapartners-Google", "adsbot"],
+    ["Mozilla/5.0 (compatible; GoogleOther)", "other-bot"],
     ["Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)", "other-bot"],
     [HUMAN, "human"],
     ["", "human"],
@@ -38,14 +39,19 @@ const visit = (path: string, ua: string | null) =>
   new Request(`https://brand-a.example${path}`, { headers: ua ? { "user-agent": ua } : {} });
 
 describe("bot logging at the brand entry", () => {
-  it.each(["/", "/privacy"])("serves identical bytes and headers to Googlebot and a human on %s", async (path) => {
-    const bot = fixture(); const human = fixture();
-    const botRes = await entry.fetch(visit(path, GOOGLEBOT), bot.env, bot.ctx);
+  const BINGBOT = "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)";
+  it.each(["/", "/privacy"])("serves identical bytes and headers to Googlebot, AdsBot, another bot and a human on %s", async (path) => {
+    const human = fixture();
     const humanRes = await entry.fetch(visit(path, HUMAN), human.env, human.ctx);
-    await Promise.all([bot.settle(), human.settle()]);
-    expect([botRes.status, await botRes.text(), [...botRes.headers].sort()])
-      .toEqual([humanRes.status, await humanRes.text(), [...humanRes.headers].sort()]);
-    expect(bot.hits).toHaveLength(1);
+    const expected = [humanRes.status, await humanRes.text(), [...humanRes.headers].sort()];
+    for (const ua of [GOOGLEBOT, ADSBOT, BINGBOT]) {
+      const bot = fixture();
+      const botRes = await entry.fetch(visit(path, ua), bot.env, bot.ctx);
+      await bot.settle();
+      expect([botRes.status, await botRes.text(), [...botRes.headers].sort()], ua).toEqual(expected);
+      expect(bot.hits, ua).toHaveLength(1);
+    }
+    await human.settle();
     expect(human.hits).toHaveLength(0);
   });
 
@@ -72,18 +78,27 @@ describe("bot logging at the brand entry", () => {
     await expect(f.settle()).resolves.toBeDefined();
   });
 
-  it("returns before the log call settles", async () => {
+  it("returns while the log call is still pending, so the entry never awaits it", async () => {
     const f = fixture();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
+    let logStarted = false;
+    let logSettled = false;
+    const logs: Promise<unknown>[] = [];
     const env = { ...f.env, CORE: { fetch: async (request: Request) => {
-      if (new URL(request.url).pathname === "/rpc/botHit") await gate;
+      if (new URL(request.url).pathname === "/rpc/botHit") { logStarted = true; await gate; return Response.json({ ok: true }); }
       return new Response("{}", { status: 503 });
     } } };
-    const res = await entry.fetch(visit("/", GOOGLEBOT), env, f.ctx);
+    const ctx = { waitUntil: (p: Promise<unknown>) => { logs.push(p.then(() => { logSettled = true; })); } } as unknown as ExecutionContext;
+    const res = await entry.fetch(visit("/", GOOGLEBOT), env, ctx);
     expect(res.status).toBe(200);
+    expect(logs).toHaveLength(1);
+    // The response is in hand and core has not been released: the log is still pending.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect([logStarted, logSettled]).toEqual([true, false]);
     release();
-    await f.settle();
+    await Promise.all(logs);
+    expect(logSettled).toBe(true);
   });
 });
 
