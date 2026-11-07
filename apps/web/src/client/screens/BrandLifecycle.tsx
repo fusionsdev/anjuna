@@ -337,7 +337,6 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useEffect(() => { void load(); }, [load, refresh]);
   // Computed rows (drain_route, leadsgate_postbacks, final_url) turn true server-side after the page loaded (the VPS drain creates the
   // conversion action within ~10 minutes). While one is open and the tab is visible, re-read the checklist every 60 s.
-  // test_sold is manual and never polled. The lead_id input has its own state, so a refresh does not reset it.
   const computedOpen = Boolean(selected) && computedChecklistItems.some((item) => !steps.find((step) => step.item === item)?.done);
   useEffect(() => {
     if (!selected || !computedOpen) return;
@@ -352,11 +351,12 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       void api.checklist(brandId).then((result) => {
         // An attest that started after this poll bumped the counter: this response is older than that write and is dropped.
         if (!active || seq !== checklistSeq.current || !canCommit(token, brandId)) return;
-        // Merge computed steps only and never reopen a finished one, so test_sold and steps already shown stay.
+        // Every step merges, test_sold too: this read can drop an action's refresh by taking the counter, so it must carry what that refresh would.
+        // A finished step is never reopened by an older answer.
         const fresh = stepsFromChecklist(result);
         setSteps((previous) => previous.length === 0 ? fresh : previous.map((step) => {
           const next = fresh.find((s) => s.item === step.item);
-          return next && computedChecklistItems.includes(step.item) && (next.done || !step.done) ? next : step;
+          return next && (next.done || !step.done) ? next : step;
         }));
       }, () => undefined).finally(() => { inFlight = false; });
     }, checklistRefreshMs);

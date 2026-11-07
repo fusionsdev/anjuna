@@ -237,4 +237,14 @@ describe("GET /api/brands/:id/checklist steps", () => {
     expect(body.steps.filter((s) => s.done).map((s) => s.item)).toEqual(["test_sold"]);
     expect(body.steps.find((s) => s.item === "drain_route")).toEqual({ item: "drain_route", done: false, evidence: null });
   });
+
+  it("keeps the event id in the evidence text of a verified Test sold", async () => {
+    const id = await draft("steps-event.example");
+    await goLive(id);
+    await env.FACTORY.prepare(
+      "INSERT INTO brand_checklist (brand_id,item,evidence_json,confirmed_by,confirmed_role,confirmed_at) VALUES (?1,'test_sold',?2,'owner','owner','2026-10-20T00:00:00.000Z')",
+    ).bind(id, JSON.stringify({ brand_id: id, item: "test_sold", actor_id: "owner", verified_at: "2026-10-20T00:00:00.000Z", event_id: "ev-1" })).run();
+    const body = await read(id);
+    expect(body.steps.find((s) => s.item === "test_sold")?.evidence).toBe("owner · 2026-10-20T00:00:00.000Z · event ev-1");
+  });
 });

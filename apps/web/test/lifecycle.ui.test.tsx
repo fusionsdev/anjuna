@@ -33,6 +33,12 @@ let lifecycleRows: LifecycleBrandSummary[];
 let requests: Array<{ method: string; path: string; body: Record<string, unknown> }>;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const lastBody = (path: string) => requests.filter((r) => r.path === path && r.method === "PATCH").at(-1)?.body;
+/** The Test sold fix button, once the install history read is done: it is disabled while that read runs, and a click then does nothing. */
+const enabledSoldButton = async () => {
+  const button = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+  return button;
+};
 const history = (installs: unknown[]) => routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
 const detail = (install: InstallWithReceipts) => routes.set(`GET /api/installs/${install.install_id}`, () => json(install));
 /** The row also has an Install and a Recover button (its primary one): the detail aside is the scope of these names. */
@@ -719,7 +725,7 @@ describe("lifecycle detail header", () => {
   });
 });
 
-describe("checklist actions and the brand selection", () => {
+describe("checklist actions and the brand selection", { timeout: 15_000 }, () => {
   const gateOf = () => { let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); return { gate, release }; };
   const second = () => LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] });
 
@@ -741,7 +747,7 @@ describe("checklist actions and the brand selection", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("keeps the open config and its typed input of another brand when a Test sold of the first brand finishes", async () => {
+  it("keeps the open config and its typed input of another brand when a Test sold of the first brand finishes", { timeout: 15_000 }, async () => {
     lifecycleRows = [structuredClone(brand), second()];
     const configB = { ...structuredClone(config), brand_id: "brand-b", hostnames: ["second.test"] };
     routes.set("GET /api/brands", () => json({ brands: [config, configB].map((c) => ({ brand_id: c.brand_id, hostnames: c.hostnames, status: c.status, flow_gate_mode: c.flow_gate_mode, ab_config: c.ab_config, form_version: c.form_version, stats_7d: { leads: 0, sold: 0, pending: 0 } })), generated_at: "2026-10-06T00:00:00Z" }));
@@ -755,7 +761,7 @@ describe("checklist actions and the brand selection", () => {
     const hold = gateOf();
     routes.set("POST /api/brands/brand-a/checklist", async () => { await hold.gate; return json({ evidence: { brand_id: "brand-a", item: "test_sold", actor_id: "owner", verified_at: "2026-11-07T00:00:00Z" } }); });
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "ยืนยัน Test sold" }));
+    fireEvent.click(await enabledSoldButton());
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
@@ -772,14 +778,14 @@ describe("checklist actions and the brand selection", () => {
     await waitFor(() => expect(listReads()).toBeGreaterThan(before));
     expect(screen.getByRole("complementary", { name: configLabel })).toBe(panel);
     expect((keyword as HTMLInputElement).value).toBe("typed not saved");
-  }, 15_000);
+  });
 
   it("reads the first brand's checklist again after its Test sold, and the step turns done", async () => {
     let attested = false;
     routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: attested ? [{ item: "test_sold", evidence: { brand_id: "brand-a", item: "test_sold", actor_id: "owner", verified_at: "2026-11-07T00:00:00Z" } }] : [] }));
     routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({}); });
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "ยืนยัน Test sold" }));
+    fireEvent.click(await enabledSoldButton());
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
@@ -859,7 +865,7 @@ describe("checklist auto-refresh (FUS-385)", () => {
   const setVisibility = (state: "visible" | "hidden") => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
   const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
   beforeEach(() => vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] }));
-  afterEach(() => { Reflect.deleteProperty(document, "visibilityState"); });
+  afterEach(() => { Reflect.deleteProperty(document, "visibilityState"); vi.useRealTimers(); });
 
   it("refetches after 60 s while drain_route is open and checks the box from the second response", async () => {
     const responses = [[], [{ item: "drain_route", evidence: evidence("drain_route") }]];
@@ -972,6 +978,32 @@ describe("checklist auto-refresh (FUS-385)", () => {
     await act(async () => { hold.release(); });
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+
+  it.each([["refresh first", [0, 1]], ["poll first", [1, 0]]])("shows test_sold done when the action refresh and the 60 s poll are both in flight (%s)", { timeout: 15_000 }, async (_name, order) => {
+    let attested = false;
+    const holds: Array<ReturnType<typeof deferred>> = [];
+    const sold = { item: "test_sold", evidence: { ...evidence("test_sold"), event_id: "ev-1" } };
+    routes.set("GET /api/brands/brand-a/checklist", async () => {
+      if (!attested || checklistReads() < 2) return json({ brand_id: "brand-a", checklist: [] });
+      const hold = deferred();
+      holds.push(hold);
+      await hold.gate;
+      return json({ brand_id: "brand-a", checklist: [sold] });
+    });
+    routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({}); });
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await enabledSoldButton());
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
+    // waitFor polls with setInterval, which is faked here: step the clock by hand until the reads are in flight.
+    const until = async (count: number) => { for (let i = 0; i < 100 && holds.length < count; i += 1) await tick(10); expect(holds).toHaveLength(count); };
+    await until(1);
+    await tick(60_000);
+    await until(2);
+    for (const index of order) await act(async () => { holds[index]!.release(); });
+    await waitFor(() => expect(boxChecked(/test_sold/)).toBe(true));
   });
 
   it("keeps test_sold checked when a poll that began before the attest resolves after it", async () => {

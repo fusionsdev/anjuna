@@ -63,6 +63,12 @@ export async function smokeFinalUrlRow(db: D1Database, brandId: string): Promise
 export const CHECKLIST_STEP_ITEMS = ["final_url", "leadsgate_postbacks", "test_sold", "drain_route"] as const;
 export type ChecklistStepRow = { item: (typeof CHECKLIST_STEP_ITEMS)[number]; done: boolean; evidence: string | null };
 
+/** " · event <id>" when the evidence carries an event id (a verified Test sold does), else nothing. */
+function eventSuffix(evidence: unknown): string {
+  const id = (evidence as { event_id?: unknown } | null)?.event_id;
+  return typeof id === "string" && id !== "" ? ` · event ${id}` : "";
+}
+
 /**
  * Exactly four rows, one per checklist item, finished or not. `evidence` is a short text (who confirmed it and when) for a finished
  * step and null for an open one. The `checklist` rows stay the source of truth; this is the same data in the shape the panel draws.
@@ -71,7 +77,7 @@ export function checklistSteps(rows: Array<Record<string, unknown>>): ChecklistS
   return CHECKLIST_STEP_ITEMS.map((item) => {
     const row = rows.find((r) => r.item === item);
     return row
-      ? { item, done: true, evidence: `${String(row.confirmed_by)} · ${String(row.confirmed_at)}` }
+      ? { item, done: true, evidence: `${String(row.confirmed_by)} · ${String(row.confirmed_at)}${eventSuffix(row.evidence)}` }
       : { item, done: false, evidence: null };
   });
 }
