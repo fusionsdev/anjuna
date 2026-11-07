@@ -98,6 +98,14 @@ describe("allocateSpend", () => {
       mode: "estimated",
     });
     expect(result.rows.map((r) => [r.brand_id, r.cost, r.allocation])).toEqual([["a", 4, "estimated"], ["b", 4, "estimated"]]);
+    // An object prototype key is not a brand of the account.
+    const proto = allocateSpend({
+      campaigns: [{ campaign_id: "333", cost: 8, clicks: 0, impressions: 0 }],
+      map: new Map([["333", "constructor"]]),
+      brandClicks: { a: 1, b: 1 },
+      mode: "exact_only",
+    });
+    expect(proto).toEqual({ rows: [], unallocated: 8 });
   });
 
   it("keeps the unmapped cost off every brand in exact_only mode", () => {

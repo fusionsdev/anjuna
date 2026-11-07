@@ -74,7 +74,7 @@ export function allocateSpend(input: {
   for (const c of input.campaigns) {
     const cost = Math.round(c.cost * 100);
     const owner = input.map.get(c.campaign_id);
-    if (owner !== undefined && owner in input.brandClicks) {
+    if (owner !== undefined && Object.hasOwn(input.brandClicks, owner)) {
       add(exact, owner, cost, c.clicks, c.impressions);
     } else if (input.mode === "exact_only" || brands.length === 0) {
       unallocated += cost;
