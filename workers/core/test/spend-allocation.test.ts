@@ -285,8 +285,8 @@ describe("deriveCampaignMap", () => {
 
   it("is idempotent", async () => {
     await h.db.batch([click("petvetpay", "111"), click("petvetpay", "111"), click("petvetpay", "111")]);
-    await deriveCampaignMap(h.db, NOW);
-    await deriveCampaignMap(h.db, NOW);
+    expect(await deriveCampaignMap(h.db, NOW)).toBe(1);
+    expect(await deriveCampaignMap(h.db, NOW)).toBe(0);
     expect((await mapRows()).results).toHaveLength(1);
   });
 });
