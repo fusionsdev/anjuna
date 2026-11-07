@@ -113,4 +113,12 @@ describe("scripts/drain/adkit-directory-sync.mjs", () => {
     const runAdkit = async (args: string[]) => (args[2] === "accounts" ? fixture("adkit-directory-accounts.txt") : '{"conversions":[]}');
     expect(await d.syncDirectory({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, log: () => {}, error: () => {} })).toBe(1);
   });
+
+  it("refuses an option-like project before any adkit call", async () => {
+    const core = fakeCore();
+    const runAdkit = vi.fn(async () => "{}");
+    await expect(d.syncDirectory({ baseUrl: "https://core.test", token: "tok", projects: ["--help"], runAdkit, fetchImpl: core.fetchImpl, log: () => {}, error: () => {} }))
+      .rejects.toThrow(/invalid adkit project/);
+    expect(runAdkit).not.toHaveBeenCalled();
+  });
 });

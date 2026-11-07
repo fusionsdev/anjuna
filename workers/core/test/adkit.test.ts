@@ -1,5 +1,8 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { timingSafeEqual } from "node:crypto";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdkitJob, type AdminRequestContext } from "@anjuna/contracts";
+import { handleJobResult } from "../src/adkit.js";
+import type { Env } from "../src/env.js";
 import { createHarness, DRAIN_TOKEN, fixtureText, type Harness } from "./helpers.js";
 
 const owner: AdminRequestContext = { actor_id: "usr_owner_01", actor_role: "owner", request_id: "req_adkit_owner" };
@@ -12,6 +15,9 @@ const ACTION = "7300000009";
 let h: Harness;
 beforeAll(async () => {
   h = await createHarness();
+  // Only Workers has subtle.timingSafeEqual; the in-process handler calls in this file run under Node.
+  const subtle = crypto.subtle as unknown as { timingSafeEqual?: (a: Uint8Array, b: Uint8Array) => boolean };
+  subtle.timingSafeEqual ??= (a, b) => timingSafeEqual(a, b);
   const at = "2026-11-01T00:00:00.000Z";
   await h.factory.batch([
     h.factory.prepare(`INSERT INTO templates (template_id, name, framework, created_by, created_at)
@@ -267,5 +273,69 @@ describe("result", () => {
     expect(await final.json()).toEqual({ status: "failed" });
     expect(await jobRow(job.id)).toMatchObject({ status: "failed", attempts: 2 });
     expect((await result({ job_id: job.id, claim_id: second, error: "late" })).status).toBe(409);
+  });
+});
+
+describe("fix round 1", () => {
+  const inProcessResult = (body: Record<string, unknown>, factory: unknown = h.factory) => handleJobResult(
+    new Request("https://core.aduplift.ai/api/adkit/jobs/result", {
+      method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }),
+    { LEADS: h.db, FACTORY: factory, DRAIN_TOKEN } as unknown as Env,
+  );
+
+  it("a stale claim's result in the same millisecond never writes the directory", async () => {
+    const { job, claimId: staleClaim } = await claimed();
+    await h.db.prepare("UPDATE adkit_jobs SET claimed_at = ?1 WHERE id = ?2").bind(minutesAgo(31), job.id).run();
+    const retake = await claim(job.id);
+    const liveClaim = ((await retake.json()) as { claim_id: string }).claim_id;
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(Date.now() + 1000));
+      const live = await inProcessResult({ job_id: job.id, claim_id: liveClaim, result: { conversion_action_id: ACTION, name: job.payload.name, adopted: false } });
+      expect(await live.json()).toEqual({ status: "done" });
+      const late = await inProcessResult({ job_id: job.id, claim_id: staleClaim, result: { conversion_action_id: ACTION, name: "cv-ffffffffffffffff", adopted: true } });
+      expect(late.status).toBe(409);
+    } finally {
+      vi.useRealTimers();
+    }
+    const rows = await h.db.prepare("SELECT id, name FROM adkit_directory").all();
+    expect(rows.results).toEqual([{ id: ACTION, name: job.payload.name }]);
+  });
+
+  it("a repeated done result writes the done audit when the first call lost it", async () => {
+    const { job, claimId } = await claimed();
+    const body = { job_id: job.id, claim_id: claimId, result: { conversion_action_id: ACTION, name: job.payload.name, adopted: false } };
+    // The FACTORY write fails after the LEADS batch landed: the job is done and the audit row is missing.
+    const failing = {
+      prepare: (sql: string) => {
+        if (sql.includes("INSERT INTO audit_log")) throw new Error("factory unavailable");
+        return h.factory.prepare(sql);
+      },
+    };
+    await expect(inProcessResult(body, failing)).rejects.toThrow("factory unavailable");
+    expect(await jobRow(job.id)).toMatchObject({ status: "done" });
+    expect((await inProcessResult(body)).status).toBe(200);
+    expect((await result(body)).status).toBe(200);
+    const audit = await h.factory.prepare("SELECT action FROM audit_log WHERE entity_id = ?1 AND action = 'adkit.job.done'").bind(job.id).all();
+    expect(audit.results).toHaveLength(1);
+  });
+
+  it("a repeat after the brand left draft returns the existing job", async () => {
+    const job = await queueJob();
+    await h.factory.prepare("UPDATE brands SET status = 'live' WHERE brand_id = 'adkit-a'").run();
+    const repeat = await createJob({ kind: "conversion_action.create", brand_draft_id: "adkit-a" });
+    expect(repeat.status).toBe(200);
+    expect(((await repeat.json()) as { job: { id: string } }).job.id).toBe(job.id);
+  });
+
+  it("a new key for the same draft and account reuses the conversion name", async () => {
+    const first = await queueJob();
+    const second = await createJob({ kind: "conversion_action.create", brand_draft_id: "adkit-a", idempotency_key: "wizard:adkit-a:retry-2" });
+    expect(second.status).toBe(201);
+    const job = ((await second.json()) as { job: { id: string; payload: { name: string } } }).job;
+    expect(job.id).not.toBe(first.id);
+    expect(job.payload.name).toBe(first.payload.name);
   });
 });

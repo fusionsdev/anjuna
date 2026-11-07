@@ -22,7 +22,7 @@ export const ADKIT_JOB_LEASE_MS = 30 * 60 * 1000;
 /** Claims per job. A job that fails or crashes this many times stays failed. */
 export const ADKIT_JOB_MAX_ATTEMPTS = 5;
 /** Most items one directory ingest accepts; the sync script sends larger snapshots in chunks. */
-export const ADKIT_DIRECTORY_INGEST_MAX = 1000;
+export const ADKIT_DIRECTORY_INGEST_MAX = 500;
 
 /** Wait before the next claim after the `attempts`-th failed claim: 1 h, 2 h, 4 h ... capped at 24 h. */
 export function adkitJobBackoffMs(attempts: number): number {

@@ -14,6 +14,7 @@ interface Executor {
   assertAllowed(args: string[]): void;
   guardAdkit(run: (args: string[]) => Promise<string>): (args: string[]) => Promise<string>;
   runAdkitCli(args: string[]): Promise<string>;
+  makeAdkitCli(execImpl: (file: string, args: string[], options: object) => Promise<{ stdout: string }>): (args: string[]) => Promise<string>;
   executeJobs(options: {
     baseUrl: string; token: string; fallbackProject?: string;
     runAdkit?: (args: string[]) => Promise<string>; fetchImpl: typeof fetch;
@@ -88,10 +89,58 @@ describe("allowlist", () => {
     expect(spawn).toHaveBeenCalledTimes(1);
   });
 
-  it("the real runner refuses a disallowed command before it looks for adkit on PATH", async () => {
+  it("the runner passes an allowed argv to execFile unchanged and never calls it for a rejected one", async () => {
+    const execFile = vi.fn(async () => ({ stdout: '{"accounts":[]}' }));
+    const run = x.makeAdkitCli(execFile);
+    await expect(run(["manage", "google", "campaigns", "update"])).rejects.toThrow(/not allowed/);
+    expect(execFile).not.toHaveBeenCalled();
+    await expect(run(["manage", "google", "accounts", "list", "--json", "--project", "proj_a"])).resolves.toBe('{"accounts":[]}');
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile).toHaveBeenCalledWith("adkit", ["manage", "google", "accounts", "list", "--json", "--project", "proj_a"],
+      expect.objectContaining({ timeout: 120_000 }));
+    // The exported real runner rejects before it reaches its execFile.
     await expect(x.runAdkitCli(["manage", "google", "campaigns", "update"])).rejects.toThrow(/not allowed/);
-    // An allowed command reaches the spawn and fails there: PATH is empty.
-    await expect(x.runAdkitCli(["manage", "google", "accounts", "list", "--json"])).rejects.not.toThrow(/not allowed/);
+  });
+
+  it("rejects an extra flag, a missing argument and an option-like value on an allowed command", async () => {
+    const spawn = vi.fn(async () => "{}");
+    const run = x.guardAdkit(spawn);
+    const list = ["manage", "google", "conversions", "list", "--account", "4811219623", "--limit", "500", "--json"];
+    const create = ["manage", "google", "conversions", "create", "--account", "4811219623", "--data", '{"conversions":[]}', "--publish", "--json"];
+    const swap = (args: string[], index: number, arg: string) => args.map((a, i) => (i === index ? arg : a));
+    for (const args of [
+      [...list, "--help"],
+      [...list, "--project", "--help"],
+      [...list, "--project", "-x"],
+      [...list, "--project"],
+      [...list, "--project", "proj_a", "--json"],
+      ["manage", "google", "accounts", "list", "--json", "--all"],
+      ["manage", "google", "accounts", "list"],
+      swap(list, 5, "--help"),
+      swap(list, 7, "5000"),
+      swap(create, 7, "--publish"),
+      swap(create, 7, "[1]"),
+      create.filter((a) => a !== "--publish"),
+      ["manage", "google", "results", "list", "--account", "4811219623", "--breakdown", "week", "--from", "2026-11-01", "--to", "2026-11-01", "--json"],
+    ]) {
+      await expect(run(args), args.join(" ")).rejects.toThrow(/not allowed/);
+    }
+    expect(spawn).not.toHaveBeenCalled();
+    for (const args of [list, [...list, "--project", "proj_a"], create,
+      ["manage", "google", "results", "list", "--account", "4811219623", "--breakdown", "hour", "--from", "2026-11-01", "--to", "2026-11-01", "--json"]]) {
+      await expect(run(args), args.join(" ")).resolves.toBe("{}");
+    }
+  });
+
+  it("refuses an option-like fallback project or payload project before any adkit call", async () => {
+    const spawn = vi.fn(async () => "{}");
+    const core = fakeCore([job()]);
+    await expect(x.executeJobs({ baseUrl: "https://core.test", token: "tok", fallbackProject: "--help", runAdkit: spawn, fetchImpl: core.fetchImpl, ...quiet }))
+      .rejects.toThrow(/invalid adkit project/);
+    const bad = fakeCore([job({ payload: { ...job().payload, project: "--help" } })]);
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit: spawn, fetchImpl: bad.fetchImpl, ...quiet })).toBe(1);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(bad.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "invalid conversion_action.create payload", retryable: false }]);
   });
 });
 

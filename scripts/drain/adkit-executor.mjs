@@ -37,17 +37,56 @@ const DUPLICATE = /duplicate|already[\s_-]?exist/i;
 
 /** `<resource> <verb>` after `manage google`. Nothing else may run. */
 export const ALLOWED_COMMANDS = Object.freeze(["accounts list", "conversions list", "results list", "conversions create"]);
-const ALLOWED = new Set(ALLOWED_COMMANDS);
+
+/** A value argument: never empty and never option-like, so it cannot smuggle a flag such as `--help`. */
+const value = (pattern) => (arg) => typeof arg === "string" && arg !== "" && !arg.startsWith("-") && pattern.test(arg);
+export const PROJECT_ARG = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
+const ACCOUNT = value(/^\d{10}$/);
+const PROJECT = value(PROJECT_ARG);
+const DATE = value(/^\d{4}-\d{2}-\d{2}$/);
+const BREAKDOWN = value(/^(hour|day)$/);
+const DATA = (arg) => {
+  if (!value(/^\{/)(arg)) return false;
+  try {
+    const parsed = JSON.parse(arg);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The exact argument vector of each allowed command: literal strings and value checks, in order. A trailing
+ * `--project <p>` is the only optional part. Any other flag, an extra argument or a missing one is rejected.
+ */
+const SHAPES = {
+  "accounts list": ["manage", "google", "accounts", "list", "--json"],
+  "conversions list": ["manage", "google", "conversions", "list", "--account", ACCOUNT, "--limit", "500", "--json"],
+  "results list": ["manage", "google", "results", "list", "--account", ACCOUNT, "--breakdown", BREAKDOWN, "--from", DATE, "--to", DATE, "--json"],
+  "conversions create": ["manage", "google", "conversions", "create", "--account", ACCOUNT, "--data", DATA, "--publish", "--json"],
+};
+
+const matches = (shape, args) => args.length === shape.length
+  && shape.every((part, i) => (typeof part === "string" ? args[i] === part : part(args[i])));
 
 export class CommandNotAllowedError extends Error {}
 
-/** Throws unless argv is `manage google <resource> <verb> ...` with an allowlisted resource and verb. */
+/** Throws unless argv is exactly one allowed command shape, with or without a trailing `--project <p>`. */
 export function assertAllowed(args) {
-  const ok = Array.isArray(args) && args[0] === "manage" && args[1] === "google"
-    && typeof args[2] === "string" && typeof args[3] === "string" && ALLOWED.has(`${args[2]} ${args[3]}`);
+  const command = Array.isArray(args) ? `${args[2]} ${args[3]}` : "";
+  const shape = Array.isArray(args) && Object.hasOwn(SHAPES, command) ? SHAPES[command] : null;
+  const ok = shape !== null && args.every((arg) => typeof arg === "string")
+    && (matches(shape, args) || matches([...shape, "--project", PROJECT], args));
   if (!ok) {
     const shown = Array.isArray(args) ? args.slice(0, 4).map(String).join(" ") : String(args);
     throw new CommandNotAllowedError(`adkit command not allowed: ${shown.slice(0, 80) || "(empty)"}`);
+  }
+}
+
+/** Throws when a configured fallback project is option-like or malformed, before any job runs. */
+export function assertProject(project) {
+  if (project !== undefined && project !== null && project !== "" && !PROJECT(project)) {
+    throw new CommandNotAllowedError(`invalid adkit project: ${String(project).slice(0, 64)}`);
   }
 }
 
@@ -59,11 +98,16 @@ export function guardAdkit(run) {
   };
 }
 
+/** The adkit runner over an `execFile`-shaped function (promisified); tests pass a spy, main passes the real one. */
+export function makeAdkitCli(execImpl) {
+  return guardAdkit(async (args) => {
+    const { stdout } = await execImpl("adkit", args, { maxBuffer: 16 * 1024 * 1024, timeout: 120_000 });
+    return stdout;
+  });
+}
+
 /** The real runner: allowlist, then spawn `adkit` from PATH. */
-export const runAdkitCli = guardAdkit(async (args) => {
-  const { stdout } = await exec("adkit", args, { maxBuffer: 16 * 1024 * 1024, timeout: 120_000 });
-  return stdout;
-});
+export const runAdkitCli = makeAdkitCli(exec);
 
 // execFile puts the whole argv in e.message, so prefer what the CLI printed (stderr, stdout).
 const errorFull = (e) => {
@@ -83,7 +127,7 @@ class JobFailure extends Error {
 export async function runConversionActionCreate(payload, run, fallbackProject) {
   // Core validated the payload; the executor checks again before any value becomes an adkit argument.
   if (!/^\d{10}$/.test(String(payload?.account)) || !/^cv-[0-9a-f]{16}$/.test(String(payload?.name))
-    || !(payload.project === null || payload.project === undefined || /^[A-Za-z0-9_-]{1,64}$/.test(String(payload.project)))) {
+    || !(payload.project === null || payload.project === undefined || PROJECT(payload.project))) {
     throw new JobFailure("invalid conversion_action.create payload", false);
   }
   const route = { account: payload.account, project: payload.project };
@@ -118,6 +162,7 @@ const KINDS = {
 export async function executeJobs({
   baseUrl, token, fallbackProject, runAdkit = runAdkitCli, fetchImpl = fetch, log = console.log, error = console.error,
 }) {
+  assertProject(fallbackProject);
   const run = guardAdkit(runAdkit);
   const origin = baseUrl.replace(/\/+$/, "");
   const headers = { Authorization: `Bearer ${token}` };

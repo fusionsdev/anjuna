@@ -10,7 +10,7 @@
  *
  *   1. adkit manage google accounts list --json [--project <p>] per project.
  *   2. Per account: adkit manage google conversions list --account <a> --limit 500 --json [--project <p>].
- *   3. POST /api/adkit/directory/ingest with every row, in chunks of 1000. Core stamps each row; a row not
+ *   3. POST /api/adkit/directory/ingest with every row, in chunks of 500. Core stamps each row; a row not
  *      sent again for 2 hours is no longer served.
  * Every adkit call goes through the executor allowlist. One failing account does not stop the others;
  * any failure makes the exit code 1. Scheduling it hourly on the VPS is an owner action (Wave 4 gate).
@@ -19,10 +19,11 @@
  */
 import { pathToFileURL } from "node:url";
 import { conversionListArgs, parseAdkitJson } from "./conversion-sync.mjs";
-import { guardAdkit, runAdkitCli } from "./adkit-executor.mjs";
+import { PROJECT_ARG, assertProject, guardAdkit, runAdkitCli } from "./adkit-executor.mjs";
 
-const CHUNK = 1000;
-const PROJECT = /^[A-Za-z0-9_-]{1,64}$/;
+// D1 runs one statement per item; 500 keeps a batch well inside the per-invocation limit.
+const CHUNK = 500;
+const PROJECT = PROJECT_ARG;
 const CONVERSION_ID = /^\d{1,20}$/;
 
 const text = (value) => (typeof value === "string" && value.trim() ? value.trim().slice(0, 200) : null);
@@ -84,6 +85,7 @@ function conversionActionsFromAdkit(out, account) {
 export async function syncDirectory({
   baseUrl, token, projects = [], runAdkit = runAdkitCli, fetchImpl = fetch, log = console.log, error = console.error, chunkSize = CHUNK,
 }) {
+  for (const project of projects) assertProject(project);
   const run = guardAdkit(runAdkit);
   const origin = baseUrl.replace(/\/+$/, "");
   let failures = 0;

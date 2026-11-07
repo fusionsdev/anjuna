@@ -116,6 +116,17 @@ async function audit(
 }
 const DRAIN_ACTOR = { id: "drain", role: "system" };
 
+/** The done audit row, once per job. `onlyIfMissing` is the repair path of a repeated result. */
+async function writeDoneAudit(env: Env, jobId: string, outcome: Record<string, unknown>, at: string, onlyIfMissing = false): Promise<void> {
+  if (onlyIfMissing) {
+    const existing = await env.FACTORY.prepare(
+      "SELECT 1 FROM audit_log WHERE action = 'adkit.job.done' AND entity_type = 'adkit_job' AND entity_id = ?1",
+    ).bind(jobId).first();
+    if (existing) return;
+  }
+  await audit(env, DRAIN_ACTOR, "adkit.job.done", jobId, outcome, at);
+}
+
 // --- VPS routes ------------------------------------------------------------------------------------
 
 /** POST /api/adkit/directory/ingest: upsert every item and stamp it now. */
@@ -189,7 +200,8 @@ export async function handleJobResult(request: Request, env: Env): Promise<Respo
   if ("result" in data) {
     const outcome = data.result;
     const resultJson = JSON.stringify(outcome);
-    // The name check keeps a result from another job's action out of this one; the directory row lands in the same batch.
+    // The name check keeps a result from another job's action out of this one. The directory row lands in the same
+    // batch and only when this claim's own result is the stored one, so a stale claim's result never writes it.
     const [jobWrite] = await env.LEADS.batch([
       env.LEADS.prepare(`
         UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4
@@ -198,18 +210,25 @@ export async function handleJobResult(request: Request, env: Env): Promise<Respo
         .bind(data.job_id, data.claim_id, resultJson, at, outcome.name),
       env.LEADS.prepare(`
         INSERT INTO adkit_directory (kind, id, parent_id, name, currency, updated_at)
-        SELECT 'conversion_action', ?2, json_extract(payload, '$.account'), ?3, NULL, ?4
-        FROM adkit_jobs WHERE id = ?1 AND status = 'done' AND updated_at = ?4 AND json_extract(result, '$.conversion_action_id') = ?2
+        SELECT 'conversion_action', ?3, json_extract(payload, '$.account'), ?4, NULL, ?5
+        FROM adkit_jobs WHERE id = ?1 AND claim_id = ?2 AND status = 'done' AND result = ?6 AND updated_at = ?5
         ON CONFLICT (kind, id) DO UPDATE SET parent_id = excluded.parent_id, name = excluded.name, updated_at = excluded.updated_at`)
-        .bind(data.job_id, outcome.conversion_action_id, outcome.name, at),
+        .bind(data.job_id, data.claim_id, outcome.conversion_action_id, outcome.name, at, resultJson),
     ]);
     if (jobWrite!.meta.changes) {
-      await audit(env, DRAIN_ACTOR, "adkit.job.done", data.job_id, outcome, at);
+      await writeDoneAudit(env, data.job_id, outcome, at);
       return json({ status: "done" });
     }
     const row = await loadJob(env, data.job_id);
     if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
-    if (row.status === "done") return json({ status: "done", already: true });
+    if (row.status === "done") {
+      // audit_log is in the FACTORY database, so it cannot share the LEADS batch. A repeat of the done result
+      // writes the audit row if the first call stopped between the two databases.
+      // Only the stored result repeats as a success; a different result for a done job is stale.
+      if (row.result !== resultJson) return stale();
+      if (row.claim_id === data.claim_id) await writeDoneAudit(env, data.job_id, outcome, row.updated_at, true);
+      return json({ status: "done", already: true });
+    }
     return stale();
   }
 
@@ -287,15 +306,28 @@ export async function createAdkitJob(request: Request, env: Env, context: AdminR
   const { kind, brand_draft_id: brandId } = body.data;
   const key = body.data.idempotency_key ?? `${kind}:${brandId}`;
 
+  // A known key answers its row before the draft is read, so a repeat after the brand left draft still finds the job.
+  const existing = await env.LEADS.prepare("SELECT * FROM adkit_jobs WHERE idempotency_key = ?1").bind(key).first<JobRow>();
+  if (existing) return existingJob(context, existing, kind, brandId);
+
   const ads = await draftAds(env, brandId);
   if (ads === "missing") return adminError(context, { error: "not_found", resource: "brand", message: "No draft brand with this id" });
   if (ads === "no_account") {
     return adminError(context, { error: "invalid", issues: [{ path: "brand_draft_id", message: "The draft has no Google Ads account" }] });
   }
 
+  // A new key for the same draft and account keeps the earlier job's name, so the executor adopts the action that
+  // job may already have created instead of making a second one.
+  const prior = await env.LEADS.prepare(`
+    SELECT json_extract(payload, '$.name') AS name FROM adkit_jobs
+    WHERE kind = ?1 AND json_extract(payload, '$.brand_draft_id') = ?2 AND json_extract(payload, '$.account') = ?3
+    ORDER BY created_at DESC, id DESC LIMIT 1`).bind(kind, brandId, ads.account).first<{ name: string }>();
+
   const id = crypto.randomUUID();
   const at = new Date().toISOString();
-  const payload = ConversionActionCreatePayload.parse({ brand_draft_id: brandId, account: ads.account, project: ads.project, name: conversionName() });
+  const payload = ConversionActionCreatePayload.parse({
+    brand_draft_id: brandId, account: ads.account, project: ads.project, name: prior?.name ?? conversionName(),
+  });
   await env.LEADS.prepare(`
     INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at)
     VALUES (?1, ?2, ?3, 'queued', NULL, 0, ?4, ?5, ?6, ?6)
@@ -303,11 +335,16 @@ export async function createAdkitJob(request: Request, env: Env, context: AdminR
     .bind(id, kind, JSON.stringify(payload), key, context.actor_id, at).run();
   const row = await env.LEADS.prepare("SELECT * FROM adkit_jobs WHERE idempotency_key = ?1").bind(key).first<JobRow>();
   if (!row) throw new Error("adkit job row missing after insert");
+  if (row.id !== id) return existingJob(context, row, kind, brandId);
+  await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.job.create", id, { kind, ...payload }, at);
+  return json(AdkitJobCreateResponse.parse({ job: publicJob(row), created: true }), 201);
+}
+
+/** The row an idempotency key already holds: 200 with `created: false`, or 409 when the key names another job. */
+function existingJob(context: AdminRequestContext, row: JobRow, kind: string, brandId: string): Response {
   const job = publicJob(row);
   if (job.kind !== kind || job.payload.brand_draft_id !== brandId) {
     return adminError(context, { error: "conflict", current_updated_at: job.updated_at, message: "idempotency_key belongs to another job" });
   }
-  const created = row.id === id;
-  if (created) await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.job.create", id, { kind, ...payload }, at);
-  return json(AdkitJobCreateResponse.parse({ job, created }), created ? 201 : 200);
+  return json(AdkitJobCreateResponse.parse({ job, created: false }), 200);
 }
