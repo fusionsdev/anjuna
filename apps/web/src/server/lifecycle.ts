@@ -585,6 +585,42 @@ async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{
   return { brands: merged, core_error: coreError };
 }
 
+/** The checklist rows of one brand: the stored attestations plus the computed rows, sorted by item. */
+async function checklistRows(env: Env, ctx: AdminRequestContext, brandId: string): Promise<Array<Record<string, unknown>>> {
+  const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all();
+  const rows: Array<Record<string, unknown>> = results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined }));
+  const open = (item: string) => !rows.some((r) => r.item === item);
+  const finalUrl = open("final_url") ? await smokeFinalUrlRow(env.FACTORY, brandId) : null;
+  if (finalUrl) rows.push(finalUrl);
+  // One getBrand read serves every computed row; a stored attestation always wins.
+  const brand = open("leadsgate_postbacks") || open("drain_route") ? await coreBrand(env, ctx, brandId) : null;
+  if (brand) {
+    const computed = [
+      open("leadsgate_postbacks") ? globalPostbackRow(brand, brandId) : null,
+      open("drain_route") ? drainRouteRow(brand) : null,
+    ].filter((row): row is Record<string, unknown> => row !== null);
+    rows.push(...computed);
+  }
+  rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
+  return rows;
+}
+
+/**
+ * GET /api/brands/checklists: the rows of every live brand in one read, keyed by brand id, so Home and the Brands screen do not
+ * ask once per brand. Each entry holds the same rows as GET /api/brands/:id/checklist. `template_approved` is false while the
+ * brand's newest template version still waits for approval (status certified).
+ */
+export async function readBrandChecklists(env: Env, ctx: AdminRequestContext): Promise<Response> {
+  const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
+  const { results } = await env.FACTORY.prepare(`SELECT b.brand_id, v.status AS template_status
+    FROM brands b
+    LEFT JOIN brand_revisions r ON r.revision_id = COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1))
+    LEFT JOIN template_versions v ON v.template_version_id = r.template_version_id
+    WHERE b.status = 'live' ORDER BY b.brand_id`).all<{ brand_id: string; template_status: string | null }>();
+  const entries = await Promise.all(results.map(async (row) => [row.brand_id, { checklist: await checklistRows(env, ctx, row.brand_id), template_approved: row.template_status !== "certified" }] as const));
+  return json(200, { brands: Object.fromEntries(entries) });
+}
+
 export function decodePathSegment(raw: string): string | null {
   try { return decodeURIComponent(raw); } catch (error) { if (error instanceof URIError) return null; throw error; }
 }
@@ -684,22 +720,7 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
-    const { results } = await env.FACTORY.prepare("SELECT item,evidence_json,confirmed_by,confirmed_role,confirmed_at FROM brand_checklist WHERE brand_id=?1 ORDER BY item").bind(brandId).all();
-    const rows: Array<Record<string, unknown>> = results.map((r) => ({ ...r, evidence: JSON.parse(r.evidence_json as string), evidence_json: undefined }));
-    const open = (item: string) => !rows.some((r) => r.item === item);
-    const finalUrl = open("final_url") ? await smokeFinalUrlRow(env.FACTORY, brandId) : null;
-    if (finalUrl) rows.push(finalUrl);
-    // One getBrand read serves every computed row; a stored attestation always wins.
-    const brand = open("leadsgate_postbacks") || open("drain_route") ? await coreBrand(env, ctx, brandId) : null;
-    if (brand) {
-      const computed = [
-        open("leadsgate_postbacks") ? globalPostbackRow(brand, brandId) : null,
-        open("drain_route") ? drainRouteRow(brand) : null,
-      ].filter((row): row is Record<string, unknown> => row !== null);
-      rows.push(...computed);
-    }
-    rows.sort((a, b) => (String(a.item) < String(b.item) ? -1 : String(a.item) > String(b.item) ? 1 : 0));
-    return json(200, { brand_id: brandId, checklist: rows });
+    return json(200, { brand_id: brandId, checklist: await checklistRows(env, ctx, brandId) });
   }
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {
