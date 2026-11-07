@@ -35,7 +35,7 @@ import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
 import { handleApiKeyRoute, handleApiV1 } from "./api-v1.js";
 import { handleLeadsRoute } from "./leads.js";
-import { handleFxSettingRoute, handleMicrosoftAdsSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
+import { handleAdsCapsSettingRoute, handleFxSettingRoute, handleMicrosoftAdsSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
 import { withUsd } from "./money.js";
 import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
@@ -138,6 +138,10 @@ async function route(
   // Baht per dollar for USD spend and profit (panel redesign, Task 1): owner read and write.
   const fxSetting = await handleFxSettingRoute(request, env, path, ctx);
   if (fxSetting) return fxSetting;
+
+  // Baht caps for panel campaigns (T13 Part B): owner read and write.
+  const adsCaps = await handleAdsCapsSettingRoute(request, env, path, ctx);
+  if (adsCaps) return adsCaps;
 
   const wizard = await handleWizardRoute(request, env, path, ctx);
   if (wizard) return wizard;
