@@ -417,6 +417,12 @@ describe("Anjuna additions", () => {
       await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
     });
 
+    it("indexes click_sessions by campaign and by brand, each with click_seen_at", async () => {
+      const ix = await indexes(env.DB, "click_sessions");
+      expect(ix.idx_click_sessions_campaign?.columns).toEqual(["utm_campaign", "click_seen_at"]);
+      expect(ix.click_sessions_brand_seen?.columns).toEqual(["brand_id", "click_seen_at"]);
+    });
+
     it("keys unallocated rows by account, date, hour (NULL = whole day) and currency", async () => {
       const insert = (hour: number | null, currency: string) => env.DB.prepare(
         "INSERT INTO ad_spend_unallocated VALUES ('1231231234', '2026-10-21', ?1, 1, ?2, 'x')").bind(hour, currency);

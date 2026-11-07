@@ -47,3 +47,6 @@ CREATE UNIQUE INDEX ad_spend_unallocated_key ON ad_spend_unallocated (account, d
 
 -- deriveCampaignMap reads click_sessions by utm_campaign inside a recent window.
 CREATE INDEX IF NOT EXISTS idx_click_sessions_campaign ON click_sessions (utm_campaign, click_seen_at);
+
+-- The campaign ingest reads paid clicks by brand_id inside a click_seen_at range.
+CREATE INDEX IF NOT EXISTS click_sessions_brand_seen ON click_sessions (brand_id, click_seen_at);
