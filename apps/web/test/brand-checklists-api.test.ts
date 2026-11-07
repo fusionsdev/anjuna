@@ -197,3 +197,44 @@ describe("GET /api/brands/checklists", () => {
     expect(await batch(owner)).toEqual({ brands: {} });
   });
 });
+
+describe("GET /api/brands/:id/checklist steps", () => {
+  type Steps = { checklist: Array<{ item: string }>; steps: Array<{ item: string; done: boolean; evidence: string | null }> };
+  const read = async (brandId: string) => {
+    const response = await call(`/api/brands/${brandId}/checklist`, { cookie: owner, env: coreDown });
+    expect(response.status).toBe(200);
+    return (await response.json()) as Steps;
+  };
+
+  it("lists exactly the four steps as open, with null evidence, for a brand with nothing done", async () => {
+    const id = await draft("steps-open.example");
+    await goLive(id);
+    const body = await read(id);
+    expect(body.steps).toEqual([
+      { item: "final_url", done: false, evidence: null },
+      { item: "leadsgate_postbacks", done: false, evidence: null },
+      { item: "test_sold", done: false, evidence: null },
+      { item: "drain_route", done: false, evidence: null },
+    ]);
+    expect(body.checklist).toEqual([]);
+  });
+
+  it("marks every step done with a short evidence string for a complete brand and keeps the checklist rows", async () => {
+    const id = await draft("steps-done.example");
+    await goLive(id);
+    for (const item of ["final_url", "leadsgate_postbacks", "test_sold", "drain_route"]) await attest(id, item);
+    const body = await read(id);
+    expect(body.steps.map((s) => [s.item, s.done])).toEqual([["final_url", true], ["leadsgate_postbacks", true], ["test_sold", true], ["drain_route", true]]);
+    for (const step of body.steps) expect(step.evidence).toBe("owner · 2026-10-20T00:00:00.000Z");
+    expect(body.checklist.map((r) => r.item).sort()).toEqual(["drain_route", "final_url", "leadsgate_postbacks", "test_sold"]);
+  });
+
+  it("marks only the attested step done for a partly finished brand", async () => {
+    const id = await draft("steps-part.example");
+    await goLive(id);
+    await attest(id, "test_sold");
+    const body = await read(id);
+    expect(body.steps.filter((s) => s.done).map((s) => s.item)).toEqual(["test_sold"]);
+    expect(body.steps.find((s) => s.item === "drain_route")).toEqual({ item: "drain_route", done: false, evidence: null });
+  });
+});

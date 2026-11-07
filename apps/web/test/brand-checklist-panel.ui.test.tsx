@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChecklistEvidence, ChecklistItemName, PanelSpendReportResponse } from "@anjuna/contracts";
+import type { PanelSpendReportResponse } from "@anjuna/contracts";
+import type { ChecklistStep } from "../src/client/api";
 import { LifecycleDetail, checklistFix } from "../src/client/screens/BrandLifecycle";
 import { brandSpendFresh } from "../src/client/home-metrics";
 
@@ -9,10 +10,10 @@ afterEach(cleanup);
 const owner = { id: "o", email: "o@example.test", role: "owner" as const };
 const employee = { id: "e", email: "e@example.test", role: "employee" as const };
 const brand = { brand_id: "brand-a", account: "account-a", hostnames: ["brand-a.example"], status: "live" as const, current_revision_id: "rev-1", runtime_sync_status: "ready" as const, bundle_form_version: "form@bundle-1", payload_version: "2026-01" };
-const evidence = (item: ChecklistItemName): ChecklistEvidence => ({ brand_id: "brand-a", item, actor_id: "system", verified_at: "2026-11-07T00:00:00Z" }) as ChecklistEvidence;
+const done = (...items: ChecklistStep["item"][]): ChecklistStep[] => items.map((item) => ({ item, done: true, evidence: "system · 2026-11-07T00:00:00Z" }));
 
 function detail(over: Partial<Parameters<typeof LifecycleDetail>[0]> = {}) {
-  return <LifecycleDetail me={owner} brand={brand} checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}} {...over} />;
+  return <LifecycleDetail me={owner} brand={brand} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} {...over} />;
 }
 const step = (item: string) => screen.getByText(new RegExp(`\(${item}\)`)).closest(".check-row") as HTMLElement;
 
@@ -27,7 +28,7 @@ describe("brand checklist fix buttons", () => {
   });
 
   it("a passing step shows no fix button", () => {
-    render(detail({ onFix: () => {}, install: { install_id: "inst-1", status: "failed", receipts: [], runtime_sync_status: "ready" } as never, checklist: { test_sold: evidence("test_sold"), drain_route: evidence("drain_route"), final_url: evidence("final_url") } }));
+    render(detail({ onFix: () => {}, install: { install_id: "inst-1", status: "failed", receipts: [], runtime_sync_status: "ready" } as never, steps: done("test_sold", "drain_route", "final_url") }));
     for (const item of ["test_sold", "drain_route", "final_url"]) expect(within(step(item)).queryByRole("button")).toBeNull();
   });
 
@@ -70,8 +71,8 @@ describe("AdKit block on the brand", () => {
     expect(block.textContent).toContain("$120");
   });
 
-  it("shows no block for an employee", () => {
-    render(detail({ me: employee }));
+  it("shows no block for an employee even when the numbers are passed in", () => {
+    render(detail({ me: employee, adkit: { periodLabel: "7 วัน", spendText: "฿3,500", profitText: "$120" } }));
     expect(screen.queryByRole("region", { name: "ตัวเลขโฆษณา" })).toBeNull();
   });
 });
@@ -86,7 +87,7 @@ describe("brandSpendFresh", () => {
     expect(brandSpendFresh(null, "brand-a", now)).toBe(false);
     expect(brandSpendFresh(report([]), "brand-a", now)).toBe(false);
   });
-  it("is true when the newest row is under 2 hours old", () => {
+  it("is true when every row is under 2 hours old", () => {
     expect(brandSpendFresh(report([{ currency: "THB", updated_at: "2026-11-07T11:00:00.000Z" }]), "brand-a", now)).toBe(true);
   });
   it("is false when every row is older than 2 hours", () => {

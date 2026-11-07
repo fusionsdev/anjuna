@@ -53,7 +53,7 @@ function leadRows(brands: ActionBrand[], leads: Record<string, string>): ReactNo
  * A request for the same action and brand that is still pending is ignored. Role gating stays on the server, and a refusal shows as a toast.
  * `view` holds the dialog and the toast; render it once in the screen.
  */
-export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (brand: ActionBrand) => void } = {}) {
+export function useBrandActions(options: { onDone?: (action: BrandAction, brands: ActionBrand[]) => void; onSetRoute?: (brand: ActionBrand) => void } = {}) {
   const [confirm, dialog] = useConfirm();
   const inFlight = useRef(new Set<string>());
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
@@ -143,7 +143,7 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
     try {
       await send(action, brand, lead);
       show("ok", copy.done(brand));
-      optionsRef.current.onDone?.();
+      optionsRef.current.onDone?.(action, [brand]);
     } catch (error) {
       show("err", failureText(error));
     } finally {
@@ -180,10 +180,13 @@ export function useBrandActions(options: { onDone?: () => void; onSetRoute?: (br
       show("ok", `ยืนยัน Test sold แล้ว ${done} แบรนด์`);
     } finally {
       release(keys);
-      if (done > 0) optionsRef.current.onDone?.();
+      if (done > 0) optionsRef.current.onDone?.(action, todo.slice(0, done));
     }
   }, [confirm, show, askLeads]);
 
+  /** Drops answers of runs that already started: a screen calls it when its selection changes, so a late read cannot open a dialog for the old brand. */
+  const invalidate = useCallback(() => { generation.current += 1; }, []);
+
   const view = createElement(Fragment, null, dialog, toast ? createElement(Toast, { key: toast.id, kind: toast.kind, text: toast.text, onDismiss: dismiss }) : null);
-  return { run, runBatch, pending, view };
+  return { run, runBatch, invalidate, pending, view };
 }

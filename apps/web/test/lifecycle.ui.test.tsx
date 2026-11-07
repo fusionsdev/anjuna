@@ -713,9 +713,86 @@ describe("lifecycle detail header", () => {
   it("a brand without a hostname shows its name once in the detail header", () => {
     // The contract needs one hostname, so a hostname-less row is a cast: a factory-only draft can still arrive that way.
     const bare = { ...brand, hostnames: [], name: "Solo Draft" } as unknown as LifecycleBrandSummary;
-    render(<LifecycleDetail me={owner} brand={bare} checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}} />);
+    render(<LifecycleDetail me={owner} brand={bare} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} />);
     expect(screen.getByRole("heading", { name: "Solo Draft" })).toBeTruthy();
     expect(screen.getAllByText(/Solo Draft/)).toHaveLength(1);
+  });
+});
+
+describe("checklist actions and the brand selection", () => {
+  const gateOf = () => { let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); return { gate, release }; };
+  const second = () => LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] });
+
+  it("drops a checklist Retry read that finishes after another brand was selected", async () => {
+    lifecycleRows = [structuredClone(brand), second()];
+    history([{ ...failed, error: null }]);
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    const hold = gateOf();
+    let reads = 0;
+    routes.set("GET /api/installs/failed-1", async () => { reads += 1; if (reads > 1) await hold.gate; return json(failed); });
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect((screen.getByRole("button", { name: "ลองติดตั้งใหม่" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "ลองติดตั้งใหม่" }));
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: /second\.test/ }));
+    await screen.findByRole("heading", { name: "second.test" });
+    await act(async () => { hold.release(); });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("keeps the open config and its typed input of another brand when a Test sold of the first brand finishes", async () => {
+    lifecycleRows = [structuredClone(brand), second()];
+    const configB = { ...structuredClone(config), brand_id: "brand-b", hostnames: ["second.test"] };
+    routes.set("GET /api/brands", () => json({ brands: [config, configB].map((c) => ({ brand_id: c.brand_id, hostnames: c.hostnames, status: c.status, flow_gate_mode: c.flow_gate_mode, ab_config: c.ab_config, form_version: c.form_version, stats_7d: { leads: 0, sold: 0, pending: 0 } })), generated_at: "2026-10-06T00:00:00Z" }));
+    routes.set("GET /api/brands/brand-b", () => json({ brand: configB }));
+    routes.set("GET /api/brands/brand-b/site-text", () => json({ brand_id: "brand-b", defaults: null }));
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    routes.set("GET /api/brands/brand-b/revisions", () => json({ brand_id: "brand-b", current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
+    routes.set("GET /api/brands/brand-b/assets", () => json({ brand_id: "brand-b", assets: [] }));
+    routes.set("GET /api/brands/brand-b/edit", () => json({ brand_id: "brand-b", status: "live", template_version_id: "tv-1", microsoft_ads_account: null }));
+    const hold = gateOf();
+    routes.set("POST /api/brands/brand-a/checklist", async () => { await hold.gate; return json({ evidence: { brand_id: "brand-a", item: "test_sold", actor_id: "owner", verified_at: "2026-11-07T00:00:00Z" } }); });
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "ยืนยัน Test sold" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
+    await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/brands/brand-a/checklist")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: /second\.test/ }));
+    await screen.findByRole("heading", { name: "second.test" });
+    await openRuntimeConfig();
+    const panel = await screen.findByRole("complementary", { name: configLabel });
+    const keyword = (await within(panel).findByRole("heading", { name: keywordSection })).closest("section")!.querySelector("input")!;
+    fireEvent.change(keyword, { target: { value: "typed not saved" } });
+    const listReads = () => requests.filter((r) => r.path === "/api/lifecycle/brands").length;
+    const before = listReads();
+    await act(async () => { hold.release(); });
+    await waitFor(() => expect(listReads()).toBeGreaterThan(before));
+    expect(screen.getByRole("complementary", { name: configLabel })).toBe(panel);
+    expect((keyword as HTMLInputElement).value).toBe("typed not saved");
+  }, 15_000);
+
+  it("reads the first brand's checklist again after its Test sold, and the step turns done", async () => {
+    let attested = false;
+    routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: attested ? [{ item: "test_sold", evidence: { brand_id: "brand-a", item: "test_sold", actor_id: "owner", verified_at: "2026-11-07T00:00:00Z" } }] : [] }));
+    routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({}); });
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "ยืนยัน Test sold" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
+    await waitFor(() => expect((screen.getByRole("checkbox", { name: /test_sold/ }) as HTMLInputElement).checked).toBe(true));
+    expect(screen.queryByRole("button", { name: "ยืนยัน Test sold" })).toBeNull();
+  });
+
+  it("turns the fix buttons off while an install runs", async () => {
+    history([{ install_id: "running-1", status: "running", error: null }]);
+    routes.set("GET /api/installs/running-1", () => json({ install_id: "running-1", brand_id: "brand-a", revision_id: "rev-1", status: "running", runtime_sync_status: "queued", receipts: [] }));
+    render(<BrandLifecycle me={owner} />);
+    const fix = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    await waitFor(() => expect((fix as HTMLButtonElement).disabled).toBe(true));
   });
 });
 
@@ -742,9 +819,29 @@ describe("AdKit numbers on the brand detail", () => {
     render(<BrandLifecycle me={owner} />);
     const adkit = await block();
     await waitFor(() => expect(requests.some((r) => r.path === "/api/spend?period=7d")).toBe(true));
+    // The spend answer is committed before the assertion: a stale number would be on screen by now.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
     expect(adkit.textContent).not.toContain("฿");
     expect(adkit.textContent).not.toContain("$");
     expect(adkit.textContent?.match(/—/g)).toHaveLength(2);
+  });
+
+  it("turns a shown number into — once the clock passes 2 hours, with no other change on the screen", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-07T12:00:00.000Z"));
+      routes.set("GET /api/spend?period=7d", () => json(spendBody("2026-11-07T11:30:00.000Z")));
+      // Every checklist step is done and nothing is pending: this brand never re-renders on its own.
+      const done = ["final_url", "leadsgate_postbacks", "test_sold", "drain_route"].map((item) => ({ item, evidence: { brand_id: "brand-a", item, actor_id: "system", verified_at: "2026-11-07T00:00:00Z" } }));
+      routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: done }));
+      render(<BrandLifecycle me={owner} />);
+      const adkit = await block();
+      await waitFor(() => expect(adkit.textContent).toContain("฿3,500"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(3 * 3_600_000); });
+      expect(adkit.textContent).not.toContain("฿");
+      expect(adkit.textContent).not.toContain("$");
+      expect(adkit.textContent?.match(/—/g)).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
   });
 
   it("has no block and no spend request for an employee", async () => {
