@@ -194,7 +194,7 @@ export interface JobResultDeps { recordCampaignBrand: RecordCampaignBrand }
 
 /**
  * POST /api/adkit/jobs/result: record the outcome of the named claim. A repeated done result is a no-op 200.
- * `deps` lets tests observe the campaign_brand_map write without the T13-1 table.
+ * `deps` lets tests observe or break the campaign_brand_map write.
  */
 export async function handleJobResult(request: Request, env: Env, deps: JobResultDeps = { recordCampaignBrand }): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();

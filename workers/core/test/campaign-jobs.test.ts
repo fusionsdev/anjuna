@@ -33,7 +33,7 @@ async function setSetting(key: string, value: unknown) {
 
 beforeEach(async () => {
   await h.db.prepare("DELETE FROM brand_runtime").run();
-  await h.db.batch(["adkit_jobs", "adkit_directory"].map((t) => h.db.prepare(`DELETE FROM ${t}`)));
+  await h.db.batch(["adkit_jobs", "adkit_directory", "campaign_brand_map"].map((t) => h.db.prepare(`DELETE FROM ${t}`)));
   await h.factory.prepare("DELETE FROM panel_settings").run();
   await seedBrand("petvet", THB_ACCOUNT);
   await seedBrand("bison", THB_ACCOUNT);
@@ -282,7 +282,7 @@ describe("GET /admin/adkit/campaigns", () => {
   });
 });
 
-describe("campaign_brand_map on a done draft (seam until T13-1 merges)", () => {
+describe("campaign_brand_map on a done draft (injected writer)", () => {
   const inProcess = (body: Record<string, unknown>, record: (db: D1Database, row: unknown) => Promise<void>) => handleJobResult(
     new Request("https://core.aduplift.ai/api/adkit/jobs/result", {
       method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -319,7 +319,26 @@ describe("campaign_brand_map on a done draft (seam until T13-1 merges)", () => {
     expect(record).toHaveBeenCalledTimes(1);
   });
 
-  it("the default writer is a no-op until the T13-1 table exists", async () => {
-    await expect(recordCampaignBrand(h.db, { account: THB_ACCOUNT, campaign_id: "1", brand_id: "petvet" })).resolves.toBeUndefined();
+});
+
+describe("campaign_brand_map write (source = 'create')", () => {
+  const mapRow = (campaignId: string) => h.db.prepare("SELECT brand_id, source FROM campaign_brand_map WHERE account = ?1 AND campaign_id = ?2")
+    .bind(THB_ACCOUNT, campaignId).first<{ brand_id: string; source: string }>();
+
+  it("a done draft job writes the map row through the real route", async () => {
+    const campaignId = await draftDone("petvet", 1, 500);
+    expect(await mapRow(campaignId)).toEqual({ brand_id: "petvet", source: "create" });
+  });
+
+  it("overwrites a click row and never a manual row", async () => {
+    const at = "2026-11-01T00:00:00.000Z";
+    await h.db.batch([
+      h.db.prepare("INSERT INTO campaign_brand_map VALUES (?1, '31000000001', 'bison', 'click', ?2, ?2)").bind(THB_ACCOUNT, at),
+      h.db.prepare("INSERT INTO campaign_brand_map VALUES (?1, '31000000002', 'bison', 'manual', ?2, ?2)").bind(THB_ACCOUNT, at),
+    ]);
+    await recordCampaignBrand(h.db, { account: THB_ACCOUNT, campaign_id: "31000000001", brand_id: "petvet" });
+    await recordCampaignBrand(h.db, { account: THB_ACCOUNT, campaign_id: "31000000002", brand_id: "petvet" });
+    expect(await mapRow("31000000001")).toEqual({ brand_id: "petvet", source: "create" });
+    expect(await mapRow("31000000002")).toEqual({ brand_id: "bison", source: "manual" });
   });
 });
