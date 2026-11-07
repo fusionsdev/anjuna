@@ -256,3 +256,208 @@ describe("GET /admin/spend", () => {
     expect(body.daily).toEqual([{ date: daysAgo(1), cost: 17, currency: "THB" }]);
   });
 });
+
+describe("POST /api/spend/campaign-ingest", () => {
+  const ACCOUNT = "5381163935";
+  const DATE = "2026-11-05";
+  const campaignIngest = (body: unknown, authorization = `Bearer ${DRAIN_TOKEN}`) =>
+    h.request("/api/spend/campaign-ingest", {
+      method: "POST",
+      headers: { Authorization: authorization, "Content-Type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+  const allocationRows = () => h.db.prepare(
+    "SELECT brand_id, date, hour, cost, currency, clicks, impressions, allocation FROM ad_spend ORDER BY date, hour, brand_id",
+  ).all();
+  const unallocatedRows = () => h.db.prepare(
+    "SELECT account, date, hour, cost, currency FROM ad_spend_unallocated ORDER BY date, hour",
+  ).all();
+  let n = 0;
+  const paidClick = (brand: string, seenAt: string, campaign: string | null = null) =>
+    h.db.prepare(`INSERT INTO click_sessions (click_session_id, gclid, utm_campaign, click_seen_at, first_seen_at, last_seen_at,
+      created_at, hostname, brand_id) VALUES (?1, 'gclid-x', ?2, ?3, ?3, ?3, ?3, ?4, ?5)`)
+      .bind(`cs-route-${++n}`, campaign, seenAt, `${brand}.example`, brand);
+  const setMode = (mode: string) => h.factory.prepare(`INSERT INTO panel_settings (key, value_json, updated_by, updated_at)
+    VALUES ('ads_allocation_mode', ?1, 'usr_owner_01', '2026-11-01T00:00:00.000Z')
+    ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json`).bind(JSON.stringify(mode)).run();
+  const body = (rows: unknown[], extra: Record<string, unknown> = {}) => ({ account: ACCOUNT, currency: "THB", rows, ...extra });
+  const pick = (rows: Record<string, unknown>[], ...keys: string[]) => rows.map((r) => keys.map((k) => r[k]));
+
+  beforeEach(async () => {
+    await h.factory.prepare("DELETE FROM panel_settings WHERE key = 'ads_allocation_mode'").run();
+    await h.seedBrand("petvetpay", "t-pv");
+    await h.seedBrand("bisoncash", "t-bc");
+    await h.db.batch([
+      h.db.prepare("UPDATE brand_runtime SET google_ads_account = ?1 WHERE brand_id IN ('petvetpay', 'bisoncash')").bind(ACCOUNT),
+      h.db.prepare("UPDATE brand_runtime SET google_ads_account = '1111111111' WHERE brand_id = 'brand-a'"),
+      h.db.prepare("INSERT INTO campaign_brand_map VALUES (?1, '111', 'bisoncash', 'manual', ?2, ?2)").bind(ACCOUNT, "2026-11-01T00:00:00.000Z"),
+    ]);
+  });
+
+  it.each(["", "Bearer wrong"])("returns the drain 401 for auth %j and writes nothing", async (authorization) => {
+    const response = await campaignIngest(body([{ date: DATE, hour: 10, campaign_id: "222", cost: 1, clicks: 1, impressions: 1 }]), authorization);
+    expect(response.status).toBe(401);
+    expect(await response.text()).toBe(fixtureText("drain/unauthorized.response.json"));
+    expect((await allocationRows()).results).toEqual([]);
+  });
+
+  it("ignores a token in the query string and is POST only", async () => {
+    expect((await h.request(`/api/spend/campaign-ingest?token=${DRAIN_TOKEN}`, { method: "POST", body: "{}" })).status).toBe(401);
+    expect((await h.request("/api/spend/campaign-ingest", { headers: { Authorization: `Bearer ${DRAIN_TOKEN}` } })).status).toBe(404);
+  });
+
+  it.each([
+    ["malformed JSON", "{rows:"],
+    ["a bad account", body([], { account: "538-116-3935" })],
+    ["a missing currency", { account: ACCOUNT, rows: [] }],
+    ["a non-numeric campaign id", body([{ date: DATE, hour: 1, campaign_id: "summer", cost: 1, clicks: 1, impressions: 1 }])],
+    ["a negative cost", body([{ date: DATE, hour: 1, campaign_id: "222", cost: -1, clicks: 1, impressions: 1 }])],
+    ["a brand_id field", body([{ brand_id: "petvetpay", date: DATE, hour: 1, campaign_id: "222", cost: 1, clicks: 1, impressions: 1 }])],
+  ])("rejects %s with 400 and writes nothing", async (_name, payload) => {
+    const response = await campaignIngest(payload);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ status: "invalid" });
+    expect((await allocationRows()).results).toEqual([]);
+  });
+
+  it("rejects the same campaign twice in one hour, writing nothing", async () => {
+    const row = { date: DATE, hour: 10, campaign_id: "222", cost: 1, clicks: 1, impressions: 1 };
+    const response = await campaignIngest(body([row, { ...row, cost: 2 }]));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ status: "invalid", message: "Duplicate campaign row" });
+    expect((await allocationRows()).results).toEqual([]);
+  });
+
+  it("rejects an account no brand of this core uses with 422", async () => {
+    const response = await campaignIngest(body([{ date: DATE, hour: 1, campaign_id: "222", cost: 1, clicks: 1, impressions: 1 }], { account: "9999999999" }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ status: "invalid", message: "Unknown account" });
+  });
+
+  it("splits PetVetPay and BisonCash so the brand rows add up to the posted cost", async () => {
+    await h.db.batch([
+      paidClick("petvetpay", `${DATE}T10:05:00.000Z`), paidClick("petvetpay", `${DATE}T10:20:00.000Z`),
+      paidClick("petvetpay", `${DATE}T10:59:59.000Z`), paidClick("bisoncash", `${DATE}T10:30:00.000Z`),
+      paidClick("bisoncash", `${DATE}T11:00:00.000Z`), // next hour, not counted for hour 10
+    ]);
+    const response = await campaignIngest(body([
+      { date: DATE, hour: 10, campaign_id: "111", cost: 40, clicks: 8, impressions: 80 },
+      { date: DATE, hour: 10, campaign_id: "222", cost: 100, clicks: 4, impressions: 40 },
+      { date: DATE, hour: 11, campaign_id: "111", cost: 12.34, clicks: 2, impressions: 20 },
+    ]));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "accepted", upserted: 4, unallocated: 0 });
+    expect((await allocationRows()).results).toEqual([
+      { brand_id: "bisoncash", date: DATE, hour: 10, cost: 65, currency: "THB", clicks: 9, impressions: 90, allocation: "estimated" },
+      { brand_id: "petvetpay", date: DATE, hour: 10, cost: 75, currency: "THB", clicks: 3, impressions: 30, allocation: "estimated" },
+      { brand_id: "bisoncash", date: DATE, hour: 11, cost: 12.34, currency: "THB", clicks: 2, impressions: 20, allocation: "exact" },
+      { brand_id: "petvetpay", date: DATE, hour: 11, cost: 0, currency: "THB", clicks: 0, impressions: 0, allocation: "exact" },
+    ]);
+    expect((await unallocatedRows()).results).toEqual([]);
+  });
+
+  it("leaves the same rows when the same hour is posted twice", async () => {
+    await h.db.batch([paidClick("petvetpay", `${DATE}T10:05:00.000Z`), paidClick("bisoncash", `${DATE}T10:06:00.000Z`)]);
+    const payload = body([{ date: DATE, hour: 10, campaign_id: "222", cost: 10.01, clicks: 3, impressions: 9 }]);
+    await campaignIngest(payload);
+    const first = (await allocationRows()).results;
+    expect((await campaignIngest(payload)).status).toBe(200);
+    expect((await allocationRows()).results).toEqual(first);
+    expect(first.map((r) => r.cost)).toEqual([5.01, 5]);
+  });
+
+  it("overwrites a brand's earlier share when a rerun gives the hour to the other brand", async () => {
+    await campaignIngest(body([{ date: DATE, hour: 10, campaign_id: "222", cost: 10, clicks: 0, impressions: 0 }]));
+    await h.db.prepare("INSERT INTO campaign_brand_map VALUES (?1, '222', 'petvetpay', 'manual', ?2, ?2)").bind(ACCOUNT, "2026-11-06T00:00:00.000Z").run();
+    await campaignIngest(body([{ date: DATE, hour: 10, campaign_id: "222", cost: 10, clicks: 0, impressions: 0 }]));
+    expect(pick((await allocationRows()).results, "brand_id", "cost", "allocation")).toEqual([
+      ["bisoncash", 0, "exact"], ["petvetpay", 10, "exact"],
+    ]);
+  });
+
+  it("uses the day's clicks when the hour has none, then an equal split", async () => {
+    await h.db.batch([paidClick("petvetpay", `${DATE}T02:00:00.000Z`), paidClick("bisoncash", `${DATE}T03:00:00.000Z`),
+      paidClick("bisoncash", `${DATE}T04:00:00.000Z`), paidClick("bisoncash", `${DATE}T05:00:00.000Z`)]);
+    await campaignIngest(body([
+      { date: DATE, hour: 20, campaign_id: "222", cost: 8, clicks: 0, impressions: 0 },
+      { date: "2026-11-06", hour: 20, campaign_id: "222", cost: 0.05, clicks: 0, impressions: 0 },
+    ]));
+    expect(pick((await allocationRows()).results, "date", "brand_id", "cost", "allocation")).toEqual([
+      [DATE, "bisoncash", 6, "estimated"], [DATE, "petvetpay", 2, "estimated"],
+      ["2026-11-06", "bisoncash", 0.03, "estimated"], ["2026-11-06", "petvetpay", 0.02, "estimated"],
+    ]);
+  });
+
+  it("counts only paid clicks of the account's brands as weights", async () => {
+    await h.db.batch([
+      paidClick("petvetpay", `${DATE}T10:05:00.000Z`),
+      h.db.prepare(`INSERT INTO click_sessions (click_session_id, utm_source, click_seen_at, first_seen_at, last_seen_at, created_at, hostname, brand_id)
+        VALUES ('cs-organic', 'newsletter', ?1, ?1, ?1, ?1, 'bisoncash.example', 'bisoncash')`).bind(`${DATE}T10:10:00.000Z`),
+      paidClick("brand-a", `${DATE}T10:15:00.000Z`),
+    ]);
+    await campaignIngest(body([{ date: DATE, hour: 10, campaign_id: "222", cost: 9, clicks: 0, impressions: 0 }]));
+    expect(pick((await allocationRows()).results, "brand_id", "cost")).toEqual([["bisoncash", 0], ["petvetpay", 9]]);
+  });
+
+  it("maps a campaign from 3 recent clicks of one brand before allocating", async () => {
+    // Click times relative to the wall clock: the map window ends at the real now.
+    const recent = `${daysAgo(1)}T09:00:00.000Z`;
+    await h.db.batch([paidClick("petvetpay", recent, "333"), paidClick("petvetpay", recent, "333"),
+      paidClick("petvetpay", recent, "333"), paidClick("bisoncash", `${DATE}T10:00:00.000Z`)]);
+    await campaignIngest(body([{ date: DATE, hour: 10, campaign_id: "333", cost: 7, clicks: 1, impressions: 1 }]));
+    expect(pick((await allocationRows()).results, "brand_id", "cost", "allocation")).toEqual([
+      ["bisoncash", 0, "exact"], ["petvetpay", 7, "exact"],
+    ]);
+  });
+
+  it("writes unmapped cost to ad_spend_unallocated and no brand row in exact_only mode", async () => {
+    await setMode("exact_only");
+    await h.db.batch([paidClick("petvetpay", `${DATE}T10:05:00.000Z`)]);
+    const payload = body([
+      { date: DATE, hour: 10, campaign_id: "111", cost: 40, clicks: 8, impressions: 80 },
+      { date: DATE, hour: 10, campaign_id: "222", cost: 100.55, clicks: 4, impressions: 40 },
+    ]);
+    const response = await campaignIngest(payload);
+    expect(await response.json()).toEqual({ status: "accepted", upserted: 2, unallocated: 100.55 });
+    expect(pick((await allocationRows()).results, "brand_id", "cost", "allocation")).toEqual([
+      ["bisoncash", 40, "exact"], ["petvetpay", 0, "exact"],
+    ]);
+    expect((await unallocatedRows()).results).toEqual([{ account: ACCOUNT, date: DATE, hour: 10, cost: 100.55, currency: "THB" }]);
+    await campaignIngest(payload);
+    expect((await unallocatedRows()).results).toHaveLength(1);
+  });
+
+  it("clears an hour's unallocated cost when the mode goes back to estimated", async () => {
+    await setMode("exact_only");
+    const payload = body([{ date: DATE, hour: null, campaign_id: "222", cost: 10, clicks: 0, impressions: 0 }]);
+    await campaignIngest(payload);
+    await setMode("estimated");
+    await campaignIngest(payload);
+    expect((await unallocatedRows()).results).toEqual([]);
+    expect(pick((await allocationRows()).results, "brand_id", "hour", "cost")).toEqual([["bisoncash", null, 5], ["petvetpay", null, 5]]);
+  });
+
+  it("accepts an empty batch", async () => {
+    const response = await campaignIngest(body([]));
+    expect(await response.json()).toEqual({ status: "accepted", upserted: 0, unallocated: 0 });
+  });
+
+  it("marks a row exact again when the account level ingest overwrites it", async () => {
+    await campaignIngest(body([{ date: DATE, hour: 10, campaign_id: "222", cost: 10, clicks: 0, impressions: 0 }]));
+    await ingest({ rows: [{ brand_id: "petvetpay", date: DATE, hour: 10, cost: 3, clicks: 1, impressions: 1 }] });
+    expect(pick((await allocationRows()).results, "brand_id", "cost", "allocation")).toEqual([
+      ["bisoncash", 5, "estimated"], ["petvetpay", 3, "exact"],
+    ]);
+  });
+
+  it("keeps the admin report shape and its totals equal to the posted cost", async () => {
+    await h.db.batch([paidClick("petvetpay", `${today()}T00:10:00.000Z`)]);
+    await campaignIngest(body([
+      { date: today(), hour: 0, campaign_id: "111", cost: 33.33, clicks: 1, impressions: 1 },
+      { date: today(), hour: 0, campaign_id: "222", cost: 66.67, clicks: 2, impressions: 2 },
+    ]));
+    const parsed = SpendReportResponse.parse(await (await report("today")).json());
+    expect(parsed.totals.cost_by_currency.THB).toBe(100);
+    expect(parsed.brands.map((b) => [b.brand_id, b.cost])).toEqual([["bisoncash", 33.33], ["petvetpay", 66.67]]);
+  });
+});

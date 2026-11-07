@@ -5,15 +5,19 @@
  * groups by brand and currency and never adds baht to dollars; the panel converts to USD.
  */
 import {
+  AdsAllocationMode,
+  CampaignSpendIngestRequest,
   SpendIngestRequest,
   SpendReportResponse,
   spendPeriodRange,
+  type CampaignSpendRow,
   type SpendCurrency,
   type SpendPeriod,
 } from "@anjuna/contracts";
 import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
+import { allocateSpend, deriveCampaignMap } from "./spend-allocation.js";
 
 /** 5000 rows of about 110 bytes each, with headroom. */
 const INGEST_BODY_LIMIT = 1_000_000;
@@ -23,40 +27,55 @@ const INGEST_BODY_LIMIT = 1_000_000;
  * POST stays far below D1's per-query bound-parameter and per-invocation query limits.
  * `WHERE true` is SQLite's required disambiguation for INSERT ... SELECT ... ON CONFLICT.
  * The conflict target is the ad_spend_key unique index expression (NULL hour = whole day).
+ * A row without `allocation` is exact: the account level path writes brands alone on their account.
  */
 const UPSERT_SQL = `
-  INSERT INTO ad_spend (brand_id, date, hour, cost, currency, clicks, impressions, source, updated_at)
+  INSERT INTO ad_spend (brand_id, date, hour, cost, currency, clicks, impressions, source, allocation, updated_at)
   SELECT json_extract(value, '$.brand_id'), json_extract(value, '$.date'), json_extract(value, '$.hour'),
          json_extract(value, '$.cost'), json_extract(value, '$.currency'), json_extract(value, '$.clicks'),
-         json_extract(value, '$.impressions'), 'google', ?2
+         json_extract(value, '$.impressions'), 'google', COALESCE(json_extract(value, '$.allocation'), 'exact'), ?2
   FROM json_each(?1) WHERE true
   ON CONFLICT (brand_id, date, COALESCE(hour, -1), source) DO UPDATE SET
     cost = excluded.cost, currency = excluded.currency, clicks = excluded.clicks, impressions = excluded.impressions,
-    updated_at = excluded.updated_at`;
+    allocation = excluded.allocation, updated_at = excluded.updated_at`;
 
 const invalid = (message: string, extra: Record<string, unknown> = {}, status = 400) =>
   json({ status: "invalid", message, ...extra }, status);
 
-export async function handleSpendIngest(request: Request, env: Env): Promise<Response> {
-  if (!await drainAuthorized(request, env)) return unauthorized();
+/** The part of a zod schema readBody uses; core does not depend on zod directly. */
+interface BodySchema<T> {
+  safeParse(raw: unknown):
+    | { success: true; data: T }
+    | { success: false; error: { issues: readonly { path: readonly PropertyKey[]; message: string }[] } };
+}
 
+/** Read and validate a JSON body under the ingest size bound. Returns the parsed value or the 4xx response. */
+async function readBody<T>(request: Request, schema: BodySchema<T>): Promise<{ data: T } | { response: Response }> {
   const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > INGEST_BODY_LIMIT) return invalid("Request body is too large", {}, 413);
+  if (Number.isFinite(declared) && declared > INGEST_BODY_LIMIT) return { response: invalid("Request body is too large", {}, 413) };
   const text = await request.text();
-  if (text.length > INGEST_BODY_LIMIT) return invalid("Request body is too large", {}, 413);
+  if (text.length > INGEST_BODY_LIMIT) return { response: invalid("Request body is too large", {}, 413) };
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    return invalid("Invalid JSON");
+    return { response: invalid("Invalid JSON") };
   }
-  const parsed = SpendIngestRequest.safeParse(raw);
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    return invalid("Invalid body", {
+    return { response: invalid("Invalid body", {
       issues: parsed.error.issues.map((i) => ({ path: i.path.map(String).join(".") || "body", message: i.message })),
-    });
+    }) };
   }
-  const { rows } = parsed.data;
+  return { data: parsed.data };
+}
+
+export async function handleSpendIngest(request: Request, env: Env): Promise<Response> {
+  if (!await drainAuthorized(request, env)) return unauthorized();
+
+  const body = await readBody(request, SpendIngestRequest);
+  if ("response" in body) return body.response;
+  const { rows } = body.data;
 
   // Every brand_id must belong to this core. One unknown id rejects the whole batch unwritten.
   const { results } = await env.LEADS.prepare("SELECT brand_id FROM brand_runtime").all<{ brand_id: string }>();
@@ -69,6 +88,142 @@ export async function handleSpendIngest(request: Request, env: Env): Promise<Res
   const payload = rows.map((r) => ({ ...r, hour: r.hour ?? null, currency: r.currency ?? "THB" }));
   await env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(payload), new Date().toISOString()).run();
   return json({ status: "accepted", upserted: rows.length });
+}
+
+/** Panel setting `ads_allocation_mode` from factory panel_settings. A missing or unreadable row is `estimated`. */
+async function loadAllocationMode(env: Env): Promise<AdsAllocationMode> {
+  const row = await env.FACTORY.prepare("SELECT value_json FROM panel_settings WHERE key = 'ads_allocation_mode'")
+    .first<{ value_json: string }>();
+  if (!row) return "estimated";
+  try {
+    const mode = AdsAllocationMode.safeParse(JSON.parse(row.value_json));
+    return mode.success ? mode.data : "estimated";
+  } catch {
+    return "estimated";
+  }
+}
+
+const UNALLOCATED_UPSERT_SQL = `
+  INSERT INTO ad_spend_unallocated (account, date, hour, cost, currency, updated_at)
+  SELECT ?3, json_extract(value, '$.date'), json_extract(value, '$.hour'), json_extract(value, '$.cost'), ?4, ?2
+  FROM json_each(?1) WHERE true
+  ON CONFLICT (account, date, COALESCE(hour, -1), currency) DO UPDATE SET
+    cost = excluded.cost, updated_at = excluded.updated_at`;
+
+/** A slot with no unallocated cost keeps no unallocated row, so a rerun in `estimated` mode clears it. */
+const UNALLOCATED_CLEAR_SQL = `
+  DELETE FROM ad_spend_unallocated
+  WHERE account = ?2 AND currency = ?3 AND EXISTS (
+    SELECT 1 FROM json_each(?1) j
+    WHERE json_extract(j.value, '$.date') = ad_spend_unallocated.date
+      AND COALESCE(json_extract(j.value, '$.hour'), -1) = COALESCE(ad_spend_unallocated.hour, -1))`;
+
+/**
+ * Paid clicks (a Google click id) of the given brands per UTC day and hour inside [from, to].
+ * click_seen_at is UTC ISO 8601, so the day is its first 10 characters and the hour the next 2 digits.
+ */
+const PAID_CLICKS_SQL = `
+  SELECT brand_id, substr(click_seen_at, 1, 10) AS date, CAST(substr(click_seen_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS n
+  FROM click_sessions
+  WHERE brand_id IN (SELECT value FROM json_each(?1))
+    AND (gclid IS NOT NULL OR gbraid IS NOT NULL OR wbraid IS NOT NULL)
+    AND click_seen_at >= ?2 AND click_seen_at < ?3
+  GROUP BY brand_id, date, hour`;
+
+const slotKey = (date: string, hour: number | null) => `${date}|${hour ?? -1}`;
+const nextDay = (date: string) => new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * POST /api/spend/campaign-ingest (drain token, header only). Body: one account's campaign level cost.
+ * Core first refreshes `click` map rows, then allocates each (date, hour) slot to the account's brands
+ * (see spend-allocation.ts) and writes one ad_spend row per brand per slot, 0 included, so a rerun or a
+ * changed mapping overwrites every earlier share. Weights for unmapped campaigns are the brands' paid
+ * clicks in the same UTC hour, else that UTC day, else equal. All writes run in one D1 batch.
+ */
+export async function handleCampaignSpendIngest(request: Request, env: Env): Promise<Response> {
+  if (!await drainAuthorized(request, env)) return unauthorized();
+
+  const body = await readBody(request, CampaignSpendIngestRequest);
+  if ("response" in body) return body.response;
+  const { account, currency, rows } = body.data;
+
+  const slots = new Map<string, { date: string; hour: number | null; campaigns: CampaignSpendRow[] }>();
+  for (const row of rows) {
+    const hour = row.hour ?? null;
+    const key = slotKey(row.date, hour);
+    const slot = slots.get(key) ?? { date: row.date, hour, campaigns: [] };
+    if (slot.campaigns.some((c) => c.campaign_id === row.campaign_id)) {
+      return invalid("Duplicate campaign row", { date: row.date, hour, campaign_id: row.campaign_id });
+    }
+    slot.campaigns.push(row);
+    slots.set(key, slot);
+  }
+
+  const { results: brandRows } = await env.LEADS.prepare(
+    "SELECT brand_id FROM brand_runtime WHERE google_ads_account = ?1 ORDER BY brand_id",
+  ).bind(account).all<{ brand_id: string }>();
+  const brands = brandRows.map((r) => r.brand_id);
+  if (!brands.length) return invalid("Unknown account", {}, 422);
+  if (!slots.size) return json({ status: "accepted", upserted: 0, unallocated: 0 });
+
+  await deriveCampaignMap(env.LEADS);
+  const dates = [...new Set(rows.map((r) => r.date))].sort();
+  const [mapResult, clickResult] = await env.LEADS.batch([
+    env.LEADS.prepare("SELECT campaign_id, brand_id FROM campaign_brand_map WHERE account = ?1").bind(account),
+    env.LEADS.prepare(PAID_CLICKS_SQL).bind(JSON.stringify(brands), `${dates[0]}T00:00:00.000Z`, `${nextDay(dates.at(-1)!)}T00:00:00.000Z`),
+  ]);
+  const map = new Map((mapResult as D1Result<{ campaign_id: string; brand_id: string }>).results.map((r) => [r.campaign_id, r.brand_id]));
+  const hourClicks = new Map<string, Record<string, number>>();
+  const dayClicks = new Map<string, Record<string, number>>();
+  for (const r of (clickResult as D1Result<{ brand_id: string; date: string; hour: number; n: number }>).results) {
+    for (const [index, key] of [[hourClicks, slotKey(r.date, Number(r.hour))], [dayClicks, r.date]] as const) {
+      const counts = index.get(key) ?? {};
+      counts[r.brand_id] = (counts[r.brand_id] ?? 0) + Number(r.n);
+      index.set(key, counts);
+    }
+  }
+  const mode = await loadAllocationMode(env);
+
+  const spend: Record<string, unknown>[] = [];
+  const unallocated: { date: string; hour: number | null; cost: number }[] = [];
+  const cleared: { date: string; hour: number | null }[] = [];
+  let unallocatedUnits = 0;
+  for (const { date, hour, campaigns } of slots.values()) {
+    const weightsFrom = (counts: Record<string, number> | undefined) =>
+      Object.fromEntries(brands.map((b) => [b, counts?.[b] ?? 0]));
+    const total = (counts: Record<string, number>) => Object.values(counts).reduce((a, b) => a + b, 0);
+    let brandClicks = weightsFrom(hour === null ? undefined : hourClicks.get(slotKey(date, hour)));
+    if (total(brandClicks) === 0) brandClicks = weightsFrom(dayClicks.get(date));
+    const result = allocateSpend({ campaigns, map, brandClicks, mode });
+    for (const brand of brands) {
+      const parts = result.rows.filter((r) => r.brand_id === brand);
+      spend.push({
+        brand_id: brand, date, hour, currency,
+        // Each part already has 2 decimals; the sum is rebuilt on hundredths so no float drift is stored.
+        cost: parts.reduce((t, p) => t + Math.round(p.cost * 100), 0) / 100,
+        clicks: parts.reduce((t, p) => t + p.clicks, 0),
+        impressions: parts.reduce((t, p) => t + p.impressions, 0),
+        allocation: parts.some((p) => p.allocation === "estimated") ? "estimated" : "exact",
+      });
+    }
+    if (result.unallocated > 0) {
+      unallocated.push({ date, hour, cost: result.unallocated });
+      unallocatedUnits += Math.round(result.unallocated * 100);
+    } else {
+      cleared.push({ date, hour });
+    }
+  }
+
+  // One brand row per slot can reach brands x 5000 rows: chunks of 2000 keep each JSON parameter well
+  // under D1's 2 MB value bound. The batch is one transaction, so a failure writes nothing.
+  const stamp = new Date().toISOString();
+  const chunks = Array.from({ length: Math.ceil(spend.length / 2000) }, (_, i) => spend.slice(i * 2000, (i + 1) * 2000));
+  await env.LEADS.batch([
+    ...chunks.map((chunk) => env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(chunk), stamp)),
+    env.LEADS.prepare(UNALLOCATED_UPSERT_SQL).bind(JSON.stringify(unallocated), stamp, account, currency),
+    env.LEADS.prepare(UNALLOCATED_CLEAR_SQL).bind(JSON.stringify(cleared), account, currency),
+  ]);
+  return json({ status: "accepted", upserted: spend.length, unallocated: unallocatedUnits / 100 });
 }
 
 const cents = (value: number) => Math.round(value * 100) / 100;
