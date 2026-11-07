@@ -140,20 +140,24 @@ export function CopyPanel({ form, errors, set, templateText }: FieldsProps & { t
  */
 export const ADKIT_POLL = { ms: 5000, backoffMaxMs: 60_000, maxMs: 30 * 60_000 };
 
-/** FNV-1a 32-bit, hex: shortens a long project id so the key fits the 160-character IdempotencyKey contract. */
-function fnv1a(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193) >>> 0;
-  return hash.toString(16).padStart(8, "0");
+/** First 32 hex characters (128 bits) of the SHA-256 of `text`. */
+async function sha256Hex32(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return Array.from(digest.subarray(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
  * One job per draft, project and account. Core keys jobs by this string, so a changed account or project gets a
  * new job and the same selection finds its earlier job. Max 140 characters, leaving room for a retry suffix.
+ * The project segment is `none` for no project, `r:<id>` for an id kept as is (no colon, key fits), and
+ * `h:<sha256 hex>` otherwise. The three forms cannot produce the same key for two different projects.
  */
-export function conversionJobKey(draftId: string, project: string, account: string): string {
-  const key = `conversion_action.create:${draftId}:${project || "none"}:${account}`;
-  return key.length <= 140 ? key : `conversion_action.create:${draftId}:p${fnv1a(project)}:${account}`;
+export async function conversionJobKey(draftId: string, project: string, account: string): Promise<string> {
+  const head = `conversion_action.create:${draftId}`;
+  if (!project) return `${head}:none:${account}`;
+  const raw = `${head}:r:${project}:${account}`;
+  if (/^[A-Za-z0-9._-]+$/.test(project) && raw.length <= 140) return raw;
+  return `${head}:h:${await sha256Hex32(project)}:${account}`;
 }
 
 const POLL_START = { since: 0, failures: 0, stopped: false };
@@ -229,10 +233,11 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
    * The job's latest state; a done job's action id goes into the form in the same update. A job for another
    * account or project than the one on screen is ignored, so its action id never lands in this selection.
    */
-  const take = (next: AdkitJob): void => {
-    if (next.payload.account !== selection.current.account || (next.payload.project ?? "") !== selection.current.project) return;
+  const take = (next: AdkitJob): boolean => {
+    if (next.payload.account !== selection.current.account || (next.payload.project ?? "") !== selection.current.project) return false;
     setJob(next);
     if (next.status === "done" && next.result && "conversion_action_id" in next.result) set("google_conversion_action", next.result.conversion_action_id);
+    return true;
   };
 
   useEffect(() => {
@@ -263,17 +268,18 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
   const resetJob = () => { setJob(null); setJobKey(undefined); setJobError(null); setPoll(POLL_START); };
   async function start(retry = false) {
     if (!draftId) return;
-    const base = conversionJobKey(draftId, project, form.google_ads_account);
-    const key = retry ? `${base}:retry-${Date.now().toString(36)}` : base;
     setStarting(true);
     setJobError(null);
     try {
+      const base = await conversionJobKey(draftId, project, form.google_ads_account);
+      const key = retry ? `${base}:retry-${Date.now().toString(36)}` : base;
       // The job reads the account and project from the saved draft, so they are saved first.
       await saveAds();
       const r = await api.createConversionAction(draftId, key);
+      // A late answer for a selection the owner already left changes nothing, so no key or poll start is kept.
+      if (!take(r.job)) return;
       setJobKey(key);
       setPoll({ ...POLL_START, since: Date.now() });
-      take(r.job);
     } catch (e) {
       setJobError(wizardErrorText(e));
     } finally {

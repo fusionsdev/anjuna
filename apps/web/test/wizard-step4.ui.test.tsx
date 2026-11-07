@@ -14,8 +14,8 @@ const TEMPLATE = {
 const PROJECTS = { items: [{ id: "proj_a", name: "Project A", currency: null, updated_at: NOW }, { id: "proj_b", name: "Project B", currency: null, updated_at: NOW }], synced_at: NOW };
 const ACCOUNTS = { items: [{ id: "1234567890", name: "Main account", currency: "THB", updated_at: NOW }, { id: "2222222222", name: "Second account", currency: "USD", updated_at: NOW }], synced_at: NOW };
 /** The key the wizard sends for draft brand_new, project proj_a and the given account. */
-const KEY_A = "conversion_action.create:brand_new:proj_a:1234567890";
-const KEY_B = "conversion_action.create:brand_new:proj_a:2222222222";
+const KEY_A = "conversion_action.create:brand_new:r:proj_a:1234567890";
+const KEY_B = "conversion_action.create:brand_new:r:proj_a:2222222222";
 const EMPTY = { items: [], synced_at: null };
 
 let held: { profile: Record<string, unknown> };
@@ -147,7 +147,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     fireEvent.click(screen.getByRole("button", { name: "ลองสร้างใหม่" }));
     expect(await screen.findByText("รอคิว")).toBeTruthy();
     const key = jobPosts().at(-1)!.body.idempotency_key as string;
-    expect(key).toMatch(/^conversion_action\.create:brand_new:proj_a:1234567890:retry-[0-9a-z]+$/);
+    expect(key).toMatch(/^conversion_action\.create:brand_new:r:proj_a:1234567890:retry-[0-9a-z]+$/);
   });
 
   it("gives a new account its own job and never applies the old account's action id", async () => {
@@ -175,10 +175,14 @@ describe("wizard step 4 from the AdKit directory", () => {
     expect((patches().at(-1)!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: "2222222222", adkit_project: "proj_a" });
 
     // An answer for A that lands while B is on screen is dropped.
-    holdB!(json(job("done", KEY_B, done, "1234567890")));
+    // The dropped answer keeps no key and starts no polling, even with a short poll interval.
+    ADKIT_POLL.ms = 5;
+    holdB!(json(job("queued", KEY_B, null, "1234567890")));
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("—");
     expect(screen.queryByText("สร้างแล้ว")).toBeNull();
+    expect(screen.queryByText("รอคิว")).toBeNull();
+    expect(jobPosts()).toHaveLength(2);
     next();
     await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" });
     expect((patches().at(-1)!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: "2222222222", adkit_project: "proj_a" });
@@ -222,10 +226,31 @@ describe("wizard step 4 from the AdKit directory", () => {
 
   it("keeps the key within the 160-character contract for a 64-character project id", async () => {
     const { conversionJobKey } = await import("../src/client/wizard/StepPanels");
-    const long = conversionJobKey("b".repeat(64), "p".repeat(64), "1234567890");
+    const long = await conversionJobKey("b".repeat(64), "p".repeat(64), "1234567890");
     expect(long.length).toBeLessThanOrEqual(140);
-    expect(long).toMatch(/^conversion_action\.create:b{64}:p[0-9a-f]{8}:1234567890$/);
-    expect(conversionJobKey("brand_new", "", "1234567890")).toBe("conversion_action.create:brand_new:none:1234567890");
+    expect(long).toMatch(/^conversion_action\.create:b{64}:h:[0-9a-f]{32}:1234567890$/);
+    expect(long).toMatch(/^[A-Za-z0-9:._-]{8,160}$/);
+    expect(await conversionJobKey("brand_new", "", "1234567890")).toBe("conversion_action.create:brand_new:none:1234567890");
+    expect(await conversionJobKey("brand_new", "none", "1234567890")).toBe("conversion_action.create:brand_new:r:none:1234567890");
+  });
+
+  it("gives different keys to projects that collided under the old 32-bit hash", async () => {
+    const { conversionJobKey } = await import("../src/client/wizard/StepPanels");
+    const draft = "b".repeat(64);
+    // The old key put a long project as p<fnv1a> next to raw ids: "p".repeat(64) hashed to 5fe86ac5.
+    const hashed = await conversionJobKey(draft, "p".repeat(64), "1234567890");
+    const literal = await conversionJobKey(draft, "p5fe86ac5", "1234567890");
+    expect(literal).toBe(`conversion_action.create:${draft}:r:p5fe86ac5:1234567890`);
+    expect(hashed).not.toBe(literal);
+    // Both of these hash to c3172bd0 with FNV-1a 32-bit.
+    const pad = "proj_" + "x".repeat(60);
+    const a = await conversionJobKey(draft, `${pad}_6s7`, "1234567890");
+    const b = await conversionJobKey(draft, `${pad}_1o80`, "1234567890");
+    expect(a).toMatch(/:h:[0-9a-f]{32}:1234567890$/);
+    expect(b).toMatch(/:h:[0-9a-f]{32}:1234567890$/);
+    expect(a).not.toBe(b);
+    // A project with a colon is hashed, so it cannot pose as another segment.
+    expect(await conversionJobKey("brand_new", "x:h:abc", "1234567890")).toMatch(/^conversion_action\.create:brand_new:h:[0-9a-f]{32}:1234567890$/);
   });
 
   it("shows — and a note when the directory is stale or empty, and keeps the select off", async () => {
