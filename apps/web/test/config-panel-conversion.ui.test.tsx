@@ -71,3 +71,20 @@ describe("Conversion action status in the money section", () => {
     expect(JSON.parse(String(patch[1]?.body))).toMatchObject({ aid: "aid-changed" });
   });
 });
+
+describe("Pause for an employee", () => {
+  it("shows Pause disabled with a Thai reason instead of hiding it", async () => {
+    setup = () => state({ status: "none", name: null, conversion_action_id: null, attempts: 0, updated_at: null });
+    render(<ConfigPanel me={{ id: "e", email: "e@example.test", role: "employee" as never }} brandId="brand-a" onClose={() => {}} onChanged={() => {}} />);
+    const pause = (await screen.findByRole("button", { name: /หยุดชั่วคราว/ })) as HTMLButtonElement;
+    expect(pause.disabled).toBe(true);
+    expect(pause.title).toBe("เฉพาะเจ้าของหยุดแบรนด์ได้");
+  });
+
+  it("keeps Pause enabled for the owner", async () => {
+    setup = () => state({ status: "none", name: null, conversion_action_id: null, attempts: 0, updated_at: null });
+    open();
+    const pause = (await screen.findByRole("button", { name: /หยุดชั่วคราว/ })) as HTMLButtonElement;
+    expect(pause.disabled).toBe(false);
+  });
+});
