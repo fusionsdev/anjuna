@@ -32,7 +32,7 @@ import { DraftDomain } from "../shared/wizard.js";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
 import { callCore } from "./core.js";
-import { drainRouteRow, smokeFinalUrlRow, smokeFinalUrlRows, smokeFinalUrlStatement } from "./drain-route-checklist.js";
+import { checklistSteps, drainRouteRow, smokeFinalUrlRow, smokeFinalUrlRows, smokeFinalUrlStatement } from "./drain-route-checklist.js";
 import { generateBrand } from "./generate.js";
 import { authorizePanel } from "./panel-roles.js";
 import { queueInstallRetry } from "./retry-install.js";
@@ -766,7 +766,8 @@ export async function handleLifecycleRoute(request: Request, env: Env, url: URL,
   if (m && method === "GET") {
     const g = authorizePanel("installBrand", ctx.actor_role); if (!g.ok) return forbidden(ctx.actor_role);
     const brandId = decodePathSegment(m[1]!); if (brandId === null) return json(400, { error: "invalid_brand_id" });
-    return json(200, { brand_id: brandId, checklist: await checklistRows(env, ctx, brandId) });
+    const rows = await checklistRows(env, ctx, brandId);
+    return json(200, { brand_id: brandId, checklist: rows, steps: checklistSteps(rows) });
   }
   m = path.match(/^\/api\/installs\/([^/]+)$/);
   if (m && method === "GET") {

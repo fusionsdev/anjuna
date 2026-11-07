@@ -100,23 +100,22 @@ describe("BrandLifecycle detail", () => {
   it("renders InstallProgress with Retry for a failed install", () => {
     const onRetry = vi.fn();
     const install = { ...base, status: "failed" as const, receipts: [{ step: "smoke", status: "failed" as const, error: "Smoke: apex DNS resolution failed" }] };
-    render(<LifecycleDetail me={owner} brand={brand} install={install} checklist={{}} leadId="" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRedeploy={() => undefined} onRetry={onRetry} onRecover={() => undefined} onChecklist={() => undefined} />);
+    render(<LifecycleDetail me={owner} brand={brand} install={install} onInstall={() => undefined} onRollback={() => undefined} onRedeploy={() => undefined} onRetry={onRetry} onRecover={() => undefined} />);
     expect(screen.getByRole("progressbar")).toBeDefined();
     expect(screen.getAllByRole("button", { name: "ลองใหม่ (Retry)" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "ลองใหม่ (Retry)" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves exactly one manual checklist action: Confirm test sold", () => {
-    const onChecklist = vi.fn();
-    render(<LifecycleDetail me={owner} brand={brand} checklist={{}} leadId="lead-1" onLeadIdChange={() => undefined} onInstall={() => undefined} onRollback={() => undefined} onRedeploy={() => undefined} onRetry={() => undefined} onRecover={() => undefined} onChecklist={onChecklist} />);
+  it("leaves exactly one manual checklist action: the Test sold fix button", () => {
+    const onFix = vi.fn();
+    render(<LifecycleDetail me={owner} brand={brand} onFix={onFix} onInstall={() => undefined} onRollback={() => undefined} onRedeploy={() => undefined} onRetry={() => undefined} onRecover={() => undefined} />);
     const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
     expect(boxes).toHaveLength(4);
-    expect(boxes.filter((box) => !box.disabled)).toHaveLength(1);
-    const sold = screen.getByLabelText(/Confirm test sold/) as HTMLInputElement;
-    expect(sold.disabled).toBe(false);
-    fireEvent.click(sold);
-    expect(onChecklist).toHaveBeenCalledWith("test_sold", "lead-1");
+    expect(boxes.every((box) => box.disabled)).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "ยืนยัน Test sold" }));
+    expect(onFix).toHaveBeenCalledWith("test_sold");
+    expect(screen.queryByLabelText("lead_id")).toBeNull();
     expect(screen.getByText(/Automatic when the install smoke test passes/)).toBeDefined();
   });
 });

@@ -49,6 +49,19 @@ export interface BrandChecklistEntry {
   unknown?: boolean;
 }
 
+/** One step of the brand checklist panel. `evidence` is a short text for a finished step and null for an open one. */
+export interface ChecklistStep { item: ChecklistItemName; done: boolean; evidence: string | null }
+
+/** The four steps of a per-brand checklist read. An older server sends no `steps`, so they are derived from the rows. */
+export function stepsFromChecklist(result: { checklist: Array<{ item: ChecklistItemName; evidence: unknown }>; steps?: ChecklistStep[] }): ChecklistStep[] {
+  if (result.steps) return result.steps;
+  return (["final_url", "leadsgate_postbacks", "test_sold", "drain_route"] as const).map((item) => {
+    const row = result.checklist.find((r) => r.item === item);
+    const evidence = row?.evidence as { actor_id?: string; verified_at?: string } | undefined;
+    return { item, done: row !== undefined, evidence: row ? `${evidence?.actor_id ?? "—"} · ${evidence?.verified_at ?? "—"}` : null };
+  });
+}
+
 /** GET /api/brands/checklists, keyed by brand id. */
 export interface BrandChecklists {
   brands: Record<string, BrandChecklistEntry>;
@@ -241,7 +254,7 @@ export const api = {
   recover: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/recover`, {}),
   retryInstall: (installId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/installs/${encodeURIComponent(installId)}/retry`, {}),
   installDetail: (installId: string) => request<InstallWithReceipts>("GET", `/api/installs/${encodeURIComponent(installId)}`),
-  checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }> }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
+  checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }>; steps?: ChecklistStep[] }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
   /** Every live brand's checklist rows in one read, keyed by brand id. A brand that is not live has no entry. */
   checklists: () => request<BrandChecklists>("GET", "/api/brands/checklists"),
   attestChecklist: (brandId: string, item: ChecklistItemName, lead_id?: string) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/checklist`, { item, ...(lead_id ? { lead_id } : {}) }),

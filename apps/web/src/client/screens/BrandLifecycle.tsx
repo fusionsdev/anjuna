@@ -1,7 +1,7 @@
-import { type BrandRevisionsResponse, type BrandSummary, type ChecklistEvidence, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
+import { type BrandRevisionsResponse, type BrandSummary, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
 import { Fragment, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api, type BrandChecklists, type Me } from "../api";
-import { checklistFlags } from "../home-metrics";
+import { ApiError, api, stepsFromChecklist, type BrandChecklists, type ChecklistStep, type Me } from "../api";
+import { brandSpendFresh, checklistFlags } from "../home-metrics";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, nextAction, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleRow, type LifecycleState, type NextAction } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
@@ -13,7 +13,7 @@ import { DuplicateDialog } from "../wizard/DuplicateDialog";
 import { EmptyState } from "../components/EmptyState";
 import { finalUrl, siteUrl } from "../final-url";
 import { isPlainLeftClick, navigate, routePath } from "../router";
-import { useBrandActions } from "../useBrandActions";
+import { useBrandActions, type BrandAction } from "../useBrandActions";
 import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
 import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandFilters } from "./BrandFilters";
@@ -41,6 +41,19 @@ const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: 
   { item: "test_sold", label: "ยืนยัน Test sold (Confirm test sold)" },
   { item: "final_url", label: "Final URL suffix keyword={keyword}", pending: "อัตโนมัติเมื่อ smoke test ของการติดตั้งผ่าน (Automatic when the install smoke test passes)" },
 ];
+
+/**
+ * The fix button of a failing checklist step, run through useBrandActions (a dialog that names the brand and its domain).
+ * leadsgate_postbacks is automatic and has none. final_url retries only a failed install. drain_route opens the route form, which only the Owner may save.
+ */
+export function checklistFix(item: ChecklistItemName, ctx: { owner: boolean; installFailed: boolean }): { action: BrandAction; label: string; reason?: string } | null {
+  switch (item) {
+    case "test_sold": return { action: "test-sold", label: "ยืนยัน Test sold" };
+    case "drain_route": return { action: "set-route", label: "ตั้งเส้นทางโฆษณา", ...(ctx.owner ? {} : { reason: "เฉพาะเจ้าของตั้งเส้นทางได้" }) };
+    case "final_url": return ctx.installFailed ? { action: "retry-install", label: "ลองติดตั้งใหม่" } : null;
+    default: return null;
+  }
+}
 
 /** A whole number with thousands separators. An unknown number is "—". */
 const count = (value: number | null) => (value === null ? "—" : Math.round(value).toLocaleString("en-US"));
@@ -154,8 +167,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   // A deploy item chosen on a non-selected row selects that brand first; the item runs once the selection has committed,
   // through the same handlers and tracking as the detail buttons.
   const queuedDeploy = useRef<{ key: BrandActionKey; brandId: string } | null>(null);
-  const [checklist, setChecklist] = useState<Record<ChecklistItemName, ChecklistEvidence | undefined>>({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
-  const [leadId, setLeadId] = useState("");
+  // The four steps of the selected brand. Empty while loading.
+  const [steps, setSteps] = useState<ChecklistStep[]>([]);
   // undefined while loading, null when the request failed (a core-only brand has no factory revisions).
   const [revisions, setRevisions] = useState<BrandRevisionsResponse | null | undefined>();
   const [revisionsRetrying, setRevisionsRetrying] = useState(false);
@@ -179,7 +192,23 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const pendingManualCopy = useRef<{ brandId: string; url: string } | null>(null);
   const [confirm, confirmDialog, cancelConfirm] = useConfirm();
   // Set route opens the brand's runtime config through the shared action path. Install tracking keeps its own handlers below: they need the selected brand's state.
-  const brandActions = useBrandActions({ onSetRoute: (brand) => setConfigBrandId(brand.id) });
+  // After a fix succeeds only the acted brand's data is read again. The selection reset stays out of it: it would close an open config of the brand on screen.
+  function onActionDone(action: BrandAction, acted: Array<{ id: string }>) {
+    void load();
+    const current = selectedIdRef.current;
+    if (!current || !acted.some((brand) => brand.id === current)) return;
+    // A retry starts an install, which the selection reset picks up through the history read.
+    if (action === "retry-install") setRefresh((value) => value + 1);
+    else refreshChecklist(current);
+  }
+  function refreshChecklist(brandId: string) {
+    const seq = ++checklistSeq.current;
+    void api.checklist(brandId).then((result) => {
+      if (seq !== checklistSeq.current || selectedIdRef.current !== brandId) return;
+      setSteps(stepsFromChecklist(result));
+    }, () => undefined);
+  }
+  const brandActions = useBrandActions({ onSetRoute: (brand) => setConfigBrandId(brand.id), onDone: onActionDone });
   const weekFunnel = useWeekFunnel(refresh);
   const [period, setPeriod] = useState<BrandPeriod>("7d");
   // View preferences, not routes: /brands/:id is the only deep link.
@@ -192,6 +221,12 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const showDemoRef = useRef(showDemo);
   showDemoRef.current = showDemo;
   const owner = me.role === "owner";
+  // The clock behind the freshness of the AdKit numbers. A brand with nothing left to do never re-renders on its own, so a timer moves it on.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   const periodFunnel = usePeriodFunnel(period, refresh, weekFunnel);
   // The spend API answers 403 to an Employee, so only the Owner asks, and only the Owner sees money columns.
   const spend = useSpendReport(period, owner, refresh);
@@ -246,15 +281,15 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useLayoutEffect(() => {
     let active = true;
     operationGeneration.current += 1;
-    // A dialog opened for the previous brand must not stay open over this one.
+    // A dialog opened for the previous brand must not stay open over this one, and a read still pending for it must not open one.
     cancelConfirm();
+    brandActions.invalidate();
     setState(undefined);
     setInstall(undefined);
     setInstallError(null);
     setPendingOperation(null);
     setConfigBrandId(null);
-    setChecklist({} as Record<ChecklistItemName, ChecklistEvidence | undefined>);
-    setLeadId("");
+    setSteps([]);
     setRevisions(undefined);
     setManualCopyUrl(null);
     if (pendingManualCopy.current && selected?.brand_id === pendingManualCopy.current.brandId) {
@@ -268,9 +303,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     fetchRevisions(selected.brand_id, selected.current_revision_id, () => active);
     void api.checklist(selected.brand_id).then((result) => {
       if (!active) return;
-      const next = {} as Record<ChecklistItemName, ChecklistEvidence | undefined>;
-      for (const row of result.checklist) next[row.item] = row.evidence as ChecklistEvidence;
-      setChecklist(next);
+      setSteps(stepsFromChecklist(result));
     }, () => undefined);
     void (async () => {
       try {
@@ -304,8 +337,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   useEffect(() => { void load(); }, [load, refresh]);
   // Computed rows (drain_route, leadsgate_postbacks, final_url) turn true server-side after the page loaded (the VPS drain creates the
   // conversion action within ~10 minutes). While one is open and the tab is visible, re-read the checklist every 60 s.
-  // test_sold is manual and never polled. The lead_id input has its own state, so a refresh does not reset it.
-  const computedOpen = Boolean(selected) && computedChecklistItems.some((item) => !checklist[item]);
+  const computedOpen = Boolean(selected) && computedChecklistItems.some((item) => !steps.find((step) => step.item === item)?.done);
   useEffect(() => {
     if (!selected || !computedOpen) return;
     const brandId = selected.brand_id;
@@ -319,12 +351,13 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       void api.checklist(brandId).then((result) => {
         // An attest that started after this poll bumped the counter: this response is older than that write and is dropped.
         if (!active || seq !== checklistSeq.current || !canCommit(token, brandId)) return;
-        // Merge computed rows only and never remove an entry, so test_sold and rows already shown stay.
-        setChecklist((previous) => {
-          const next = { ...previous };
-          for (const row of result.checklist) if (computedChecklistItems.includes(row.item)) next[row.item] = row.evidence as ChecklistEvidence;
-          return next;
-        });
+        // Every step merges, test_sold too: this read can drop an action's refresh by taking the counter, so it must carry what that refresh would.
+        // A finished step is never reopened by an older answer.
+        const fresh = stepsFromChecklist(result);
+        setSteps((previous) => previous.length === 0 ? fresh : previous.map((step) => {
+          const next = fresh.find((s) => s.item === step.item);
+          return next && (next.done || !step.done) ? next : step;
+        }));
       }, () => undefined).finally(() => { inFlight = false; });
     }, checklistRefreshMs);
     return () => { active = false; clearInterval(timer); };
@@ -755,6 +788,22 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     await act(async () => { await api.upgradeAll(upgrade); setUpgradeRefresh((value) => value + 1); });
   }
 
+  /** A fix button in the checklist runs its action through the shared dialog path. */
+  function fixStep(item: ChecklistItemName) {
+    if (!selected) return;
+    const fix = checklistFix(item, { owner, installFailed: (install?.status ?? selected.latest_install?.status) === "failed" });
+    if (!fix || fix.reason) return;
+    void brandActions.run(fix.action, {
+      id: selected.brand_id, name: selected.name ?? selected.brand_id, domain: selected.hostnames[0] ?? selected.brand_id,
+      installId: install?.install_id ?? selected.latest_install?.install_id ?? null,
+    });
+  }
+  // The AdKit numbers are the Owner's. Spend older than 2 hours reads "—", like every other number of unknown age.
+  const adkit = owner && selected ? (() => {
+    const fresh = brandSpendFresh(spend, selected.brand_id, new Date(clock));
+    const money = brandMoney(selected.brand_id, runtimeBrands, periodFunnel, spend);
+    return { periodLabel: BRAND_PERIODS.find(([key]) => key === period)?.[1] ?? period, spendText: fresh ? money.spendText : "—", profitText: fresh ? usd(money.profit) : "—" };
+  })() : undefined;
   const runtimeBrand = runtimeBrands.find((brand) => brand.brand_id === selectedId);
   // A row menu opens Runtime config for its own row without selecting it, so the panel follows configBrandId, not the selection.
   const configBrand = configBrandId ? runtimeBrands.find((brand) => brand.brand_id === configBrandId) : undefined;
@@ -848,7 +897,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       </section>
       <div className="brands-aside">
         {selected
-          ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} checklist={checklist} revisions={revisions} revisionsRetrying={revisionsRetrying} onRetryRevisions={retryRevisions} onCopyFinalUrl={() => void copyFinalUrl()} manualCopyUrl={manualCopyUrl} leadId={leadId} onLeadIdChange={setLeadId} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} onChecklist={async (item, suppliedLeadId) => { const token = operationToken(); checklistSeq.current += 1; try { const result = await api.attestChecklist(selected.brand_id, item, suppliedLeadId); if (!canCommit(token, selected.brand_id)) return; const row = (result as { evidence?: ChecklistEvidence }).evidence; if (row) { checklistSeq.current += 1; setChecklist((previous) => ({ ...previous, [item]: row })); } await load(token); } catch (e) { if (canCommit(token, selected.brand_id)) setError(e instanceof ApiError ? e.thai : "ดำเนินการไม่สำเร็จ"); } }} />
+          ? <LifecycleDetail me={me} brand={selected} state={state} install={install} pendingOperation={recovering || (pendingOperation?.brandId === selected.brand_id && pendingOperation.generation === operationGeneration.current)} steps={steps} revisions={revisions} revisionsRetrying={revisionsRetrying} onRetryRevisions={retryRevisions} onCopyFinalUrl={() => void copyFinalUrl()} manualCopyUrl={manualCopyUrl} onFix={fixStep} adkit={adkit} onInstall={() => void startInstall()} onRollback={() => void rollback()} onRedeploy={() => void redeploy()} onRedeployLatest={() => void redeployLatest()} onRetry={() => void retry()} onRecover={() => void recover()} onResumeWizard={() => setWizard({ brandId: selected.brand_id })} onDuplicate={() => setDuplicateOf(selected)} />
           // A failed Core list may hide a Core-only brand, so the id is not known to be missing.
           : listLoaded && !coreListError && routeBrandId
             ? <section className="panel brand-side"><p role="alert">ไม่พบแบรนด์ <code>{routeBrandId}</code> (Brand not found)</p></section>
@@ -877,7 +926,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
  * onCopyFinalUrl: omitted by a caller with no clipboard handling, which then gets no Copy button.
  * manualCopyUrl: the Final URL to show in a read-only input once the clipboard was missing or refused it.
  */
-export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, checklist, revisions, revisionsRetrying = false, onRetryRevisions, onCopyFinalUrl, manualCopyUrl, leadId, onLeadIdChange, onInstall, onRollback, onRedeploy, onRedeployLatest, onRetry, onRecover, onResumeWizard, onDuplicate, onChecklist }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; checklist: Partial<Record<ChecklistItemName, ChecklistEvidence | undefined>>; revisions?: BrandRevisionsResponse | null; revisionsRetrying?: boolean; onRetryRevisions?: () => void; onCopyFinalUrl?: () => void; manualCopyUrl?: string | null; leadId: string; onLeadIdChange: (value: string) => void; onInstall: () => void; onRollback: () => void; onRedeploy: () => void; onRedeployLatest?: () => void; onRetry: () => void; onRecover: () => void; onResumeWizard?: () => void; onDuplicate?: () => void; onChecklist: (item: ChecklistItemName, leadId?: string) => void }) {
+export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, steps = [], revisions, revisionsRetrying = false, onRetryRevisions, onCopyFinalUrl, manualCopyUrl, onInstall, onRollback, onRedeploy, onRedeployLatest, onRetry, onRecover, onResumeWizard, onDuplicate, onFix, adkit }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; steps?: ChecklistStep[]; revisions?: BrandRevisionsResponse | null; revisionsRetrying?: boolean; onRetryRevisions?: () => void; onCopyFinalUrl?: () => void; manualCopyUrl?: string | null; onInstall: () => void; onRollback: () => void; onRedeploy: () => void; onRedeployLatest?: () => void; onRetry: () => void; onRecover: () => void; onResumeWizard?: () => void; onDuplicate?: () => void; onFix?: (item: ChecklistItemName) => void; adkit?: { periodLabel: string; spendText: string; profitText: string } }) {
   const lifecycleStatus = state?.lifecycle_status ?? (brand.status === "installing" ? "running" : brand.status === "live" ? "ready" : brand.status);
   // The same gating as the row menu; the buttons below keep their labels, order and handlers.
   const actionItems = brandActionItems({
@@ -897,6 +946,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const finalUrlFieldId = useId();
   return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</h2><p className="muted">{brand.name && brand.name !== (brand.hostnames[0] ?? brand.name ?? brand.brand_id) && `${brand.name} · `}form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
+    {adkit && me.role === "owner" && <section className="section" aria-label="ตัวเลขโฆษณา"><h3>ตัวเลขโฆษณา · {adkit.periodLabel}</h3><div className="status-grid"><div><span className="muted">ค่าโฆษณา</span><strong>{adkit.spendText}</strong></div><div><span className="muted">กำไร</span><strong>{adkit.profitText}</strong></div></div></section>}
     {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง</button>}{showAction("rollback") && <button className="btn" {...gate("rollback")} onClick={onRollback}>ย้อนกลับ</button>}{showAction("redeploy") && <button className="btn" {...gate("redeploy")} onClick={onRedeploy}>ติดตั้งใหม่</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" {...gate("redeployLatest")} onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด</button>}{showAction("recover") && <button className="btn danger" {...gate("recover")} onClick={onRecover}>กู้คืน</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}{ownerOnlyShown && <p className="muted small" role="note">ปุ่มที่กดไม่ได้ใช้ได้เฉพาะเจ้าของ</p>}</div>}
     {/* spec timeline: the managed-only row above would hide it for an unmanaged brand */}
     <div className="side-actions"><a className="btn" href={routePath({ view: "brand-timeline", brandId: brand.brand_id })} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); }}>ไทม์ไลน์</a></div>
@@ -928,9 +978,11 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
         </li>)}</ul>}
     </section>}
     <div className="section"><h3>รายการตรวจ</h3>{checklistItems.map(({ item, label, pending }) => {
-      const evidence = checklist[item];
-      const isSold = item === "test_sold";
-      return <div className="check-row" key={item}><label><input type="checkbox" checked={Boolean(evidence)} disabled={Boolean(evidence) || !isSold} onChange={() => { if (isSold) onChecklist(item, leadId); }} />{label} <span className="muted">({item})</span></label>{isSold && !evidence && <input aria-label="lead_id" placeholder="opaque lead_id" value={leadId} onChange={(e) => onLeadIdChange(e.target.value)} required />}{!isSold && !evidence && pending && <span className="muted small">{pending}</span>}{evidence && <span className="muted small">หลักฐาน: {evidence.actor_id} · {evidence.verified_at}{"event_id" in evidence ? ` · event ${evidence.event_id}` : ""}</span>}</div>;
+      const step = steps.find((candidate) => candidate.item === item);
+      const done = step?.done === true;
+      // A failing step carries its own button. It asks in a dialog that names the brand, and is off while an install runs, like the side actions.
+      const fix = onFix && !done ? checklistFix(item, { owner: me.role === "owner", installFailed: (install?.status ?? brand.latest_install?.status) === "failed" }) : null;
+      return <div className="check-row" key={item}><label><input type="checkbox" checked={done} disabled readOnly />{label} <span className="muted">({item})</span></label>{fix && onFix && <button type="button" className="btn" disabled={fix.reason !== undefined || pendingOperation} title={fix.reason} onClick={() => onFix(item)}>{fix.label}</button>}{item !== "test_sold" && !done && pending && <span className="muted small">{pending}</span>}{step?.evidence && <span className="muted small">หลักฐาน: {step.evidence}</span>}</div>;
     })}</div>
   </section>;
 }
