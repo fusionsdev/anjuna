@@ -200,20 +200,21 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
   const [starting, setStarting] = useState(false);
   const pending = job !== null && (job.status === "queued" || job.status === "claimed");
 
+  /** The job's latest state; a done job's action id goes into the form in the same update. */
+  const take = (next: AdkitJob) => {
+    setJob(next);
+    if (next.status === "done" && next.result && "conversion_action_id" in next.result) set("google_conversion_action", next.result.conversion_action_id);
+  };
+
   useEffect(() => {
     if (!job || !draftId || (job.status !== "queued" && job.status !== "claimed")) return;
     let active = true;
     const timer = setTimeout(() => {
-      api.createConversionAction(draftId, jobKey).then((r) => { if (active) setJob(r.job); }, (e: unknown) => { if (active) setJobError(wizardErrorText(e)); });
+      api.createConversionAction(draftId, jobKey).then((r) => { if (active) take(r.job); }, (e: unknown) => { if (active) setJobError(wizardErrorText(e)); });
     }, ADKIT_POLL.ms);
     return () => { active = false; clearTimeout(timer); };
-  }, [job, jobKey, draftId]);
-
-  const created = job?.status === "done" && job.result && "conversion_action_id" in job.result ? job.result.conversion_action_id : null;
-  useEffect(() => {
-    if (created && created !== form.google_conversion_action) set("google_conversion_action", created);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [created]);
+  }, [job, jobKey, draftId]);
 
   if (!canEdit) {
     return (
@@ -233,8 +234,8 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
       // The job reads the account and project from the saved draft, so they are saved first.
       await saveAds();
       const r = await api.createConversionAction(draftId, key);
-      setJob(r.job);
       setJobKey(key);
+      take(r.job);
     } catch (e) {
       setJobError(wizardErrorText(e));
     } finally {

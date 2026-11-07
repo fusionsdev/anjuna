@@ -178,9 +178,9 @@ describe("five-step flow to Generate", () => {
     expect(patches()[1]!.body).toEqual({ profile: { contact: CONTACT, copy: { site_title: "Maple Cash | Quick Funding", h1: "{{keyword}} in minutes", cta: "Check my rate" } } });
     // Step 4 has selects from the AdKit directory and no text input (wizard-step4.ui.test.tsx covers the job).
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }) as HTMLSelectElement).options).toHaveLength(2));
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }) as unknown as HTMLSelectElement).options).toHaveLength(2));
     fireEvent.change(screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }), { target: { value: ADS.adkit_project } });
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "บัญชี Google Ads" }) as HTMLSelectElement).options).toHaveLength(2));
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "บัญชี Google Ads" }) as unknown as HTMLSelectElement).options).toHaveLength(2));
     fireEvent.change(screen.getByRole("combobox", { name: "บัญชี Google Ads" }), { target: { value: ADS.google_ads_account } });
     next();
 
@@ -390,8 +390,8 @@ describe("tracking step roles", () => {
     (PANEL_ROLE_TABLE as Record<string, string>).setDraftTracking = "owner";
     atTracking(owner);
     await heading("ติดตามผล (Tracking)");
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "บัญชี Google Ads" }) as HTMLSelectElement).value).toBe(ADS.google_ads_account));
-    expect((screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }) as HTMLSelectElement).value).toBe(ADS.adkit_project);
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "บัญชี Google Ads" }) as unknown as HTMLSelectElement).value).toBe(ADS.google_ads_account));
+    expect((screen.getByRole("combobox", { name: "โปรเจกต์ AdKit" }) as unknown as HTMLSelectElement).value).toBe(ADS.adkit_project);
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 });

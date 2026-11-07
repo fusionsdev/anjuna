@@ -72,7 +72,7 @@ const atTracking = async (me: typeof owner | typeof employee = owner) => {
   render(<BrandWizard me={me} brandId="brand_new" initialStep={3} onClose={vi.fn()} onGenerated={vi.fn()} />);
   await screen.findByRole("heading", { level: 2, name: "ติดตามผล (Tracking)" });
 };
-const select = (name: string) => screen.getByRole("combobox", { name }) as HTMLSelectElement;
+const select = (name: string) => screen.getByRole("combobox", { name }) as unknown as HTMLSelectElement;
 const choose = (name: string, value: string) => fireEvent.change(select(name), { target: { value } });
 const options = (name: string) => [...select(name).options].map((o) => [o.value, o.textContent]);
 const next = () => fireEvent.click(screen.getByRole("button", { name: "ถัดไป (Next)" }));
