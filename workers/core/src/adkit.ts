@@ -155,10 +155,13 @@ export async function handleJobsPending(request: Request, env: Env, nowMs = Date
   } catch (e) {
     console.error(`held job recheck failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
   }
+  // A campaign enable or budget job that ran out of claims may have changed spend remotely: it ends 'unknown'.
   await env.LEADS.prepare(`
-    UPDATE adkit_jobs SET status = 'failed', result = json_object('error', 'claim lease expired on the last attempt'), updated_at = ?1
+    UPDATE adkit_jobs SET status = CASE WHEN kind IN (${SPEND_KINDS}) THEN 'unknown' ELSE 'failed' END,
+      result = json_object('error', 'claim lease expired on the last attempt'), updated_at = ?1
     WHERE status = 'claimed' AND claimed_at <= ?2 AND attempts >= ?3`)
     .bind(now, leaseCutoff(nowMs), ADKIT_JOB_MAX_ATTEMPTS).run();
+  await queueStatusChecks(env, now);
   const { results } = await env.LEADS.prepare(`
     SELECT id, kind, payload, attempts FROM adkit_jobs WHERE ${ELIGIBLE}
     ORDER BY created_at, id LIMIT ${PENDING_LIMIT}`)
@@ -251,17 +254,46 @@ export async function handleJobResult(request: Request, env: Env, deps: JobResul
   if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
   if (row.status !== "claimed" || row.claim_id !== data.claim_id) return stale();
   const retry = data.retryable !== false && row.attempts < ADKIT_JOB_MAX_ATTEMPTS;
+  // `retryable: false` means the executor never changed anything (refused command, invalid payload, verified no-op).
+  // A retryable error on the last attempt of a spend job leaves the remote outcome open: 'unknown', still counted.
+  const final = data.retryable !== false && SPEND_KIND_LIST.includes(row.kind) ? "unknown" : "failed";
   const nextAttemptAt = retry ? new Date(Date.now() + adkitJobBackoffMs(row.attempts)).toISOString() : null;
   const update = await env.LEADS.prepare(`
     UPDATE adkit_jobs
     SET status = ?3, result = ?4, claim_id = CASE WHEN ?3 = 'queued' THEN NULL ELSE claim_id END,
         claimed_at = CASE WHEN ?3 = 'queued' THEN NULL ELSE claimed_at END, next_attempt_at = ?5, updated_at = ?6
     WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND attempts = ?7`)
-    .bind(data.job_id, data.claim_id, retry ? "queued" : "failed", JSON.stringify({ error: data.error }), nextAttemptAt, at, row.attempts)
+    .bind(data.job_id, data.claim_id, retry ? "queued" : final, JSON.stringify({ error: data.error }), nextAttemptAt, at, row.attempts)
     .run();
   if (!update.meta.changes) return stale();
-  if (!retry) await audit(env, DRAIN_ACTOR, "adkit.job.failed", data.job_id, { error: data.error, attempts: row.attempts }, at);
-  return json({ status: retry ? "queued" : "failed" });
+  if (!retry) await audit(env, DRAIN_ACTOR, `adkit.job.${final}`, data.job_id, { error: data.error, attempts: row.attempts }, at);
+  if (!retry && final === "unknown") await queueStatusChecks(env, at);
+  return json({ status: retry ? "queued" : final });
+}
+
+/** Campaign kinds whose lost outcome may have changed what a live campaign spends. */
+const SPEND_KIND_LIST = ["campaign.enable", "campaign.update_budget"];
+const SPEND_KINDS = SPEND_KIND_LIST.map((k) => `'${k}'`).join(", ");
+
+/**
+ * One campaign.status_check per unknown job (key `campaign.status_check:<job id>`), so the executor lists the
+ * campaign and core learns its real status and budget. Idempotent: ON CONFLICT DO NOTHING on the key.
+ */
+async function queueStatusChecks(env: Env, at: string): Promise<void> {
+  const { results } = await env.LEADS.prepare(`
+    SELECT u.id, u.payload FROM adkit_jobs u
+    WHERE u.status = 'unknown' AND u.kind IN (${SPEND_KINDS})
+      AND NOT EXISTS (SELECT 1 FROM adkit_jobs c WHERE c.idempotency_key = 'campaign.status_check:' || u.id)`)
+    .all<{ id: string; payload: string }>();
+  for (const row of results) {
+    const p = JSON.parse(row.payload) as Record<string, unknown>;
+    const ref = { campaign_id: p.campaign_id, brand_id: p.brand_id, account: p.account, project: p.project, name: p.name };
+    await env.LEADS.prepare(`
+      INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at)
+      VALUES (?1, 'campaign.status_check', ?2, 'queued', NULL, 0, ?3, 'core', ?4, ?4)
+      ON CONFLICT (idempotency_key) DO NOTHING`)
+      .bind(crypto.randomUUID(), JSON.stringify(ref), `campaign.status_check:${row.id}`, at).run();
+  }
 }
 
 type CampaignOutcome = Exclude<Extract<AdkitJobResultRequest, { result: unknown }>["result"], { conversion_action_id: string }>;
@@ -293,6 +325,10 @@ async function handleCampaignResult(
     kind = "campaign.draft.create";
     guard = "json_extract(payload, '$.name') = ?6";
     guardValue = outcome.name;
+  } else if ("observed_status" in outcome) {
+    kind = "campaign.status_check";
+    guard = "json_extract(payload, '$.campaign_id') = ?6";
+    guardValue = outcome.campaign_id;
   } else if ("status" in outcome) {
     kind = outcome.status === "ENABLED" ? "campaign.enable" : "campaign.pause";
     guard = "json_extract(payload, '$.campaign_id') = ?6";
@@ -306,7 +342,7 @@ async function handleCampaignResult(
     UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4
     WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND kind = ?5 AND ${guard}
     RETURNING payload`)
-    .bind(jobId, claimId, resultJson, at, kind, guardValue, ...("daily_budget" in outcome ? [outcome.daily_budget] : []))
+    .bind(jobId, claimId, resultJson, at, kind, guardValue, ...(kind === "campaign.update_budget" && "daily_budget" in outcome ? [outcome.daily_budget] : []))
     .first<{ payload: string }>();
   if (write) {
     await writeDoneAudit(env, jobId, outcome, at);

@@ -343,3 +343,26 @@ describe("campaign jobs (T13 Part B)", () => {
     }
   });
 });
+
+describe("campaign.status_check (T13-4 F2)", () => {
+  const ACCOUNT = "4811219623";
+  const ref = { campaign_id: "22000000001", brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1" };
+  const runWith = async (listOutput: unknown) => {
+    const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => { calls.push(args); return JSON.stringify(listOutput); };
+    const failures = await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet });
+    return { failures, calls, results: core.results };
+  };
+
+  it("reports the listed status and budget with one read-only list call", async () => {
+    const { failures, calls, results } = await runWith({ campaigns: [{ id: "22000000001", name: "petvet-search-1", status: "enabled", dailyBudget: 2000 }] });
+    expect(failures).toBe(0);
+    expect(calls.map((a) => a.slice(2, 4).join(" "))).toEqual(["campaigns list"]);
+    expect(results[0]).toMatchObject({ result: { campaign_id: "22000000001", observed_status: "ENABLED", daily_budget: 2000 } });
+  });
+
+  it("reports NOT_FOUND only from a complete listing", async () => {
+    expect((await runWith({ campaigns: [] })).results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND", daily_budget: null } });
+  });
+});

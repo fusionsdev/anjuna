@@ -115,9 +115,9 @@ interface Campaign {
   state: PanelCampaign["state"];
   /** Budget the campaign runs at: the last done budget job, else the draft budget. */
   budget: number;
-  /** Budget for the caps: the larger of `budget` and any budget job still queued or claimed. */
+  /** Budget for the caps: the larger of `budget` and any budget job still pending or unknown. */
   committedBudget: number;
-  /** Counts toward the caps: enabled, or an enable job is still queued or claimed. */
+  /** Counts toward the caps: enabled, an enable job still pending, or an enable whose outcome is unknown. */
   spending: boolean;
   updated_at: string;
   /** Finished (done or failed) jobs per kind, for the idempotency key generation. */
@@ -155,20 +155,43 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
     campaigns.push(c);
     if (campaignId && !byId.has(campaignId)) byId.set(campaignId, c);
   }
+  // Done rows set the state and budget in completion order.
   const others = rows.filter((r) => r.kind !== "campaign.draft.create").sort(byUpdated);
+  const unknowns = new Map<Campaign, JobRow[]>();
+  const dones = new Map<Campaign, JobRow[]>();
   for (const row of others) {
     const ref = JSON.parse(row.payload) as { campaign_id?: string; daily_budget?: number };
     const c = ref.campaign_id ? byId.get(ref.campaign_id) : undefined;
     if (!c) continue;
     if (!pending(row)) c.finished[row.kind] = (c.finished[row.kind] ?? 0) + 1;
     if (row.updated_at > c.updated_at) c.updated_at = row.updated_at;
-    if (row.status === "done" && row.kind === "campaign.enable") c.state = "enabled";
-    if (row.status === "done" && row.kind === "campaign.pause") c.state = "paused";
-    if (row.status === "done" && row.kind === "campaign.update_budget" && typeof ref.daily_budget === "number") c.budget = ref.daily_budget;
+    if (row.status === "unknown") unknowns.set(c, [...(unknowns.get(c) ?? []), row]);
+    if (row.status !== "done") continue;
+    dones.set(c, [...(dones.get(c) ?? []), row]);
+    if (row.kind === "campaign.enable") c.state = "enabled";
+    if (row.kind === "campaign.pause") c.state = "paused";
+    if (row.kind === "campaign.update_budget" && typeof ref.daily_budget === "number") c.budget = ref.daily_budget;
+    if (row.kind === "campaign.status_check" && row.result) {
+      const seen = JSON.parse(row.result) as { observed_status: string; daily_budget: number | null };
+      c.state = seen.observed_status === "ENABLED" ? "enabled" : seen.observed_status === "PAUSED" ? "paused"
+        : seen.observed_status === "DRAFT" ? "draft" : "removed";
+      if (typeof seen.daily_budget === "number") c.budget = seen.daily_budget;
+    }
   }
+  // An unknown enable or budget stays open (counted) until a done row resolves it: a status check created after it
+  // became unknown, or a pause or enable (for an enable) or a budget job (for a budget) created after it. Creation
+  // order is used because a job is always created after the job it follows.
+  const resolves = (u: JobRow, r: JobRow) => (r.kind === "campaign.status_check" ? r.created_at >= u.updated_at
+    : u.kind === "campaign.enable" ? (r.kind === "campaign.pause" || r.kind === "campaign.enable") && byCreated(r, u) > 0
+      : r.kind === "campaign.update_budget" && byCreated(r, u) > 0);
   for (const c of campaigns) {
-    c.committedBudget = c.budget;
-    c.spending = c.state === "enabled";
+    const open = (unknowns.get(c) ?? []).filter((u) => !(dones.get(c) ?? []).some((r) => resolves(u, r)));
+    const openEnable = open.some((u) => u.kind === "campaign.enable");
+    const openBudgets = open.filter((u) => u.kind === "campaign.update_budget")
+      .map((u) => (JSON.parse(u.payload) as { daily_budget: number }).daily_budget);
+    c.committedBudget = Math.max(c.budget, ...openBudgets);
+    c.spending = c.state === "enabled" || openEnable;
+    if (openEnable && c.state !== "enabled") c.state = "unknown";
     if (!c.campaign_id) continue;
     for (const row of others) {
       if (!pending(row) || (JSON.parse(row.payload) as { campaign_id?: string }).campaign_id !== c.campaign_id) continue;
@@ -285,12 +308,15 @@ export async function createCampaignJob(
   const known = await findByKey(env, key);
   if (known) return json(AdkitJobCreateResponse.parse({ job: publicJob(known), created: false }), 200);
 
+  if (req.kind === "campaign.status_check") return insertJob(env, context, req.kind, ref, key, at, false);
   if (req.kind === "campaign.pause") {
-    if (c.state !== "enabled") return conflict(context, c, "Only an enabled campaign can be paused");
+    if (c.state !== "enabled" && c.state !== "unknown") return conflict(context, c, "Only an enabled campaign can be paused");
     return insertJob(env, context, req.kind, ref, key, at, false);
   }
-  if (req.kind === "campaign.enable" && (c.state === "enabled" || c.state === "enabling")) {
-    return conflict(context, c, "The campaign is already enabled");
+  if (req.kind === "campaign.enable" && (c.state === "enabled" || c.state === "enabling" || c.state === "unknown")) {
+    return conflict(context, c, c.state === "unknown"
+      ? "The last enable has an unknown outcome; wait for its status check or pause the campaign"
+      : "The campaign is already enabled");
   }
 
   const payload = req.kind === "campaign.update_budget" ? CampaignBudgetPayload.parse({ ...ref, daily_budget: req.daily_budget }) : ref;

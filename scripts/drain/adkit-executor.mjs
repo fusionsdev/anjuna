@@ -256,6 +256,47 @@ export function campaignsByName(out) {
   return map;
 }
 
+/** Upper-case status AdKit reports for a campaign row (ENABLED, PAUSED, DRAFT, REMOVED), or "" when absent. */
+const rowStatus = (item) => String(item?.status ?? "").trim().toUpperCase();
+
+/** Daily budget of a list row: dailyBudget, daily_budget, budget(.amount) or budgetAmountMicros / 1e6; null when absent. */
+function rowBudget(item) {
+  const micros = item?.budgetAmountMicros ?? item?.budget?.amountMicros;
+  const raw = item?.dailyBudget ?? item?.daily_budget ?? (typeof item?.budget === "object" ? item?.budget?.amount : item?.budget)
+    ?? (micros !== undefined && micros !== null ? Number(micros) / 1e6 : undefined);
+  const n = typeof raw === "string" ? Number(raw) : raw;
+  return typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+
+/** Every campaign row of one `campaigns list` output, normalized: id, name, status, daily budget. */
+export function campaignRows(out) {
+  const list = Array.isArray(out) ? out : Array.isArray(out?.campaigns) ? out.campaigns : Array.isArray(out?.data) ? out.data : [];
+  return list.flatMap((item) => {
+    const raw = item?.platformId ?? item?.campaignId ?? item?.id;
+    const id = raw === undefined || raw === null ? "" : String(raw);
+    return typeof item?.name === "string" && CAMPAIGN_ID.test(id)
+      ? [{ id, name: item.name, status: rowStatus(item), dailyBudget: rowBudget(item) }] : [];
+  });
+}
+
+const LIST_LIMIT = 500;
+
+/** campaign.status_check: report what AdKit lists for the campaign id. NOT_FOUND only when the listing is complete. */
+export async function runCampaignStatusCheck(payload, run, fallbackProject) {
+  if (!refOk(payload)) throw new JobFailure("invalid campaign.status_check payload", false);
+  const rows = campaignRows(checked(await run(withRoute(
+    ["manage", "google", "campaigns", "list", "--account", payload.account, "--limit", String(LIST_LIMIT), "--json"], payload, fallbackProject,
+  ))));
+  const row = rows.find((r) => r.id === payload.campaign_id);
+  if (!row) {
+    if (rows.length >= LIST_LIMIT) throw new JobFailure("lookup_incomplete", false);
+    return { campaign_id: payload.campaign_id, observed_status: "NOT_FOUND", daily_budget: null };
+  }
+  const observed = ["ENABLED", "PAUSED", "DRAFT", "REMOVED"].includes(row.status) ? row.status : null;
+  if (!observed) throw new JobFailure(`status_unreadable: ${row.status.slice(0, 40) || "(none)"}`, false);
+  return { campaign_id: payload.campaign_id, observed_status: observed, daily_budget: row.dailyBudget !== null && row.dailyBudget > 0 ? row.dailyBudget : null };
+}
+
 /** The new campaign id from the create output: platformId, campaignId, id or a campaigns/<id> resource name. */
 export function createdCampaignId(out) {
   const first = (v) => (Array.isArray(v) ? v[0] : undefined);
@@ -326,6 +367,7 @@ const KINDS = {
   "campaign.enable": runCampaignEnable,
   "campaign.pause": runCampaignPause,
   "campaign.update_budget": runCampaignUpdateBudget,
+  "campaign.status_check": runCampaignStatusCheck,
 };
 
 

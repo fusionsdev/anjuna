@@ -427,3 +427,87 @@ describe("F1: an enable that has not passed the cap recheck is never claimable",
     expect((await inProc(env, { kind: "campaign.enable", campaign_id: b })).status).toBe(422);
   });
 });
+
+describe("F2: a lost enable result keeps the budget counted", () => {
+  const LATE = Date.parse(PINNED_NOW) + 24 * 60 * 60_000;
+  const coreEnv = () => ({ LEADS: h.db, FACTORY: h.factory, DRAIN_TOKEN }) as unknown as Env;
+  const pendingAt = async (nowMs: number) => {
+    const response = await handleJobsPending(new Request("https://core.aduplift.ai/api/adkit/jobs/pending", { headers: auth }), coreEnv(), nowMs);
+    return ((await response.json()) as { jobs: Array<{ id: string; kind: string; payload: Record<string, unknown> }> }).jobs;
+  };
+  const status = async (id: string) => (await h.db.prepare("SELECT status FROM adkit_jobs WHERE id = ?1").bind(id).first<{ status: string }>())!.status;
+  const stateOf = async (campaignId: string) => {
+    const body = PanelCampaignsResponse.parse(await (await h.admin("/admin/adkit/campaigns", owner)).json());
+    return body.campaigns.find((c) => c.campaign_id === campaignId)!.state;
+  };
+  /** The enable ran remotely, but every claim lost its result: the last lease expired. */
+  async function lostEnable(campaignId: string) {
+    const job = await queued(await post({ kind: "campaign.enable", campaign_id: campaignId }));
+    await h.db.prepare(`UPDATE adkit_jobs SET status = 'claimed', claim_id = 'c-lost', claimed_at = ?2, attempts = 5 WHERE id = ?1`)
+      .bind(job.id, PINNED_NOW).run();
+    await pendingAt(LATE);
+    return job;
+  }
+
+  it("a lease that expires on the last attempt leaves the enable unknown, still counted, and queues a status check", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const job = await lostEnable(a);
+    expect(await status(job.id)).toBe("unknown");
+    expect(await stateOf(a)).toBe("unknown");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422);
+    const checks = (await pendingAt(LATE)).filter((j) => j.kind === "campaign.status_check");
+    expect(checks.map((j) => j.payload)).toEqual([{ campaign_id: a, brand_id: "petvet", account: THB_ACCOUNT, project: "proj_a", name: "petvet-search-1" }]);
+  });
+
+  it("an error result on the last attempt is unknown; a non-retryable error is failed and frees the budget", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const first = await queued(await post({ kind: "campaign.enable", campaign_id: a }));
+    await h.db.prepare("UPDATE adkit_jobs SET attempts = 4 WHERE id = ?1").bind(first.id).run();
+    const claim = await vps("jobs/claim", { job_id: first.id });
+    const { claim_id } = await claim.json() as { claim_id: string };
+    expect((await vps("jobs/result", { job_id: first.id, claim_id, error: "timeout after 120 s" })).status).toBe(200);
+    expect(await status(first.id)).toBe("unknown");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422);
+
+    const c = await draftDone("usdbrand", 1, 10);
+    const never = await queued(await post({ kind: "campaign.enable", campaign_id: c }));
+    const claim2 = await vps("jobs/claim", { job_id: never.id });
+    const { claim_id: claim2Id } = await claim2.json() as { claim_id: string };
+    await vps("jobs/result", { job_id: never.id, claim_id: claim2Id, error: "adkit command not allowed", retryable: false });
+    expect(await status(never.id)).toBe("failed");
+  });
+
+  it.each([
+    ["PAUSED", "paused", 201],
+    ["ENABLED", "enabled", 422],
+    ["NOT_FOUND", "removed", 201],
+  ] as const)("a confirming status check %s resolves the unknown enable to %s", async (observed, state, nextEnable) => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    await lostEnable(a);
+    const check = (await pendingAt(LATE)).find((j) => j.kind === "campaign.status_check")!;
+    const done = await finish(check.id, { campaign_id: a, observed_status: observed, daily_budget: observed === "NOT_FOUND" ? null : 2000 });
+    expect(done.status).toBe(200);
+    expect(await stateOf(a)).toBe(state);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(nextEnable);
+  });
+
+  it("a confirmed pause resolves the unknown enable", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    await lostEnable(a);
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    expect(await stateOf(a)).toBe("paused");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(201);
+  });
+
+  it("an unknown enable cannot be enabled again; the owner may queue a status check", async () => {
+    const a = await draftDone("petvet", 1, 500);
+    await lostEnable(a);
+    expect((await post({ kind: "campaign.enable", campaign_id: a })).status).toBe(409);
+    expect((await post({ kind: "campaign.status_check", campaign_id: a }, employee)).status).toBeLessThan(300);
+  });
+});

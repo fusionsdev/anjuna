@@ -78,14 +78,20 @@ export const ConversionJobKind = z.enum(["conversion_action.create"]);
 export type ConversionJobKind = z.infer<typeof ConversionJobKind>;
 
 /** Jobs POST /admin/adkit/campaign-jobs queues (T13 Part B). Only campaign.enable spends money. */
-export const CampaignJobKind = z.enum(["campaign.draft.create", "campaign.update_budget", "campaign.pause", "campaign.enable"]);
+export const CampaignJobKind = z.enum([
+  "campaign.draft.create", "campaign.update_budget", "campaign.pause", "campaign.enable", "campaign.status_check",
+]);
 export type CampaignJobKind = z.infer<typeof CampaignJobKind>;
 
 export const AdkitJobKind = z.enum([...ConversionJobKind.options, ...CampaignJobKind.options]);
 export type AdkitJobKind = z.infer<typeof AdkitJobKind>;
 
-/** `held`: a campaign enable or budget job waiting for its cap recheck; never claimable. */
-export const AdkitJobStatus = z.enum(["queued", "claimed", "done", "failed", "held"]);
+/**
+ * `held`: a campaign enable or budget job waiting for its cap recheck; never claimable.
+ * `unknown`: a claimed campaign enable or budget job whose outcome never reached core (last lease expired, or the last
+ * attempt reported an error). Core keeps its budget counted until a status check or a confirmed pause resolves it.
+ */
+export const AdkitJobStatus = z.enum(["queued", "claimed", "done", "failed", "held", "unknown"]);
 export type AdkitJobStatus = z.infer<typeof AdkitJobStatus>;
 
 /** What the executor needs to create the action. The name is opaque and fixed per job, so a retry adopts it. */
@@ -182,6 +188,13 @@ export const CampaignStatusResult = z.strictObject({ campaign_id: GoogleCampaign
 export type CampaignStatusResult = z.infer<typeof CampaignStatusResult>;
 export const CampaignBudgetResult = z.strictObject({ campaign_id: GoogleCampaignId, daily_budget: DailyBudget });
 export type CampaignBudgetResult = z.infer<typeof CampaignBudgetResult>;
+/** campaign.status_check: what `campaigns list` reports for the campaign id. NOT_FOUND only after a complete listing. */
+export const CampaignStatusCheckResult = z.strictObject({
+  campaign_id: GoogleCampaignId,
+  observed_status: z.enum(["ENABLED", "PAUSED", "DRAFT", "REMOVED", "NOT_FOUND"]),
+  daily_budget: DailyBudget.nullable(),
+});
+export type CampaignStatusCheckResult = z.infer<typeof CampaignStatusCheckResult>;
 
 /** POST /admin/adkit/campaign-jobs. Core derives the idempotency key; the client never sends one. */
 export const CampaignJobCreateRequest = z.discriminatedUnion("kind", [
@@ -198,6 +211,7 @@ export const CampaignJobCreateRequest = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("campaign.enable"), campaign_id: GoogleCampaignId }),
   z.strictObject({ kind: z.literal("campaign.pause"), campaign_id: GoogleCampaignId }),
   z.strictObject({ kind: z.literal("campaign.update_budget"), campaign_id: GoogleCampaignId, daily_budget: DailyBudget }),
+  z.strictObject({ kind: z.literal("campaign.status_check"), campaign_id: GoogleCampaignId }),
 ]);
 export type CampaignJobCreateRequest = z.infer<typeof CampaignJobCreateRequest>;
 
@@ -210,10 +224,12 @@ export const CAMPAIGN_JOB_ROLES = {
   "campaign.enable": { action: "enableCampaign", min_role: "owner" },
   "campaign.pause": { action: "pauseCampaign", min_role: "owner" },
   "campaign.update_budget": { action: "updateCampaignBudget", min_role: "owner" },
+  /** Read only: lists the campaign in AdKit and records what it reports. */
+  "campaign.status_check": { action: "checkCampaignStatus", min_role: "employee" },
 } as const satisfies Record<CampaignJobKind, { action: string; min_role: "employee" | "owner" }>;
 
 /** The state core derives for one panel campaign from its jobs. */
-export const CampaignState = z.enum(["drafting", "draft", "enabling", "enabled", "paused", "failed"]);
+export const CampaignState = z.enum(["drafting", "draft", "enabling", "enabled", "paused", "failed", "unknown", "removed"]);
 export const PanelCampaign = z.strictObject({
   draft_job_id: z.string().uuid(),
   campaign_id: GoogleCampaignId.nullable(),
@@ -247,7 +263,9 @@ export const AdkitJobCreateRequest = z.strictObject({
 export type AdkitJobCreateRequest = z.infer<typeof AdkitJobCreateRequest>;
 
 export const AdkitJobPayload = z.union([ConversionActionCreatePayload, CampaignDraftPayload, CampaignBudgetPayload, CampaignRefPayload]);
-export const AdkitJobOutcome = z.union([ConversionActionCreateResult, CampaignDraftResult, CampaignStatusResult, CampaignBudgetResult]);
+export const AdkitJobOutcome = z.union([
+  ConversionActionCreateResult, CampaignDraftResult, CampaignStatusResult, CampaignBudgetResult, CampaignStatusCheckResult,
+]);
 
 export const AdkitJob = z.strictObject({
   id: z.string().uuid(),
@@ -276,6 +294,7 @@ const ExecutorJob = z.discriminatedUnion("kind", [
   executorJob(z.literal("campaign.update_budget"), CampaignBudgetPayload),
   executorJob(z.literal("campaign.pause"), CampaignRefPayload),
   executorJob(z.literal("campaign.enable"), CampaignRefPayload),
+  executorJob(z.literal("campaign.status_check"), CampaignRefPayload),
 ]);
 
 export const AdkitJobsPendingResponse = z.strictObject({ jobs: z.array(ExecutorJob) });
