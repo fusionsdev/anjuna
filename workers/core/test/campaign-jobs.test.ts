@@ -1,6 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdkitJob, PanelCampaignsResponse, type AdminRequestContext } from "@anjuna/contracts";
+import { handleJobResult } from "../src/adkit.js";
+import { recordCampaignBrand } from "../src/campaign-brand-map.js";
+import type { Env } from "../src/env.js";
 import { createHarness, DRAIN_TOKEN, type Harness } from "./helpers.js";
 
 const owner: AdminRequestContext = { actor_id: "usr_owner_01", actor_role: "owner", request_id: "req_camp_owner" };
@@ -276,5 +279,47 @@ describe("GET /admin/adkit/campaigns", () => {
       ["bison-search-1", "draft", 300],
       ["usdbrand-search-1", "drafting", 350],
     ]);
+  });
+});
+
+describe("campaign_brand_map on a done draft (seam until T13-1 merges)", () => {
+  const inProcess = (body: Record<string, unknown>, record: (db: D1Database, row: unknown) => Promise<void>) => handleJobResult(
+    new Request("https://core.aduplift.ai/api/adkit/jobs/result", {
+      method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }),
+    { LEADS: h.db, FACTORY: h.factory, DRAIN_TOKEN } as unknown as Env,
+    { recordCampaignBrand: record },
+  );
+
+  async function claimedDraft() {
+    const job = await queued(await post(draftBody("petvet", 1, 500), employee));
+    const claim = await vps("jobs/claim", { job_id: job.id });
+    return { job, claimId: ((await claim.json()) as { claim_id: string }).claim_id };
+  }
+
+  it("records account, campaign id and brand once when the draft is done, and again on a repeated done result", async () => {
+    const { job, claimId } = await claimedDraft();
+    const record = vi.fn(async () => {});
+    const result = { campaign_id: "22000000777", name: "petvet-search-1", adopted: false };
+    expect((await inProcess({ job_id: job.id, claim_id: claimId, result }, record)).status).toBe(200);
+    expect(record).toHaveBeenCalledTimes(1);
+    expect((record.mock.calls[0] as unknown[])[1]).toEqual({ account: THB_ACCOUNT, campaign_id: "22000000777", brand_id: "petvet" });
+    expect((await inProcess({ job_id: job.id, claim_id: claimId, result }, record)).status).toBe(200);
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
+  it("records nothing for a stale result, and a failing writer still answers done", async () => {
+    const { job, claimId } = await claimedDraft();
+    const record = vi.fn(async () => { throw new Error("no such table: campaign_brand_map"); });
+    const wrong = { campaign_id: "22000000777", name: "petvet-search-2", adopted: false };
+    expect((await inProcess({ job_id: job.id, claim_id: claimId, result: wrong }, record)).status).toBe(409);
+    expect(record).not.toHaveBeenCalled();
+    const right = { ...wrong, name: "petvet-search-1" };
+    expect(await (await inProcess({ job_id: job.id, claim_id: claimId, result: right }, record)).json()).toEqual({ status: "done" });
+    expect(record).toHaveBeenCalledTimes(1);
+  });
+
+  it("the default writer is a no-op until the T13-1 table exists", async () => {
+    await expect(recordCampaignBrand(h.db, { account: THB_ACCOUNT, campaign_id: "1", brand_id: "petvet" })).resolves.toBeUndefined();
   });
 });

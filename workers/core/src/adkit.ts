@@ -35,6 +35,7 @@ import {
 import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
+import { recordCampaignBrand, type RecordCampaignBrand } from "./campaign-brand-map.js";
 
 export const JOB_BODY_LIMIT = 4096;
 const INGEST_BODY_LIMIT = 512 * 1024;
@@ -189,8 +190,13 @@ export async function handleJobClaim(request: Request, env: Env): Promise<Respon
 
 const stale = () => json({ status: "stale" }, 409);
 
-/** POST /api/adkit/jobs/result: record the outcome of the named claim. A repeated done result is a no-op 200. */
-export async function handleJobResult(request: Request, env: Env): Promise<Response> {
+export interface JobResultDeps { recordCampaignBrand: RecordCampaignBrand }
+
+/**
+ * POST /api/adkit/jobs/result: record the outcome of the named claim. A repeated done result is a no-op 200.
+ * `deps` lets tests observe the campaign_brand_map write without the T13-1 table.
+ */
+export async function handleJobResult(request: Request, env: Env, deps: JobResultDeps = { recordCampaignBrand }): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
   const body = await parseBody(request, AdkitJobResultRequest, JOB_BODY_LIMIT);
   if (!body.ok) return vpsError(body);
@@ -198,7 +204,7 @@ export async function handleJobResult(request: Request, env: Env): Promise<Respo
   const at = new Date().toISOString();
 
   if ("result" in data && !("conversion_action_id" in data.result)) {
-    return handleCampaignResult(env, data.job_id, data.claim_id, data.result, at);
+    return handleCampaignResult(env, data.job_id, data.claim_id, data.result, at, deps);
   }
   if ("result" in data && "conversion_action_id" in data.result) {
     const outcome = data.result;
@@ -260,7 +266,20 @@ type CampaignOutcome = Exclude<Extract<AdkitJobResultRequest, { result: unknown 
  * result carries the job's campaign name, a status or budget result the job's campaign id (and budget). So a
  * result meant for another job, or an ENABLED result on a pause job, never marks this row done.
  */
-async function handleCampaignResult(env: Env, jobId: string, claimId: string, outcome: CampaignOutcome, at: string): Promise<Response> {
+async function handleCampaignResult(
+  env: Env, jobId: string, claimId: string, outcome: CampaignOutcome, at: string, deps: JobResultDeps,
+): Promise<Response> {
+  // A done draft maps its campaign to the brand (source = 'create'). The job row is already done, so a failed map
+  // write is logged and the result still answers done; the campaign then falls back to click mapping or the estimate.
+  const recordMap = async (payloadJson: string) => {
+    if (!("name" in outcome)) return;
+    const payload = JSON.parse(payloadJson) as { account: string; brand_id: string };
+    try {
+      await deps.recordCampaignBrand(env.LEADS, { account: payload.account, campaign_id: outcome.campaign_id, brand_id: payload.brand_id });
+    } catch (e) {
+      console.error(`campaign_brand_map write failed for job ${jobId}: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+    }
+  };
   const resultJson = JSON.stringify(outcome);
   let kind: string;
   let guard: string;
@@ -286,12 +305,16 @@ async function handleCampaignResult(env: Env, jobId: string, claimId: string, ou
     .first<{ payload: string }>();
   if (write) {
     await writeDoneAudit(env, jobId, outcome, at);
+    await recordMap(write.payload);
     return json({ status: "done" });
   }
   const row = await loadJob(env, jobId);
   if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
   if (row.status === "done" && row.result === resultJson) {
-    if (row.claim_id === claimId) await writeDoneAudit(env, jobId, outcome, row.updated_at, true);
+    if (row.claim_id === claimId) {
+      await writeDoneAudit(env, jobId, outcome, row.updated_at, true);
+      await recordMap(row.payload);
+    }
     return json({ status: "done", already: true });
   }
   return stale();
