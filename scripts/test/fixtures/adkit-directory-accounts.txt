@@ -1,0 +1,10 @@
+Notice: a newer AdKit CLI is available.
+{
+  "accounts": [
+    { "platformId": "4811219623", "name": "Main account", "currencyCode": "THB", "project": { "id": "proj_a", "name": "Project A" } },
+    { "customerId": "123-456-7890", "descriptiveName": "Second account", "currency": "usd", "projectId": "proj_b" },
+    { "platformId": "5550001111", "name": "No currency" },
+    { "name": "no id here", "currencyCode": "USD" }
+  ],
+  "total": 4
+}
