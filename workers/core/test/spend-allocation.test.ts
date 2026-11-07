@@ -124,6 +124,23 @@ describe("allocateSpend", () => {
     });
   });
 
+  it.each(["estimated", "exact_only"] as const)("gives a brand alone on its account every campaign as exact in %s mode", (mode) => {
+    const result = allocateSpend({
+      campaigns: [
+        { campaign_id: "111", cost: 40, clicks: 8, impressions: 80 },
+        { campaign_id: "222", cost: 10.5, clicks: 2, impressions: 20 },
+        { campaign_id: "333", cost: 1, clicks: 1, impressions: 1 },
+      ],
+      map: new Map([["111", "solo"], ["333", "brand-on-another-account"]]),
+      brandClicks: { solo: 0 },
+      mode,
+    });
+    expect(result).toEqual({
+      rows: [{ brand_id: "solo", cost: 51.5, clicks: 11, impressions: 101, allocation: "exact" }],
+      unallocated: 0,
+    });
+  });
+
   it("returns nothing for no campaigns", () => {
     expect(allocateSpend({ campaigns: [], map: new Map(), brandClicks, mode: "estimated" })).toEqual({ rows: [], unallocated: 0 });
   });
@@ -157,7 +174,8 @@ describe("allocateSpend", () => {
       const context = JSON.stringify({ run, brandClicks, campaigns, map: [...map], mode });
       expect(sumUnits(result.rows.map((r) => r.cost)) + units(result.unallocated), context).toBe(sumUnits(campaigns.map((c) => c.cost)));
       expect(result.rows.reduce((t, r) => t + r.clicks, 0), context)
-        .toBe(campaigns.filter((c) => mode === "estimated" || map.has(c.campaign_id)).reduce((t, c) => t + c.clicks, 0));
+        .toBe(campaigns.filter((c) => mode === "estimated" || brandIds.length === 1 || map.has(c.campaign_id)).reduce((t, c) => t + c.clicks, 0));
+      if (brandIds.length === 1) expect(result.unallocated, context).toBe(0);
       for (const row of result.rows) {
         expect(Number.isFinite(row.cost) && row.cost >= 0, context).toBe(true);
         expect(Math.round(row.cost * 100) / 100, context).toBe(row.cost);

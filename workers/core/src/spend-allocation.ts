@@ -2,7 +2,8 @@
  * Split the spend of one Google Ads account between the brands that share it (T13, Part A).
  *
  * A campaign mapped to a brand (campaign_brand_map) gives its whole cost to that brand: `exact`.
- * An unmapped campaign is split across the account's brands by their paid click counts: `estimated`.
+ * A brand alone on its account gets every campaign of the account as `exact`, in both modes.
+ * Otherwise an unmapped campaign is split across the account's brands by their paid click counts: `estimated`.
  * In `exact_only` mode the unmapped cost goes to no brand and comes back as `unallocated`.
  * All money math runs on integer hundredths (satang or cents) with largest remainder rounding, so the
  * parts of a split add up to the whole exactly.
@@ -76,6 +77,9 @@ export function allocateSpend(input: {
     const owner = input.map.get(c.campaign_id);
     if (owner !== undefined && Object.hasOwn(input.brandClicks, owner)) {
       add(exact, owner, cost, c.clicks, c.impressions);
+    } else if (brands.length === 1) {
+      // A brand alone on its account owns every campaign of it, mapped or not, in both modes.
+      add(exact, brands[0]!, cost, c.clicks, c.impressions);
     } else if (input.mode === "exact_only" || brands.length === 0) {
       unallocated += cost;
     } else {

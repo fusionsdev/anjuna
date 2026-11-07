@@ -437,6 +437,18 @@ describe("POST /api/spend/campaign-ingest", () => {
     expect(pick((await allocationRows()).results, "brand_id", "hour", "cost")).toEqual([["bisoncash", null, 5], ["petvetpay", null, 5]]);
   });
 
+  it.each(["estimated", "exact_only"])("gives a brand alone on its account an unmapped campaign as exact in %s mode", async (mode) => {
+    await setMode(mode);
+    const response = await campaignIngest(body(
+      [{ date: DATE, hour: 10, campaign_id: "444", cost: 9.99, clicks: 3, impressions: 30 }], { account: "1111111111" },
+    ));
+    expect(await response.json()).toEqual({ status: "accepted", upserted: 1, unallocated: 0 });
+    expect((await allocationRows()).results).toEqual([
+      { brand_id: "brand-a", date: DATE, hour: 10, cost: 9.99, currency: "THB", clicks: 3, impressions: 30, allocation: "exact" },
+    ]);
+    expect((await unallocatedRows()).results).toEqual([]);
+  });
+
   it("accepts an empty batch", async () => {
     const response = await campaignIngest(body([]));
     expect(await response.json()).toEqual({ status: "accepted", upserted: 0, unallocated: 0 });
