@@ -266,30 +266,39 @@ function rowBudget(item) {
   return typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 }
 
-/** Every campaign row of one `campaigns list` output, normalized: id, name, status, daily budget. */
-export function campaignRows(out) {
-  const list = Array.isArray(out) ? out : Array.isArray(out?.campaigns) ? out.campaigns : Array.isArray(out?.data) ? out.data : [];
-  return list.flatMap((item) => {
-    const raw = item?.platformId ?? item?.campaignId ?? item?.id;
+/**
+ * One `campaigns list` output, validated. `ok` is false when the output has no rows array (an array, `campaigns` or
+ * `data`), when any raw row lacks a string name or a numeric id, or when the next page token is neither absent nor a
+ * string. `rawCount` counts the raw rows before any check, so a dropped row can never make a page look short.
+ */
+export function campaignPage(out) {
+  const list = Array.isArray(out) ? out : Array.isArray(out?.campaigns) ? out.campaigns : Array.isArray(out?.data) ? out.data : null;
+  if (!list) return { rows: [], rawCount: 0, ok: false, token: null };
+  const rows = list.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const raw = item.platformId ?? item.campaignId ?? item.id;
     const id = raw === undefined || raw === null ? "" : String(raw);
-    return typeof item?.name === "string" && CAMPAIGN_ID.test(id)
+    return typeof item.name === "string" && CAMPAIGN_ID.test(id)
       ? [{ id, name: item.name, status: rowStatus(item), dailyBudget: rowBudget(item) }] : [];
   });
+  const t = Array.isArray(out) ? undefined
+    : out.nextPageToken ?? out.next_page_token ?? out.pagination?.nextPageToken ?? out.pageInfo?.nextPageToken;
+  const tokenOk = t === undefined || t === null || typeof t === "string";
+  return { rows, rawCount: list.length, ok: rows.length === list.length && tokenOk, token: typeof t === "string" && t !== "" ? t : null };
 }
+
+/** The parsed campaign rows of one `campaigns list` output (rows that do not parse are left out). */
+export const campaignRows = (out) => campaignPage(out).rows;
 
 const LIST_LIMIT = 500;
 /** Most `campaigns list` pages one lookup reads (10,000 campaigns). Past it the lookup is incomplete. */
 export const LIST_MAX_PAGES = 20;
 
-const nextToken = (out) => {
-  const t = out?.nextPageToken ?? out?.next_page_token ?? out?.pagination?.nextPageToken ?? out?.pageInfo?.nextPageToken;
-  return typeof t === "string" && t !== "" ? t : null;
-};
-
 /**
  * Every campaign of the account across pages: `--limit 500`, then `--page-token <t>` while the output names a next
- * page. `complete` is true only when the last page has no next token and fewer than 500 rows, so a full page without
- * a token (AdKit may not page) or more than LIST_MAX_PAGES pages counts as incomplete.
+ * page. `complete` is true only when every page validated (campaignPage ok) and the last page has no next token and
+ * fewer than 500 raw rows. A malformed page, a dropped row, a full page without a token (AdKit may not page) or more
+ * than LIST_MAX_PAGES pages counts as incomplete, so no caller creates or reports NOT_FOUND from it.
  */
 export async function listAllCampaigns(run, payload, fallbackProject) {
   const rows = [];
@@ -299,10 +308,11 @@ export async function listAllCampaigns(run, payload, fallbackProject) {
       "manage", "google", "campaigns", "list", "--account", payload.account, "--limit", String(LIST_LIMIT),
       ...(token ? ["--page-token", token] : []), "--json",
     ], payload, fallbackProject)));
-    const pageRows = campaignRows(out);
-    rows.push(...pageRows);
-    token = nextToken(out);
-    if (!token) return { rows, complete: pageRows.length < LIST_LIMIT };
+    const page = campaignPage(out);
+    rows.push(...page.rows);
+    if (!page.ok) return { rows, complete: false };
+    token = page.token;
+    if (!token) return { rows, complete: page.rawCount < LIST_LIMIT };
   }
   return { rows, complete: false };
 }
