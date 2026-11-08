@@ -290,7 +290,22 @@ export function campaignPage(out) {
   // A next-page signal under a name the executor cannot follow (cursor, hasMore, hasNextPage, nextOffset, ...) means
   // more rows exist that this lookup cannot read: the page is not ok unless a known token is present.
   const strayMore = !token && !Array.isArray(out) && [out, out.pagination, out.pageInfo].some(morePageSignal);
-  return { rows, rawCount: list.length, ok: rows.length === list.length && tokenOk && !strayMore, token };
+  return {
+    rows, rawCount: list.length, ok: rows.length === list.length && tokenOk && !strayMore, token,
+    total: Array.isArray(out) ? null : countField(out, TOTAL_KEYS), totalPages: Array.isArray(out) ? null : countField(out, TOTAL_PAGE_KEYS),
+  };
+}
+
+const TOTAL_KEYS = ["total", "totalCount", "total_count", "totalResults", "totalSize"];
+const TOTAL_PAGE_KEYS = ["totalPages", "total_pages", "pageCount"];
+
+/** The first number under one of `keys` in the output or its pagination/pageInfo object, else null. */
+function countField(out, keys) {
+  for (const holder of [out, out.pagination, out.pageInfo]) {
+    if (!holder || typeof holder !== "object") continue;
+    for (const key of keys) if (typeof holder[key] === "number" && Number.isFinite(holder[key])) return holder[key];
+  }
+  return null;
 }
 
 const KNOWN_TOKEN_KEYS = new Set(["nextPageToken", "next_page_token"]);
@@ -324,6 +339,8 @@ export const JOB_DEADLINE_MS = 25 * 60_000;
 export async function listAllCampaigns(run, payload, fallbackProject, { now = Date.now, deadline = now() + JOB_DEADLINE_MS } = {}) {
   const rows = [];
   let token = null;
+  let rawSeen = 0;
+  let pagesRead = 0;
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
     if (now() + ADKIT_CALL_MS > deadline) return { rows, complete: false };
     const out = checked(await run(withRoute([
@@ -333,8 +350,12 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
     const page = campaignPage(out);
     rows.push(...page.rows);
     if (!page.ok) return { rows, complete: false };
+    rawSeen += page.rawCount;
     token = page.token;
-    if (!token) return { rows, complete: page.rawCount < LIST_LIMIT };
+    // A total or page count above what was read means rows exist that this lookup never saw.
+    const short = (page.total !== null && page.total > rawSeen) || (page.totalPages !== null && page.totalPages > pagesRead + 1);
+    if (!token) return { rows, complete: page.rawCount < LIST_LIMIT && !short };
+    pagesRead++;
   }
   return { rows, complete: false };
 }
