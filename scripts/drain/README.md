@@ -64,60 +64,27 @@ When installing this version, copy `adkit-executor.mjs` and `conversion-sync.mjs
 
 ## Deploy 0025 (adkit_jobs claim_seq and result_seq, T13-4d)
 
-Migration `0025_adkit_jobs_claim_seq.sql` adds the job event counter. The old core does not set it, so any claim or result the old core records after the migration keeps `claim_seq` or `result_seq` NULL. The new core reads NULL as 0: a NULL done enable sorts before every backfilled pause and the campaign stops counting toward the caps, and a NULL check claim drops the check's ENABLED evidence. Only `adkit-executor.mjs` triggers claims, results and the lease-expiry sweep (`GET /api/adkit/jobs/pending`), so the executor must not run between the migration and the core deploy.
+Migration `0025_adkit_jobs_claim_seq.sql` adds the job event counter. The old core does not set it, so any claim or result the old core records after the migration keeps `claim_seq` or `result_seq` NULL, and the new core reads NULL as 0. That lowers counted spend in two ways: a NULL done enable sorts before every backfilled pause, so the campaign stops counting toward the caps; and a NULL check claim puts every earlier enable or pause inside the check's window, so its ENABLED evidence is dropped. Only `adkit-executor.mjs` triggers claims, results and the lease-expiry sweep (`GET /api/adkit/jobs/pending`). So the executor must be stopped, and proven stopped, for the whole time between the migration and the core deploy.
+
+**No SQL repair exists.** Every repair statement tried in T13-4e to T13-4g opened a new way to lower counted spend (numbering an old pause or budget result above newer results applies it after them). The runbook therefore fails closed: the count in step 4 is a gate, never a to-do list.
 
 Run these steps once per deployment, for the aduplift core (`wrangler.deploy.aduplift.jsonc`, D1 `aduplift-leads`) and for the maimax core (`wrangler.deploy.maimax.jsonc`, D1 `maimax-leads`):
 
-1. Stop the adkit executor on both VPS. maimax: comment out the crontab line that runs `adkit-executor.mjs` (or `run.sh`, if it calls the executor) and check that `pgrep -f adkit-executor.mjs` prints nothing. hstgr: stop the executor step in `scheduler.mjs` (or `docker stop` the drain container) and check the same. Skip a VPS where the executor is not installed yet.
+1. Stop the adkit executor on hstgr AND maimax, and verify it on both before going on. Do not run step 2 until both are verified.
+   - maimax: disable whatever schedules the executor (the systemd timer, or the crontab line that runs `adkit-executor.mjs` or a `run.sh` that calls it). Proof: `systemctl is-active <executor timer>` prints `inactive` (or `crontab -l` shows the line commented out), and `pgrep -af adkit-executor` prints nothing.
+   - hstgr: stop the executor step of `scheduler.mjs` or stop the drain container. Proof: `systemctl is-active <executor timer>` prints `inactive` if a timer runs it, `docker ps` shows the container stopped or `docker exec <container> pgrep -af adkit-executor` prints nothing.
+   - Keep the proof output; it goes with the deploy note. A VPS where the executor is not installed counts as verified only after the same `pgrep` check.
 2. Apply the migration: `cd workers/core && bunx wrangler d1 migrations apply <db> --remote -c <deploy config>`.
 3. Deploy core: `bunx wrangler deploy -c <deploy config>`.
-4. Check for NULL rows and require 0. Run each statement below with `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "<statement>"`. `packages/leads-db/test/deploy-0025.test.ts` and the P1 test in `workers/core/test/campaign-jobs.test.ts` run these exact statements (between the `sql:` markers); the core test also checks with the real `deriveCampaigns` that counted spend does not go down.
+4. Gate. Run the count with `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "<statement>"`. `packages/leads-db/test/deploy-0025.test.ts` and the gate test in `workers/core/test/campaign-jobs.test.ts` read this exact statement (between the `sql:count` marker and its fence).
 
    <!-- sql:count -->
    ```sql
    SELECT COUNT(*) AS n FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL)
    ```
 
-   The first clause has no status filter on purpose. The backfill numbers every claimed row, the new core sets `claim_seq` in every claim, and a retry sets `claimed_at` back to NULL. So a first-clause match is a claim the old core made during the gap. That includes a status check the old core claimed and the new core finished: it is `done` with `result_seq` set and `claim_seq` NULL, and its NULL claim (read as 0) would put every earlier enable or pause inside its window and drop ENABLED evidence.
-
-   Every final result the new core records sets `result_seq`, including a held enable or budget job refused on its cap recheck (T13-4f; a core from T13-4d or T13-4e left that refused row with `result_seq` NULL, and `number-result` below repairs it). A non-zero count therefore means the old core recorded a claim or result after step 2, or a refused held row from a T13-4d/T13-4e core. Keep the executor stopped, list the rows, and repair them one at a time in this order:
-
-   <!-- sql:list -->
-   ```sql
-   SELECT id, kind, status, claim_seq, result_seq FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL) ORDER BY updated_at, rowid
-   ```
-
-   Run all four statements below on each listed row, in this order. Each statement matches only its own form and changes nothing on any other row.
-
-   - A `done` `campaign.status_check` (`claim_seq` NULL, `result_seq` NULL or set): keep it. It stays `done` with its result. The statement writes 0 into each NULL column, and `deriveCampaigns` already reads NULL as 0, so the campaign's state, budget and counted spend do not change (a check claimed at 0 is never newer than another check, and its staleness window is the same). Discarding it instead could lower counted spend: a check that read ENABLED/2500 for a campaign the panel shows as PAUSED would stop counting while the campaign spends.
-
-     <!-- sql:keep-done-check -->
-     ```sql
-     UPDATE adkit_jobs SET claim_seq = COALESCE(claim_seq, 0), result_seq = COALESCE(result_seq, 0) WHERE id = '<id>' AND kind = 'campaign.status_check' AND status = 'done' AND (claim_seq IS NULL OR result_seq IS NULL)
-     ```
-
-   - An unfinished `campaign.status_check` (still `claimed` by the old core, or `failed` by it): discard it. Nothing reads a failed check, so its numbers never matter; it gets a `result_seq` so it leaves the count.
-
-     <!-- sql:discard-unfinished-check -->
-     ```sql
-     UPDATE adkit_jobs SET status = 'failed', result = COALESCE(result, json_object('error', 'discarded: claimed by the old core during the 0025 deploy')), claimed_at = NULL, result_seq = COALESCE(result_seq, (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs)) WHERE id = '<id>' AND kind = 'campaign.status_check' AND status IN ('claimed', 'failed') AND (claimed_at IS NOT NULL OR result_seq IS NULL)
-     ```
-
-   - Any other row (an enable, pause, budget, draft or conversion job): number its claim, then its result, each above the current maximum of both columns. Neither statement runs on a status check.
-
-     <!-- sql:number-claim -->
-     ```sql
-     UPDATE adkit_jobs SET claim_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND kind <> 'campaign.status_check' AND claimed_at IS NOT NULL AND claim_seq IS NULL
-     ```
-
-     <!-- sql:number-result -->
-     ```sql
-     UPDATE adkit_jobs SET result_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND kind <> 'campaign.status_check' AND status IN ('done','failed','unknown') AND result_seq IS NULL
-     ```
-
-   After the repair, queue a fresh status check from the panel for every campaign that had a repaired status check (`POST /admin/adkit/campaign-jobs` with `{"kind":"campaign.status_check","campaign_id":"<campaign id>"}`); it runs when the executor restarts. Do not submit enable or budget jobs from the panel until those fresh status checks have finished.
-
-   Run the count again. Start the executor only when it is 0. Every repair statement is safe to run twice.
-5. Start the executor again on both VPS (restore the crontab line, restart the container or scheduler step).
-
-The steps are idempotent. A run with nothing claimed or finished during the gap returns 0 at step 4.
+   - Count 0: go to step 5. The new core sets `claim_seq` in every claim and `result_seq` in every final result (done, failed, unknown, and a held job refused on its cap recheck), and the backfill numbered every older row, so a correct deploy always counts 0.
+   - Count not 0: STOP. Do not edit any row and do not start the executors. Leave them stopped. Set `ads_cap_total_thb_day` to 0 in the panel settings (owner action): that refuses every new enable and budget change until the owner decides. Hand the rows to the owner with the result of
+     `SELECT id, kind, status, claimed_at, claim_seq, result_seq, updated_at, payload, result FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL) ORDER BY updated_at, rowid`.
+     The only safe recovery is a decision by the owner. A non-zero count is only possible if step 1 was skipped or failed.
+5. Start the executor again on both VPS (re-enable the timer or crontab line, restart the container or scheduler step), and check the first run's log.
