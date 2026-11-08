@@ -43,7 +43,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 
 * Server-post or API lead delivery to buyers. Prepop redirect is the only handoff.
 * Multi-tenant data sharing between installations.
-* Direct Google Ads API work. AdKit is used only by the existing drain.
+* Direct Google Ads API work from a Worker. Workers hold no AdKit key. The VPS drain host runs `adkit`, the panel writes jobs and the VPS executor runs them (ADR-0005).
 * New loss-prevention frameworks beyond V1, such as payout matrices, receipt tables, live-state ladders or crash-test harnesses.
 * Turnstile, and outreach by SMS or phone.
 * A builder MCP. It is deferred until the first brand is live.

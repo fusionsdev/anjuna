@@ -8,11 +8,15 @@ import { parseRoute, routePath } from "../src/client/router";
 
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
 const employee: Me = { id: "u2", email: "staff@example.test", role: "employee" };
-const TRAFFIC_NAV = "ทราฟฟิก (Traffic)";
-const ERRORS_NAV = "ข้อผิดพลาดฝั่งเว็บ (Client errors)";
+const TRAFFIC_TITLE = "ทราฟฟิก (Traffic)";
+const ERRORS_TITLE = "ข้อผิดพลาดฝั่งเว็บ (Client errors)";
+const TRAFFIC_TAB = "ทราฟฟิก";
+const ERRORS_TAB = "ข้อผิดพลาดฝั่งเว็บ";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const navLabels = () => within(screen.getByRole("navigation", { name: "เมนูหลัก" })).getAllByRole("link").map((a) => a.textContent);
+const menu = () => within(screen.getByRole("navigation", { name: "เมนูหลัก" }));
+const tabs = () => within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
+const tabLabels = () => tabs().getAllByRole("link").map((a) => a.textContent);
 
 beforeEach(() => {
   vi.spyOn(api, "alerts").mockRejectedValue(new Error("alerts are not under test"));
@@ -43,26 +47,21 @@ describe("Traffic and Client errors routes", () => {
     expect(routePath({ view: "errors" })).toBe("/errors");
   });
 
-  it("the sidebar shows Traffic and Client errors to an employee and an owner, after Funnel", async () => {
+  it("the Traffic menu item and its Traffic, Funnel and Client errors tabs show to an employee and an owner", async () => {
     window.history.replaceState(null, "", "/funnel");
     const me = vi.spyOn(api, "me").mockResolvedValue(owner);
     const { unmount } = render(<App />);
-    await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    const ownerNav = navLabels();
-    const funnel = ownerNav.findIndex((l) => l!.startsWith("ฟันเนล"));
-    expect(ownerNav.slice(funnel + 1, funnel + 4)).toEqual([TRAFFIC_NAV, ERRORS_NAV, "ลีด (Leads)"]);
-    expect(screen.getByRole("link", { name: TRAFFIC_NAV }).getAttribute("href")).toBe("/traffic");
-    expect(screen.getByRole("link", { name: ERRORS_NAV }).getAttribute("href")).toBe("/errors");
+    await screen.findByRole("navigation", { name: "หมวดย่อย" });
+    expect(tabLabels()).toEqual([TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
+    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("href")).toBe("/traffic");
+    expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("href")).toBe("/traffic");
+    expect(tabs().getByRole("link", { name: ERRORS_TAB }).getAttribute("href")).toBe("/errors");
     unmount();
 
     me.mockResolvedValue(employee);
     render(<App />);
-    await waitFor(() => expect(screen.getByRole("link", { name: TRAFFIC_NAV })).toBeTruthy());
-    const employeeNav = navLabels();
-    const employeeFunnel = employeeNav.findIndex((l) => l!.startsWith("ฟันเนล"));
-    expect(employeeNav.slice(employeeFunnel + 1, employeeFunnel + 3)).toEqual([TRAFFIC_NAV, ERRORS_NAV]);
-    expect(ownerNav).toContain("ผู้ใช้");
-    expect(employeeNav).not.toContain("ผู้ใช้");
+    await waitFor(() => expect(menu().getByRole("link", { name: TRAFFIC_TAB })).toBeTruthy());
+    expect(tabLabels()).toEqual([TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
   });
 
   it("opening /traffic renders the Traffic screen with its page title", async () => {
@@ -70,9 +69,11 @@ describe("Traffic and Client errors routes", () => {
     window.history.replaceState(null, "", "/traffic");
     render(<App />);
     expect(await screen.findByRole("heading", { level: 1, name: "ทราฟฟิก" })).toBeTruthy();
-    expect(document.title).toBe(`${TRAFFIC_NAV} · Control Panel`);
-    expect(document.querySelector(".topbar-title")?.textContent).toBe(TRAFFIC_NAV);
-    expect(screen.getByRole("link", { name: TRAFFIC_NAV }).getAttribute("aria-current")).toBe("page");
+    // The title is set in an effect that can run after the heading appears.
+    await waitFor(() => expect(document.title).toBe(`${TRAFFIC_TITLE} · Control Panel`));
+    expect(document.querySelector(".topbar-title")?.textContent).toBe(TRAFFIC_TITLE);
+    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
+    expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
   });
 
   it("opening /errors renders the Client errors screen with its page title", async () => {
@@ -80,8 +81,10 @@ describe("Traffic and Client errors routes", () => {
     window.history.replaceState(null, "", "/errors");
     render(<App />);
     expect(await screen.findByRole("heading", { level: 1, name: "ข้อผิดพลาดฝั่งเว็บ" })).toBeTruthy();
-    expect(document.title).toBe(`${ERRORS_NAV} · Control Panel`);
-    expect(document.querySelector(".topbar-title")?.textContent).toBe(ERRORS_NAV);
-    expect(screen.getByRole("link", { name: ERRORS_NAV }).getAttribute("aria-current")).toBe("page");
+    // The title is set in an effect that can run after the heading appears.
+    await waitFor(() => expect(document.title).toBe(`${ERRORS_TITLE} · Control Panel`));
+    expect(document.querySelector(".topbar-title")?.textContent).toBe(ERRORS_TITLE);
+    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
+    expect(tabs().getByRole("link", { name: ERRORS_TAB }).getAttribute("aria-current")).toBe("page");
   });
 });

@@ -1,4 +1,4 @@
-import type { InstallWithReceipts, LifecycleBrandSummary } from "@anjuna/contracts";
+import type { AdminRole, InstallStatus, InstallWithReceipts, LifecycleBrandSummary } from "@anjuna/contracts";
 
 export type LifecycleUiStatus = "draft" | "queued" | "running" | "ready" | "failed" | "rolled_back" | "detached" | "unmanaged" | "sync_error";
 export type LifecycleBrandForUi = Omit<LifecycleBrandSummary, "runtime_sync_status" | "status"> & { status: LifecycleBrandSummary["status"] | LifecycleUiStatus; runtime_sync_status: "queued" | "running" | "ready" | "failed" | "sync_error" };
@@ -105,4 +105,65 @@ export function lifecycleMutationAvailability(
     retry: installStatus === "failed" && !recoveryRequired,
     recover: installStatus === "failed" && recoveryRequired,
   };
+}
+
+export type Role = AdminRole;
+export type LifecycleRowStatus = LifecycleBrandForUi["status"];
+
+/**
+ * What nextAction reads from one brand row. A LifecycleBrandSummary fits as is.
+ * paused: core paused the brand (the factory status of a paused brand still reads live).
+ * template_approved, drain_route, test_sold: false means that step is open, undefined means the caller does not know, and unknown never blocks.
+ * recovery_required: the failed install holds evidence only Recover can clear. Only the selected brand's install detail knows it.
+ */
+export interface LifecycleRow {
+  status: LifecycleRowStatus;
+  runtime_sync_status: LifecycleBrandForUi["runtime_sync_status"];
+  bundle_form_version: string | null;
+  payload_version: string | null;
+  latest_install?: { status: InstallStatus } | null;
+  paused?: boolean;
+  recovery_required?: boolean;
+  template_approved?: boolean;
+  drain_route?: boolean;
+  test_sold?: boolean;
+}
+
+export type NextActionKind = "install" | "retry" | "approve-template" | "set-route" | "test-sold" | "open" | "resume";
+/** disabled is set with a Thai reason when this role (or the row) cannot run the action. The action stays in view. */
+export type NextAction = { kind: NextActionKind; label: string; disabled: boolean; reason?: string };
+
+const enabled = (kind: NextActionKind, label: string): NextAction => ({ kind, label, disabled: false });
+const refused = (kind: NextActionKind, label: string, reason: string): NextAction => ({ kind, label, disabled: true, reason });
+/** An action only the owner may run: the employee sees it disabled with the reason. */
+const ownerOnly = (role: Role, kind: NextActionKind, label: string, reason: string): NextAction => (role === "owner" ? enabled(kind, label) : refused(kind, label, reason));
+
+/**
+ * The one button a brand row offers, first match wins:
+ * retired, then an install in progress (progress), a failed install (retry, or Recover when it needs recovery),
+ * a pause (resume), a template waiting for approval, a draft or failed brand (install), a brand that needs a look
+ * (rolled back, detached, or a live brand with a runtime sync problem), then an open drain route, an open test sold,
+ * and last the plain open.
+ * Pure: the role only decides whether an action is disabled, never which one is chosen.
+ */
+export function nextAction(row: LifecycleRow, role: Role): NextAction {
+  const installStatus = row.latest_install?.status;
+  if (row.status === "retired") return enabled("open", "ดูแบรนด์");
+  if (row.status === "installing" || row.status === "queued" || row.status === "running" || installStatus === "queued" || installStatus === "running") return enabled("open", "ดูความคืบหน้า");
+  if (installStatus === "failed") {
+    return row.recovery_required ? ownerOnly(role, "retry", "กู้คืน", "เฉพาะเจ้าของกู้คืนได้") : enabled("retry", "ลองใหม่");
+  }
+  if (row.paused || row.status === "paused") return enabled("resume", "เปิดใช้งานต่อ");
+  if (row.template_approved === false) return ownerOnly(role, "approve-template", "อนุมัติเทมเพลต", "เฉพาะเจ้าของอนุมัติเทมเพลตได้");
+  if (row.status === "draft" || row.status === "failed") {
+    return row.bundle_form_version == null || row.payload_version == null ? refused("install", "ติดตั้ง", "ยังไม่มีฟอร์มที่ยืนยันแล้ว") : enabled("install", "ติดตั้ง");
+  }
+  if (row.status === "rolled_back" || row.status === "detached" || row.status === "sync_error") return enabled("open", "ตรวจสอบ");
+  if (row.status === "live" || row.status === "ready") {
+    // Like brandHealth, only a live brand's runtime sync counts: a core-only row reads sync_error whenever core state is missing.
+    if (row.runtime_sync_status === "sync_error" || row.runtime_sync_status === "failed") return enabled("open", "ตรวจสอบ");
+    if (row.drain_route === false) return ownerOnly(role, "set-route", "ตั้งเส้นทาง", "เฉพาะเจ้าของตั้งเส้นทางได้");
+    if (row.test_sold === false) return enabled("test-sold", "ยืนยันขายทดสอบ");
+  }
+  return enabled("open", "ดูแบรนด์");
 }

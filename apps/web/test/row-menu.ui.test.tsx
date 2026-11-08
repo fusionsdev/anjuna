@@ -52,6 +52,30 @@ describe("RowMenu", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("a disabled item stays in the list with its reason, takes focus, and does nothing when chosen", () => {
+    const calls: string[] = [];
+    setup(calls, [
+      { key: "rollback", label: "ย้อนกลับ", group: "deploy", disabled: true, reason: "เฉพาะเจ้าของย้อนกลับแบรนด์ได้", onSelect: () => { calls.push("rollback"); } },
+      { key: "duplicate", label: "ทำสำเนา", group: "other", onSelect: () => { calls.push("duplicate"); } },
+    ]);
+    openMenu();
+    const [rollback, duplicate] = within(menu()).getAllByRole("menuitem");
+    expect(rollback!.getAttribute("aria-disabled")).toBe("true");
+    expect(rollback!.getAttribute("title")).toBe("เฉพาะเจ้าของย้อนกลับแบรนด์ได้");
+    expect(duplicate!.getAttribute("aria-disabled")).toBeNull();
+    expect(duplicate!.getAttribute("title")).toBeNull();
+    // Focusable: the first item takes focus on open and the arrow keys reach it.
+    expect(document.activeElement).toBe(rollback);
+    fireEvent.keyDown(menu(), { key: "ArrowDown" });
+    fireEvent.keyDown(menu(), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(rollback);
+    fireEvent.click(rollback!);
+    expect(calls).toEqual([]);
+    expect(screen.queryByRole("menu")).not.toBeNull();
+    fireEvent.click(duplicate!);
+    expect(calls).toEqual(["duplicate"]);
+  });
+
   it("renders nothing for an empty list", () => {
     setup([], []);
     expect(screen.queryByRole("button", { name: "จัดการ (Actions)" })).toBeNull();

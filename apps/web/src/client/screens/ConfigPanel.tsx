@@ -69,8 +69,11 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
       </p>
 
       <Section title="สถานะ (Pause / Resume)">
-        {(brand.status !== "live" || me.role === "owner") && <button
+        {/* The server refuses an employee's pause. The button shows disabled with the reason, like the row menu. */}
+        <button
           className={brand.status === "live" ? "btn warn" : "btn pri"}
+          disabled={brand.status === "live" && me.role !== "owner"}
+          title={brand.status === "live" && me.role !== "owner" ? "เฉพาะเจ้าของหยุดแบรนด์ได้" : undefined}
           onClick={async () => {
             const pausing = brand.status === "live";
             const ok = await confirm({
@@ -84,7 +87,8 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
           }}
         >
           {brand.status === "live" ? "หยุดชั่วคราว (Pause)" : "เปิดใช้งานต่อ (Resume)"}
-        </button>}
+        </button>
+        {brand.status === "live" && me.role !== "owner" && <p className="muted small" role="note">เฉพาะเจ้าของหยุดแบรนด์ได้</p>}
       </Section>
 
       <KeywordSection key={brand.updated_at} brand={brand} onSave={(k) => save({ keyword_default: k })} />

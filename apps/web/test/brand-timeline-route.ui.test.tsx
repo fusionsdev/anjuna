@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { App } from "../src/client/App";
@@ -7,7 +7,7 @@ import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 import { parseRoute, routePath } from "../src/client/router";
 
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
-const LINK = "ไทม์ไลน์ (Timeline)";
+const LINK = "ไทม์ไลน์";
 
 const lifecycle = (id: string, extra: Record<string, unknown> = {}) => LifecycleBrandSummary.parse({
   brand_id: id, name: "Credit Genie", account: "test-account", hostnames: ["creditsgene.test"], status: "live", current_revision_id: `${id}_rev_1`,
@@ -89,7 +89,10 @@ describe("brand timeline route", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "ไทม์ไลน์แบรนด์ (Brand timeline)" })).toBeTruthy();
     await waitFor(() => expect(timeline).toHaveBeenCalledWith("b1", expect.anything()));
-    expect(screen.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
+    const menu = within(screen.getByRole("navigation", { name: "เมนูหลัก" }));
+    expect(menu.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
+    const tabs = within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
+    expect(tabs.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
     expect(screen.queryByText(LINK)).toBeNull();
   });
 });

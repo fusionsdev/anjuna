@@ -853,15 +853,18 @@ describe("GET /admin/leads (FUS-376)", () => {
 
   it("defaults to the last 30 days and 50 rows", async () => {
     const stamp = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+    // A brand no other test seeds: other tests write fixed-date leads into brand-a/b/c, and those
+    // fall inside this real-clock 30-day window once the calendar gets close to their dates.
+    const brand = "brand-clock";
     await lh.db.batch([
-      ...Array.from({ length: 51 }, (_, i) => insert(`recent-${String(i + 1).padStart(8, "0")}`, "brand-c", stamp(1))),
-      insert("stale-00000001", "brand-c", stamp(45)),
+      ...Array.from({ length: 51 }, (_, i) => insert(`recent-${String(i + 1).padStart(8, "0")}`, brand, stamp(1))),
+      insert("stale-00000001", brand, stamp(45)),
     ]);
 
-    const first = await leadsAt("/admin/leads?brand=brand-c");
+    const first = await leadsAt(`/admin/leads?brand=${brand}`);
     expect(first.rows).toHaveLength(50);
     expect(first.next_cursor).not.toBeNull();
-    const second = await leadsAt(`/admin/leads?brand=brand-c&cursor=${first.next_cursor}`);
+    const second = await leadsAt(`/admin/leads?brand=${brand}&cursor=${first.next_cursor}`);
     expect(second.rows).toHaveLength(1);
     expect(second.next_cursor).toBeNull();
     expect([...ids(first), ...ids(second)]).not.toContain("stale-00000001");

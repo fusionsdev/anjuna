@@ -25,7 +25,9 @@ import { PANEL_ROLE_TABLE } from "../server/panel-roles";
 import { navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
 import { AppShell, pageTitle } from "./components/AppShell";
 import { SidebarNav, type NavItem } from "./components/SidebarNav";
+import { SectionTabs } from "./components/SectionTabs";
 import { Spinner } from "./components/Spinner";
+import { NAV_GROUPS, activeTabId, groupOfView, groupViews, visibleTabs, type NavGroup } from "./nav-groups";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -71,26 +73,22 @@ export function App() {
     if (id === "new-brand") setWizardRequest((count) => count + 1);
     navigate(viewPath(id));
   };
+  // One item per group. The settings group stays for an employee through the tabs they may open, and its link opens the first of them.
+  const groupItem = (group: NavGroup): NavItem & { show: boolean } => {
+    const tabs = visibleTabs(group, me.role);
+    return { id: group.id, label: group.label, show: tabs.length > 0, activeFor: groupViews(group), target: tabs[0]?.id };
+  };
   const nav: (NavItem & { show: boolean })[] = [
     { id: "home", label: "หน้าแรก", show: true },
-    { id: "brands", label: "แบรนด์", show: true },
-    { id: "deploys", label: "ประวัติการติดตั้ง", show: true },
-    { id: "new-brand", label: "สร้างแบรนด์ใหม่", show: true },
+    groupItem(NAV_GROUPS.brands),
     { id: "templates", label: "เทมเพลต", show: true },
-    { id: "funnel", label: "ฟันเนล", show: true, gap: true },
-    { id: "traffic", label: "ทราฟฟิก (Traffic)", show: true }, // spec traffic
-    { id: "errors", label: "ข้อผิดพลาดฝั่งเว็บ (Client errors)", show: true }, // spec traffic
-    { id: "leads", label: "ลีด (Leads)", show: true }, // spec leads
-    { id: "conversions", label: "คอนเวอร์ชัน", show: true },
+    groupItem(NAV_GROUPS.traffic),
+    groupItem(NAV_GROUPS.leads),
     { id: "alerts", label: "การแจ้งเตือน", show: true, badge: alertCount !== null ? { count: alertCount, label: `${alertCount} รายการที่ต้องจัดการ` } : null },
-    { id: "mailing", label: "รายชื่ออีเมล", show: true },
-    { id: "suppressions", label: "อีเมลที่บล็อก (Suppressions)", show: me.role === "owner" }, // spec leads
-    { id: "audit", label: "ประวัติการแก้ไข", show: true, gap: true },
-    { id: "users", label: "ผู้ใช้", show: me.role === "owner" },
-    { id: "settings", label: "ตั้งค่า (Settings)", show: roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings) }, // spec settings
-    { id: "builder-keys", label: "คีย์ Builder", show: true },
+    groupItem(NAV_GROUPS.settings),
   ];
   const items: NavItem[] = nav.filter((n) => n.show);
+  const group = groupOfView(view);
 
   return (
     <AppShell
@@ -100,8 +98,9 @@ export function App() {
         await api.signOut().catch(() => undefined);
         setMe(null);
       }}
-      nav={<SidebarNav items={items} current={view === "brand-timeline" ? "brands" : view} onOpen={open} />}
+      nav={<SidebarNav items={items} current={view} onOpen={open} />}
     >
+      {group && <SectionTabs tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />}
       {view === "home" && <HomeScreen me={me} onGo={open} />}
       {(view === "brands" || view === "new-brand") && (
         <BrandLifecycle
@@ -152,7 +151,7 @@ export function App() {
         : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
       {/* spec settings */}
       {view === "settings" && (roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings)
-        ? <SettingsScreen />
+        ? <SettingsScreen me={me} />
         : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
       {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
     </AppShell>

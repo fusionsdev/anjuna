@@ -27,6 +27,9 @@ import { TrafficBreakdownQuery, TrafficBreakdownResponse } from "./traffic.js";
 import { z } from "zod";
 import { AdkitProject, BrandId, GoogleAdsAccount, GoogleConversionAction, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
 import { ConversionSetupStateResponse } from "./conversion-setup.js";
+import {
+  AdkitDirectoryResponse, AdkitJobCreateRequest, AdkitJobCreateResponse, CampaignJobCreateRequest, PanelCampaignsResponse,
+} from "./adkit.js";
 import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { BrandTheme } from "./theme.js";
@@ -699,7 +702,7 @@ export const AdminError = z.discriminatedUnion("error", [
     /** PATCH fields the caller may not change (absent when the whole endpoint is denied). */
     denied_fields: z.array(z.string()).min(1).optional(),
   }),
-  z.strictObject({ error: z.literal("not_found"), ...errorBase, resource: z.enum(["brand", "lead", "route", "suppression"]) }),
+  z.strictObject({ error: z.literal("not_found"), ...errorBase, resource: z.enum(["brand", "lead", "route", "suppression", "campaign"]) }),
   z.strictObject({ error: z.literal("conflict"), ...errorBase, current_updated_at: Timestamp }),
   z.strictObject({
     error: z.literal("invalid"),
@@ -870,6 +873,21 @@ export const AlertsReportResponse = z.strictObject({
       ),
     }),
   }),
+  /**
+   * Panel redesign T12: crawler hits counted by the brand Workers (no response varies by them).
+   * `adsbot_hours` has one row per brand per UTC hour with AdsBot hits; any row makes the state
+   * "alert". No money. Optional so a core that predates the counter still parses.
+   */
+  bot_hits: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      window_hours: z.number().positive(),
+      brands: z.array(z.strictObject({
+        brand: z.string().min(1), googlebot: Count, adsbot: Count, other_bot: Count,
+      })),
+      adsbot_hours: z.array(z.strictObject({ brand: z.string().min(1), hour: Timestamp, hits: Count })),
+    }),
+  }).optional(),
 });
 export type AlertsReportResponse = z.infer<typeof AlertsReportResponse>;
 
@@ -1029,6 +1047,51 @@ export const AdminApi = {
     path: "/admin/brands/:id/conversion-setup",
     min_role: "owner",
     response: ConversionSetupStateResponse,
+  },
+  /** T9 AdKit directory (ADR-0005): fresh rows only, synced from the VPS. */
+  adkitProjects: {
+    method: "GET",
+    path: "/admin/adkit/projects",
+    min_role: "owner",
+    response: AdkitDirectoryResponse,
+  },
+  adkitAccounts: {
+    method: "GET",
+    path: "/admin/adkit/projects/:project/accounts",
+    min_role: "owner",
+    response: AdkitDirectoryResponse,
+  },
+  adkitConversionActions: {
+    method: "GET",
+    path: "/admin/adkit/accounts/:account/conversion-actions",
+    min_role: "owner",
+    response: AdkitDirectoryResponse,
+  },
+  /** Queue one AdKit job. Idempotent: a repeat answers the existing row with `created: false`. */
+  createAdkitJob: {
+    method: "POST",
+    path: "/admin/adkit/jobs",
+    min_role: "owner",
+    request: AdkitJobCreateRequest,
+    response: AdkitJobCreateResponse,
+  },
+  /**
+   * T13 Part B: queue a campaign job. Employee may queue a draft; core refuses the other kinds below the role in
+   * CAMPAIGN_JOB_ROLES (enable, pause, budget are owner only). Budgets above a baht cap are 422 before a row exists.
+   */
+  createCampaignJob: {
+    method: "POST",
+    path: "/admin/adkit/campaign-jobs",
+    min_role: "employee",
+    request: CampaignJobCreateRequest,
+    response: AdkitJobCreateResponse,
+  },
+  /** Panel campaigns derived from their jobs, with the caps and the enabled total in baht per day. */
+  listCampaigns: {
+    method: "GET",
+    path: "/admin/adkit/campaigns",
+    min_role: "employee",
+    response: PanelCampaignsResponse,
   },
   conversionsReport: {
     method: "GET",

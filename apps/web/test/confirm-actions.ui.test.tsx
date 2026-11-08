@@ -7,6 +7,8 @@ import { UsersScreen } from "../src/client/screens/Users";
 import { flowGateLabel } from "../src/client/labels";
 import { answerConfirm } from "./confirm";
 
+/** The selected row has its own Recover button (its primary one): the detail aside is the scope of the action names. */
+const inAside = () => within(document.querySelector<HTMLElement>(".brands-aside")!);
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const brand = LifecycleBrandSummary.parse({
   brand_id: "brand-a", account: "test-account", hostnames: ["renderable.test"],
@@ -97,46 +99,30 @@ describe("BrandLifecycle actions that had no confirmation", () => {
   };
 
   it.each([
-    ["rollback", "ย้อนกลับ (Rollback)", "/rollback", false],
-    ["recover", "กู้คืน (Recover, Owner)", "/recover", true],
+    ["rollback", "ย้อนกลับ", "/rollback", false],
+    ["recover", "กู้คืน", "/recover", true],
   ] as const)("%s asks first and sends nothing on cancel", async (_name, button, suffix, needsRecovery) => {
     if (needsRecovery) recoverable();
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: button }));
+    fireEvent.click(await inAside().findByRole("button", { name: button }));
     await answerConfirm(false);
     expect(sent("POST", suffix)).toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: button }));
+    fireEvent.click(inAside().getByRole("button", { name: button }));
     await answerConfirm(true);
     await waitFor(() => expect(sent("POST", suffix)).toHaveLength(1));
   });
 
   it("names the action in the rollback and recover dialogs", async () => {
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับ (Rollback)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "ย้อนกลับ" }));
     const rollbackDialog = await answerConfirm(false);
     expect(rollbackDialog.textContent).toContain("ย้อนกลับแบรนด์นี้เป็นเวอร์ชันก่อนหน้า?");
     cleanup();
     recoverable();
     render(<BrandLifecycle me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "กู้คืน (Recover, Owner)" }));
+    fireEvent.click(await inAside().findByRole("button", { name: "กู้คืน" }));
     const recoverDialog = await answerConfirm(false);
     expect(recoverDialog.textContent).toContain("กู้คืนแบรนด์นี้?");
-  });
-
-  it("asks before Start upgrade-all, shows the target in the dialog, and sends nothing on cancel", async () => {
-    render(<BrandLifecycle me={owner} />);
-    await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
-    fireEvent.change(screen.getByLabelText("from_template_version_id"), { target: { value: "tv-1" } });
-    fireEvent.change(screen.getByLabelText("to_template_version_id"), { target: { value: "tv-2" } });
-    const start = () => fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์ (Start upgrade-all)" }));
-    start();
-    const dialog = await answerConfirm(false);
-    expect(dialog.textContent).toContain("tv-1");
-    expect(dialog.textContent).toContain("tv-2");
-    expect(sent("POST", "/api/upgrade-all")).toHaveLength(0);
-    start();
-    await answerConfirm(true);
-    await waitFor(() => expect(sent("POST", "/api/upgrade-all")).toHaveLength(1));
   });
 });
 

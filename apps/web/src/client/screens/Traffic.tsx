@@ -1,5 +1,5 @@
 // spec traffic
-import { TRAFFIC_LOG_PERIODS, TRAFFIC_METRICS, type TrafficLogPeriod, type TrafficMetrics, type TrafficReportResponse } from "@anjuna/contracts";
+import { TRAFFIC_LOG_PERIODS, TRAFFIC_METRICS, type AlertsReportResponse, type TrafficLogPeriod, type TrafficMetrics, type TrafficReportResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
@@ -39,6 +39,53 @@ const count = (n: number) => n.toLocaleString("en-US");
 /** UTC, read from the ISO string and never from the viewer's time zone. */
 const utc = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
 const dash = (value: string | number | null) => (value === null || value === "" ? "—" : String(value));
+
+type BotHits = NonNullable<AlertsReportResponse["bot_hits"]>;
+type BotRow = BotHits["detail"]["brands"][number];
+
+/**
+ * Googlebot and AdsBot counts for the last 24 hours, read from the alerts report (employees may
+ * read it, no money). It is best effort: when the call fails or core predates the counter the
+ * strip is hidden and the rest of the page is unchanged.
+ */
+function BotStrip({ domains }: { domains: Map<string, string> }) {
+  const [bots, setBots] = useState<BotHits | null>(null);
+  useEffect(() => {
+    let active = true;
+    api.alerts().then((report) => { if (active) setBots(report.bot_hits ?? null); }, () => { /* hidden */ });
+    return () => { active = false; };
+  }, []);
+  if (!bots) return null;
+  const { brands, adsbot_hours: hours } = bots.detail;
+  const columns: Column<BotRow>[] = [
+    { key: "brand", header: "แบรนด์", cell: (row) => <BrandLabel brandId={row.brand} domain={domains.get(row.brand) ?? row.brand} /> },
+    { key: "googlebot", header: "Googlebot", align: "right", cell: (row) => count(row.googlebot) },
+    { key: "adsbot", header: "AdsBot", align: "right", cell: (row) => count(row.adsbot) },
+    { key: "other", header: "บอทอื่น", align: "right", cell: (row) => count(row.other_bot) },
+  ];
+  return (
+    <section className="panel" aria-label="บอทของ Google">
+      <h2>บอทของ Google ใน 24 ชั่วโมง</h2>
+      {bots.state === "alert" && (
+        <div className="note neg" role="alert">
+          <p>AdsBot เข้าเว็บ {hours.length} ช่วงชั่วโมง ตรวจหน้าที่โฆษณาชี้ไป</p>
+          <ul>
+            {hours.map((row) => (
+              <li key={`${row.brand}${row.hour}`}>{domains.get(row.brand) ?? row.brand} · {utc(row.hour).slice(0, 13)}:00 UTC · {count(row.hits)} ครั้ง</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <DataTable
+        label="บอทของ Google"
+        columns={columns}
+        rows={brands}
+        rowKey={(row) => row.brand}
+        empty={<EmptyState title="ยังไม่มีบอทเข้าเว็บในช่วงนี้" />}
+      />
+    </section>
+  );
+}
 
 type Load = { report: TrafficReportResponse } | { error: string } | null;
 
@@ -115,6 +162,7 @@ export function TrafficScreen() {
           <section className="panel" aria-label="แนวโน้ม (Trend)">
             <TrendChart trend={report.trend} bucket={report.bucket} />
           </section>
+          <BotStrip domains={domains} />
           <section className="panel" aria-label="แยกตาม (Breakdown)">
             <div className="seg" role="group" aria-label="แยกตาม">
               {TABS.map(([key, label]) => (

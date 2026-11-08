@@ -26,6 +26,11 @@ export const PANEL_ROLE_TABLE = {
   /** Plan: "Install a brand" is employee and owner. */
   installBrand: "employee",
   /**
+   * Generate (wizard Review step, POST /api/brands/:id/generate): spec "Only an owner or a key with scope
+   * brand:generate may run generate". The other install actions keep installBrand.
+   */
+  generateBrand: "owner",
+  /**
    * Tracking ids on a draft (profile.ads: Google Ads account, conversion action, AdKit project, Microsoft Ads account).
    * An employee may set them before install. Raise this to "owner" and the wizard shows them read-only to an
    * employee and the draft routes refuse an employee who changes them. A live brand's money routing stays owner only.
@@ -42,6 +47,8 @@ export const PANEL_ROLE_TABLE = {
   listTemplates: "employee",
   importTemplate: "employee",
   approveTemplate: "owner",
+  /** Template manager: create a category, set a template's category, archive, delete. Owner only. */
+  manageTemplates: "owner",
   /** The edit page of a live brand: template version and tracking ids, read-only for an employee. */
   viewBrandEdit: "employee",
   /** Logo and favicon of a brand: like site text, an employee may upload and remove them. */
@@ -51,6 +58,15 @@ export const PANEL_ROLE_TABLE = {
   /** Builder keys for the template MCP: list and create are employee and owner; revoke is owner only. */
   viewBuilderKeys: "employee",
   manageBuilderKeys: "owner",
+  /** Scoped keys for /api/v1: mint, list and revoke. Owner only, because a key acts with the owner role inside its scopes. */
+  manageApiKeys: "owner",
+  /**
+   * Wizard step 4 from the AdKit directory: project and account selects and the conversion action job. Core serves
+   * the directory and queues jobs for an owner only, so an employee sees the tracking step read-only.
+   */
+  useAdkit: "owner",
+  /** The global Microsoft Ads account in Settings (moved out of the wizard). */
+  setMicrosoftAdsSetting: "owner",
   /** The Settings page: every brand's money routing and A/B config in one table, Owner only. */
   viewSettings: "owner",
   /** The per-brand timeline of changes and Ads account events: employee and owner. */

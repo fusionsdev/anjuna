@@ -1,11 +1,11 @@
 import { TrafficBreakdownResponse, type TemplateThemeVars, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contracts";
-import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
+import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
-import { ConversionSetupStateResponse } from "@anjuna/contracts";
+import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
-import { SettingsBrandsResponse } from "../shared/settings";
+import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
 import type { TimelineRequestQuery } from "./timeline";
 import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
@@ -32,10 +32,40 @@ import type {
   FunnelReportResponse,
   MailingStatusResponse,
   SpendPeriod,
-  SpendReportResponse,
+  PanelSpendReportResponse,
   TemplateImportRequest,
   TemplateZipImportRequest,
 } from "@anjuna/contracts";
+
+/**
+ * One brand in GET /api/brands/checklists. `template_approved` is false while a version of its template at or above the deployed one
+ * waits for approval, and `template_waiting_id` is that version. `unknown` is true when core did not answer, so the computed rows
+ * cannot be trusted: read nothing from the checklist and offer no step.
+ */
+export interface BrandChecklistEntry {
+  checklist: Array<{ item: ChecklistItemName; evidence: unknown }>;
+  template_approved: boolean;
+  template_waiting_id: string | null;
+  unknown?: boolean;
+}
+
+/** One step of the brand checklist panel. `evidence` is a short text for a finished step and null for an open one. */
+export interface ChecklistStep { item: ChecklistItemName; done: boolean; evidence: string | null }
+
+/** The four steps of a per-brand checklist read. An older server sends no `steps`, so they are derived from the rows. */
+export function stepsFromChecklist(result: { checklist: Array<{ item: ChecklistItemName; evidence: unknown }>; steps?: ChecklistStep[] }): ChecklistStep[] {
+  if (result.steps) return result.steps;
+  return (["final_url", "leadsgate_postbacks", "test_sold", "drain_route"] as const).map((item) => {
+    const row = result.checklist.find((r) => r.item === item);
+    const evidence = row?.evidence as { actor_id?: string; verified_at?: string } | undefined;
+    return { item, done: row !== undefined, evidence: row ? `${evidence?.actor_id ?? "—"} · ${evidence?.verified_at ?? "—"}` : null };
+  });
+}
+
+/** GET /api/brands/checklists, keyed by brand id. */
+export interface BrandChecklists {
+  brands: Record<string, BrandChecklistEntry>;
+}
 
 export interface Me {
   id: string;
@@ -152,7 +182,14 @@ export const api = {
   builderKeys: () => request<unknown>("GET", "/api/builder-keys").then((body) => BuilderKeyListResponse.parse(body)),
   createBuilderKey: (label: string) => request<unknown>("POST", "/api/builder-keys", { label }).then((body) => BuilderKeyCreateResponse.parse(body).key),
   revokeBuilderKey: (id: string) => request<{ key: unknown }>("POST", `/api/builder-keys/${encodeURIComponent(id)}/revoke`, {}).then((body) => BuilderKeySummary.parse(body.key)),
-  templates: () => request<unknown>("GET", "/api/templates").then((body) => TemplateListResponse.parse(body)),
+  /** Archived templates are left out unless the Templates screen asks for them; pickers and counts never do. */
+  templates: (options?: { includeArchived?: boolean }) =>
+    request<unknown>("GET", options?.includeArchived ? "/api/templates?include_archived=1" : "/api/templates").then((body) => TemplateListResponse.parse(body)),
+  createTemplateCategory: (name: string) => request<unknown>("POST", "/api/templates/categories", { name }).then((body) => TemplateCategoryCreateResponse.parse(body).category),
+  setTemplateCategory: (templateId: string, categoryId: string | null) =>
+    request<unknown>("PATCH", `/api/templates/${encodeURIComponent(templateId)}/category`, { category_id: categoryId }).then((body) => TemplateCategoryAssignResponse.parse(body)),
+  archiveTemplate: (templateId: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(templateId)}/archive`, {}).then((body) => TemplateArchiveResponse.parse(body)),
+  deleteTemplate: (templateId: string) => request<unknown>("DELETE", `/api/templates/${encodeURIComponent(templateId)}`).then(() => undefined),
   template: (id: string) => request<unknown>("GET", `/api/templates/${encodeURIComponent(id)}`).then((body) => TemplateDetailResponse.parse(body)),
   approveTemplate: (id: string, themeVars?: TemplateThemeVars) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/approve`, themeVars ? { theme_vars: themeVars } : {}).then((body) => TemplateApproveResponse.parse(body)),
   detectTemplateThemeVars: (id: string) => request<unknown>("POST", `/api/templates/${encodeURIComponent(id)}/detect-theme-vars`, {}).then((body) => TemplateThemeVarsResponse.parse(body)),
@@ -171,6 +208,8 @@ export const api = {
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
   brands: () => request<{ brands: BrandSummary[]; generated_at: string }>("GET", "/api/brands"),
   settingsBrands: () => request<unknown>("GET", "/api/settings/brands").then((body) => SettingsBrandsResponse.parse(body)), // spec settings
+  microsoftAdsSetting: () => request<unknown>("GET", "/api/settings/microsoft-ads").then((body) => MicrosoftAdsSettingResponse.parse(body)),
+  putMicrosoftAdsSetting: (account: string | null) => request<unknown>("PUT", "/api/settings/microsoft-ads", { microsoft_ads_account: account }).then((body) => MicrosoftAdsSettingResponse.parse(body)),
   brand: (id: string) => request<{ brand: BrandConfig }>("GET", `/api/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
   conversionSetup: (id: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(id)}/conversion-setup`).then((body) => ConversionSetupStateResponse.parse(body).conversion_setup),
   siteTextDefaults: (brandId: string) => request<unknown>("GET", `/api/brands/${encodeURIComponent(brandId)}/site-text`).then((body) => SiteTextDefaultsResponse.parse(body)),
@@ -198,6 +237,11 @@ export const api = {
   updateDraft: (brandId: string, body: UpdateBrandDraftRequest) => request<unknown>("PATCH", `/api/brands/${encodeURIComponent(brandId)}/draft`, body).then((result) => UpdateBrandDraftResponse.parse(result)),
   wizardDraft: (brandId: string) => request<unknown>("GET", `/api/wizard/drafts/${encodeURIComponent(brandId)}`).then((result) => WizardDraft.parse(result)),
   wizardDefaults: () => request<unknown>("GET", "/api/wizard/defaults").then((result) => WizardDefaultsResponse.parse(result)),
+  /** Wizard step 4: the AdKit directory (fresh rows only) and the conversion action job, through /api/v1 with the session. */
+  adkitProjects: () => request<unknown>("GET", "/api/v1/adkit/projects").then((result) => AdkitDirectoryResponse.parse(result)),
+  adkitAccounts: (project: string) => request<unknown>("GET", `/api/v1/adkit/projects/${encodeURIComponent(project)}/accounts`).then((result) => AdkitDirectoryResponse.parse(result)),
+  /** Idempotent: the same key answers the same job, so the wizard polls by repeating the call. */
+  createConversionAction: (brandDraftId: string, idempotencyKey?: string) => request<unknown>("POST", "/api/v1/adkit/conversion-actions", { brand_draft_id: brandDraftId, ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}) }).then((result) => AdkitJobCreateResponse.parse(result)),
   zoneCheck: (domain: string, brandId?: string) => request<unknown>("POST", "/api/wizard/zone-check", { domain, ...(brandId ? { brand_id: brandId } : {}) }).then((result) => ZoneCheckResponse.parse(result)),
   duplicateBrand: (brandId: string, body: DuplicateBrandRequest) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/duplicate`, body).then((result) => DuplicateBrandResponse.parse(result)),
   /** Checks the draft, then starts the install; a second call while it runs answers with the same install id. */
@@ -217,7 +261,9 @@ export const api = {
   recover: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/recover`, {}),
   retryInstall: (installId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/installs/${encodeURIComponent(installId)}/retry`, {}),
   installDetail: (installId: string) => request<InstallWithReceipts>("GET", `/api/installs/${encodeURIComponent(installId)}`),
-  checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }> }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
+  checklist: (brandId: string) => request<{ brand_id: string; checklist: Array<{ item: ChecklistItemName; evidence: unknown }>; steps?: ChecklistStep[] }>("GET", `/api/brands/${encodeURIComponent(brandId)}/checklist`),
+  /** Every live brand's checklist rows in one read, keyed by brand id. A brand that is not live has no entry. */
+  checklists: () => request<BrandChecklists>("GET", "/api/brands/checklists"),
   attestChecklist: (brandId: string, item: ChecklistItemName, lead_id?: string) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/checklist`, { item, ...(lead_id ? { lead_id } : {}) }),
   upgradeAll: (body: Omit<UpgradeAllCommand, "started_by" | "started_role">) => request<unknown>("POST", "/api/upgrade-all", body),
   latestUpgrade: () => request<unknown>("GET", "/api/upgrade-all/latest").then((body) => LatestUpgradeResponse.parse(body)),
@@ -240,7 +286,7 @@ export const api = {
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
   /** Owner only: an employee gets 403 forbidden_role. */
-  spend: (period: SpendPeriod) => request<SpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),
+  spend: (period: SpendPeriod) => request<PanelSpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),
   trafficRisk: (period: RiskPeriod) =>
     request<unknown>("GET", `/api/traffic/risk?${new URLSearchParams({ period })}`).then((body) => TrafficRiskResponse.parse(body)),
   /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */

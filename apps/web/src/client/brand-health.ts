@@ -1,28 +1,28 @@
 import type { BrandSummary, LifecycleBrandSummary } from "@anjuna/contracts";
 
 /** Also the severity order, worst first. */
-export type BrandIssue = "install_failed" | "sync_error" | "install_running" | "no_domain" | "paused";
+export type BrandIssue = "install_failed" | "sync_error" | "install_running" | "no_domain" | "paused" | "checklist_failing";
 
-const ISSUE_ORDER: readonly BrandIssue[] = ["install_failed", "sync_error", "install_running", "no_domain", "paused"];
+const ISSUE_ORDER: readonly BrandIssue[] = ["install_failed", "sync_error", "install_running", "no_domain", "paused", "checklist_failing"];
 const NO_ISSUE_SEVERITY = 99;
 
-export type BrandChip = "all" | "live" | "paused" | "failed" | "no_domain";
+export type BrandChip = "all" | "needs-fix" | "live" | "unfinished" | "paused";
 
 export const BRAND_CHIPS: ReadonlyArray<{ id: BrandChip; label: string }> = [
-  { id: "all", label: "ทั้งหมด (All)" },
-  { id: "live", label: "ใช้งาน (Live)" },
-  { id: "paused", label: "หยุดชั่วคราว (Paused)" },
-  { id: "failed", label: "ติดตั้งล้มเหลว (Failed install)" },
-  { id: "no_domain", label: "ยังไม่มีโดเมนใช้งาน (No live domain)" },
+  { id: "all", label: "ทั้งหมด" },
+  { id: "needs-fix", label: "ต้องแก้" },
+  { id: "live", label: "ใช้งาน" },
+  { id: "unfinished", label: "ยังไม่เสร็จ" },
+  { id: "paused", label: "หยุด" },
 ];
 
 export type BrandSortMode = "issues" | "activity" | "az" | "profit";
 
 export const BRAND_SORTS: ReadonlyArray<{ id: BrandSortMode; label: string; ownerOnly: boolean }> = [
-  { id: "issues", label: "ปัญหาก่อน (Issues first)", ownerOnly: false },
-  { id: "activity", label: "กิจกรรมล่าสุด (Latest activity)", ownerOnly: false },
-  { id: "az", label: "ชื่อโดเมน A-Z (Domain A-Z)", ownerOnly: false },
-  { id: "profit", label: "กำไรน้อยสุด (Worst profit)", ownerOnly: true },
+  { id: "issues", label: "ปัญหาก่อน", ownerOnly: false },
+  { id: "activity", label: "กิจกรรมล่าสุด", ownerOnly: false },
+  { id: "az", label: "ชื่อโดเมน A-Z", ownerOnly: false },
+  { id: "profit", label: "กำไรน้อยสุด", ownerOnly: true },
 ];
 
 export interface BrandHealth {
@@ -33,8 +33,11 @@ export interface BrandHealth {
 
 const isFailed = (status: string | undefined) => status === "failed" || status === "rolled_back";
 
-/** coreListFailed: the brands list carries core_error. */
-export function brandHealth(brand: LifecycleBrandSummary, runtime: Pick<BrandSummary, "status"> | undefined, options?: { coreListFailed?: boolean }): BrandHealth {
+/**
+ * coreListFailed: the brands list carries core_error.
+ * checklistFailing: any checklist row of the brand has no evidence. The caller that reads the checklists passes it; absent means unknown and never raises the issue.
+ */
+export function brandHealth(brand: LifecycleBrandSummary, runtime: Pick<BrandSummary, "status"> | undefined, options?: { coreListFailed?: boolean; checklistFailing?: boolean }): BrandHealth {
   const latest = brand.latest_install ?? null;
   const has: Record<BrandIssue, boolean> = {
     install_failed: isFailed(brand.status) || isFailed(latest?.status),
@@ -45,6 +48,7 @@ export function brandHealth(brand: LifecycleBrandSummary, runtime: Pick<BrandSum
     // A core-only row has no factory revision either, but core is serving its domain.
     no_domain: brand.status !== "unmanaged" && brand.current_revision_id === null,
     paused: runtime?.status === "paused" || brand.status === "paused",
+    checklist_failing: options?.checklistFailing === true,
   };
   const issues = ISSUE_ORDER.filter((issue) => has[issue]);
   return {
@@ -54,20 +58,29 @@ export function brandHealth(brand: LifecycleBrandSummary, runtime: Pick<BrandSum
   };
 }
 
+/**
+ * needs-fix: a failed install, a sync error, no live domain or a failing checklist. unfinished: still a draft or an install is running.
+ * live ignores a failing checklist, so a live brand with open checklist rows stays under live.
+ */
 export function matchesBrandChip(health: BrandHealth, brand: LifecycleBrandSummary, chip: BrandChip): boolean {
   switch (chip) {
     case "all":
       return true;
+    case "needs-fix":
+      return NEEDS_FIX_ISSUES.some((issue) => health.issues.includes(issue));
     case "live":
-      return health.issues.length === 0 && brand.status === "live";
+      return brand.status === "live" && health.issues.every((issue) => issue === "checklist_failing");
+    case "unfinished":
+      return brand.status === "draft" || health.issues.includes("install_running");
     case "paused":
       return health.issues.includes("paused");
-    case "failed":
-      return health.issues.includes("install_failed");
-    case "no_domain":
-      return health.issues.includes("no_domain");
   }
 }
+
+const NEEDS_FIX_ISSUES: readonly BrandIssue[] = ["install_failed", "sync_error", "no_domain", "checklist_failing"];
+
+/** A demo brand is named demo followed by digits. The Brands list hides it until the operator asks for it. */
+export const isDemoBrand = (brand: Pick<LifecycleBrandSummary, "name">): boolean => /^demo\d+/.test(brand.name ?? "");
 
 export function matchesBrandSearch(brand: LifecycleBrandSummary, query: string): boolean {
   const needle = query.trim().toLowerCase();

@@ -5,7 +5,7 @@ import { CoreError, type AnalyticsRequest, type CoreClient, type CoreResult } fr
 /** In-memory fake: no network, crypto signing, persistence, or provider calls. */
 export class MockCoreClient implements CoreClient {
   readonly calls: { [M in LeadsRpcMethod]: LeadsRpcRequest<M>[] } = {
-    recordClick: [], submitLead: [], resolveContinuation: [], zip: [], issueHandoff: [], verifyHandoff: [], brandSettings: [], brandAsset: [],
+    recordClick: [], submitLead: [], resolveContinuation: [], zip: [], issueHandoff: [], verifyHandoff: [], brandSettings: [], brandAsset: [], botHit: [],
   };
   readonly analytics: AnalyticsRequest[] = [];
   readonly continuations = new Map<string, string>();
@@ -40,6 +40,10 @@ export class MockCoreClient implements CoreClient {
     const asset = this.assets[body.kind];
     if (!asset) throw new CoreError(404);
     return { status: 200, data: asset };
+  }
+  async botHit(body: LeadsRpcRequest<"botHit">): Promise<CoreResult<"botHit">> {
+    this.record("botHit", body);
+    return { status: 200, data: { ok: true } };
   }
   async submitLead(body: LeadsRpcRequest<"submitLead">): Promise<CoreResult<"submitLead">> {
     this.record("submitLead", body);

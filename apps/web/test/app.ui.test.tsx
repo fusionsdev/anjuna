@@ -6,19 +6,21 @@ import { api } from "../src/client/api";
 
 // Exercise the shell's navigation without triggering unrelated screen requests.
 vi.mock("../src/client/screens/BrandLifecycle", () => ({
-  BrandLifecycle: ({ wizardRequest, routeBrandId, wizardRoute, onSelectBrand }: { wizardRequest: number; routeBrandId?: string | null; wizardRoute?: boolean; onSelectBrand?: (id: string) => void }) => (
+  BrandLifecycle: ({ wizardRequest, routeBrandId, wizardRoute, onSelectBrand, onNewBrand }: { wizardRequest: number; routeBrandId?: string | null; wizardRoute?: boolean; onSelectBrand?: (id: string) => void; onNewBrand?: () => void }) => (
     <>
       <h1>Brands screen: {wizardRequest} {routeBrandId ?? "-"}</h1>
       <p>wizardRoute {String(wizardRoute)}</p>
       <button type="button" onClick={() => onSelectBrand?.("brand_new")}>Pick brand_new</button>
+      <button type="button" onClick={() => onNewBrand?.()}>New brand button</button>
     </>
   ),
 }));
 vi.mock("../src/client/screens/Home", () => ({
-  HomeScreen: ({ onGo }: { onGo?: (target: "funnel") => void }) => (
+  HomeScreen: ({ onGo }: { onGo?: (target: "funnel" | "new-brand") => void }) => (
     <>
       <h1>หน้าแรก</h1>
       <button type="button" onClick={() => onGo?.("funnel")}>Home link to funnel</button>
+      <button type="button" onClick={() => onGo?.("new-brand")}>Home link to new brand</button>
     </>
   ),
 }));
@@ -30,6 +32,13 @@ vi.mock("../src/client/screens/Mailing", () => ({ MailingScreen: () => <h1>Maili
 vi.mock("../src/client/screens/Audit", () => ({ AuditScreen: () => <h1>Audit screen</h1> }));
 vi.mock("../src/client/screens/Users", () => ({ UsersScreen: () => <h1>Users screen</h1> }));
 vi.mock("../src/client/screens/BuilderKeys", () => ({ BuilderKeysScreen: () => <h1>Builder keys screen</h1> }));
+vi.mock("../src/client/screens/Traffic", () => ({ TrafficScreen: () => <h1>Traffic screen</h1> }));
+vi.mock("../src/client/screens/ClientErrors", () => ({ ClientErrorsScreen: () => <h1>Client errors screen</h1> }));
+vi.mock("../src/client/screens/Leads", () => ({ LeadsScreen: () => <h1>Leads screen</h1> }));
+vi.mock("../src/client/screens/Suppressions", () => ({ SuppressionsScreen: () => <h1>Suppressions screen</h1> }));
+vi.mock("../src/client/screens/Settings", () => ({ SettingsScreen: () => <h1>Settings screen</h1> }));
+vi.mock("../src/client/screens/Deploys", () => ({ DeploysScreen: () => <h1>Deploys screen</h1> }));
+vi.mock("../src/client/screens/BrandTimeline", () => ({ BrandTimelineScreen: ({ brandId }: { brandId: string }) => <h1>Timeline screen {brandId}</h1> }));
 vi.mock("../src/client/screens/SignIn", () => ({ SignIn: () => <h1>Sign in screen</h1> }));
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
@@ -61,57 +70,92 @@ afterEach(() => {
 });
 
 describe("Console rail", () => {
-  it("starts at Home and displays the mockup navigation and signed-in user", async () => {
+  it("starts at Home and shows the seven menu items and the signed-in user", async () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
     expect(within(nav).getAllByRole("link").map((link) => link.querySelector("span")?.textContent)).toEqual([
-      "หน้าแรก", "แบรนด์", "ประวัติการติดตั้ง", "สร้างแบรนด์ใหม่", "เทมเพลต", "ฟันเนล", "ทราฟฟิก (Traffic)", "ข้อผิดพลาดฝั่งเว็บ (Client errors)", "ลีด (Leads)", "คอนเวอร์ชัน", "การแจ้งเตือน", "รายชื่ออีเมล",
-      "อีเมลที่บล็อก (Suppressions)", "ประวัติการแก้ไข", "ผู้ใช้", "ตั้งค่า (Settings)", "คีย์ Builder",
+      "หน้าแรก", "แบรนด์", "เทมเพลต", "ทราฟฟิก", "ลีดและคอนเวอร์ชัน", "การแจ้งเตือน", "ตั้งค่า",
     ]);
     expect(within(nav).getByRole("link", { name: "หน้าแรก" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.queryByRole("navigation", { name: "หมวดย่อย" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
     expect(screen.getByText("Owner")).toBeTruthy();
     expect(await screen.findByLabelText("0 รายการที่ต้องจัดการ")).toHaveProperty("textContent", "0");
   });
 
   it.each([
-    ["แบรนด์", "Brands screen: 0 -"],
-    ["เทมเพลต", "Templates screen -"],
-    ["ฟันเนล", "Funnel screen"],
-    ["คอนเวอร์ชัน", "Conversions screen owner"],
-    ["การแจ้งเตือน", "Alerts screen"],
-    ["รายชื่ออีเมล", "Mailing screen"],
-    ["ประวัติการแก้ไข", "Audit screen"],
-    ["ผู้ใช้", "Users screen"],
-    ["คีย์ Builder", "Builder keys screen"],
-  ])("keeps %s reachable and can return Home", async (label, heading) => {
+    ["แบรนด์", "Brands screen: 0 -", "/brands"],
+    ["เทมเพลต", "Templates screen -", "/templates"],
+    ["ทราฟฟิก", "Traffic screen", "/traffic"],
+    ["ลีดและคอนเวอร์ชัน", "Leads screen", "/leads"],
+    ["การแจ้งเตือน", "Alerts screen", "/alerts"],
+    ["ตั้งค่า", "Settings screen", "/settings"],
+  ])("keeps %s reachable and can return Home", async (label, heading, path) => {
     render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
     const link = within(nav).getByRole("link", { name: new RegExp(`^${label}(?: |$)`) });
     fireEvent.click(link);
     expect(await screen.findByRole("heading", { name: heading })).toBeTruthy();
+    expect(window.location.pathname).toBe(path);
     expect(link.getAttribute("aria-current")).toBe("page");
     expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
     fireEvent.click(within(nav).getByRole("link", { name: "หน้าแรก" }));
     expect(await screen.findByRole("heading", { name: "หน้าแรก" })).toBeTruthy();
   });
 
+  it.each([
+    ["/deploys", "ประวัติการติดตั้ง", "Deploys screen"],
+    ["/traffic", "ฟันเนล", "Funnel screen"],
+    ["/funnel", "ข้อผิดพลาดฝั่งเว็บ", "Client errors screen"],
+    ["/errors", "ทราฟฟิก", "Traffic screen"],
+    ["/leads", "คอนเวอร์ชัน", "Conversions screen owner"],
+    ["/conversions", "ลีด", "Leads screen"],
+    ["/settings", "ผู้ใช้", "Users screen"],
+    ["/users", "รายชื่ออีเมล", "Mailing screen"],
+    ["/mailing", "อีเมลที่บล็อก", "Suppressions screen"],
+    ["/suppressions", "ประวัติการแก้ไข", "Audit screen"],
+    ["/audit", "คีย์ Builder", "Builder keys screen"],
+    ["/builder-keys", "ตั้งค่า", "Settings screen"],
+  ])("from %s the tab %s opens its screen and becomes the only selected tab", async (start, label, heading) => {
+    window.history.replaceState(null, "", start);
+    render(<App />);
+    const tabs = await screen.findByRole("navigation", { name: "หมวดย่อย" });
+    fireEvent.click(within(tabs).getByRole("link", { name: label }));
+    expect(await screen.findByRole("heading", { name: heading })).toBeTruthy();
+    expect(within(tabs).getByRole("link", { name: label }).getAttribute("aria-current")).toBe("page");
+    expect(tabs.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
+  });
+
   it("opens the screen a Home link asks for", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Home link to funnel" }));
     expect(await screen.findByRole("heading", { name: "Funnel screen" })).toBeTruthy();
+    // Funnel is a tab of the Traffic item, so the sidebar marks Traffic and the tab strip marks Funnel.
+    expect(screen.getByRole("navigation", { name: "เมนูหลัก" }).querySelector('[aria-current="page"]')?.textContent).toBe("ทราฟฟิก");
     expect(screen.getByRole("link", { name: "ฟันเนล" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("opens the brand wizard from Home and repeats the existing request action", async () => {
     render(<App />);
-    const create = await screen.findByRole("link", { name: "สร้างแบรนด์ใหม่" });
-    fireEvent.click(create);
+    fireEvent.click(await screen.findByRole("button", { name: "Home link to new brand" }));
     expect(await screen.findByRole("heading", { name: "Brands screen: 1 -" })).toBeTruthy();
-    fireEvent.click(create);
+    expect(window.location.pathname).toBe("/brands/new");
+    fireEvent.click(screen.getByRole("button", { name: "New brand button" }));
     expect(await screen.findByRole("heading", { name: "Brands screen: 2 -" })).toBeTruthy();
+  });
+
+  it("has no menu item or tab for the new brand wizard, only the button", async () => {
+    window.history.replaceState(null, "", "/brands/new");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Brands screen: 1 -" });
+    expect(screen.queryByRole("link", { name: "สร้างแบรนด์ใหม่" })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
+    expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("แบรนด์");
+    const tabs = screen.getByRole("navigation", { name: "หมวดย่อย" });
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["แบรนด์", "ประวัติการติดตั้ง"]);
+    expect(within(tabs).getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("counts warn and alert categories, not affected leads or healthy categories", async () => {
@@ -128,7 +172,7 @@ describe("Console rail", () => {
     await screen.findByRole("heading", { name: "หน้าแรก" });
     await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(1));
     expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull();
-    fireEvent.click(screen.getByRole("link", { name: "ฟันเนล" }));
+    fireEvent.click(screen.getByRole("link", { name: "เทมเพลต" }));
     expect(await screen.findByLabelText("3 รายการที่ต้องจัดการ")).toBeTruthy();
   });
 
@@ -136,21 +180,35 @@ describe("Console rail", () => {
     let finish!: (report: AlertsReportResponse) => void;
     vi.mocked(api.alerts).mockReturnValueOnce(new Promise<AlertsReportResponse>((resolve) => { finish = resolve; }));
     render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "ฟันเนล" }));
+    fireEvent.click(await screen.findByRole("link", { name: "เทมเพลต" }));
     await screen.findByLabelText("0 รายการที่ต้องจัดการ");
     await act(async () => { finish(attention); });
     expect(screen.getByLabelText("0 รายการที่ต้องจัดการ")).toBeTruthy();
     expect(screen.queryByLabelText("3 รายการที่ต้องจัดการ")).toBeNull();
   });
 
-  it("hides owner-only Users from employees", async () => {
+  it("hides the owner-only tabs from employees and keeps the Settings item for the tabs they may open", async () => {
     vi.mocked(api.me).mockResolvedValue({ ...owner, role: "employee" });
     render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
-    expect(screen.queryByRole("link", { name: /^ผู้ใช้$/ })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
+    expect(within(nav).getAllByRole("link").map((link) => link.querySelector("span")?.textContent)).toEqual([
+      "หน้าแรก", "แบรนด์", "เทมเพลต", "ทราฟฟิก", "ลีดและคอนเวอร์ชัน", "การแจ้งเตือน", "ตั้งค่า",
+    ]);
+    expect(within(nav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("href")).toBe("/mailing");
     fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
     expect(screen.getByText("พนักงาน")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "คีย์ Builder" })).toBeTruthy();
+    fireEvent.click(within(nav).getByRole("link", { name: "ตั้งค่า" }));
+    expect(await screen.findByRole("heading", { name: "Mailing screen" })).toBeTruthy();
+    const tabs = screen.getByRole("navigation", { name: "หมวดย่อย" });
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["รายชื่ออีเมล", "ประวัติการแก้ไข", "คีย์ Builder"]);
+  });
+
+  it("shows an owner all six Settings tabs in order", async () => {
+    window.history.replaceState(null, "", "/mailing");
+    render(<App />);
+    const tabs = await screen.findByRole("navigation", { name: "หมวดย่อย" });
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["ตั้งค่า", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
   it("preserves initial template deep links", async () => {
@@ -164,26 +222,38 @@ describe("Console rail", () => {
   it.each([
     ["/brands", "Brands screen: 0 -", "แบรนด์"],
     ["/brands/brand_abc", "Brands screen: 0 brand_abc", "แบรนด์"],
-    ["/brands/new", "Brands screen: 1 -", "สร้างแบรนด์ใหม่"],
+    ["/brands/new", "Brands screen: 1 -", "แบรนด์"],
+    ["/brands/brand_abc/timeline", "Timeline screen brand_abc", "แบรนด์"],
+    ["/deploys", "Deploys screen", "แบรนด์"],
     ["/templates/tv-1", "Templates screen tv-1", "เทมเพลต"],
-    ["/funnel", "Funnel screen", "ฟันเนล"],
-    ["/conversions", "Conversions screen owner", "คอนเวอร์ชัน"],
-    ["/conversions?period=30d&status=dead", "Conversions screen owner", "คอนเวอร์ชัน"],
-    ["/audit", "Audit screen", "ประวัติการแก้ไข"],
-    ["/builder-keys", "Builder keys screen", "คีย์ Builder"],
+    ["/traffic", "Traffic screen", "ทราฟฟิก"],
+    ["/funnel", "Funnel screen", "ทราฟฟิก"],
+    ["/errors", "Client errors screen", "ทราฟฟิก"],
+    ["/leads", "Leads screen", "ลีดและคอนเวอร์ชัน"],
+    ["/conversions", "Conversions screen owner", "ลีดและคอนเวอร์ชัน"],
+    ["/conversions?period=30d&status=dead", "Conversions screen owner", "ลีดและคอนเวอร์ชัน"],
+    ["/alerts", "Alerts screen", "การแจ้งเตือน"],
+    ["/settings", "Settings screen", "ตั้งค่า"],
+    ["/users", "Users screen", "ตั้งค่า"],
+    ["/mailing", "Mailing screen", "ตั้งค่า"],
+    ["/suppressions", "Suppressions screen", "ตั้งค่า"],
+    ["/audit", "Audit screen", "ตั้งค่า"],
+    ["/builder-keys", "Builder keys screen", "ตั้งค่า"],
   ])("deep link %s renders its screen", async (path, heading, label) => {
     window.history.replaceState(null, "", path);
     render(<App />);
     expect(await screen.findByRole("heading", { name: heading })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
+    // The Alerts link name carries its badge count once the report loads, so match the label as a prefix.
     expect(within(nav).getByRole("link", { name: new RegExp(`^${label}`) }).getAttribute("aria-current")).toBe("page");
+    expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
 
   it("back from /brands/new to /brands turns wizardRoute off", async () => {
     window.history.replaceState(null, "", "/brands");
     render(<App />);
     await screen.findByText("wizardRoute false");
-    fireEvent.click(screen.getByRole("link", { name: "สร้างแบรนด์ใหม่" }));
+    fireEvent.click(screen.getByRole("button", { name: "New brand button" }));
     expect(await screen.findByText("wizardRoute true")).toBeTruthy();
     expect(window.location.pathname).toBe("/brands/new");
     await act(async () => {
@@ -197,7 +267,7 @@ describe("Console rail", () => {
   it("forward to /brands/new turns wizardRoute on", async () => {
     window.history.replaceState(null, "", "/brands");
     render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "สร้างแบรนด์ใหม่" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New brand button" }));
     await screen.findByText("wizardRoute true");
     await act(async () => {
       window.history.back();
@@ -215,7 +285,7 @@ describe("Console rail", () => {
   it("replaces /brands/new when the wizard selects the new brand, so back skips the wizard", async () => {
     window.history.replaceState(null, "", "/brands");
     render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "สร้างแบรนด์ใหม่" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New brand button" }));
     await screen.findByText("wizardRoute true");
     fireEvent.click(screen.getByRole("button", { name: "Pick brand_new" }));
     expect(window.location.pathname).toBe("/brands/brand_new");
@@ -230,9 +300,17 @@ describe("Console rail", () => {
   it("changes the URL on navigation and follows the back button", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
+    fireEvent.click(screen.getByRole("link", { name: "ทราฟฟิก" }));
+    expect(window.location.pathname).toBe("/traffic");
+    expect(await screen.findByRole("heading", { name: "Traffic screen" })).toBeTruthy();
     fireEvent.click(screen.getByRole("link", { name: "ฟันเนล" }));
     expect(window.location.pathname).toBe("/funnel");
     expect(await screen.findByRole("heading", { name: "Funnel screen" })).toBeTruthy();
+    await act(async () => {
+      window.history.back();
+      await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
+    });
+    expect(await screen.findByRole("heading", { name: "Traffic screen" })).toBeTruthy();
     await act(async () => {
       window.history.back();
       await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
@@ -248,9 +326,12 @@ describe("Console rail", () => {
     fireEvent.click(screen.getByRole("link", { name: "หน้าแรก" }));
     await screen.findByRole("heading", { name: "หน้าแรก" });
     expect(document.title).toBe("หน้าแรก · Control Panel");
+    fireEvent.click(screen.getByRole("link", { name: "ลีดและคอนเวอร์ชัน" }));
+    await screen.findByRole("heading", { name: "Leads screen" });
+    await waitFor(() => expect(document.title).toBe("ลีด (Leads) · Control Panel"));
     fireEvent.click(screen.getByRole("link", { name: "คอนเวอร์ชัน" }));
     await screen.findByRole("heading", { name: "Conversions screen owner" });
-    expect(document.title).toBe("คอนเวอร์ชัน (Conversions) · Control Panel");
+    await waitFor(() => expect(document.title).toBe("คอนเวอร์ชัน (Conversions) · Control Panel"));
   });
 
   it("gives an employee the Conversions page, with the role passed to the screen", async () => {
@@ -259,6 +340,7 @@ describe("Console rail", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Conversions screen employee" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "คอนเวอร์ชัน" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: "ลีดและคอนเวอร์ชัน" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("shows Page not found for an unknown path and marks no nav item", async () => {

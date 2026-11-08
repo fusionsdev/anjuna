@@ -70,6 +70,24 @@ describe("Conversions page", () => {
     expect(pressed("ทั้งหมด")).toBe("false");
   });
 
+  it("shows the เมื่อวาน chip and asks core for yesterday when it is pressed", async () => {
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    expect(pressed("เมื่อวาน")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "เมื่อวาน" }));
+    await waitFor(() => expect(lastCall().searchParams.get("period")).toBe("yesterday"));
+    expect(pressed("เมื่อวาน")).toBe("true");
+    expect(window.location.search).toContain("period=yesterday");
+  });
+
+  it("reads period=yesterday from the URL", async () => {
+    window.history.replaceState(null, "", "/conversions?period=yesterday");
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    expect(lastCall().searchParams.get("period")).toBe("yesterday");
+    expect(pressed("เมื่อวาน")).toBe("true");
+  });
+
   it("falls back to 7d and all for unknown query values", async () => {
     window.history.replaceState(null, "", "/conversions?period=bogus&status=x");
     render(<ConversionsScreen me={owner} />);

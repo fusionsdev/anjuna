@@ -11,10 +11,10 @@ const LEAD_ID = "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f";
 const APPLICANT_EMAIL = "test.applicant@example.com";
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
 const employee: Me = { id: "u2", email: "staff@example.test", role: "employee" };
-const LEADS_NAV = "ลีด (Leads)";
-const TRAFFIC_NAV = "ทราฟฟิก (Traffic)";
-const ERRORS_NAV = "ข้อผิดพลาดฝั่งเว็บ (Client errors)";
-const SUPPRESSIONS_NAV = "อีเมลที่บล็อก (Suppressions)";
+const LEADS_NAV = "ลีด (Leads)"; // the screen heading
+const LEADS_MENU = "ลีดและคอนเวอร์ชัน";
+const LEADS_TAB = "ลีด";
+const SUPPRESSIONS_TAB = "อีเมลที่บล็อก";
 const OWNER_ONLY = "สำหรับ Owner เท่านั้น (Owner only)";
 
 let requests: string[];
@@ -23,7 +23,9 @@ const back = () => act(async () => {
   window.history.back();
   await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
 });
-const navLabels = () => within(screen.getByRole("navigation", { name: "เมนูหลัก" })).getAllByRole("link").map((a) => a.textContent);
+const menu = () => within(screen.getByRole("navigation", { name: "เมนูหลัก" }));
+const tabs = () => within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
+const tabLabels = () => tabs().getAllByRole("link").map((a) => a.textContent);
 
 beforeEach(() => {
   requests = [];
@@ -69,7 +71,8 @@ describe("Leads and Suppressions routes", () => {
     await screen.findByTitle(LEAD_ID);
     expect(screen.queryByRole("heading", { name: "รายละเอียดลีด (Lead detail)" })).toBeNull();
     expect(container.textContent).not.toContain(APPLICANT_EMAIL);
-    expect(screen.getByRole("link", { name: LEADS_NAV }).getAttribute("aria-current")).toBe("page");
+    expect(menu().getByRole("link", { name: LEADS_MENU }).getAttribute("aria-current")).toBe("page");
+    expect(tabs().getByRole("link", { name: LEADS_TAB }).getAttribute("aria-current")).toBe("page");
   });
 
   it("opens the detail from a list row and the Back button returns to the list", async () => {
@@ -99,27 +102,23 @@ describe("Leads and Suppressions routes", () => {
     expect(screen.queryByText("Postback Inspector")).toBeNull();
   });
 
-  it("shows the Leads nav item to both roles and Suppressions only to an owner", async () => {
-    window.history.replaceState(null, "", "/funnel");
+  it("shows the Leads menu item to both roles and the Suppressions tab only to an owner", async () => {
+    window.history.replaceState(null, "", "/suppressions");
     const me = vi.spyOn(api, "me").mockResolvedValue(owner);
     const { unmount } = render(<App />);
-    await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    const ownerNav = navLabels();
-    expect(ownerNav.indexOf(LEADS_NAV)).toBe(ownerNav.indexOf(ERRORS_NAV) + 1);
-    expect(ownerNav.indexOf(ERRORS_NAV)).toBe(ownerNav.indexOf(TRAFFIC_NAV) + 1);
-    expect(ownerNav.indexOf(TRAFFIC_NAV)).toBe(ownerNav.findIndex((l) => l!.startsWith("ฟันเนล")) + 1);
-    expect(ownerNav.indexOf(SUPPRESSIONS_NAV)).toBe(ownerNav.findIndex((l) => l!.startsWith("รายชื่ออีเมล")) + 1);
-    expect(screen.getByRole("link", { name: SUPPRESSIONS_NAV }).getAttribute("href")).toBe("/suppressions");
-    expect(screen.getByRole("link", { name: LEADS_NAV }).getAttribute("href")).toBe("/leads");
+    await screen.findByRole("navigation", { name: "หมวดย่อย" });
+    const ownerTabs = tabLabels();
+    expect(ownerTabs.indexOf(SUPPRESSIONS_TAB)).toBe(ownerTabs.indexOf("รายชื่ออีเมล") + 1);
+    expect(tabs().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("href")).toBe("/suppressions");
+    expect(tabs().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("aria-current")).toBe("page");
+    expect(menu().getByRole("link", { name: LEADS_MENU }).getAttribute("href")).toBe("/leads");
     unmount();
 
     me.mockResolvedValue(employee);
     render(<App />);
-    await waitFor(() => expect(screen.getByRole("link", { name: LEADS_NAV })).toBeTruthy());
-    const employeeNav = navLabels();
-    expect(employeeNav).toContain(LEADS_NAV);
-    expect(employeeNav).not.toContain(SUPPRESSIONS_NAV);
-    expect(screen.queryByRole("link", { name: SUPPRESSIONS_NAV })).toBeNull();
+    await waitFor(() => expect(menu().getByRole("link", { name: LEADS_MENU })).toBeTruthy());
+    expect(tabLabels()).not.toContain(SUPPRESSIONS_TAB);
+    expect(screen.queryByRole("link", { name: SUPPRESSIONS_TAB })).toBeNull();
   });
 
   it("renders the owner-only panel on /suppressions for an employee", async () => {

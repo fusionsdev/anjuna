@@ -4,11 +4,13 @@ import { InstallWithReceipts } from "@anjuna/contracts";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
 let employee: string;
+let owner: string;
 
 beforeAll(async () => { await setupDatabases(); });
 beforeEach(async () => {
   resetState();
   employee = await sessions.employee();
+  owner = await sessions.owner();
   await env.FACTORY.batch([
     env.FACTORY.prepare("INSERT OR IGNORE INTO templates (template_id,name,framework,created_by,created_at) VALUES ('tpl-1','Starter','astro','owner','2026-10-01T00:00:00Z')"),
     env.FACTORY.prepare("INSERT OR IGNORE INTO template_versions (template_version_id,template_id,version,sha256,r2_key,status,sealed_by,sealed_at,created_by,created_at) VALUES ('tv-1','tpl-1',1,'sha-1','templates/tv-1','sealed','owner','2026-10-01T00:00:00Z','owner','2026-10-01T00:00:00Z')"),
@@ -36,10 +38,20 @@ function factory() {
   return { dispatched, env: makeEnv({ FACTORY_WORKER: worker }) };
 }
 
-const generate = (brandId: string, testEnv: ReturnType<typeof makeEnv>, cookie = employee) =>
+// Generate is owner only (spec: owner or a brand:generate key); the drafts are still created by an employee.
+const generate = (brandId: string, testEnv: ReturnType<typeof makeEnv>, cookie = owner) =>
   call(`/api/brands/${brandId}/generate`, { cookie, method: "POST", body: {}, env: testEnv });
 
 describe("POST /api/brands/:id/generate", () => {
+  it("refuses an employee with 403 and starts nothing", async () => {
+    const brandId = await draft("generate-employee.example");
+    const f = factory();
+    const response = await generate(brandId, f.env, employee);
+    expect(response.status).toBe(403);
+    expect(f.dispatched).toEqual([]);
+    expect((await env.FACTORY.prepare("SELECT COUNT(*) AS n FROM installs WHERE brand_id=?1").bind(brandId).first<{ n: number }>())!.n).toBe(0);
+  });
+
   it("validates the draft and starts the install through the install path (201)", async () => {
     const brandId = await draft("generate-ok.example");
     const f = factory();

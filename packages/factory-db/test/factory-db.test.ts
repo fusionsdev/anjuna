@@ -63,6 +63,7 @@ describe("factory-db migrations", () => {
     expect(await userTables(env.DB)).toEqual(
       [
         "ads_account_events",
+        "api_keys",
         "audit_log",
         "brand_assets",
         "brand_revisions",
@@ -73,6 +74,9 @@ describe("factory-db migrations", () => {
         "form_artifacts",
         "install_receipts",
         "installs",
+        "panel_settings",
+        "template_categories",
+        "template_category_map",
         "template_theme_vars",
         "template_versions",
         "template_fingerprints",
@@ -303,6 +307,24 @@ describe("factory-db constraints", () => {
       "INSERT INTO template_theme_vars (template_version_id, theme_vars_json, updated_by, updated_at) VALUES ('missing', ?1, 'owner1', ?2)",
       vars, NOW,
     )).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("migration 0013 adds template categories with a unique name and foreign keys", async () => {
+    await run("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('t-cat', 'Categorised', 'react_spa', 'bk_1', ?1)", NOW);
+    await run("INSERT INTO template_categories (id, name, sort) VALUES ('cat-1', 'Loans', 1)");
+    await expect(run("INSERT INTO template_categories (id, name, sort) VALUES ('cat-2', 'Loans', 2)")).rejects.toThrow(/UNIQUE/);
+    await run("INSERT INTO template_category_map (template_id, category_id) VALUES ('t-cat', 'cat-1')");
+    await expect(run("INSERT INTO template_category_map (template_id, category_id) VALUES ('t-cat', 'cat-1')")).rejects.toThrow(/UNIQUE|PRIMARY KEY/);
+    await expect(run("INSERT INTO template_category_map (template_id, category_id) VALUES ('missing', 'cat-1')")).rejects.toThrow(/FOREIGN KEY/);
+    await expect(run("UPDATE template_category_map SET category_id = 'missing' WHERE template_id = 't-cat'")).rejects.toThrow(/FOREIGN KEY/);
+  });
+
+  it("migration 0014 adds api_keys with a unique 64-character hash and a JSON array of scopes", async () => {
+    const hash = "a".repeat(64);
+    await run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_1', 'Bot', ?1, '[\"brand:draft\"]', 'owner1', ?2)", hash, NOW);
+    await expect(run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_2', 'Bot', ?1, '[]', 'owner1', ?2)", hash, NOW)).rejects.toThrow(/UNIQUE/);
+    await expect(run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_3', 'Bot', 'short', '[]', 'owner1', ?1)", NOW)).rejects.toThrow(/CHECK/);
+    await expect(run("INSERT INTO api_keys (key_id, label, key_hash, scopes_json, created_by, created_at) VALUES ('ak_4', 'Bot', ?1, '{}', 'owner1', ?2)", "b".repeat(64), NOW)).rejects.toThrow(/CHECK/);
   });
 
   it("effectiveThemeVarsSql prefers the backfill row", async () => {

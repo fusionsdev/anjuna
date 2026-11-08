@@ -6,8 +6,8 @@ import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
 const employee = { ...owner, id: "employee", role: "employee" as const };
-const redeployName = "ติดตั้งใหม่ (Redeploy)";
-const latestName = "ติดตั้งใหม่พร้อมฟอร์มล่าสุด (Redeploy with latest form)";
+const redeployName = "ติดตั้งใหม่";
+const latestName = "ติดตั้งใหม่พร้อมฟอร์มล่าสุด";
 const newerForm = { form_artifact_id: "fa-2", bundle_form_version: "form@abcdef2" };
 const liveBrand = LifecycleBrandSummary.parse({
   brand_id: "brand-a", account: "test-account", hostnames: ["renderable.test", "www.renderable.test"],
@@ -57,10 +57,14 @@ describe("Redeploy button in the brand detail", () => {
     expect(await screen.findByRole("button", { name: redeployName })).toBeTruthy();
   });
 
-  it("is not offered to an Employee", async () => {
+  it("is shown to an Employee disabled with the reason", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: /renderable.test/ });
-    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
+    const button = await screen.findByRole("button", { name: redeployName }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้");
+    fireEvent.click(button);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it.each(["draft", "failed", "installing", "paused"] as const)("is not offered to an Owner for a %s brand", async (status) => {
@@ -124,10 +128,12 @@ describe("Redeploy with the latest form in the brand detail", () => {
     expect(screen.queryByRole("button", { name: latestName })).toBeNull();
   });
 
-  it("is not offered to an Employee", async () => {
+  it("is shown to an Employee disabled with the reason", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: /renderable.test/ });
-    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+    const button = await screen.findByRole("button", { name: latestName }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้");
   });
 
   it.each(["draft", "failed", "installing", "paused"] as const)("is not offered to an Owner for a %s brand", async (status) => {
@@ -175,7 +181,7 @@ describe("Redeploy with the latest form in the brand detail", () => {
 
 describe("the operation label in the receipts panel", () => {
   // The first line under the Install progress heading, not the install ID line that tracks a pending operation.
-  const receiptsLine = async () => (await screen.findByRole("heading", { name: /Install progress/ })).parentElement!.querySelector("p")!;
+  const receiptsLine = async () => (await screen.findByRole("heading", { name: "ความคืบหน้าการติดตั้ง" })).parentElement!.querySelector("p")!;
   it.each([
     ["install", "ติดตั้ง (Install)"],
     ["rollback", "ย้อนกลับ (Rollback)"],
@@ -221,11 +227,10 @@ describe("Redeploy of a brand that core reports as paused", () => {
     expect(await screen.findByText("สถานะ runtime: paused")).toBeTruthy();
   });
 
-  it("offers neither to an Employee", async () => {
+  it("shows both to an Employee, disabled", async () => {
     render(<BrandLifecycle me={employee} />);
     await screen.findByRole("heading", { name: /renderable.test/ });
-    expect(screen.queryByRole("button", { name: redeployName })).toBeNull();
-    expect(screen.queryByRole("button", { name: latestName })).toBeNull();
+    for (const name of [redeployName, latestName]) expect((await screen.findByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it.each(["draft", "failed", "installing"] as const)("still offers neither for a %s brand", async (status) => {

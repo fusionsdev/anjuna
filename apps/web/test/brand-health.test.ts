@@ -1,6 +1,6 @@
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { describe, expect, it } from "vitest";
-import { BRAND_CHIPS, BRAND_SORTS, brandHealth, matchesBrandChip, matchesBrandSearch, sortBrands, sortWorstProfitFirst, type BrandChip, type BrandHealth } from "../src/client/brand-health";
+import { BRAND_CHIPS, BRAND_SORTS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, sortWorstProfitFirst, type BrandHealth } from "../src/client/brand-health";
 import { finalUrl, siteUrl } from "../src/client/final-url";
 
 const brand = (over: Partial<LifecycleBrandSummary> = {}) => LifecycleBrandSummary.parse({
@@ -74,44 +74,61 @@ describe("brandHealth", () => {
 });
 
 describe("matchesBrandChip", () => {
-  it("counts a healthy live brand under live and not under failed", () => {
+  const chips = (row: LifecycleBrandSummary, health: BrandHealth) => BRAND_CHIPS.filter(({ id }) => matchesBrandChip(health, row, id)).map(({ id }) => id);
+  it("counts a healthy live brand under live and nowhere else but all", () => {
     const row = brand();
-    const health = brandHealth(row, { status: "live" });
-    const hits = (chip: BrandChip) => matchesBrandChip(health, row, chip);
-    expect(hits("all")).toBe(true);
-    expect(hits("live")).toBe(true);
-    expect(hits("paused")).toBe(false);
-    expect(hits("failed")).toBe(false);
-    expect(hits("no_domain")).toBe(false);
+    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all", "live"]);
   });
   it("puts a paused brand under paused and not under live", () => {
     const row = brand();
-    const health = brandHealth(row, { status: "paused" });
-    expect(matchesBrandChip(health, row, "paused")).toBe(true);
-    expect(matchesBrandChip(health, row, "live")).toBe(false);
+    expect(chips(row, brandHealth(row, { status: "paused" }))).toEqual(["all", "paused"]);
   });
-  it("puts a failed brand under failed and not under live", () => {
+  it("puts a failed install under needs-fix and not under live", () => {
     const row = brand({ status: "failed" });
-    const health = brandHealth(row, { status: "live" });
-    expect(matchesBrandChip(health, row, "failed")).toBe(true);
-    expect(matchesBrandChip(health, row, "live")).toBe(false);
+    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all", "needs-fix"]);
   });
-  it("puts a brand that never installed under no_domain", () => {
+  it("puts a brand that never installed under needs-fix (no live domain) and unfinished", () => {
     const row = brand({ status: "draft", current_revision_id: null, runtime_sync_status: "queued" });
-    const health = brandHealth(row, undefined);
-    expect(matchesBrandChip(health, row, "no_domain")).toBe(true);
-    expect(matchesBrandChip(health, row, "failed")).toBe(false);
+    expect(chips(row, brandHealth(row, undefined))).toEqual(["all", "needs-fix", "unfinished"]);
   });
-  it("keeps a core-only brand out of no_domain and out of live", () => {
+  it("puts a running install under unfinished, and a live brand with a queued redeploy too", () => {
+    const installing = brand({ status: "installing", current_revision_id: null });
+    expect(matchesBrandChip(brandHealth(installing, undefined), installing, "unfinished")).toBe(true);
+    const redeploying = brand({ latest_install: install("running") });
+    expect(matchesBrandChip(brandHealth(redeploying, { status: "live" }), redeploying, "unfinished")).toBe(true);
+    expect(matchesBrandChip(brandHealth(redeploying, { status: "live" }), redeploying, "live")).toBe(false);
+  });
+  it("puts a live brand with a sync error under needs-fix, so no live brand with a problem is missing from every status chip", () => {
+    const row = brand({ runtime_sync_status: "sync_error" });
+    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all", "needs-fix"]);
+  });
+  it("puts a live brand with a failing checklist under needs-fix and still under live", () => {
+    const row = brand();
+    expect(brandHealth(row, { status: "live" }, { checklistFailing: true }).issues).toEqual(["checklist_failing"]);
+    expect(chips(row, brandHealth(row, { status: "live" }, { checklistFailing: true }))).toEqual(["all", "needs-fix", "live"]);
+    expect(chips(row, brandHealth(row, { status: "live" }, { checklistFailing: false }))).toEqual(["all", "live"]);
+  });
+  it("keeps a core-only brand out of needs-fix and out of live", () => {
     const row = brand({ status: "unmanaged", current_revision_id: null });
-    const health = brandHealth(row, { status: "live" });
-    expect(matchesBrandChip(health, row, "no_domain")).toBe(false);
-    expect(matchesBrandChip(health, row, "live")).toBe(false);
-    expect(matchesBrandChip(health, row, "all")).toBe(true);
+    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all"]);
   });
   it("lists every chip and sort, with profit the only owner-only sort", () => {
-    expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["all", "live", "paused", "failed", "no_domain"]);
+    expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["all", "needs-fix", "live", "unfinished", "paused"]);
+    expect(BRAND_CHIPS.map((chip) => chip.label)).toEqual(["ทั้งหมด", "ต้องแก้", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
     expect(BRAND_SORTS.filter((sort) => sort.ownerOnly).map((sort) => sort.id)).toEqual(["profit"]);
+  });
+  it("carries no English in parentheses on a chip or sort label", () => {
+    for (const { label } of [...BRAND_CHIPS, ...BRAND_SORTS]) expect(label).not.toMatch(/\([A-Za-z]/);
+  });
+});
+
+describe("isDemoBrand", () => {
+  it("matches a name that starts with demo and digits", () => {
+    for (const name of ["demo1", "demo42-loans", "demo007"]) expect(isDemoBrand(brand({ name }))).toBe(true);
+  });
+  it("does not match other names, a missing name, or demo inside a longer name", () => {
+    for (const name of ["Wizard Demo", "demo", "demoX1", "my-demo1", "Demo1"]) expect(isDemoBrand(brand({ name }))).toBe(false);
+    expect(isDemoBrand(brand())).toBe(false);
   });
 });
 

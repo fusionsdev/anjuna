@@ -168,6 +168,26 @@ describe("SidebarNav", () => {
     expect(within(nav).getByLabelText("3 รายการที่ต้องจัดการ").textContent).toBe("3");
   });
 
+  it("marks a grouped item current on every view it lists and opens its target view", () => {
+    const onOpen = vi.fn();
+    const grouped: NavItem[] = [
+      { id: "home", label: "หน้าแรก" },
+      { id: "traffic", label: "ทราฟฟิก", activeFor: ["traffic", "funnel", "errors"] },
+      { id: "settings", label: "ตั้งค่า", activeFor: ["settings", "mailing"], target: "mailing" },
+    ];
+    const { rerender } = render(<SidebarNav items={grouped} current="funnel" onOpen={onOpen} />);
+    const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
+    expect(within(nav).getAllByRole("link").map((a) => a.getAttribute("aria-current"))).toEqual([null, "page", null]);
+    rerender(<SidebarNav items={grouped} current="mailing" onOpen={onOpen} />);
+    expect(within(nav).getAllByRole("link").map((a) => a.getAttribute("aria-current"))).toEqual([null, null, "page"]);
+    rerender(<SidebarNav items={grouped} current="not-found" onOpen={onOpen} />);
+    expect(nav.querySelectorAll('[aria-current="page"]')).toHaveLength(0);
+    const settings = within(nav).getByRole("link", { name: "ตั้งค่า" });
+    expect(settings.getAttribute("href")).toBe("/mailing");
+    fireEvent.click(settings);
+    expect(onOpen).toHaveBeenCalledWith("mailing");
+  });
+
   it("leaves a ctrl-click or middle-click to the browser", () => {
     const { onOpen } = renderShell();
     const link = screen.getByRole("link", { name: "หน้าแรก" });

@@ -13,6 +13,7 @@ import {
   BrandStatusChangeRequest,
   ConversionsQuery,
   LeadAggregatesQuery,
+  SpendReportResponse,
   authorize,
   type AdminError,
   type AdminRequestContext,
@@ -25,15 +26,17 @@ import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
 import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
-import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
+import { decodePathSegment, handleLifecycleRoute, readBrandChecklists } from "./lifecycle.js";
 import { withMockBindings } from "./mock-bindings.js"; // spec polish
 import { handleDeployRoute } from "./deploys.js";
 import { handleTimelineRoute } from "./timeline.js";
 import { handleAuditRoute } from "./audit-route.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
+import { handleApiKeyRoute, handleApiV1 } from "./api-v1.js";
 import { handleLeadsRoute } from "./leads.js";
-import { handleSettingsRoute } from "./settings.js";
+import { handleAdsCapsSettingRoute, handleFxSettingRoute, handleMicrosoftAdsSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
+import { withUsd } from "./money.js";
 import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
 import { handleTrafficRiskRoute } from "./traffic-risk.js";
@@ -86,6 +89,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return auth.handler(request);
   }
 
+  // API v1: a bearer key or the session, with scopes (api-v1.ts).
+  if (path === "/api/v1" || path.startsWith("/api/v1/")) return handleApiV1(request, env, url, path, auth);
+
   const session = await auth.api.getSession({ headers: request.headers });
   const role = AdminRole.safeParse(session?.user.role);
   if (!session || !role.success) return json(401, { error: "unauthorized" });
@@ -111,6 +117,9 @@ async function route(
   const rid = ctx.request_id;
   let m: RegExpMatchArray | null;
 
+  // Panel redesign (Task 4): every live brand's checklist in one read, for Home and the Brands screen.
+  if (path === "/api/brands/checklists" && method === "GET") return readBrandChecklists(env, ctx);
+
   const lifecycle = await handleLifecycleRoute(request, env, url, path, ctx);
   if (lifecycle) return lifecycle;
 
@@ -126,6 +135,14 @@ async function route(
   const settings = await handleSettingsRoute(request, env, path, ctx);
   if (settings) return settings;
 
+  // Baht per dollar for USD spend and profit (panel redesign, Task 1): owner read and write.
+  const fxSetting = await handleFxSettingRoute(request, env, path, ctx);
+  if (fxSetting) return fxSetting;
+
+  // Baht caps for panel campaigns (T13 Part B): owner read and write.
+  const adsCaps = await handleAdsCapsSettingRoute(request, env, path, ctx);
+  if (adsCaps) return adsCaps;
+
   const wizard = await handleWizardRoute(request, env, path, ctx);
   if (wizard) return wizard;
 
@@ -134,6 +151,12 @@ async function route(
 
   const builderKeys = await handleBuilderKeyRoute(request, env, path, ctx);
   if (builderKeys) return builderKeys;
+
+  const apiKeys = await handleApiKeyRoute(request, env, path, ctx);
+  if (apiKeys) return apiKeys;
+
+  const microsoftAds = await handleMicrosoftAdsSettingRoute(request, env, path, ctx);
+  if (microsoftAds) return microsoftAds;
 
   const brandEdit = await handleBrandEditRoute(request, env, path, ctx);
   if (brandEdit) return brandEdit;
@@ -303,11 +326,15 @@ async function route(
     return fromCore(await callCore(env, ctx, { endpoint: "mailingStatus" }));
   }
 
-  // Ad spend (FUS-368): owner only, so an employee never receives money figures.
+  // Ad spend (FUS-368): owner only, so an employee never receives money figures. Core reports cost
+  // in the account currency; the panel adds cost_usd and total_cost_usd at the owner's fx rate.
   if (path === "/api/spend" && method === "GET") {
     const g = authorize("spendReport", ctx.actor_role);
     if (!g.ok) return forbidden(g.error, rid);
-    return fromCore(await callCore(env, ctx, { endpoint: "spendReport", query: url.searchParams }));
+    const report = await callCore(env, ctx, { endpoint: "spendReport", query: url.searchParams });
+    if (report.status !== 200) return fromCore(report);
+    const fx = await readFxSetting(env.FACTORY);
+    return json(200, withUsd(SpendReportResponse.parse(report.body), fx.thbPerUsd));
   }
 
   // Conversion action status (FUS-384): owner only, shown in the money section.
