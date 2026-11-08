@@ -591,6 +591,29 @@ describe("F2: a lost enable result keeps the budget counted", () => {
     expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(201); // real budget read: 1000 + 2000
   });
 
+  it("G4: a status check claimed before a later enable finished is ignored; the campaign stays counted and a fresh check is queued", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    // R1 claims a status check and reads PAUSED, but its result is slow.
+    const check = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    const r1 = await vps("jobs/claim", { job_id: check.id });
+    const { claim_id: r1Claim } = await r1.json() as { claim_id: string };
+    await new Promise((r) => setTimeout(r, 5));
+    // R2 enables the campaign and posts done first.
+    const enable = await queued(await post({ kind: "campaign.enable", campaign_id: a }));
+    expect((await finish(enable.id, { campaign_id: a, status: "ENABLED" })).status).toBe(200);
+    // R1's PAUSED arrives later.
+    expect((await vps("jobs/result", { job_id: check.id, claim_id: r1Claim, result: { campaign_id: a, observed_status: "PAUSED", daily_budget: 2000 } })).status).toBe(200);
+    expect(await stateOf(a)).toBe("enabled");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2000 + 2000 > 3000
+    const fresh = await h.db.prepare("SELECT status, json_extract(payload, '$.campaign_id') AS campaign_id FROM adkit_jobs WHERE idempotency_key = ?1")
+      .bind(`campaign.status_check:stale:${check.id}`).first<{ status: string; campaign_id: string }>();
+    expect(fresh).toEqual({ status: "queued", campaign_id: a });
+  });
+
   it("a confirmed pause resolves the unknown enable", async () => {
     const a = await draftDone("petvet", 1, 2000);
     const b = await draftDone("bison", 1, 2000);
