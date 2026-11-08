@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LeadsRpc, type FormLeadPayload, type LeadsRpcMethod, type SubmitLeadAccepted, type SubmitLeadRequest } from "@anjuna/contracts";
 import { consentText } from "../src/rpc/consent.js";
+import { readBody } from "../src/rpc/index.js";
 import { createHarness, fixtureText, HANDOFF_KEY, hash, type Harness } from "./helpers.js";
 
 let h: Harness;
@@ -68,7 +69,19 @@ describe("RPC auth and public settings", () => {
     const malformed = await h.request("/rpc/submitLead", { method: "POST", headers: { authorization: "Bearer account-a-token" }, body: "{" });
     expect([malformed.status, await malformed.json()]).toEqual([400, { status: "invalid", message: "Invalid payload" }]);
     const input = submit(); input.lead.metadata.referrer = "x".repeat(65_000);
-    expect((await rpc("submitLead", input)).status).toBe(413);
+    const oversized = await h.requestRejectedEarly(LeadsRpc.submitLead.path, { method: "POST", headers: {
+      authorization: "Bearer account-a-token", "content-type": "application/json",
+    }, body: JSON.stringify(input) });
+    // The status is only observable when the response beats the socket close.
+    if (oversized) expect(oversized.status).toBe(413);
+    expect((await h.db.prepare("SELECT COUNT(*) AS n FROM leads").first<{ n: number }>())?.n).toBe(0);
+  });
+  it("readBody throws RangeError above 64,000 bytes, by declared length or by streamed size", async () => {
+    const post = (body: string, headers: Record<string, string> = {}) => new Request("https://core.test/rpc", { method: "POST", headers, body });
+    await expect(readBody(post(JSON.stringify({ pad: "x".repeat(65_000) })))).rejects.toBeInstanceOf(RangeError);
+    await expect(readBody(post("{}", { "content-length": "64001" }))).rejects.toBeInstanceOf(RangeError);
+    const pad = "x".repeat(64_000 - JSON.stringify({ pad: "" }).length);
+    expect(await readBody(post(JSON.stringify({ pad })))).toEqual({ pad });
   });
 });
 

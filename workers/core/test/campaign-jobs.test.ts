@@ -1,4 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdkitJob, PanelCampaignsResponse, type AdminRequestContext } from "@anjuna/contracts";
 import { handleJobClaim, handleJobResult, handleJobsPending } from "../src/adkit.js";
@@ -873,6 +875,47 @@ describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a bu
     await h.db.prepare("DELETE FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).run();
     expect(await (await postResult(r1, r1Claim, result)).json()).toEqual({ status: "done", already: true });
     expect((await h.db.prepare("SELECT status FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).first<{ status: string }>())?.status).toBe("queued");
+  });
+});
+
+describe("Deploy 0025 gate (scripts/drain/README.md step 4): a correct deploy leaves the count at 0", () => {
+  const README = readFileSync(fileURLToPath(new URL("../../../scripts/drain/README.md", import.meta.url).href), "utf8");
+  const gateSql = () => {
+    const match = /<!-- sql:count -->\s*```sql\s*([\s\S]*?)```/.exec(README);
+    if (!match) throw new Error("README has no sql:count block");
+    return match[1]!.trim();
+  };
+  const enableReq = (campaignId: string) => new Request("https://core.aduplift.ai/admin/adkit/campaign-jobs", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "campaign.enable", campaign_id: campaignId }),
+  });
+
+  it("drafts, enable, status check, pause, a refused held enable and an unknown budget, all by the new core: count 0", async () => {
+    const env = { LEADS: h.db, FACTORY: h.factory, DRAIN_TOKEN } as unknown as Env;
+    const a = await draftDone("petvet", 1, 1000);
+    await enabled(a);
+    const check = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    expect((await finish(check.id, { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 })).status).toBe(200);
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    // Two concurrent enables: one is refused on its cap recheck (held to failed).
+    const b = await draftDone("bison", 1, 2000);
+    const c = await draftDone("petvet", 2, 2000);
+    let inner: Response | undefined;
+    const outer = await createCampaignJob(enableReq(b), env, owner, Date.parse(PINNED_NOW), {
+      afterPrecheck: async () => { inner = await createCampaignJob(enableReq(c), env, owner, Date.parse(PINNED_NOW)); },
+    });
+    expect([outer.status, inner!.status].sort()).toEqual([201, 422]);
+    // The released enable runs; then a budget change on it ends unknown (write may have run) and queues a status check.
+    const live = (await h.db.prepare("SELECT id, json_extract(payload, '$.campaign_id') AS cid FROM adkit_jobs WHERE kind = 'campaign.enable' AND status = 'queued'")
+      .first<{ id: string; cid: string }>())!;
+    expect((await finish(live.id, { campaign_id: live.cid, status: "ENABLED" })).status).toBe(200);
+    const budget = await queued(await post({ kind: "campaign.update_budget", campaign_id: live.cid, daily_budget: 1500 }));
+    const claim = await vps("jobs/claim", { job_id: budget.id });
+    const { claim_id } = await claim.json() as { claim_id: string };
+    await vps("jobs/result", { job_id: budget.id, claim_id, error: "timeout after 120 s", retryable: false });
+    const statuses = (await h.db.prepare("SELECT status FROM adkit_jobs").all<{ status: string }>()).results.map((r) => r.status);
+    expect(new Set(statuses)).toEqual(new Set(["done", "failed", "unknown", "queued"]));
+    expect((await h.db.prepare(gateSql()).first<{ n: number }>())!.n).toBe(0);
   });
 });
 

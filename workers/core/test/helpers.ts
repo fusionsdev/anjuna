@@ -22,6 +22,22 @@ export const hash = (value: string) => createHash("sha256").update(value).digest
 export const fixtureText = (file: string) => readFileSync(join(ROOT, "packages/contracts/fixtures", file), "utf8");
 export const goldenRows = () => PendingResponse.parse(JSON.parse(fixtureText("drain/pending.response.json"))).conversions;
 
+const live = new Set<Miniflare>();
+/** Runtimes created by createHarness and not yet disposed. test/setup.ts fails a file that leaves any. */
+export const leakedRuntimes = () => [...live];
+
+/**
+ * A Worker that rejects a body before reading all of it makes workerd answer and close the socket
+ * while undici is still writing. The client then sees ECONNRESET or EPIPE instead of the response.
+ */
+export function isEarlyCloseReset(error: unknown): boolean {
+  for (let cause: unknown = error, depth = 0; cause && depth < 5; depth++, cause = (cause as { cause?: unknown }).cause) {
+    const code = (cause as { code?: unknown }).code;
+    if (code === "ECONNRESET" || code === "EPIPE" || code === "UND_ERR_SOCKET") return true;
+  }
+  return false;
+}
+
 async function bundle(entry: string): Promise<string> {
   const result = await build({
     entryPoints: [join(ROOT, "workers/core", entry)], bundle: true, write: false,
@@ -89,6 +105,9 @@ export async function createHarness(options: {
       },
     ],
   }));
+  live.add(mf);
+  const disposeRuntime = mf.dispose.bind(mf);
+  mf.dispose = async () => { live.delete(mf); await disposeRuntime(); };
   const db = await mf.getD1Database("LEADS", "production");
   const factory = await mf.getD1Database("FACTORY", "production");
   for (const migration of leadsMigrations) await db.batch(migration.queries.map((query) => db.prepare(query)));
@@ -166,6 +185,14 @@ export async function createHarness(options: {
       return new Response(response.status === 204 ? null : bytes, {
         status: response.status, headers: Object.fromEntries(response.headers),
       });
+    },
+    /**
+     * For a request the Worker rejects before it reads the whole body. Returns the response, or null
+     * when the connection reset before the response arrived. Any other failure still throws.
+     */
+    async requestRejectedEarly(path: string, init: RequestInit = {}): Promise<Response | null> {
+      try { return await this.request(path, init); }
+      catch (error) { if (isEarlyCloseReset(error)) return null; throw error; }
     },
     async admin(path: string, context: AdminRequestContext, init: RequestInit = {}) {
       const headers = new Headers(init.headers);
