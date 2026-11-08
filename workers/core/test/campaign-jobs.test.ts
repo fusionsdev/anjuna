@@ -880,7 +880,7 @@ describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a bu
 });
 
 describe("P1: the Deploy 0025 repair (scripts/drain/README.md) never lowers counted spend", () => {
-  const README = readFileSync(fileURLToPath(new URL("../../../scripts/drain/README.md", import.meta.url)), "utf8");
+  const README = readFileSync(fileURLToPath(new URL("../../../scripts/drain/README.md", import.meta.url).href), "utf8");
   const readmeSql = (name: string) => {
     const match = new RegExp(`<!-- sql:${name} -->\\s*\`\`\`sql\\s*([\\s\\S]*?)\`\`\``).exec(README);
     if (!match) throw new Error(`README has no sql:${name} block`);
