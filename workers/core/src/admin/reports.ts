@@ -18,6 +18,7 @@ import {
   runAlerts,
 } from "@anjuna/insights";
 import type { Env } from "../env.js";
+import { loadBotHits } from "./bot-hits.js";
 import { listmonkConfigured } from "../listmonk-config.js";
 
 const EMPTY_EVENTS = new InMemoryFunnelEvents([]);
@@ -31,10 +32,11 @@ export async function loadFunnel(env: Env, filter: FunnelQuery, role: AdminRole)
 }
 
 export async function loadAlerts(env: Env, query: AlertsQuery): Promise<AlertsReportResponse> {
-  const report = await runAlerts(env.LEADS, { submitErrorCounts: EMPTY_SUBMIT_ERRORS }, {
-    now: query.now ?? new Date().toISOString(),
-  });
-  return AlertsReportResponse.parse(report);
+  const now = query.now ?? new Date().toISOString();
+  const report = await runAlerts(env.LEADS, { submitErrorCounts: EMPTY_SUBMIT_ERRORS }, { now });
+  // The crawler block is extra: a failed read omits it and never breaks the alerts report.
+  const bot_hits = await loadBotHits(env, now).catch(() => undefined);
+  return AlertsReportResponse.parse(bot_hits ? { ...report, bot_hits } : report);
 }
 
 export async function loadMailingStatus(env: Env): Promise<MailingStatusResponse> {

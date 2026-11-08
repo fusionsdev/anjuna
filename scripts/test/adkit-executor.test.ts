@@ -67,9 +67,9 @@ function fakeCore(jobs: Job[], claimStatus = 200) {
 const quiet = { log: () => {}, error: () => {} };
 
 describe("allowlist", () => {
-  it("allows exactly seven commands", () => {
+  it("allows exactly eight commands", () => {
     expect([...x.ALLOWED_COMMANDS].sort()).toEqual([
-      "accounts list", "campaigns create", "campaigns list", "campaigns update", "conversions create", "conversions list", "results list",
+      "accounts list", "campaigns create", "campaigns list", "campaigns update", "conversions create", "conversions list", "results campaigns", "results list",
     ]);
   });
 

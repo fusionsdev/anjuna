@@ -44,7 +44,7 @@ function submitRequest(lead: FormLeadPayload): SubmitLeadRequestT {
 
 describe("LeadsRpc routing table", () => {
   it("has the six T3 methods, live brandSettings and brandAsset under /rpc/", () => {
-    expect(Object.keys(LeadsRpc)).toEqual(["recordClick", "submitLead", "resolveContinuation", "zip", "issueHandoff", "verifyHandoff", "brandSettings", "brandAsset"]);
+    expect(Object.keys(LeadsRpc)).toEqual(["recordClick", "submitLead", "resolveContinuation", "zip", "issueHandoff", "verifyHandoff", "brandSettings", "brandAsset", "botHit"]);
     for (const [name, def] of Object.entries(LeadsRpc)) expect(def.path).toBe(`/rpc/${name}`);
   });
 });

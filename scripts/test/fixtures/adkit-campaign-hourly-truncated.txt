@@ -1,0 +1,2 @@
+Notice: a newer AdKit CLI is available.
+{"results":[{"cost":97.61,"clicks":2,"impressions":4,"breakdown":"hour","hour":17}],"warnings":[{"code":"row_limit_reached","message":"More rows are available, so this response is incomplete. If you need them, repeat this request with a higher limit or narrow the date range or filters."}]}

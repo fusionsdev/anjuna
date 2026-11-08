@@ -873,6 +873,21 @@ export const AlertsReportResponse = z.strictObject({
       ),
     }),
   }),
+  /**
+   * Panel redesign T12: crawler hits counted by the brand Workers (no response varies by them).
+   * `adsbot_hours` has one row per brand per UTC hour with AdsBot hits; any row makes the state
+   * "alert". No money. Optional so a core that predates the counter still parses.
+   */
+  bot_hits: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      window_hours: z.number().positive(),
+      brands: z.array(z.strictObject({
+        brand: z.string().min(1), googlebot: Count, adsbot: Count, other_bot: Count,
+      })),
+      adsbot_hours: z.array(z.strictObject({ brand: z.string().min(1), hour: Timestamp, hits: Count })),
+    }),
+  }).optional(),
 });
 export type AlertsReportResponse = z.infer<typeof AlertsReportResponse>;
 

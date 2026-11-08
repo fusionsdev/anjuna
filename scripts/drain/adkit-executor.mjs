@@ -44,7 +44,7 @@ const DUPLICATE = /duplicate|already[\s_-]?exist/i;
 /** `<resource> <verb>` after `manage google`. Nothing else may run. */
 export const ALLOWED_COMMANDS = Object.freeze([
   "accounts list", "conversions list", "results list", "conversions create",
-  "campaigns list", "campaigns create", "campaigns update",
+  "campaigns list", "campaigns create", "campaigns update", "results campaigns",
 ]);
 
 /** A value argument: never empty and never option-like, so it cannot smuggle a flag such as `--help`. */
@@ -116,6 +116,12 @@ function kindAllows(command, args, kind) {
   return false;
 }
 const BUDGET_MAX = 1_000_000;
+const campaignBase = ["manage", "google", "results", "campaigns", "--account", ACCOUNT];
+const campaignTail = ["--from", DATE, "--to", DATE, "--limit", "500", "--json"];
+const campaignShapes = [
+  [...campaignBase, ...campaignTail],
+  [...campaignBase, "--campaign", value(/^\d+$/), "--breakdown", "hour", "--fields", "cost,clicks,impressions", ...campaignTail],
+];
 
 export class CommandNotAllowedError extends Error {}
 
@@ -125,7 +131,7 @@ export class CommandNotAllowedError extends Error {}
  */
 export function assertAllowed(args, kind) {
   const command = Array.isArray(args) ? `${args[2]} ${args[3]}` : "";
-  const shapes = Array.isArray(args) && Object.hasOwn(SHAPES, command) ? SHAPES[command] : [];
+  const shapes = !Array.isArray(args) ? [] : command === "results campaigns" ? campaignShapes : Object.hasOwn(SHAPES, command) ? SHAPES[command] : [];
   const ok = shapes.length > 0 && args.every((arg) => typeof arg === "string")
     && shapes.some((shape) => matches(shape, args) || matches([...shape, "--project", PROJECT], args))
     && kindAllows(command, args, kind);

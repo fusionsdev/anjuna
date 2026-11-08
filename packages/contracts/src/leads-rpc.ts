@@ -203,6 +203,26 @@ export type BrandAssetRequest = z.infer<typeof BrandAssetRequest>;
 export const BrandAssetResponse = BrandAssetBody;
 export type BrandAssetResponse = z.infer<typeof BrandAssetResponse>;
 
+// --- botHit ------------------------------------------------------------------------------------
+
+/**
+ * Crawler kinds a brand Worker reports. The report only feeds an hourly counter: no response
+ * ever varies by it (AGENTS.md rule 3). Neither an IP nor a user agent string is carried.
+ */
+export const BOT_KINDS = ["googlebot", "adsbot", "other-bot"] as const;
+export type BotKind = (typeof BOT_KINDS)[number];
+export const BotHitRequest = z.strictObject({
+  brand_id: BrandId,
+  kind: z.enum(BOT_KINDS),
+  /** Request pathname only (no query), capped at 200. Validated but not stored. */
+  path: z.string().max(200).regex(/^\//),
+  /** Brand Worker clock. Core buckets by it only within one hour of its own clock. */
+  at: z.iso.datetime(),
+});
+export type BotHitRequest = z.infer<typeof BotHitRequest>;
+export const BotHitResponse = z.strictObject({ ok: z.literal(true) });
+export type BotHitResponse = z.infer<typeof BotHitResponse>;
+
 /**
  * Authenticated Worker context headers; the existing submitLead JSON shape is unchanged.
  * submitLead requires x-consent-brand = encodeURIComponent(configured display name).
@@ -230,6 +250,7 @@ export const LeadsRpc = {
   verifyHandoff: { path: "/rpc/verifyHandoff", request: VerifyHandoffRequest, response: VerifyHandoffResponse },
   brandSettings: { path: "/rpc/brandSettings", request: BrandSettingsRequest, response: BrandSettingsResponse },
   brandAsset: { path: "/rpc/brandAsset", request: BrandAssetRequest, response: BrandAssetResponse },
+  botHit: { path: "/rpc/botHit", request: BotHitRequest, response: BotHitResponse },
 } as const;
 export type LeadsRpcMethod = keyof typeof LeadsRpc;
 export type LeadsRpcRequest<M extends LeadsRpcMethod> = z.input<(typeof LeadsRpc)[M]["request"]>;

@@ -11,7 +11,7 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   traffic_events: ["risk_score", "risk_signals"], // 0015, FUS-372
   suppressions: ["added_by"], // 0017, FUS-382
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup", "adkit_directory", "adkit_jobs", "campaign_brand_map", "ad_spend_unallocated"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup", "adkit_directory", "adkit_jobs", "campaign_brand_map", "ad_spend_unallocated", "bot_hits"];
 
 interface ColumnInfo {
   cid: number;
@@ -120,6 +120,7 @@ describe("leads-db migrations", () => {
         "ad_spend_unallocated",
         "adkit_directory",
         "adkit_jobs",
+        "bot_hits",
         "brand_runtime",
         "campaign_brand_map",
         "click_sessions",
