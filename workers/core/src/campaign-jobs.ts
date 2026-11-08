@@ -381,7 +381,7 @@ export async function createCampaignJob(
     // The key holds a pending budget job with another amount: answering it with 200 would drop the new amount.
     return adminError(context, {
       error: "conflict", current_updated_at: known.updated_at,
-      message: `A budget change is still pending (job ${known.id}, status ${known.status}); wait for it before another amount`,
+      message: pendingBudgetMessage(known),
     });
   }
   if (known) return json(AdkitJobCreateResponse.parse({ job: publicJob(known), created: false }), 200);
@@ -411,6 +411,9 @@ export async function createCampaignJob(
   await hooks.afterPrecheck?.();
   return insertJob(env, context, req.kind, payload, key, at, true, hooks);
 }
+
+const pendingBudgetMessage = (row: JobRow) =>
+  `A budget change is still pending (job ${row.id}, status ${row.status}); wait for it before another amount`;
 
 function conflict(context: AdminRequestContext, c: Campaign, message: string): Response {
   return adminError(context, { error: "conflict", current_updated_at: c.updated_at, message });
@@ -483,7 +486,15 @@ async function insertJob(
     .bind(id, kind, JSON.stringify(payload), held ? "held" : "queued", key, context.actor_id, at).run();
   let row = await findByKey(env, key);
   if (!row) throw new Error("campaign job row missing after insert");
-  if (row.id !== id) return json(AdkitJobCreateResponse.parse({ job: publicJob(row), created: false }), 200);
+  if (row.id !== id) {
+    // A concurrent request with the same key won the INSERT. For a budget with another amount, answering 200 with
+    // that row would drop this amount, so it is 409 (the same answer as a key found before the insert).
+    if (kind === "campaign.update_budget"
+      && (JSON.parse(row.payload) as { daily_budget: number }).daily_budget !== (payload as { daily_budget: number }).daily_budget) {
+      return adminError(context, { error: "conflict", current_updated_at: row.updated_at, message: pendingBudgetMessage(row) });
+    }
+    return json(AdkitJobCreateResponse.parse({ job: publicJob(row), created: false }), 200);
+  }
   await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.job.create", id, { kind, ...payload }, at);
 
   if (held) {

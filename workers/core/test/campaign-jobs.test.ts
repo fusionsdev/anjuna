@@ -485,6 +485,21 @@ describe("F1: an enable that has not passed the cap recheck is never claimable",
     expect(results.slice(-2).map((r) => r.campaign_id)).toEqual([a, b]);
   });
 
+  it("two budget changes with different amounts that both miss the key: the loser of the INSERT gets 409, not the other amount", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    await enabled(a);
+    const env = coreEnv();
+    let inner: Response | undefined;
+    const outer = await inProc(env, { kind: "campaign.update_budget", campaign_id: a, daily_budget: 1500 }, {
+      afterPrecheck: async () => { inner = await inProc(env, { kind: "campaign.update_budget", campaign_id: a, daily_budget: 1800 }); },
+    });
+    expect(inner!.status).toBe(201);
+    expect(outer.status).toBe(409);
+    expect(await outer.json()).toMatchObject({ error: "conflict", message: expect.stringContaining("budget change is still pending") });
+    const { results } = await h.db.prepare("SELECT json_extract(payload, '$.daily_budget') AS b FROM adkit_jobs WHERE kind = 'campaign.update_budget'").all<{ b: number }>();
+    expect(results.map((r) => r.b)).toEqual([1800]);
+  });
+
   it("a held enable counts toward the caps of the next request", async () => {
     const a = await draftDone("petvet", 1, 2000);
     const b = await draftDone("bison", 1, 2000);
