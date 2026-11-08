@@ -683,6 +683,74 @@ describe("G2: a malformed or truncated list is never complete", () => {
   });
 });
 
+describe("N4: list totals across status check, draft create and budget readback", () => {
+  const ACCOUNT = "4811219623";
+  const CAMPAIGN = "22000000001";
+  const ref = { campaign_id: CAMPAIGN, brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1" };
+  const draftPayload = {
+    brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1", daily_budget: 500,
+    bid_strategy: "maximize_conversions", geo: { country: "US" }, keywords: ["personal loans"], final_url: "https://petvet.example/",
+  };
+  const other = { id: "30000000001", name: "other-search-1", status: "PAUSED", dailyBudget: 10 };
+  const other2 = { id: "30000000002", name: "other-search-2", status: "PAUSED", dailyBudget: 10 };
+  // The row each job looks for when it is "found": 1 filler + target = 2 rows. "Not found": 2 filler rows.
+  const target = {
+    "campaign.status_check": { id: CAMPAIGN, name: "petvet-search-1", status: "ENABLED", dailyBudget: 2000 },
+    "campaign.draft.create": { id: "9001", name: "petvet-search-1", status: "PAUSED", dailyBudget: 500 },
+    "campaign.update_budget": { id: CAMPAIGN, name: "petvet-search-1", status: "ENABLED", dailyBudget: 750.5 },
+  } as const;
+  const payloads = { "campaign.status_check": ref, "campaign.draft.create": draftPayload, "campaign.update_budget": { ...ref, daily_budget: 750.5 } };
+  const totals = {
+    "absent": {}, "null": { total: null, totalPages: null }, "clean strings": { total: "2", totalPages: "1" }, "numbers": { total: 2, totalPages: 1 },
+    "negative total": { total: -1 }, "fractional total": { total: 1.5 }, "string 2.0": { total: "2.0" }, "object total": { total: { n: 2 } },
+    "non-number totalPages": { totalPages: "one" },
+  } as const;
+  const valid = new Set(["absent", "null", "clean strings", "numbers"]);
+  type Kind = keyof typeof target;
+  /** [result or error, the adkit commands that ran]. */
+  function expected(kind: Kind, found: boolean, ok: boolean): [Record<string, unknown>, string[]] {
+    if (kind === "campaign.status_check") {
+      if (found) return [{ result: { campaign_id: CAMPAIGN, observed_status: "ENABLED", daily_budget: 2000 } }, ["list"]];
+      return [ok ? { result: { campaign_id: CAMPAIGN, observed_status: "NOT_FOUND", daily_budget: null } } : { error: "lookup_incomplete", retryable: false }, ["list"]];
+    }
+    if (kind === "campaign.draft.create") {
+      if (found) return [{ result: { campaign_id: "9001", adopted: true, status: "PAUSED", daily_budget: 500 } }, ["list"]];
+      return ok ? [{ result: { campaign_id: "9002", adopted: false, status: "DRAFT" } }, ["list", "create"]] : [{ error: "lookup_incomplete", retryable: false }, ["list"]];
+    }
+    return [found ? { result: { campaign_id: CAMPAIGN, daily_budget: 750.5 } } : { error: "budget_unverified", retryable: false }, ["update", "list"]];
+  }
+  const cases = (Object.keys(target) as Kind[]).flatMap((kind) => [true, false].flatMap((found) =>
+    (Object.keys(totals) as Array<keyof typeof totals>).map((t) => [kind, found ? "found" : "not found", t] as const)));
+
+  it.each(cases)("%s, campaign %s, total %s", async (kind, foundLabel, totalLabel) => {
+    const found = foundLabel === "found";
+    const core = fakeCore([job({ kind, payload: payloads[kind], attempts: 1 })]);
+    const calls: string[][] = [];
+    const runAdkit = async (args: string[]) => {
+      calls.push(args);
+      if (args[3] === "list") return JSON.stringify({ campaigns: found ? [other, target[kind]] : [other, other2], ...totals[totalLabel] });
+      if (args[3] === "create") return JSON.stringify({ campaign: { id: "9002" } });
+      return "{}";
+    };
+    const failures = await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet });
+    const [want, commands] = expected(kind, found, valid.has(totalLabel));
+    expect(calls.map((a) => a[3])).toEqual(commands);
+    expect(core.results).toHaveLength(1);
+    expect(core.results[0]).toMatchObject(want);
+    expect(failures).toBe("error" in want ? 1 : 0);
+  });
+
+  it("campaignPage treats NaN and Infinity totals as invalid (JSON cannot carry them, so they are passed directly)", () => {
+    const page = (x as unknown as { campaignPage(out: unknown): { ok: boolean; total: number | null; totalPages: number | null } }).campaignPage;
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(page({ campaigns: [other], total: bad }).ok, `total ${bad}`).toBe(false);
+      expect(page({ campaigns: [other], totalPages: bad }).ok, `totalPages ${bad}`).toBe(false);
+      expect(page({ campaigns: [other], pageInfo: { totalPages: bad } }).ok, `pageInfo.totalPages ${bad}`).toBe(false);
+    }
+    expect(page({ campaigns: [other], total: 1, totalPages: 1 })).toMatchObject({ ok: true, total: 1, totalPages: 1 });
+  });
+});
+
 describe("F4: adopting by name needs name, budget and a paused or draft status", () => {
   const ACCOUNT = "4811219623";
   const draftPayload = {
