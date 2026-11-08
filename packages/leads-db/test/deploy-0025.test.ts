@@ -28,6 +28,7 @@ describe("Deploy 0025 step 4 repair statements (from scripts/drain/README.md)", 
       ["g-budget-unknown-result-null", "campaign.update_budget", "unknown", "2026-11-08T00:00:07.000Z", 3, null, "c-g"],
       ["h-enable-claimed-claim-null", "campaign.enable", "claimed", "2026-11-08T00:00:08.000Z", null, null, "c-h"],
       ["i-failed-result-null", "campaign.pause", "failed", null, null, null, null],
+      ["j-check-failed-by-old-core", "campaign.status_check", "failed", "2026-11-08T00:00:09.000Z", null, null, "c-j"],
     ];
     let seq = 1;
     for (const [id, kind, status, claimedAt, claimSeq, resultSeq, claimId] of rows) {
@@ -40,42 +41,39 @@ describe("Deploy 0025 step 4 repair statements (from scripts/drain/README.md)", 
         .bind(id, kind, status, result, `key-${id}`, claimId, claimedAt, at, seq++, claimSeq, resultSeq).run();
     }
     const count = async () => (await env.DB.prepare(readmeSql("count")).first<{ n: number }>())!.n;
-    expect(await count()).toBe(7);
+    expect(await count()).toBe(8);
 
     const repair = async () => {
       const { results } = await env.DB.prepare(readmeSql("list")).all<{ id: string; kind: string }>();
-      for (const row of results) {
-        if (row.kind === "campaign.status_check") {
-          await env.DB.prepare(withId(readmeSql("discard-check"), row.id)).run();
-        } else {
-          await env.DB.prepare(withId(readmeSql("number-claim"), row.id)).run();
-          await env.DB.prepare(withId(readmeSql("number-result"), row.id)).run();
-        }
-      }
+      // The README runs all four statements on each listed row; each matches only its own form.
+      for (const row of results) for (const name of ["keep-done-check", "discard-unfinished-check", "number-claim", "number-result"]) await env.DB.prepare(withId(readmeSql(name), row.id)).run();
       return results.map((r) => r.id);
     };
     expect(await repair()).toEqual(["c-check-claimed", "d-check-done-both-null", "e-check-done-result-set",
-      "f-enable-done-both-null", "g-budget-unknown-result-null", "h-enable-claimed-claim-null", "i-failed-result-null"]);
+      "f-enable-done-both-null", "g-budget-unknown-result-null", "h-enable-claimed-claim-null", "j-check-failed-by-old-core", "i-failed-result-null"]);
     expect(await count()).toBe(0);
 
     const snapshot = async () => (await env.DB.prepare("SELECT id, status, claimed_at, claim_seq, result_seq FROM adkit_jobs ORDER BY id").all()).results;
     const after = await snapshot();
     // Rerun every repair statement on every row: nothing changes and the count stays 0.
     for (const [id] of rows) {
-      for (const name of ["discard-check", "number-claim", "number-result"]) await env.DB.prepare(withId(readmeSql(name), id)).run();
+      for (const name of ["keep-done-check", "discard-unfinished-check", "number-claim", "number-result"]) await env.DB.prepare(withId(readmeSql(name), id)).run();
     }
     expect(await repair()).toEqual([]);
     expect(await count()).toBe(0);
-    // A rerun of discard-check on a non-check row and of number-* on a numbered row is a no-op.
+    // A rerun of any statement on any repaired row is a no-op.
     expect(await snapshot()).toEqual(after);
 
     const byId = Object.fromEntries((after as Array<{ id: string; status: string; claimed_at: string | null; claim_seq: number | null; result_seq: number | null }>)
       .map((r) => [r.id, r]));
-    // Status checks are discarded and never numbered as claims; an existing result_seq is kept.
-    for (const id of ["c-check-claimed", "d-check-done-both-null", "e-check-done-result-set"]) {
+    // A done check is kept done: NULL becomes 0, which is what deriveCampaigns already read, and a set result_seq stays.
+    expect(byId["d-check-done-both-null"]).toMatchObject({ status: "done", claim_seq: 0, result_seq: 0 });
+    expect(byId["e-check-done-result-set"]).toMatchObject({ status: "done", claim_seq: 0, result_seq: 7 });
+    // An unfinished check is discarded and never numbered as a claim.
+    for (const id of ["c-check-claimed", "j-check-failed-by-old-core"]) {
       expect(byId[id]).toMatchObject({ status: "failed", claimed_at: null, claim_seq: null });
+      expect(byId[id]!.result_seq).not.toBeNull();
     }
-    expect(byId["e-check-done-result-set"]!.result_seq).toBe(7);
     // Other rows get numbers above every earlier value, a row's claim before its result.
     expect(byId["f-enable-done-both-null"]!.claim_seq!).toBeLessThan(byId["f-enable-done-both-null"]!.result_seq!);
     expect(byId["f-enable-done-both-null"]!.claim_seq!).toBeGreaterThan(7);

@@ -71,7 +71,7 @@ Run these steps once per deployment, for the aduplift core (`wrangler.deploy.adu
 1. Stop the adkit executor on both VPS. maimax: comment out the crontab line that runs `adkit-executor.mjs` (or `run.sh`, if it calls the executor) and check that `pgrep -f adkit-executor.mjs` prints nothing. hstgr: stop the executor step in `scheduler.mjs` (or `docker stop` the drain container) and check the same. Skip a VPS where the executor is not installed yet.
 2. Apply the migration: `cd workers/core && bunx wrangler d1 migrations apply <db> --remote -c <deploy config>`.
 3. Deploy core: `bunx wrangler deploy -c <deploy config>`.
-4. Check for NULL rows and require 0. Run each statement below with `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "<statement>"`. `leads-db/test/deploy-0025.test.ts` runs these exact statements (between the `sql:` markers) on a populated table.
+4. Check for NULL rows and require 0. Run each statement below with `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "<statement>"`. `packages/leads-db/test/deploy-0025.test.ts` and the P1 test in `workers/core/test/campaign-jobs.test.ts` run these exact statements (between the `sql:` markers); the core test also checks with the real `deriveCampaigns` that counted spend does not go down.
 
    <!-- sql:count -->
    ```sql
@@ -87,24 +87,35 @@ Run these steps once per deployment, for the aduplift core (`wrangler.deploy.adu
    SELECT id, kind, status, claim_seq, result_seq FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL) ORDER BY updated_at, rowid
    ```
 
-   - A `campaign.status_check` row, in any of its forms (still `claimed` by the old core with both columns NULL; `done` with both NULL; `done` with `result_seq` set and `claim_seq` NULL): discard it. It never gets a claim number, because any number would rank that old reading as the newest check. The statement keeps an existing `result_seq` and gives a NULL one the next number, which is safe: `deriveCampaigns` reads done checks only and `writesByCampaign` skips status checks, so a failed check's numbers are never read. Then queue a fresh status check for its campaign from the panel (`POST /admin/adkit/campaign-jobs` with `{"kind":"campaign.status_check","campaign_id":"<campaign id>"}`); it runs when the executor restarts.
+   Run all four statements below on each listed row, in this order. Each statement matches only its own form and changes nothing on any other row.
 
-     <!-- sql:discard-check -->
+   - A `done` `campaign.status_check` (`claim_seq` NULL, `result_seq` NULL or set): keep it. It stays `done` with its result. The statement writes 0 into each NULL column, and `deriveCampaigns` already reads NULL as 0, so the campaign's state, budget and counted spend do not change (a check claimed at 0 is never newer than another check, and its staleness window is the same). Discarding it instead could lower counted spend: a check that read ENABLED/2500 for a campaign the panel shows as PAUSED would stop counting while the campaign spends.
+
+     <!-- sql:keep-done-check -->
      ```sql
-     UPDATE adkit_jobs SET status = 'failed', result = json_object('error', 'discarded: claimed by the old core during the 0025 deploy'), claimed_at = NULL, result_seq = COALESCE(result_seq, (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs)) WHERE id = '<id>' AND kind = 'campaign.status_check'
+     UPDATE adkit_jobs SET claim_seq = COALESCE(claim_seq, 0), result_seq = COALESCE(result_seq, 0) WHERE id = '<id>' AND kind = 'campaign.status_check' AND status = 'done' AND (claim_seq IS NULL OR result_seq IS NULL)
      ```
 
-   - Any other row: number its claim, then its result, each above the current maximum of both columns. A statement that has nothing to do changes nothing.
+   - An unfinished `campaign.status_check` (still `claimed` by the old core, or `failed` by it): discard it. Nothing reads a failed check, so its numbers never matter; it gets a `result_seq` so it leaves the count.
+
+     <!-- sql:discard-unfinished-check -->
+     ```sql
+     UPDATE adkit_jobs SET status = 'failed', result = COALESCE(result, json_object('error', 'discarded: claimed by the old core during the 0025 deploy')), claimed_at = NULL, result_seq = COALESCE(result_seq, (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs)) WHERE id = '<id>' AND kind = 'campaign.status_check' AND status IN ('claimed', 'failed') AND (claimed_at IS NOT NULL OR result_seq IS NULL)
+     ```
+
+   - Any other row (an enable, pause, budget, draft or conversion job): number its claim, then its result, each above the current maximum of both columns. Neither statement runs on a status check.
 
      <!-- sql:number-claim -->
      ```sql
-     UPDATE adkit_jobs SET claim_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND claimed_at IS NOT NULL AND claim_seq IS NULL
+     UPDATE adkit_jobs SET claim_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND kind <> 'campaign.status_check' AND claimed_at IS NOT NULL AND claim_seq IS NULL
      ```
 
      <!-- sql:number-result -->
      ```sql
-     UPDATE adkit_jobs SET result_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND status IN ('done','failed','unknown') AND result_seq IS NULL
+     UPDATE adkit_jobs SET result_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND kind <> 'campaign.status_check' AND status IN ('done','failed','unknown') AND result_seq IS NULL
      ```
+
+   After the repair, queue a fresh status check from the panel for every campaign that had a repaired status check (`POST /admin/adkit/campaign-jobs` with `{"kind":"campaign.status_check","campaign_id":"<campaign id>"}`); it runs when the executor restarts. Do not submit enable or budget jobs from the panel until those fresh status checks have finished.
 
    Run the count again. Start the executor only when it is 0. Every repair statement is safe to run twice.
 5. Start the executor again on both VPS (restore the crontab line, restart the container or scheduler step).

@@ -1,8 +1,11 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdkitJob, PanelCampaignsResponse, type AdminRequestContext } from "@anjuna/contracts";
 import { handleJobClaim, handleJobResult, handleJobsPending } from "../src/adkit.js";
-import { createCampaignJob, type CampaignJobHooks } from "../src/campaign-jobs.js";
+import { createCampaignJob, deriveCampaigns, type CampaignJobHooks } from "../src/campaign-jobs.js";
+import type { JobRow } from "../src/adkit.js";
 import { recordCampaignBrand } from "../src/campaign-brand-map.js";
 import type { Env } from "../src/env.js";
 import { createHarness, DRAIN_TOKEN, type Harness } from "./helpers.js";
@@ -873,6 +876,90 @@ describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a bu
     await h.db.prepare("DELETE FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).run();
     expect(await (await postResult(r1, r1Claim, result)).json()).toEqual({ status: "done", already: true });
     expect((await h.db.prepare("SELECT status FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).first<{ status: string }>())?.status).toBe("queued");
+  });
+});
+
+describe("P1: the Deploy 0025 repair (scripts/drain/README.md) never lowers counted spend", () => {
+  const README = readFileSync(fileURLToPath(new URL("../../../scripts/drain/README.md", import.meta.url)), "utf8");
+  const readmeSql = (name: string) => {
+    const match = new RegExp(`<!-- sql:${name} -->\\s*\`\`\`sql\\s*([\\s\\S]*?)\`\`\``).exec(README);
+    if (!match) throw new Error(`README has no sql:${name} block`);
+    return match[1]!.trim();
+  };
+  const withId = (sql: string, id: string) => sql.replaceAll("'<id>'", `'${id}'`);
+  const NEXT = "(SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs)";
+  const derive = async () => {
+    const { results } = await h.db.prepare("SELECT * FROM adkit_jobs WHERE kind LIKE 'campaign.%' ORDER BY created_at, id").all<JobRow>();
+    return new Map(deriveCampaigns(results).filter((c) => c.campaign_id)
+      .map((c) => [c.campaign_id!, { state: c.state, spending: c.spending, committed: c.committedBudget }]));
+  };
+  /** A row the old core left during the deploy gap. resultSeq "next" takes the next counter value. */
+  async function oldCoreRow(id: string, kind: string, campaignId: string, name: string, status: string,
+    result: Record<string, unknown> | null, resultSeq: "next" | null) {
+    await h.db.prepare(`INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, claim_id, claimed_at,
+        created_at, updated_at, seq, claim_seq, result_seq)
+      VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, 'core', 'old-claim', ?7, ?7, ?7, (SELECT MAX(seq) + 1 FROM adkit_jobs), NULL, ${resultSeq === "next" ? NEXT : "NULL"})`)
+      .bind(id, kind, JSON.stringify({ campaign_id: campaignId, brand_id: "petvet", account: THB_ACCOUNT, project: "proj_a", name }),
+        status, result === null ? null : JSON.stringify(result), `old-${id}`, new Date().toISOString()).run();
+  }
+
+  it("each old-core form reaches count 0 and stays 0; A (PAUSED in the panel, check read ENABLED/2500) stays counted; enable B=2000 is 422", async () => {
+    // A: an adopted PAUSED draft at 1000; no enable or pause job exists for it.
+    const draftA = await queued(await post(draftBody("petvet", 1, 1000), employee));
+    const a = "22000000101";
+    expect((await finish(draftA.id, { campaign_id: a, name: "petvet-search-1", adopted: true, status: "PAUSED", daily_budget: 1000 })).status).toBe(200);
+    const b = await draftDone("bison", 1, 2000);
+    const c = await draftDone("petvet", 2, 300);
+    const d = await draftDone("petvet", 3, 200);
+    const e = await draftDone("petvet", 4, 300);
+    // Old-core forms.
+    await oldCoreRow("66666666-6666-4666-8666-000000000001", "campaign.status_check", a, "petvet-search-1", "done",
+      { campaign_id: a, observed_status: "ENABLED", daily_budget: 2500 }, "next"); // done, result_seq set, claim_seq NULL
+    await oldCoreRow("66666666-6666-4666-8666-000000000002", "campaign.status_check", c, "petvet-search-2", "claimed", null, null); // claimed, both NULL
+    await oldCoreRow("66666666-6666-4666-8666-000000000003", "campaign.status_check", d, "petvet-search-3", "done",
+      { campaign_id: d, observed_status: "PAUSED", daily_budget: 200 }, null); // done, both NULL
+    await oldCoreRow("66666666-6666-4666-8666-000000000004", "campaign.enable", e, "petvet-search-4", "done",
+      { campaign_id: e, status: "ENABLED" }, null); // done enable, both NULL
+
+    const before = await derive();
+    expect(before.get(a)).toEqual({ state: "enabled", spending: true, committed: 2500 });
+    const count = async () => (await h.db.prepare(readmeSql("count")).first<{ n: number }>())!.n;
+    expect(await count()).toBe(4);
+
+    const repairAll = async (ids?: string[]) => {
+      const listed = ids ? (await Promise.all(ids.map((id) => h.db.prepare("SELECT id, kind, status FROM adkit_jobs WHERE id = ?1").bind(id)
+        .first<{ id: string; kind: string; status: string }>()))).map((r) => r!)
+        : (await h.db.prepare(readmeSql("list")).all<{ id: string; kind: string; status: string }>()).results;
+      for (const row of listed) {
+        for (const name of ["keep-done-check", "discard-unfinished-check", "number-claim", "number-result"]) {
+          await h.db.prepare(withId(readmeSql(name), row.id)).run();
+        }
+      }
+      return listed.map((r) => r.id);
+    };
+    const repaired = await repairAll();
+    expect(repaired).toHaveLength(4);
+    expect(await count()).toBe(0);
+    const after = await derive();
+    await repairAll(repaired); // rerun every statement on every repaired row
+    expect(await count()).toBe(0);
+    expect(await derive()).toEqual(after);
+
+    // Counted spend never goes down: every campaign counted before is counted after, at the same or a larger budget.
+    for (const [id, was] of before) {
+      const now = after.get(id)!;
+      if (was.spending) expect(now.spending, id).toBe(true);
+      if (was.spending) expect(now.committed, id).toBeGreaterThanOrEqual(was.committed);
+    }
+    expect(after.get(a)).toEqual({ state: "enabled", spending: true, committed: 2500 });
+    // The done check keeps status done and its result.
+    const kept = await h.db.prepare("SELECT status, result FROM adkit_jobs WHERE id = '66666666-6666-4666-8666-000000000001'").first<{ status: string; result: string }>();
+    expect(kept!.status).toBe("done");
+    expect(JSON.parse(kept!.result)).toMatchObject({ observed_status: "ENABLED", daily_budget: 2500 });
+
+    // The runbook queues a fresh check; before it runs, enable B=2000 is still refused (2500 + 300 + 2000 > 3000).
+    expect((await post({ kind: "campaign.status_check", campaign_id: a }, employee)).status).toBeLessThan(300);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422);
   });
 });
 
