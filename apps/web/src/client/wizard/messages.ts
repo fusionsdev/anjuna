@@ -40,7 +40,8 @@ export const TRACKING_TEXT = {
   retry: "ลองสร้างใหม่",
   needAccount: "เลือกบัญชี Google Ads ก่อนสร้าง conversion action",
   readOnly: "Owner กำหนดค่านี้ · แสดงอย่างเดียว",
-  job: { queued: "รอคิว", claimed: "กำลังสร้าง", done: "สร้างแล้ว", failed: "สร้างไม่สำเร็จ" },
+  // held and unknown occur only on campaign jobs; the labels keep the map total over every job status.
+  job: { queued: "รอคิว", claimed: "กำลังสร้าง", done: "สร้างแล้ว", failed: "สร้างไม่สำเร็จ", held: "รอตรวจวงเงิน", unknown: "ไม่ทราบผล" },
   pollFailed: "ตรวจสถานะงานไม่สำเร็จ จะลองใหม่อัตโนมัติ",
   pollStopped: "หยุดตรวจสถานะแล้ว งานรอนานเกิน 30 นาที",
   checkAgain: "ตรวจสถานะอีกครั้ง",

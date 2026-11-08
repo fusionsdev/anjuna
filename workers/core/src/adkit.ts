@@ -35,12 +35,14 @@ import {
 import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
+import { recordCampaignBrand, type RecordCampaignBrand } from "./campaign-brand-map.js";
+import { recheckHeldJobs } from "./campaign-jobs.js";
 
-const JOB_BODY_LIMIT = 4096;
+export const JOB_BODY_LIMIT = 4096;
 const INGEST_BODY_LIMIT = 512 * 1024;
 const PENDING_LIMIT = 50;
 
-interface JobRow {
+export interface JobRow {
   id: string;
   kind: string;
   payload: string;
@@ -65,7 +67,7 @@ const issuesOf = (issues: Array<{ path: PropertyKey[]; message: string }>) =>
 
 type Parsed<T> = { ok: true; data: T } | { ok: false; status: number; message: string; issues?: Array<{ path: string; message: string }> };
 
-async function parseBody<T>(request: Request, schema: Schema<T>, limit: number): Promise<Parsed<T>> {
+export async function parseBody<T>(request: Request, schema: Schema<T>, limit: number): Promise<Parsed<T>> {
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > limit) return { ok: false, status: 413, message: "Request body is too large" };
   const text = await request.text();
@@ -85,7 +87,7 @@ async function parseBody<T>(request: Request, schema: Schema<T>, limit: number):
 const vpsError = (failure: Extract<Parsed<unknown>, { ok: false }>) =>
   json({ status: "invalid", message: failure.message, ...(failure.issues ? { issues: failure.issues } : {}) }, failure.status);
 
-function adminError(context: AdminRequestContext, error: AdminError): Response {
+export function adminError(context: AdminRequestContext, error: AdminError): Response {
   return json({ ...error, request_id: context.request_id }, ADMIN_ERROR_STATUS[error.error]);
 }
 
@@ -96,17 +98,17 @@ const ELIGIBLE = `((status = 'queued' AND (next_attempt_at IS NULL OR next_attem
 
 const leaseCutoff = (nowMs: number) => new Date(nowMs - ADKIT_JOB_LEASE_MS).toISOString();
 
-function publicJob(row: JobRow): AdkitJob {
+export function publicJob(row: JobRow): AdkitJob {
   return AdkitJob.parse({
     id: row.id, kind: row.kind, status: row.status, payload: JSON.parse(row.payload),
     result: row.result === null ? null : JSON.parse(row.result), attempts: row.attempts,
     idempotency_key: row.idempotency_key, requested_by: row.requested_by,
-    next_attempt_at: row.status === "queued" ? row.next_attempt_at : null,
+    next_attempt_at: row.status === "queued" ? row.next_attempt_at : null, // never set on a held row
     created_at: row.created_at, updated_at: row.updated_at,
   });
 }
 
-async function audit(
+export async function audit(
   env: Env, actor: { id: string; role: string }, action: string, jobId: string, after: Record<string, unknown>, at: string,
 ): Promise<void> {
   await env.FACTORY.prepare(
@@ -144,14 +146,22 @@ export async function handleDirectoryIngest(request: Request, env: Env): Promise
 }
 
 /** GET /api/adkit/jobs/pending: fails crashed claims that used their last attempt, then lists claimable jobs. */
-export async function handleJobsPending(request: Request, env: Env): Promise<Response> {
+export async function handleJobsPending(request: Request, env: Env, nowMs = Date.now()): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
-  const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
+  try {
+    // A campaign job left held by a crash between its insert and its cap recheck is decided here, before listing.
+    await recheckHeldJobs(env, nowMs);
+  } catch (e) {
+    console.error(`held job recheck failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+  }
+  // A campaign enable or budget job that ran out of claims may have changed spend remotely: it ends 'unknown'.
   await env.LEADS.prepare(`
-    UPDATE adkit_jobs SET status = 'failed', result = json_object('error', 'claim lease expired on the last attempt'), updated_at = ?1
+    UPDATE adkit_jobs SET status = CASE WHEN kind IN (${SPEND_KINDS}) THEN 'unknown' ELSE 'failed' END,
+      result = json_object('error', 'claim lease expired on the last attempt'), updated_at = ?1
     WHERE status = 'claimed' AND claimed_at <= ?2 AND attempts >= ?3`)
     .bind(now, leaseCutoff(nowMs), ADKIT_JOB_MAX_ATTEMPTS).run();
+  await queueStatusChecks(env, now);
   const { results } = await env.LEADS.prepare(`
     SELECT id, kind, payload, attempts FROM adkit_jobs WHERE ${ELIGIBLE}
     ORDER BY created_at, id LIMIT ${PENDING_LIMIT}`)
@@ -163,11 +173,10 @@ export async function handleJobsPending(request: Request, env: Env): Promise<Res
 }
 
 /** POST /api/adkit/jobs/claim: one UPDATE takes the job only while it is eligible, so a concurrent claim gets 409. */
-export async function handleJobClaim(request: Request, env: Env): Promise<Response> {
+export async function handleJobClaim(request: Request, env: Env, nowMs = Date.now()): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
   const body = await parseBody(request, AdkitJobClaimRequest, JOB_BODY_LIMIT);
   if (!body.ok) return vpsError(body);
-  const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
   const claimId = crypto.randomUUID();
   const claimed = await env.LEADS.prepare(`
@@ -189,15 +198,23 @@ export async function handleJobClaim(request: Request, env: Env): Promise<Respon
 
 const stale = () => json({ status: "stale" }, 409);
 
-/** POST /api/adkit/jobs/result: record the outcome of the named claim. A repeated done result is a no-op 200. */
-export async function handleJobResult(request: Request, env: Env): Promise<Response> {
+export interface JobResultDeps { recordCampaignBrand: RecordCampaignBrand }
+
+/**
+ * POST /api/adkit/jobs/result: record the outcome of the named claim. A repeated done result is a no-op 200.
+ * `deps` lets tests observe or break the campaign_brand_map write.
+ */
+export async function handleJobResult(request: Request, env: Env, deps: JobResultDeps = { recordCampaignBrand }): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
   const body = await parseBody(request, AdkitJobResultRequest, JOB_BODY_LIMIT);
   if (!body.ok) return vpsError(body);
   const data = body.data;
   const at = new Date().toISOString();
 
-  if ("result" in data) {
+  if ("result" in data && !("conversion_action_id" in data.result)) {
+    return handleCampaignResult(env, data.job_id, data.claim_id, data.result, at, deps);
+  }
+  if ("result" in data && "conversion_action_id" in data.result) {
     const outcome = data.result;
     const resultJson = JSON.stringify(outcome);
     // The name check keeps a result from another job's action out of this one. The directory row lands in the same
@@ -232,21 +249,118 @@ export async function handleJobResult(request: Request, env: Env): Promise<Respo
     return stale();
   }
 
+  if (!("error" in data)) return stale();
   const row = await loadJob(env, data.job_id);
   if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
   if (row.status !== "claimed" || row.claim_id !== data.claim_id) return stale();
   const retry = data.retryable !== false && row.attempts < ADKIT_JOB_MAX_ATTEMPTS;
+  // A spend job (enable, budget) that may have written remotely ends 'unknown' and stays counted. Only `wrote: false`
+  // from the executor (it failed before any create or update ran) lets it end 'failed'.
+  const final = SPEND_KIND_LIST.includes(row.kind) && data.wrote !== false ? "unknown" : "failed";
   const nextAttemptAt = retry ? new Date(Date.now() + adkitJobBackoffMs(row.attempts)).toISOString() : null;
   const update = await env.LEADS.prepare(`
     UPDATE adkit_jobs
     SET status = ?3, result = ?4, claim_id = CASE WHEN ?3 = 'queued' THEN NULL ELSE claim_id END,
         claimed_at = CASE WHEN ?3 = 'queued' THEN NULL ELSE claimed_at END, next_attempt_at = ?5, updated_at = ?6
     WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND attempts = ?7`)
-    .bind(data.job_id, data.claim_id, retry ? "queued" : "failed", JSON.stringify({ error: data.error }), nextAttemptAt, at, row.attempts)
+    .bind(data.job_id, data.claim_id, retry ? "queued" : final, JSON.stringify({ error: data.error }), nextAttemptAt, at, row.attempts)
     .run();
   if (!update.meta.changes) return stale();
-  if (!retry) await audit(env, DRAIN_ACTOR, "adkit.job.failed", data.job_id, { error: data.error, attempts: row.attempts }, at);
-  return json({ status: retry ? "queued" : "failed" });
+  if (!retry) await audit(env, DRAIN_ACTOR, `adkit.job.${final}`, data.job_id, { error: data.error, attempts: row.attempts }, at);
+  if (!retry && final === "unknown") await queueStatusChecks(env, at);
+  return json({ status: retry ? "queued" : final });
+}
+
+/** Campaign kinds whose lost outcome may have changed what a live campaign spends. */
+const SPEND_KIND_LIST = ["campaign.enable", "campaign.update_budget"];
+const SPEND_KINDS = SPEND_KIND_LIST.map((k) => `'${k}'`).join(", ");
+
+/**
+ * One campaign.status_check per unknown job (key `campaign.status_check:<job id>`), so the executor lists the
+ * campaign and core learns its real status and budget. Idempotent: ON CONFLICT DO NOTHING on the key.
+ */
+async function queueStatusChecks(env: Env, at: string): Promise<void> {
+  const { results } = await env.LEADS.prepare(`
+    SELECT u.id, u.payload FROM adkit_jobs u
+    WHERE u.status = 'unknown' AND u.kind IN (${SPEND_KINDS})
+      AND NOT EXISTS (SELECT 1 FROM adkit_jobs c WHERE c.idempotency_key = 'campaign.status_check:' || u.id)`)
+    .all<{ id: string; payload: string }>();
+  for (const row of results) {
+    const p = JSON.parse(row.payload) as Record<string, unknown>;
+    const ref = { campaign_id: p.campaign_id, brand_id: p.brand_id, account: p.account, project: p.project, name: p.name };
+    await env.LEADS.prepare(`
+      INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at)
+      VALUES (?1, 'campaign.status_check', ?2, 'queued', NULL, 0, ?3, 'core', ?4, ?4)
+      ON CONFLICT (idempotency_key) DO NOTHING`)
+      .bind(crypto.randomUUID(), JSON.stringify(ref), `campaign.status_check:${row.id}`, at).run();
+  }
+}
+
+type CampaignOutcome = Exclude<Extract<AdkitJobResultRequest, { result: unknown }>["result"], { conversion_action_id: string }>;
+
+/**
+ * A campaign job's result. The kind the result shape implies and the payload must match the claimed row: a draft
+ * result carries the job's campaign name and budget, a status or budget result the job's campaign id (and budget).
+ * So a result meant for another job, an adopt of a campaign with another budget, or an ENABLED result on a pause
+ * job never marks this row done.
+ */
+async function handleCampaignResult(
+  env: Env, jobId: string, claimId: string, outcome: CampaignOutcome, at: string, deps: JobResultDeps,
+): Promise<Response> {
+  // A done draft maps its campaign to the brand (source = 'create'). The job row is already done, so a failed map
+  // write is logged and the result still answers done; the campaign then falls back to click mapping or the estimate.
+  const recordMap = async (payloadJson: string) => {
+    if (!("name" in outcome)) return;
+    const payload = JSON.parse(payloadJson) as { account: string; brand_id: string };
+    try {
+      await deps.recordCampaignBrand(env.LEADS, { account: payload.account, campaign_id: outcome.campaign_id, brand_id: payload.brand_id });
+    } catch (e) {
+      console.error(`campaign_brand_map write failed for job ${jobId}: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+    }
+  };
+  const resultJson = JSON.stringify(outcome);
+  let kind: string;
+  let guard: string;
+  let guardValue: string | number;
+  if ("name" in outcome) {
+    kind = "campaign.draft.create";
+    guard = "json_extract(payload, '$.name') = ?6 AND json_extract(payload, '$.daily_budget') = ?7";
+    guardValue = outcome.name;
+  } else if ("observed_status" in outcome) {
+    kind = "campaign.status_check";
+    guard = "json_extract(payload, '$.campaign_id') = ?6";
+    guardValue = outcome.campaign_id;
+  } else if ("status" in outcome) {
+    kind = outcome.status === "ENABLED" ? "campaign.enable" : "campaign.pause";
+    guard = "json_extract(payload, '$.campaign_id') = ?6";
+    guardValue = outcome.campaign_id;
+  } else {
+    kind = "campaign.update_budget";
+    guard = "json_extract(payload, '$.campaign_id') = ?6 AND json_extract(payload, '$.daily_budget') = ?7";
+    guardValue = outcome.campaign_id;
+  }
+  const write = await env.LEADS.prepare(`
+    UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4
+    WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND kind = ?5 AND ${guard}
+    RETURNING payload`)
+    .bind(jobId, claimId, resultJson, at, kind, guardValue,
+      ...((kind === "campaign.update_budget" || kind === "campaign.draft.create") && "daily_budget" in outcome ? [outcome.daily_budget] : []))
+    .first<{ payload: string }>();
+  if (write) {
+    await writeDoneAudit(env, jobId, outcome, at);
+    await recordMap(write.payload);
+    return json({ status: "done" });
+  }
+  const row = await loadJob(env, jobId);
+  if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
+  if (row.status === "done" && row.result === resultJson) {
+    if (row.claim_id === claimId) {
+      await writeDoneAudit(env, jobId, outcome, row.updated_at, true);
+      await recordMap(row.payload);
+    }
+    return json({ status: "done", already: true });
+  }
+  return stale();
 }
 
 async function loadJob(env: Env, id: string): Promise<JobRow | null> {
@@ -343,7 +457,7 @@ export async function createAdkitJob(request: Request, env: Env, context: AdminR
 /** The row an idempotency key already holds: 200 with `created: false`, or 409 when the key names another job. */
 function existingJob(context: AdminRequestContext, row: JobRow, kind: string, brandId: string): Response {
   const job = publicJob(row);
-  if (job.kind !== kind || job.payload.brand_draft_id !== brandId) {
+  if (job.kind !== kind || !("brand_draft_id" in job.payload) || job.payload.brand_draft_id !== brandId) {
     return adminError(context, { error: "conflict", current_updated_at: job.updated_at, message: "idempotency_key belongs to another job" });
   }
   return json(AdkitJobCreateResponse.parse({ job, created: false }), 200);

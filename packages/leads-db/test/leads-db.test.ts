@@ -496,6 +496,16 @@ describe("Anjuna additions", () => {
       await job("j6", "key-6", "claimed", "claim").run();
       await env.DB.prepare("DELETE FROM adkit_jobs").run();
     });
+
+    it("0023 accepts the four campaign kinds and still rejects an unknown kind", async () => {
+      const kinds = ["campaign.draft.create", "campaign.update_budget", "campaign.pause", "campaign.enable"];
+      const insert = (id: string, kind: string) =>
+        env.DB.prepare(`INSERT INTO adkit_jobs (id, kind, payload, status, attempts, idempotency_key, requested_by, created_at, updated_at)
+          VALUES (?1, ?2, '{}', 'queued', 0, ?1, 'usr', 'x', 'x')`).bind(id, kind);
+      for (const [i, kind] of kinds.entries()) await insert(`kind-job-${i}`, kind).run();
+      await expect(insert("kind-job-x", "campaign.delete").run()).rejects.toThrow(/CHECK constraint failed/);
+      await env.DB.prepare("DELETE FROM adkit_jobs").run();
+    });
   });
 
   describe("mailing_outbox", () => {

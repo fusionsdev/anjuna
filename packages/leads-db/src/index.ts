@@ -31,6 +31,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0020_adkit_directory_jobs.sql",
   "0021_bot_hits.sql",
   "0022_spend_allocation.sql",
+  "0023_adkit_campaign_jobs.sql",
 ] as const;
 
 /** V1 source the baseline is ported from. */
