@@ -198,12 +198,12 @@ describe("sortBrands", () => {
 
 describe("finalUrl and siteUrl", () => {
   it("builds the keyword URL from the apex hostname", () => {
-    expect(finalUrl(["a.test", "www.a.test"])).toBe("https://a.test/?keyword={keyword}");
+    expect(finalUrl(["a.test", "www.a.test"])).toBe("https://a.test/?keyword={keyword}&utm_campaign={campaignid}");
     expect(siteUrl(["a.test", "www.a.test"])).toBe("https://a.test");
   });
   it("answers null with no hostname", () => { expect(finalUrl([])).toBeNull(); expect(siteUrl([])).toBeNull(); });
   it("uses the first hostname even when core returns a www host first", () => {
     // A core-only brand's hostnames are whatever core returned.
-    expect(finalUrl(["www.b.test"])).toBe("https://www.b.test/?keyword={keyword}");
+    expect(finalUrl(["www.b.test"])).toBe("https://www.b.test/?keyword={keyword}&utm_campaign={campaignid}");
   });
 });

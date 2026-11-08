@@ -5,7 +5,7 @@ import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
 import { answerConfirm } from "./confirm";
 
 const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
-const URL_CG = "https://creditsgene.test/?keyword={keyword}";
+const URL_CG = "https://creditsgene.test/?keyword={keyword}&utm_campaign={campaignid}";
 
 const lifecycle = (id: string, host: string, extra: Record<string, unknown> = {}) => LifecycleBrandSummary.parse({
   brand_id: id, name: "Credit Genie", account: "test-account", hostnames: [host], status: "live", current_revision_id: `${id}_rev_3`,
@@ -57,7 +57,7 @@ afterEach(() => {
 const copyButton = () => screen.findByRole("button", { name: /คัดลอก Final URL/ });
 
 describe("brand card: Copy Final URL, Open site and revision history", () => {
-  it("copies https://<apex>/?keyword={keyword} and confirms with a toast", async () => {
+  it("copies https://<apex>/?keyword={keyword}&utm_campaign={campaignid} and confirms with a toast", async () => {
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     serve(lifecycle("brand-cg", "creditsgene.test"));
@@ -129,7 +129,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     render(<BrandLifecycle me={owner} />);
     expect((await screen.findByRole("link", { name: /เปิดเว็บไซต์/ })).getAttribute("href")).toBe("https://www.b.test");
     fireEvent.click(await copyButton());
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://www.b.test/?keyword={keyword}"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://www.b.test/?keyword={keyword}&utm_campaign={campaignid}"));
   });
 
   it("lists revisions newest first and marks the current one and the rollback target", async () => {
