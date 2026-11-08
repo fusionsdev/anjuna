@@ -799,7 +799,7 @@ describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a bu
     expect(second).toBe(max);
   });
 
-  it.skip("K2: A enabled outside the panel at 1000; R1 reads ENABLED/1000; a panel budget job to 2500 ends done before R1 posts: A counts 2500, enable B is 422", async () => {
+  it("K2: A enabled outside the panel at 1000; R1 reads ENABLED/1000; a panel budget job to 2500 ends done before R1 posts: A counts 2500, enable B is 422", async () => {
     const a = await draftDone("petvet", 1, 1000);
     const b = await draftDone("bison", 1, 2000);
     const r1 = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
@@ -828,7 +828,7 @@ describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a bu
     expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(201);
   });
 
-  it.skip("a newer check that read no budget keeps the budget an older check read (fields override separately)", async () => {
+  it("a newer check that read no budget keeps the budget an older check read (fields override separately)", async () => {
     const a = await draftDone("petvet", 1, 1000);
     const b = await draftDone("bison", 1, 1500);
     await enabled(a);

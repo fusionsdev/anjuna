@@ -15,9 +15,11 @@
  *     outcome is unknown until a status check or a confirmed pause resolves it. A budget counts at the largest of the
  *     done budget and any pending or unknown budget job.
  *   - A campaign.status_check result confirms the status. It resolves an unknown budget only when it read a budget
- *     (daily_budget not null). It is ignored when an enable, pause or budget job of its campaign that may have
- *     written (done or unknown) finished between its claim and its result; core then queues a fresh check (adkit.ts
- *     requeueStaleStatusCheck). Among checks, one claimed earlier never overrides one claimed later.
+ *     (daily_budget not null). Order is the job event counter (claim_seq, result_seq; migration 0025), never a
+ *     clock. Its status is ignored when an enable or pause job of its campaign that may have written (done or
+ *     unknown) got its result between the check's claim and result; its budget is ignored when a budget job did.
+ *     Core then queues a fresh check (adkit.ts requeueStaleStatusCheck). Per field, a check claimed earlier never
+ *     overrides one claimed later.
  *   - A budget is in the account currency (adkit_directory). THB counts as is, USD is converted with fx_thb_per_usd,
  *     any other or unknown currency is refused.
  *   - Two owner requests at the same moment could each pass the check before the other's row exists. An enable or
@@ -191,12 +193,16 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
   }
   // Done rows set the state and budget in result order (result_seq, the event counter; no clock).
   const others = rows.filter((r) => r.kind !== "campaign.draft.create").sort(byResult);
-  // A status check describes the campaign as it was when it was claimed. It is ignored when an enable, pause or budget
-  // job that may have written (done or unknown) got its result between the check's claim and its result
-  // (staleStatusCheck, on claim_seq and result_seq), and when a check of the same campaign with a later claim_seq was
-  // already applied: an older read never overrides a newer one.
+  // A status check describes the campaign as it was when it was claimed. Its status and its budget are judged
+  // separately (checkStaleness, on claim_seq and result_seq): an enable or pause job that may have written (done or
+  // unknown) and got its result inside the check's window makes the status stale; a budget job does that to the
+  // budget only. So a budget job never erases ENABLED evidence. Per field, a check with a later claim_seq that read
+  // the field wins: an older read never overrides a newer one, and a check that read no budget leaves the budget be.
   const writes = writesByCampaign(rows);
-  const lastCheckClaim = new Map<Campaign, number>();
+  const lastStatusClaim = new Map<Campaign, number>();
+  const lastBudgetClaim = new Map<Campaign, number>();
+  /** Which parts of each done status check stand (not stale); used to resolve unknown jobs. */
+  const checkParts = new Map<JobRow, { status: boolean; budget: boolean }>();
   const unknowns = new Map<Campaign, JobRow[]>();
   const dones = new Map<Campaign, JobRow[]>();
   for (const row of others) {
@@ -207,21 +213,24 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
     if (row.updated_at > c.updated_at) c.updated_at = row.updated_at;
     if (row.status === "unknown") unknowns.set(c, [...(unknowns.get(c) ?? []), row]);
     if (row.status !== "done") continue;
-    if (row.kind === "campaign.status_check") {
-      const claimed = row.claim_seq ?? 0;
-      if (staleStatusCheck(row, writes.get(ref.campaign_id!) ?? [])) continue;
-      if (claimed < (lastCheckClaim.get(c) ?? 0)) continue;
-      lastCheckClaim.set(c, claimed);
-    }
     dones.set(c, [...(dones.get(c) ?? []), row]);
     if (row.kind === "campaign.enable") c.state = "enabled";
     if (row.kind === "campaign.pause") c.state = "paused";
     if (row.kind === "campaign.update_budget" && typeof ref.daily_budget === "number") c.budget = ref.daily_budget;
     if (row.kind === "campaign.status_check" && row.result) {
       const seen = JSON.parse(row.result) as { observed_status: string; daily_budget: number | null };
-      c.state = seen.observed_status === "ENABLED" ? "enabled" : seen.observed_status === "PAUSED" ? "paused"
-        : seen.observed_status === "DRAFT" ? "draft" : "removed";
-      if (typeof seen.daily_budget === "number") c.budget = seen.daily_budget;
+      const stale = checkStaleness(row, writes.get(ref.campaign_id!) ?? []);
+      checkParts.set(row, { status: !stale.status, budget: !stale.budget && typeof seen.daily_budget === "number" });
+      const claimed = row.claim_seq ?? 0;
+      if (!stale.status && claimed >= (lastStatusClaim.get(c) ?? 0)) {
+        lastStatusClaim.set(c, claimed);
+        c.state = seen.observed_status === "ENABLED" ? "enabled" : seen.observed_status === "PAUSED" ? "paused"
+          : seen.observed_status === "DRAFT" ? "draft" : "removed";
+      }
+      if (!stale.budget && typeof seen.daily_budget === "number" && claimed >= (lastBudgetClaim.get(c) ?? 0)) {
+        lastBudgetClaim.set(c, claimed);
+        c.budget = seen.daily_budget;
+      }
     }
   }
   // An unknown enable or budget stays open (counted) until a done row resolves it: a status check claimed after it
@@ -229,9 +238,10 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
   // budget) inserted after it. Insert
   // order (seq) is used because a job is always inserted after the job it follows. A status check that could not read
   // the budget (daily_budget null) confirms the status only: it never resolves an unknown budget job.
-  const readBudget = (r: JobRow) => typeof (JSON.parse(r.result ?? "{}") as { daily_budget?: unknown }).daily_budget === "number";
+  // A check resolves an unknown only with a part that stands: its status for an enable, a read budget for a budget.
   const resolves = (u: JobRow, r: JobRow) => (r.kind === "campaign.status_check"
-    ? (r.claim_seq ?? 0) > (u.result_seq ?? 0) && (u.kind === "campaign.enable" || readBudget(r))
+    ? (r.claim_seq ?? 0) > (u.result_seq ?? 0)
+      && (u.kind === "campaign.enable" ? checkParts.get(r)?.status === true : checkParts.get(r)?.budget === true)
     : u.kind === "campaign.enable" ? (r.kind === "campaign.pause" || r.kind === "campaign.enable") && r.seq > u.seq
       : r.kind === "campaign.update_budget" && r.seq > u.seq);
   for (const c of campaigns) {
@@ -263,23 +273,29 @@ const WRITE_KINDS = new Set(["campaign.enable", "campaign.pause", "campaign.upda
  * Per campaign id, the result_seq of every enable, pause or budget job that may have written: done, or unknown (its
  * outcome was lost after the write may have run).
  */
-export function writesByCampaign(rows: JobRow[]): Map<string, number[]> {
-  const writes = new Map<string, number[]>();
+export function writesByCampaign(rows: JobRow[]): Map<string, Array<{ kind: string; seq: number }>> {
+  const writes = new Map<string, Array<{ kind: string; seq: number }>>();
   for (const row of rows) {
     if ((row.status !== "done" && row.status !== "unknown") || !WRITE_KINDS.has(row.kind)) continue;
     const id = (JSON.parse(row.payload) as { campaign_id?: string }).campaign_id;
-    if (id) writes.set(id, [...(writes.get(id) ?? []), row.result_seq ?? 0]);
+    if (id) writes.set(id, [...(writes.get(id) ?? []), { kind: row.kind, seq: row.result_seq ?? 0 }]);
   }
   return writes;
 }
 
 /**
- * A done status check is stale when a write of its campaign got its result between the check's claim and its result
- * (claim_seq < write result_seq < check result_seq; the counter is unique, so there are no ties). It may describe the
- * campaign before that write. A write that got its result after the check's result is applied after it anyway.
+ * Which parts of a done status check are stale. A write of its campaign that got its result between the check's
+ * claim and its result (claim_seq < write result_seq < check result_seq; the counter is unique, so no ties) may have
+ * changed what the check read: an enable or pause makes the status stale, a budget job the budget. A write that got
+ * its result after the check's result is applied after it anyway.
  */
-export const staleStatusCheck = (row: JobRow, writes: number[]) =>
-  writes.some((w) => (row.claim_seq ?? 0) < w && w < (row.result_seq ?? 0));
+export function checkStaleness(row: JobRow, writes: Array<{ kind: string; seq: number }>): { status: boolean; budget: boolean } {
+  const inside = writes.filter((w) => (row.claim_seq ?? 0) < w.seq && w.seq < (row.result_seq ?? 0));
+  return {
+    status: inside.some((w) => w.kind === "campaign.enable" || w.kind === "campaign.pause"),
+    budget: inside.some((w) => w.kind === "campaign.update_budget"),
+  };
+}
 
 /** Baht per day the spending campaigns hold, in total and for one brand, leaving `skip` out. Null: a currency is unknown. */
 function enabledThb(campaigns: Campaign[], rates: Rates, brandId: string, skip?: Campaign): { total: number; brand: number } | null {
