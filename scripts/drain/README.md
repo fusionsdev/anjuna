@@ -61,3 +61,19 @@ bunx vitest run test/drain-spend-sync.test.ts test/adkit-executor.test.ts
 After merge, deploy **core, then panel, then this script**. An old core returns 404 on the campaign route. Backfill and VPS installation remain owner actions; reruns rely on core's idempotent upserts. No VPS or AdKit invocation was used to build these changes; fixtures were supplied in the task brief.
 
 When installing this version, copy `adkit-executor.mjs` and `conversion-sync.mjs` beside `spend-sync.mjs`: the campaign path imports the shared argument guard, whose module imports the conversion helpers. Importing these modules does not run their CLI entry points. The default UTC date window can lag the next local day by 7 hours for UTC+7 accounts; choose explicit dates for a backfill.
+
+## Deploy 0025 (adkit_jobs claim_seq and result_seq, T13-4d)
+
+Migration `0025_adkit_jobs_claim_seq.sql` adds the job event counter. The old core does not set it, so any claim or result the old core records after the migration keeps `claim_seq` or `result_seq` NULL. The new core reads NULL as 0: a NULL done enable sorts before every backfilled pause and the campaign stops counting toward the caps, and a NULL check claim drops the check's ENABLED evidence. Only `adkit-executor.mjs` triggers claims, results and the lease-expiry sweep (`GET /api/adkit/jobs/pending`), so the executor must not run between the migration and the core deploy.
+
+Run these steps once per deployment, for the aduplift core (`wrangler.deploy.aduplift.jsonc`, D1 `aduplift-leads`) and for the maimax core (`wrangler.deploy.maimax.jsonc`, D1 `maimax-leads`):
+
+1. Stop the adkit executor on both VPS. maimax: comment out the crontab line that runs `adkit-executor.mjs` (or `run.sh`, if it calls the executor) and check that `pgrep -f adkit-executor.mjs` prints nothing. hstgr: stop the executor step in `scheduler.mjs` (or `docker stop` the drain container) and check the same. Skip a VPS where the executor is not installed yet.
+2. Apply the migration: `cd workers/core && bunx wrangler d1 migrations apply <db> --remote -c <deploy config>`.
+3. Deploy core: `bunx wrangler deploy -c <deploy config>`.
+4. Check for NULL rows and require 0:
+   `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "SELECT COUNT(*) FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND status = 'claimed' AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL)"`.
+   A non-zero count means the old core recorded a claim or result after step 2. Keep the executor stopped: give those rows numbers above the current maximum of both columns, one row at a time in updated_at order (claim before result), then repeat step 4.
+5. Start the executor again on both VPS (restore the crontab line, restart the container or scheduler step).
+
+The steps are idempotent. A run with nothing claimed or finished during the gap returns 0 at step 4.

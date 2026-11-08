@@ -143,7 +143,13 @@ interface Campaign {
 const pending = (row: JobRow) => row.status === "queued" || row.status === "claimed" || row.status === "held";
 const byCreated = (a: JobRow, b: JobRow) =>
   (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-/** Event order of results (migration 0025 result_seq); rows without one (pending, or legacy) sort by updated_at. */
+/**
+ * Event order of results (migration 0025 result_seq); rows without one sort by updated_at among themselves. A NULL
+ * result_seq is read as 0 and sorts FIRST. For a pending row that is harmless (it is never applied). For a done
+ * write recorded by the old core after 0025 was applied, it is the hazard: an old-core done enable would sort before
+ * a backfilled pause and the campaign would stop counting. Hence the deploy order in scripts/drain/README.md
+ * ("Deploy 0025"): stop the adkit executor before applying 0025, deploy core, check no NULL rows, then restart it.
+ */
 const byResult = (a: JobRow, b: JobRow) => ((a.result_seq ?? 0) - (b.result_seq ?? 0))
   || (a.updated_at < b.updated_at ? -1 : a.updated_at > b.updated_at ? 1 : byCreated(a, b));
 
@@ -285,9 +291,13 @@ export function writesByCampaign(rows: JobRow[]): Map<string, Array<{ kind: stri
 
 /**
  * Which parts of a done status check are stale. A write of its campaign that got its result between the check's
- * claim and its result (claim_seq < write result_seq < check result_seq; the counter is unique, so no ties) may have
+ * claim and its result (claim_seq < write result_seq < check result_seq) may have
  * changed what the check read: an enable or pause makes the status stale, a budget job the budget. A write that got
- * its result after the check's result is applied after it anyway.
+ * its result after the check's result is applied after it anyway. The counter is unique per statement; one
+ * lease-expiry UPDATE that ends several rows may give them one shared value, all of them unknown or failed writes,
+ * never a check, so a tie never sits on a window edge. A check whose claim_seq is NULL (claimed by the old core
+ * during the deploy gap) reads as 0, so every earlier write falls in its window and its ENABLED evidence is dropped:
+ * the deploy order in scripts/drain/README.md closes that gap too.
  */
 export function checkStaleness(row: JobRow, writes: Array<{ kind: string; seq: number }>): { status: boolean; budget: boolean } {
   const inside = writes.filter((w) => (row.claim_seq ?? 0) < w.seq && w.seq < (row.result_seq ?? 0));
