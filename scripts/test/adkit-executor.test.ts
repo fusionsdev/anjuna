@@ -573,6 +573,7 @@ describe("G2: a malformed or truncated list is never complete", () => {
     ["M1: a total string that is not a clean integer", { campaigns: filler(2), total: "2.0" }],
     ["M1: a totalPages string that is not a number", { campaigns: filler(2), totalPages: "one" }],
     ["M1: a negative totalPages under pageInfo", { campaigns: filler(2), pageInfo: { totalPages: -3 } }],
+    ["P2: an empty next page token on a page whose total is above the rows read", { campaigns: filler(2), total: 600, nextPageToken: "" }],
   ])("%s: no create, no NOT_FOUND", async (_label, listOutput) => {
     failsClosed(await runBoth(listOutput));
   });
@@ -623,16 +624,22 @@ describe("G2: a malformed or truncated list is never complete", () => {
     });
 
     it("M2: a page token that repeats ends the lookup as incomplete: no NOT_FOUND, no create", async () => {
-      const x1 = { id: "30000000001", name: "other-search-1", status: "PAUSED", dailyBudget: 10 };
+      // Every row is new, so the repeated-id rule (N1) cannot end the lookup: only the token Set can.
+      const rowsByCall = [
+        { id: "30000000001", name: "other-search-1", status: "PAUSED", dailyBudget: 10 },
+        { id: "30000000002", name: "other-search-2", status: "PAUSED", dailyBudget: 10 },
+        { id: "30000000003", name: "other-search-3", status: "PAUSED", dailyBudget: 10 },
+      ];
       for (const [kind, payload] of [["campaign.status_check", ref], ["campaign.draft.create", draftPayload]] as const) {
         const core = fakeCore([job({ kind, payload, attempts: 1 })]);
         const calls: string[][] = [];
         const runAdkit = async (args: string[]) => {
           calls.push(args);
           if (args[3] !== "list") throw new Error("create must not run");
-          // page 1: X, token p2. page 2 (asked with p2): X again, token p2 again. A third call would return X, no token.
-          if (!args.includes("--page-token")) return JSON.stringify({ campaigns: [x1], total: 3, totalPages: 3, nextPageToken: "p2" });
-          return calls.length === 2 ? JSON.stringify({ campaigns: [x1], nextPageToken: "p2" }) : JSON.stringify({ campaigns: [x1] });
+          // page 1: X, token p2. page 2 (asked with p2): new row Y, token p2 again. A third call would return Z, no token,
+          // and with 3 rows and 3 pages read the totals would match: without the token Set the lookup would end complete.
+          if (!args.includes("--page-token")) return JSON.stringify({ campaigns: [rowsByCall[0]], total: 3, totalPages: 3, nextPageToken: "p2" });
+          return calls.length === 2 ? JSON.stringify({ campaigns: [rowsByCall[1]], nextPageToken: "p2" }) : JSON.stringify({ campaigns: [rowsByCall[2]] });
         };
         expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
         expect(calls.map((a) => a[3]), kind).toEqual(["list", "list"]);

@@ -147,8 +147,10 @@ const byCreated = (a: JobRow, b: JobRow) =>
  * Event order of results (migration 0025 result_seq); rows without one sort by updated_at among themselves. A NULL
  * result_seq is read as 0 and sorts FIRST. For a pending row that is harmless (it is never applied). For a done
  * write recorded by the old core after 0025 was applied, it is the hazard: an old-core done enable would sort before
- * a backfilled pause and the campaign would stop counting. Hence the deploy order in scripts/drain/README.md
- * ("Deploy 0025"): stop the adkit executor before applying 0025, deploy core, check no NULL rows, then restart it.
+ * a backfilled pause and the campaign would stop counting. Hence scripts/drain/README.md "Deploy 0025": stop the
+ * adkit executor on hstgr and maimax and verify it stopped before applying 0025, deploy core, and restart it only when
+ * the NULL-row gate counts 0. No SQL repair exists (renumbering an old result can apply it after newer ones); a
+ * non-zero count leaves the executor stopped, sets ads_cap_total_thb_day to 0 and goes to the owner.
  */
 const byResult = (a: JobRow, b: JobRow) => ((a.result_seq ?? 0) - (b.result_seq ?? 0))
   || (a.updated_at < b.updated_at ? -1 : a.updated_at > b.updated_at ? 1 : byCreated(a, b));
@@ -297,7 +299,8 @@ export function writesByCampaign(rows: JobRow[]): Map<string, Array<{ kind: stri
  * lease-expiry UPDATE that ends several rows may give them one shared value, all of them unknown or failed writes,
  * never a check, so a tie never sits on a window edge. A check whose claim_seq is NULL (claimed by the old core
  * during the deploy gap) reads as 0, so every earlier write falls in its window and its ENABLED evidence is dropped:
- * the deploy order in scripts/drain/README.md closes that gap too.
+ * stopping and verifying the executor before 0025 (scripts/drain/README.md "Deploy 0025") is the only guard; no SQL
+ * repair exists.
  */
 export function checkStaleness(row: JobRow, writes: Array<{ kind: string; seq: number }>): { status: boolean; budget: boolean } {
   const inside = writes.filter((w) => (row.claim_seq ?? 0) < w.seq && w.seq < (row.result_seq ?? 0));

@@ -11,7 +11,8 @@ import { getRuntime, ownsHostname, publicSettings } from "./runtime.js";
 import { submitLead, validationEnv } from "./submit.js";
 import { validateLeadPayload } from "./validation.js";
 
-async function readBody(request: Request): Promise<unknown> {
+/** Reads a JSON body of at most 64,000 bytes. Throws RangeError beyond that, SyntaxError on bad JSON. */
+export async function readBody(request: Request): Promise<unknown> {
   if (Number(request.headers.get("content-length")) > 64_000) throw new RangeError();
   const reader = request.body?.getReader();
   if (!reader) return null;
