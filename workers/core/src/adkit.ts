@@ -58,10 +58,20 @@ export interface JobRow {
   updated_at: string;
   /** Insert order (migration 0024), set in the INSERT by NEXT_SEQ. */
   seq: number;
+  /** Event order of the latest claim (migration 0025), set in the claim UPDATE by NEXT_EVENT. */
+  claim_seq: number | null;
+  /** Event order of the final result (done, failed, unknown), set in that UPDATE by NEXT_EVENT. */
+  result_seq: number | null;
 }
 
 /** The next insert order value, used inside an INSERT so it is atomic with the row (D1 runs one write at a time). */
 export const NEXT_SEQ = "(SELECT COALESCE(MAX(seq), 0) + 1 FROM adkit_jobs)";
+
+/**
+ * The next job event number (migration 0025): claims and final results share one counter, so its order is the
+ * commit order of those writes. Used inside the claim or result UPDATE itself, so it is atomic with the change.
+ */
+export const NEXT_EVENT = "(SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs)";
 
 type Schema<T> = {
   safeParse(raw: unknown): { success: true; data: T } | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
@@ -162,7 +172,7 @@ export async function handleJobsPending(request: Request, env: Env, nowMs = Date
   }
   // A campaign enable or budget job that ran out of claims may have changed spend remotely: it ends 'unknown'.
   await env.LEADS.prepare(`
-    UPDATE adkit_jobs SET status = CASE WHEN kind IN (${SPEND_KINDS}) THEN 'unknown' ELSE 'failed' END,
+    UPDATE adkit_jobs SET status = CASE WHEN kind IN (${SPEND_KINDS}) THEN 'unknown' ELSE 'failed' END, result_seq = ${NEXT_EVENT},
       result = json_object('error', 'claim lease expired on the last attempt'), updated_at = ?1
     WHERE status = 'claimed' AND claimed_at <= ?2 AND attempts >= ?3`)
     .bind(now, leaseCutoff(nowMs), ADKIT_JOB_MAX_ATTEMPTS).run();
@@ -186,7 +196,8 @@ export async function handleJobClaim(request: Request, env: Env, nowMs = Date.no
   const claimId = crypto.randomUUID();
   const claimed = await env.LEADS.prepare(`
     UPDATE adkit_jobs
-    SET status = 'claimed', claim_id = ?4, claimed_at = ?1, attempts = attempts + 1, next_attempt_at = NULL, updated_at = ?1
+    SET status = 'claimed', claim_id = ?4, claimed_at = ?1, attempts = attempts + 1, next_attempt_at = NULL, updated_at = ?1,
+        claim_seq = ${NEXT_EVENT}
     WHERE id = ?5 AND ${ELIGIBLE}
     RETURNING id, kind, payload, attempts`)
     .bind(now, leaseCutoff(nowMs), ADKIT_JOB_MAX_ATTEMPTS, claimId, body.data.job_id)
@@ -226,7 +237,7 @@ export async function handleJobResult(request: Request, env: Env, deps: JobResul
     // batch and only when this claim's own result is the stored one, so a stale claim's result never writes it.
     const [jobWrite] = await env.LEADS.batch([
       env.LEADS.prepare(`
-        UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4
+        UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4, result_seq = ${NEXT_EVENT}
         WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND kind = 'conversion_action.create'
           AND json_extract(payload, '$.name') = ?5`)
         .bind(data.job_id, data.claim_id, resultJson, at, outcome.name),
@@ -266,7 +277,8 @@ export async function handleJobResult(request: Request, env: Env, deps: JobResul
   const update = await env.LEADS.prepare(`
     UPDATE adkit_jobs
     SET status = ?3, result = ?4, claim_id = CASE WHEN ?3 = 'queued' THEN NULL ELSE claim_id END,
-        claimed_at = CASE WHEN ?3 = 'queued' THEN NULL ELSE claimed_at END, next_attempt_at = ?5, updated_at = ?6
+        claimed_at = CASE WHEN ?3 = 'queued' THEN NULL ELSE claimed_at END, next_attempt_at = ?5, updated_at = ?6,
+        result_seq = CASE WHEN ?3 = 'queued' THEN result_seq ELSE ${NEXT_EVENT} END
     WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND attempts = ?7`)
     .bind(data.job_id, data.claim_id, retry ? "queued" : final, JSON.stringify({ error: data.error }), nextAttemptAt, at, row.attempts)
     .run();
@@ -345,7 +357,7 @@ async function handleCampaignResult(
     guardValue = outcome.campaign_id;
   }
   const write = await env.LEADS.prepare(`
-    UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4
+    UPDATE adkit_jobs SET status = 'done', result = ?3, next_attempt_at = NULL, updated_at = ?4, result_seq = ${NEXT_EVENT}
     WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND kind = ?5 AND ${guard}
     RETURNING payload`)
     .bind(jobId, claimId, resultJson, at, kind, guardValue,
@@ -363,6 +375,8 @@ async function handleCampaignResult(
     if (row.claim_id === claimId) {
       await writeDoneAudit(env, jobId, outcome, row.updated_at, true);
       await recordMap(row.payload);
+      // The first call may have stopped after the done UPDATE; the requeue is idempotent (ON CONFLICT on the key).
+      if (row.kind === "campaign.status_check") await requeueStaleStatusCheck(env, jobId, row.payload, at);
     }
     return json({ status: "done", already: true });
   }
@@ -370,10 +384,11 @@ async function handleCampaignResult(
 }
 
 /**
- * A status check is stale when an enable, pause or budget job of its campaign that may have written (done or
- * unknown) finished between the check's claim and its result: it may describe the campaign before that write.
- * deriveCampaigns ignores it (staleStatusCheck); this queues a fresh check (key `campaign.status_check:stale:<job id>`)
- * so core still learns the current state. The same rule on both sides, ties included.
+ * A status check is stale (for status, budget or both) when an enable, pause or budget job of its campaign that may
+ * have written (done or unknown) got its result_seq between the check's claim_seq and its result_seq: it may
+ * describe the campaign before that write. deriveCampaigns ignores the stale part (checkStaleness); this queues a
+ * fresh check (key `campaign.status_check:stale:<job id>`) so core still learns the current state. Both sides use
+ * the event counter, so a write that commits after the check's result is outside the window on both sides.
  */
 async function requeueStaleStatusCheck(env: Env, jobId: string, payload: string, at: string): Promise<void> {
   await env.LEADS.prepare(`
@@ -383,8 +398,8 @@ async function requeueStaleStatusCheck(env: Env, jobId: string, payload: string,
       SELECT 1 FROM adkit_jobs w
       WHERE w.status IN ('done', 'unknown') AND w.kind IN ('campaign.enable', 'campaign.pause', 'campaign.update_budget')
         AND json_extract(w.payload, '$.campaign_id') = json_extract(?2, '$.campaign_id')
-        AND w.updated_at >= (SELECT COALESCE(claimed_at, '') FROM adkit_jobs WHERE id = ?5)
-        AND w.updated_at <= ?4)
+        AND COALESCE(w.result_seq, 0) > (SELECT COALESCE(claim_seq, 0) FROM adkit_jobs WHERE id = ?5)
+        AND COALESCE(w.result_seq, 0) < (SELECT COALESCE(result_seq, 0) FROM adkit_jobs WHERE id = ?5))
     ON CONFLICT (idempotency_key) DO NOTHING`)
     .bind(crypto.randomUUID(), payload, `campaign.status_check:stale:${jobId}`, at, jobId).run();
 }

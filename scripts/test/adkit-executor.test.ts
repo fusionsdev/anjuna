@@ -563,13 +563,16 @@ describe("G2: a malformed or truncated list is never complete", () => {
     ["hasMore: true without a token", { campaigns: filler(2), hasMore: true }],
     ["pageInfo.hasNextPage: true without a token", { campaigns: filler(2), pageInfo: { hasNextPage: true } }],
     ["an offset for the next page", { data: filler(2), nextOffset: 100 }],
+    ["a total above the rows read", { campaigns: filler(2), total: 600 }],
+    ["a totalCount above the rows read", { campaigns: filler(2), totalCount: 3 }],
+    ["totalPages above the pages read", { campaigns: filler(2), totalPages: 2 }],
   ])("%s: no create, no NOT_FOUND", async (_label, listOutput) => {
     failsClosed(await runBoth(listOutput));
   });
 
   it("a page that says there is no more (hasMore: false, empty cursor) stays complete: NOT_FOUND", async () => {
     const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
-    const runAdkit = async () => JSON.stringify({ campaigns: filler(2), hasMore: false, cursor: "", pageInfo: { hasNextPage: false } });
+    const runAdkit = async () => JSON.stringify({ campaigns: filler(2), hasMore: false, cursor: "", pageInfo: { hasNextPage: false }, total: 2, totalPages: 1 });
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
     expect(core.results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND" } });
   });

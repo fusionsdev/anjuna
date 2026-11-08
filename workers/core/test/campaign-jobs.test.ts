@@ -745,6 +745,121 @@ describe("H1: an old status check never lowers counted spend or undoes a newer c
   });
 });
 
+describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a budget job never erases ENABLED", () => {
+  const coreEnv = () => ({ LEADS: h.db, FACTORY: h.factory, DRAIN_TOKEN }) as unknown as Env;
+  const claimAt = async (jobId: string, nowMs: number) => {
+    const response = await handleJobClaim(new Request("https://core.aduplift.ai/api/adkit/jobs/claim", {
+      method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ job_id: jobId }),
+    }), coreEnv(), nowMs);
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { claim_id: string }).claim_id;
+  };
+  const postResult = (jobId: string, claimId: string, result: Record<string, unknown>) => vps("jobs/result", { job_id: jobId, claim_id: claimId, result });
+  const campaignOf = async (campaignId: string) => {
+    const body = PanelCampaignsResponse.parse(await (await h.admin("/admin/adkit/campaigns", owner)).json());
+    return { campaign: body.campaigns.find((c) => c.campaign_id === campaignId)!, enabledTotal: body.enabled_total_thb_day };
+  };
+  /** A second status check for the campaign under another key, as an automatic check has. */
+  async function secondCheck(firstCheckId: string, id: string) {
+    await h.db.prepare(`INSERT INTO adkit_jobs (id, kind, payload, status, attempts, idempotency_key, requested_by, created_at, updated_at, seq)
+      SELECT ?2, 'campaign.status_check', payload, 'queued', 0, 'campaign.status_check:second-' || ?2, 'core', created_at, created_at,
+        (SELECT MAX(seq) + 1 FROM adkit_jobs)
+      FROM adkit_jobs WHERE id = ?1`).bind(firstCheckId, id).run();
+    return id;
+  }
+  const claimSeq = async (id: string) => (await h.db.prepare("SELECT claim_seq FROM adkit_jobs WHERE id = ?1").bind(id).first<{ claim_seq: number | null }>())!.claim_seq;
+
+  it("K1: R1 and R2 claimed in the same millisecond; R2 reads 2500 and posts first, R1 reads 1000 and posts later: A stays at 2500, enable B is 422", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    const r1 = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
+    const r2 = await secondCheck(r1, "44444444-4444-4444-8444-444444444444");
+    const same = Date.now();
+    const r1Claim = await claimAt(r1, same);
+    const r2Claim = await claimAt(r2, same);
+    expect(await claimSeq(r2)).toBeGreaterThan((await claimSeq(r1))!);
+    expect((await postResult(r2, r2Claim, { campaign_id: a, observed_status: "ENABLED", daily_budget: 2500 })).status).toBe(200);
+    expect((await postResult(r1, r1Claim, { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 })).status).toBe(200);
+    const { campaign, enabledTotal } = await campaignOf(a);
+    expect([campaign.state, campaign.daily_budget, enabledTotal]).toEqual(["enabled", 2500, 2500]);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2500 + 2000 > 3000
+  });
+
+  it("K1: a reclaim after the lease gets a new claim_seq above every other", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const check = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
+    const t0 = Date.now();
+    await claimAt(check, t0);
+    const first = (await claimSeq(check))!;
+    await claimAt(check, t0 + 31 * 60_000);
+    const second = (await claimSeq(check))!;
+    const max = (await h.db.prepare("SELECT MAX(claim_seq) AS m FROM adkit_jobs").first<{ m: number }>())!.m;
+    expect(second).toBeGreaterThan(first);
+    expect(second).toBe(max);
+  });
+
+  it("K2: A enabled outside the panel at 1000; R1 reads ENABLED/1000; a panel budget job to 2500 ends done before R1 posts: A counts 2500, enable B is 422", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 2000);
+    const r1 = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
+    const r1Claim = await claimAt(r1, Date.now());
+    const budget = await queued(await post({ kind: "campaign.update_budget", campaign_id: a, daily_budget: 2500 }));
+    expect((await finish(budget.id, { campaign_id: a, daily_budget: 2500 })).status).toBe(200);
+    expect((await postResult(r1, r1Claim, { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 })).status).toBe(200);
+    const { campaign, enabledTotal } = await campaignOf(a);
+    expect([campaign.state, campaign.daily_budget, enabledTotal]).toEqual(["enabled", 2500, 2500]);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2500 + 2000 > 3000
+    // R1 is stale for the budget only, so a fresh check is queued; A already counts while it waits.
+    const fresh = await h.db.prepare("SELECT status FROM adkit_jobs WHERE idempotency_key = ?1").bind(`campaign.status_check:stale:${r1}`).first<{ status: string }>();
+    expect(fresh?.status).toBe("queued");
+  });
+
+  it("K2: a check that straddles a pause is stale for status; the confirmed pause stands", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    const r1 = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
+    const r1Claim = await claimAt(r1, Date.now());
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    expect((await postResult(r1, r1Claim, { campaign_id: a, observed_status: "ENABLED", daily_budget: 2000 })).status).toBe(200);
+    expect((await campaignOf(a)).campaign.state).toBe("paused");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(201);
+  });
+
+  it("a newer check that read no budget keeps the budget an older check read (fields override separately)", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 1500);
+    await enabled(a);
+    const r1 = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
+    const r2 = await secondCheck(r1, "55555555-5555-4555-8555-555555555555");
+    const r1Claim = await claimAt(r1, Date.now());
+    const r2Claim = await claimAt(r2, Date.now());
+    expect((await postResult(r2, r2Claim, { campaign_id: a, observed_status: "ENABLED", daily_budget: null })).status).toBe(200);
+    expect((await postResult(r1, r1Claim, { campaign_id: a, observed_status: "PAUSED", daily_budget: 1800 })).status).toBe(200);
+    const { campaign } = await campaignOf(a);
+    expect([campaign.state, campaign.daily_budget]).toEqual(["enabled", 1800]); // R2 owns status, R1 the only budget read
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 1800 + 1500 > 3000
+  });
+
+  it("a repeated result of a stale check queues the fresh check again if the first call stopped before it", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    await enabled(a);
+    const r1 = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
+    const r1Claim = await claimAt(r1, Date.now());
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    const result = { campaign_id: a, observed_status: "ENABLED", daily_budget: 2000 };
+    expect((await postResult(r1, r1Claim, result)).status).toBe(200);
+    const freshKey = `campaign.status_check:stale:${r1}`;
+    // The first call stopped after the done UPDATE: no fresh check exists.
+    await h.db.prepare("DELETE FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).run();
+    expect(await (await postResult(r1, r1Claim, result)).json()).toEqual({ status: "done", already: true });
+    expect((await h.db.prepare("SELECT status FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).first<{ status: string }>())?.status).toBe("queued");
+  });
+});
+
 describe("F4: core stores a draft only when the result matches the job's budget and a draft or paused status", () => {
   async function claimedDraft(budget: number) {
     const job = await queued(await post(draftBody("petvet", 1, budget), employee));
