@@ -8,6 +8,7 @@ declare global {
       MIGRATIONS: D1Migration[];
       V1_SCHEMA: D1Migration[];
       V1_MIGRATION_TEXTS: Record<string, string>;
+      DRAIN_README: string;
     }
   }
 }

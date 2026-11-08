@@ -71,13 +71,42 @@ Run these steps once per deployment, for the aduplift core (`wrangler.deploy.adu
 1. Stop the adkit executor on both VPS. maimax: comment out the crontab line that runs `adkit-executor.mjs` (or `run.sh`, if it calls the executor) and check that `pgrep -f adkit-executor.mjs` prints nothing. hstgr: stop the executor step in `scheduler.mjs` (or `docker stop` the drain container) and check the same. Skip a VPS where the executor is not installed yet.
 2. Apply the migration: `cd workers/core && bunx wrangler d1 migrations apply <db> --remote -c <deploy config>`.
 3. Deploy core: `bunx wrangler deploy -c <deploy config>`.
-4. Check for NULL rows and require 0:
-   `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "SELECT COUNT(*) FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL)"`.
-   The first clause has no status filter on purpose. The backfill numbers every claimed row and the new core sets `claim_seq` in every claim, and a retry sets `claimed_at` back to NULL, so a match is always a claim the old core made during the gap. That includes a status check the old core claimed and the new core finished: it is `done` with `result_seq` set and `claim_seq` NULL, and its NULL claim (read as 0) would put every earlier enable or pause inside its window and drop ENABLED evidence.
-   A non-zero count means the old core recorded a claim or result after step 2. Keep the executor stopped and repair each matching row:
-   - A `campaign.status_check` with `claim_seq` NULL: never give it a claim number, because any number would rank that old reading as the newest check. Discard it: `UPDATE adkit_jobs SET status = 'failed', result = json_object('error', 'discarded: claimed by the old core during the 0025 deploy'), claimed_at = NULL WHERE id = '<id>'`. Then queue a fresh status check for its campaign from the panel (`POST /admin/adkit/campaign-jobs` with `{"kind":"campaign.status_check","campaign_id":"<id>"}`); it runs when the executor restarts.
-   - Any other row: give each NULL column a number above the current maximum of both columns, one row at a time in updated_at order, a row's claim before its result.
-   Repeat step 4. Start the executor only when the count is 0.
+4. Check for NULL rows and require 0. Run each statement below with `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "<statement>"`. `leads-db/test/deploy-0025.test.ts` runs these exact statements (between the `sql:` markers) on a populated table.
+
+   <!-- sql:count -->
+   ```sql
+   SELECT COUNT(*) AS n FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL)
+   ```
+
+   The first clause has no status filter on purpose. The backfill numbers every claimed row, the new core sets `claim_seq` in every claim, and a retry sets `claimed_at` back to NULL. So a first-clause match is a claim the old core made during the gap. That includes a status check the old core claimed and the new core finished: it is `done` with `result_seq` set and `claim_seq` NULL, and its NULL claim (read as 0) would put every earlier enable or pause inside its window and drop ENABLED evidence.
+
+   A non-zero count means the old core recorded a claim or result after step 2. Keep the executor stopped, list the rows, and repair them one at a time in this order:
+
+   <!-- sql:list -->
+   ```sql
+   SELECT id, kind, status, claim_seq, result_seq FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL) ORDER BY updated_at, rowid
+   ```
+
+   - A `campaign.status_check` row, in any of its forms (still `claimed` by the old core with both columns NULL; `done` with both NULL; `done` with `result_seq` set and `claim_seq` NULL): discard it. It never gets a claim number, because any number would rank that old reading as the newest check. The statement keeps an existing `result_seq` and gives a NULL one the next number, which is safe: `deriveCampaigns` reads done checks only and `writesByCampaign` skips status checks, so a failed check's numbers are never read. Then queue a fresh status check for its campaign from the panel (`POST /admin/adkit/campaign-jobs` with `{"kind":"campaign.status_check","campaign_id":"<campaign id>"}`); it runs when the executor restarts.
+
+     <!-- sql:discard-check -->
+     ```sql
+     UPDATE adkit_jobs SET status = 'failed', result = json_object('error', 'discarded: claimed by the old core during the 0025 deploy'), claimed_at = NULL, result_seq = COALESCE(result_seq, (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs)) WHERE id = '<id>' AND kind = 'campaign.status_check'
+     ```
+
+   - Any other row: number its claim, then its result, each above the current maximum of both columns. A statement that has nothing to do changes nothing.
+
+     <!-- sql:number-claim -->
+     ```sql
+     UPDATE adkit_jobs SET claim_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND claimed_at IS NOT NULL AND claim_seq IS NULL
+     ```
+
+     <!-- sql:number-result -->
+     ```sql
+     UPDATE adkit_jobs SET result_seq = (SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs) WHERE id = '<id>' AND status IN ('done','failed','unknown') AND result_seq IS NULL
+     ```
+
+   Run the count again. Start the executor only when it is 0. Every repair statement is safe to run twice.
 5. Start the executor again on both VPS (restore the crontab line, restart the container or scheduler step).
 
 The steps are idempotent. A run with nothing claimed or finished during the gap returns 0 at step 4.

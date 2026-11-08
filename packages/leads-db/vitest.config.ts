@@ -28,6 +28,8 @@ export default defineConfig(async () => {
             MIGRATIONS: migrations,
             V1_SCHEMA: v1Schema,
             V1_MIGRATION_TEXTS: v1MigrationTexts,
+            // The drain runbook, so deploy-0025.test.ts runs the exact repair statements it documents.
+            DRAIN_README: readFileSync(path.join(here, "..", "..", "scripts", "drain", "README.md"), "utf8"),
           },
         },
       }),
