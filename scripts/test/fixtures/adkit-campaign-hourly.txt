@@ -1,0 +1,2 @@
+Notice: a newer AdKit CLI is available.
+{"results":[{"cost":97.61,"clicks":2,"impressions":4,"breakdown":"hour","hour":17},{"cost":91.74,"clicks":2,"impressions":2,"breakdown":"hour","hour":23},{"cost":50,"clicks":1,"impressions":4,"breakdown":"hour","hour":20},{"cost":49.99,"clicks":1,"impressions":4,"breakdown":"hour","hour":22}]}

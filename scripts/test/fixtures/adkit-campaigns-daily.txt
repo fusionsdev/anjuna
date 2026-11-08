@@ -1,0 +1,2 @@
+Notice: a newer AdKit CLI is available.
+{"results":[{"id":"1000000001","name":"Bison Lending","status":"enabled","primaryStatus":"eligible","impressions":18,"clicks":7,"cost":338.99,"conversions":0},{"id":"1000000002","name":"Sabieng Cooking","status":"enabled","primaryStatus":"limited","impressions":9,"clicks":0,"cost":0,"conversions":0},{"id":"1000000003","name":"Paused Old","status":"paused","impressions":0,"clicks":0,"cost":0,"conversions":0}]}

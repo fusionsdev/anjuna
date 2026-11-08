@@ -36,7 +36,7 @@ const ERROR_MAX = 500;
 const DUPLICATE = /duplicate|already[\s_-]?exist/i;
 
 /** `<resource> <verb>` after `manage google`. Nothing else may run. */
-export const ALLOWED_COMMANDS = Object.freeze(["accounts list", "conversions list", "results list", "conversions create"]);
+export const ALLOWED_COMMANDS = Object.freeze(["accounts list", "conversions list", "results list", "results campaigns", "conversions create"]);
 
 /** A value argument: never empty and never option-like, so it cannot smuggle a flag such as `--help`. */
 const value = (pattern) => (arg) => typeof arg === "string" && arg !== "" && !arg.startsWith("-") && pattern.test(arg);
@@ -69,14 +69,22 @@ const SHAPES = {
 const matches = (shape, args) => args.length === shape.length
   && shape.every((part, i) => (typeof part === "string" ? args[i] === part : part(args[i])));
 
+const campaignBase = ["manage", "google", "results", "campaigns", "--account", ACCOUNT];
+const campaignTail = ["--from", DATE, "--to", DATE, "--limit", "500", "--json"];
+const campaignShapes = [
+  [...campaignBase, ...campaignTail],
+  [...campaignBase, "--campaign", value(/^\d+$/), "--breakdown", "hour", "--fields", "cost,clicks,impressions", ...campaignTail],
+];
+
 export class CommandNotAllowedError extends Error {}
 
 /** Throws unless argv is exactly one allowed command shape, with or without a trailing `--project <p>`. */
 export function assertAllowed(args) {
   const command = Array.isArray(args) ? `${args[2]} ${args[3]}` : "";
   const shape = Array.isArray(args) && Object.hasOwn(SHAPES, command) ? SHAPES[command] : null;
-  const ok = shape !== null && args.every((arg) => typeof arg === "string")
-    && (matches(shape, args) || matches([...shape, "--project", PROJECT], args));
+  const shapes = command === "results campaigns" ? campaignShapes : shape ? [shape] : [];
+  const ok = Array.isArray(args) && args.every((arg) => typeof arg === "string")
+    && shapes.some(s => matches(s, args) || matches([...s, "--project", PROJECT], args));
   if (!ok) {
     const shown = Array.isArray(args) ? args.slice(0, 4).map(String).join(" ") : String(args);
     throw new CommandNotAllowedError(`adkit command not allowed: ${shown.slice(0, 80) || "(empty)"}`);

@@ -67,8 +67,8 @@ function fakeCore(jobs: Job[], claimStatus = 200) {
 const quiet = { log: () => {}, error: () => {} };
 
 describe("allowlist", () => {
-  it("allows exactly four commands", () => {
-    expect([...x.ALLOWED_COMMANDS].sort()).toEqual(["accounts list", "conversions create", "conversions list", "results list"]);
+  it("allows exactly five commands", () => {
+    expect([...x.ALLOWED_COMMANDS].sort()).toEqual(["accounts list", "conversions create", "conversions list", "results campaigns", "results list"]);
   });
 
   it("rejects campaigns update and every other command before spawning", async () => {
