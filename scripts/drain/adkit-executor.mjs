@@ -39,6 +39,8 @@ import {
 
 const exec = promisify(execFile);
 const ERROR_MAX = 500;
+/** Most time one adkit call may run (execFile timeout). */
+const ADKIT_CALL_MS = 120_000;
 const DUPLICATE = /duplicate|already[\s_-]?exist/i;
 
 /** `<resource> <verb>` after `manage google`. Nothing else may run. */
@@ -159,7 +161,7 @@ export function guardAdkit(run) {
 /** The adkit runner over an `execFile`-shaped function (promisified); tests pass a spy, main passes the real one. */
 export function makeAdkitCli(execImpl) {
   return guardAdkit(async (args) => {
-    const { stdout } = await execImpl("adkit", args, { maxBuffer: 16 * 1024 * 1024, timeout: 120_000 });
+    const { stdout } = await execImpl("adkit", args, { maxBuffer: 16 * 1024 * 1024, timeout: ADKIT_CALL_MS });
     return stdout;
   });
 }
@@ -291,8 +293,13 @@ export function campaignPage(out) {
 export const campaignRows = (out) => campaignPage(out).rows;
 
 const LIST_LIMIT = 500;
-/** Most `campaigns list` pages one lookup reads (10,000 campaigns). Past it the lookup is incomplete. */
-export const LIST_MAX_PAGES = 20;
+/** Most `campaigns list` pages one lookup reads (4,000 campaigns). Past it the lookup is incomplete. */
+export const LIST_MAX_PAGES = 8;
+/**
+ * A job must post its result inside the 30 min claim lease, or another run may claim it again. A list page starts
+ * only when its 120 s CLI timeout still ends before this deadline (from the claim); otherwise the lookup is incomplete.
+ */
+export const JOB_DEADLINE_MS = 25 * 60_000;
 
 /**
  * Every campaign of the account across pages: `--limit 500`, then `--page-token <t>` while the output names a next
@@ -300,10 +307,11 @@ export const LIST_MAX_PAGES = 20;
  * fewer than 500 raw rows. A malformed page, a dropped row, a full page without a token (AdKit may not page) or more
  * than LIST_MAX_PAGES pages counts as incomplete, so no caller creates or reports NOT_FOUND from it.
  */
-export async function listAllCampaigns(run, payload, fallbackProject) {
+export async function listAllCampaigns(run, payload, fallbackProject, { now = Date.now, deadline = now() + JOB_DEADLINE_MS } = {}) {
   const rows = [];
   let token = null;
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    if (now() + ADKIT_CALL_MS > deadline) return { rows, complete: false };
     const out = checked(await run(withRoute([
       "manage", "google", "campaigns", "list", "--account", payload.account, "--limit", String(LIST_LIMIT),
       ...(token ? ["--page-token", token] : []), "--json",
@@ -318,9 +326,9 @@ export async function listAllCampaigns(run, payload, fallbackProject) {
 }
 
 /** campaign.status_check: report what AdKit lists for the campaign id. NOT_FOUND only when the listing is complete. */
-export async function runCampaignStatusCheck(payload, run, fallbackProject, { listCampaigns = listAllCampaigns } = {}) {
+export async function runCampaignStatusCheck(payload, run, fallbackProject, { listCampaigns = listAllCampaigns, clock } = {}) {
   if (!refOk(payload)) throw new JobFailure("invalid campaign.status_check payload", false);
-  const { rows, complete } = await listCampaigns(run, payload, fallbackProject);
+  const { rows, complete } = await listCampaigns(run, payload, fallbackProject, clock);
   const row = rows.find((r) => r.id === payload.campaign_id);
   if (!row) {
     if (!complete) throw new JobFailure("lookup_incomplete", false);
@@ -358,11 +366,11 @@ const checked = (stdout) => {
  * Create (or adopt) the job's draft campaign. Never sends --publish. The name is looked up across every page first;
  * when the lookup cannot prove the name is absent, the job fails for good instead of risking a second campaign.
  */
-export async function runCampaignDraftCreate(payload, run, fallbackProject, { listCampaigns = listAllCampaigns } = {}) {
+export async function runCampaignDraftCreate(payload, run, fallbackProject, { listCampaigns = listAllCampaigns, clock } = {}) {
   const data = draftData(payload);
   if (!data) throw new JobFailure("invalid campaign.draft.create payload", false);
   const lookup = async () => {
-    const { rows, complete } = await listCampaigns(run, payload, fallbackProject);
+    const { rows, complete } = await listCampaigns(run, payload, fallbackProject, clock);
     const row = rows.find((r) => r.name === payload.name && r.status !== "REMOVED");
     if (!row && !complete) throw new JobFailure("lookup_incomplete", false);
     return row ?? null;
@@ -418,10 +426,10 @@ export const runCampaignPause = statusJob("campaign.pause", "PAUSED");
  * Without --publish AdKit may keep the change unapplied, so a mismatch or an unreadable listing fails the job
  * (non-retryable, after a write: core keeps the larger budget counted and queues a status check).
  */
-export async function runCampaignUpdateBudget(payload, run, fallbackProject, { listCampaigns = listAllCampaigns } = {}) {
+export async function runCampaignUpdateBudget(payload, run, fallbackProject, { listCampaigns = listAllCampaigns, clock } = {}) {
   if (!refOk(payload) || !budgetOk(payload?.daily_budget)) throw new JobFailure("invalid campaign.update_budget payload", false);
   checked(await run(updateArgs(payload, { dailyBudget: payload.daily_budget }, false, fallbackProject)));
-  const { rows } = await listCampaigns(run, payload, fallbackProject);
+  const { rows } = await listCampaigns(run, payload, fallbackProject, clock);
   const row = rows.find((r) => r.id === payload.campaign_id);
   if (!row || row.dailyBudget === null) throw new JobFailure("budget_unverified", false);
   if (Math.round(row.dailyBudget * 100) !== Math.round(payload.daily_budget * 100)) {
@@ -449,7 +457,7 @@ const KINDS = {
  */
 export async function executeJobs({
   baseUrl, token, fallbackProject, runAdkit = runAdkitCli, fetchImpl = fetch, log = console.log, error = console.error,
-  listCampaigns = listAllCampaigns,
+  listCampaigns = listAllCampaigns, now = Date.now,
 }) {
   assertProject(fallbackProject);
   const run = guardAdkit(runAdkit);
@@ -480,6 +488,8 @@ export async function executeJobs({
       if (!claimRes.ok) throw new Error(`claim: HTTP ${claimRes.status}: ${(await claimRes.text()).slice(0, 200)}`);
       const claim = await claimRes.json();
       const job = claim.job;
+      // Every lookup of this job ends before the deadline, so the result lands inside the claim lease.
+      const clock = { now, deadline: now() + JOB_DEADLINE_MS };
 
       // After a successful claim every path posts exactly one result, so nothing below may escape this try.
       let outcome;
@@ -494,7 +504,7 @@ export async function executeJobs({
       try {
         const handler = Object.hasOwn(KINDS, job.kind) ? KINDS[job.kind] : undefined;
         if (!handler) throw new JobFailure(`unknown job kind: ${String(job.kind).slice(0, 60)}`, false);
-        outcome = await handler(job.payload, jobRun, fallbackProject, { listCampaigns });
+        outcome = await handler(job.payload, jobRun, fallbackProject, { listCampaigns, clock });
       } catch (e) {
         failure = e instanceof JobFailure ? e : new JobFailure(errorText(e), !(e instanceof CommandNotAllowedError));
       }

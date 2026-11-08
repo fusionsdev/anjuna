@@ -447,7 +447,23 @@ describe("F3: a draft retry never creates a second campaign", () => {
       return JSON.stringify({ campaigns: filler(lists * 500, 500), nextPageToken: `tok-${lists + 1}` });
     };
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
-    expect(lists).toBe(20);
+    expect(lists).toBe(8);
+    expect(core.results[0]).toMatchObject({ error: "lookup_incomplete", retryable: false });
+  });
+
+  it("stops listing when the next page could run past the job deadline (25 min after the claim) and fails without a create", async () => {
+    const core = fakeCore([draftJob()]);
+    let clock = 1_000_000;
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] !== "list") throw new Error("create must not run");
+      lists++;
+      clock += 7 * 60_000; // each page takes 7 minutes
+      return JSON.stringify({ campaigns: filler(lists * 500, 500), nextPageToken: `tok-${lists + 1}` });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, now: () => clock, ...quiet } as never)).toBe(1);
+    // Page 4 starts at 21 min (its 120 s CLI timeout ends by 23 min). Page 5 would start at 28 min: refused.
+    expect(lists).toBe(4);
     expect(core.results[0]).toMatchObject({ error: "lookup_incomplete", retryable: false });
   });
 
