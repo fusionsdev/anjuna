@@ -576,6 +576,51 @@ describe("G2: a malformed or truncated list is never complete", () => {
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
     expect(core.results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND" } });
   });
+
+  describe("L1: total and totalPages are remembered across every page", () => {
+    const pagedRun = (pages: unknown[]) => {
+      const calls: string[][] = [];
+      const runAdkit = async (args: string[]) => {
+        calls.push(args);
+        if (args[3] !== "list") throw new Error("create must not run");
+        const token = args.includes("--page-token") ? args[args.indexOf("--page-token") + 1]! : "p1";
+        return JSON.stringify(pages[Number(token.slice(1)) - 1]);
+      };
+      return { calls, runAdkit };
+    };
+
+    it("page 1 says total 600 and totalPages 3, page 2 has no token and no total: lookup_incomplete, never NOT_FOUND, no create", async () => {
+      const pages = [
+        { campaigns: filler(1), total: 600, totalPages: 3, nextPageToken: "p2" },
+        { campaigns: [{ id: "30000000099", name: "other-search-99", status: "PAUSED", dailyBudget: 10 }] },
+      ];
+      for (const [kind, payload] of [["campaign.status_check", ref], ["campaign.draft.create", draftPayload]] as const) {
+        const core = fakeCore([job({ kind, payload, attempts: 1 })]);
+        const { calls, runAdkit } = pagedRun(pages);
+        expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+        expect(calls.map((a) => a[3]), kind).toEqual(["list", "list"]);
+        expect(core.results, kind).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "lookup_incomplete", retryable: false }]);
+      }
+    });
+
+    it("totalPages alone on page 1 (3 pages) with 2 pages read is incomplete", async () => {
+      const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
+      const { runAdkit } = pagedRun([{ campaigns: filler(1), totalPages: 3, nextPageToken: "p2" }, { campaigns: filler(1) }]);
+      expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+      expect(core.results[0]).toMatchObject({ error: "lookup_incomplete", retryable: false });
+    });
+
+    it("a consistent 2-page list whose total equals the rows read stays complete: NOT_FOUND", async () => {
+      const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
+      const { calls, runAdkit } = pagedRun([
+        { campaigns: filler(1), total: 2, totalPages: 2, nextPageToken: "p2" },
+        { campaigns: [{ id: "30000000099", name: "other-search-99", status: "PAUSED", dailyBudget: 10 }] },
+      ]);
+      expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+      expect(calls).toHaveLength(2);
+      expect(core.results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND", daily_budget: null } });
+    });
+  });
 });
 
 describe("F4: adopting by name needs name, budget and a paused or draft status", () => {
