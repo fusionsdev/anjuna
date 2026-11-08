@@ -205,8 +205,11 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
   }
   // An unknown enable or budget stays open (counted) until a done row resolves it: a status check created after it
   // became unknown, or a pause or enable (for an enable) or a budget job (for a budget) inserted after it. Insert
-  // order (seq) is used because a job is always inserted after the job it follows.
-  const resolves = (u: JobRow, r: JobRow) => (r.kind === "campaign.status_check" ? r.created_at >= u.updated_at
+  // order (seq) is used because a job is always inserted after the job it follows. A status check that could not read
+  // the budget (daily_budget null) confirms the status only: it never resolves an unknown budget job.
+  const readBudget = (r: JobRow) => typeof (JSON.parse(r.result ?? "{}") as { daily_budget?: unknown }).daily_budget === "number";
+  const resolves = (u: JobRow, r: JobRow) => (r.kind === "campaign.status_check"
+    ? r.created_at >= u.updated_at && (u.kind === "campaign.enable" || readBudget(r))
     : u.kind === "campaign.enable" ? (r.kind === "campaign.pause" || r.kind === "campaign.enable") && r.seq > u.seq
       : r.kind === "campaign.update_budget" && r.seq > u.seq);
   for (const c of campaigns) {

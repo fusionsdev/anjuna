@@ -572,6 +572,25 @@ describe("F2: a lost enable result keeps the budget counted", () => {
     expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(nextEnable);
   });
 
+  it("G3: a status check without a readable budget confirms status only; the unknown budget stays counted", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    const budget = await queued(await post({ kind: "campaign.update_budget", campaign_id: a, daily_budget: 2500 }));
+    const claim = await vps("jobs/claim", { job_id: budget.id });
+    const { claim_id } = await claim.json() as { claim_id: string };
+    await vps("jobs/result", { job_id: budget.id, claim_id, error: "timeout after 120 s", retryable: false });
+    expect(await status(budget.id)).toBe("unknown");
+    const check = (await pendingAt(LATE)).find((j) => j.kind === "campaign.status_check")!;
+    expect((await finish(check.id, { campaign_id: a, observed_status: "ENABLED", daily_budget: null })).status).toBe(200);
+    expect(await stateOf(a)).toBe("enabled");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2500 + 2000 > 3000
+
+    const next = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    expect((await finish(next.id, { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 })).status).toBe(200);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(201); // real budget read: 1000 + 2000
+  });
+
   it("a confirmed pause resolves the unknown enable", async () => {
     const a = await draftDone("petvet", 1, 2000);
     const b = await draftDone("bison", 1, 2000);
