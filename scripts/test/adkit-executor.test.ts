@@ -501,6 +501,19 @@ describe("F3: a draft retry never creates a second campaign", () => {
     expect(String(core.results[0]!.error)).toMatch(/^create_failed: /);
   });
 
+  it("a duplicate create whose follow-up lookup times out fails for good, so no retry creates a second campaign", async () => {
+    const core = fakeCore([draftJob()]);
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] === "list" && ++lists === 1) return JSON.stringify({ campaigns: [] });
+      if (args[3] === "list") throw Object.assign(new Error("Command failed"), { stderr: "list timed out after 120 s" });
+      throw Object.assign(new Error("Command failed"), { stderr: "campaign already exists" });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(lists).toBe(2);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: expect.stringMatching(/^create_failed: .*list timed out/), retryable: false }]);
+  });
+
   it("a page token that looks like a flag is refused by the allowlist", async () => {
     const guarded = x.guardAdkit(vi.fn(async () => "{}"));
     await expect(guarded(["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", "--publish", "--json"]))

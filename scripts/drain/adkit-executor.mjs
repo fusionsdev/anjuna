@@ -396,7 +396,14 @@ export async function runCampaignDraftCreate(payload, run, fallbackProject, { li
     if (e instanceof CommandNotAllowedError || e instanceof JobFailure) throw e;
     // The create started, so it may have made the campaign. A retry could create a second one if `campaigns list`
     // does not show it, so every failure from here on is final; only a duplicate the lookup can see is adopted.
-    const adopted = DUPLICATE.test(errorFull(e)) ? await lookup() : null;
+    let adopted = null;
+    try {
+      adopted = DUPLICATE.test(errorFull(e)) ? await lookup() : null;
+    } catch (lookupError) {
+      // A JobFailure (lookup_incomplete) is already final; any other lookup error is made final too.
+      if (lookupError instanceof JobFailure) throw lookupError;
+      throw new JobFailure(`create_failed: ${errorText(e)}; lookup: ${errorText(lookupError)}`.slice(0, ERROR_MAX), false);
+    }
     if (!adopted) throw new JobFailure(`create_failed: ${errorText(e)}`.slice(0, ERROR_MAX), false);
     return adopt(adopted);
   }
