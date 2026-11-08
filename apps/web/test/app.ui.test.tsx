@@ -204,11 +204,11 @@ describe("Console rail", () => {
     expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["รายชื่ออีเมล", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
-  it("shows an owner all six Settings tabs in order", async () => {
+  it("shows an owner all seven Settings tabs in order", async () => {
     window.history.replaceState(null, "", "/mailing");
     render(<App />);
     const tabs = await screen.findByRole("navigation", { name: "หมวดย่อย" });
-    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["ตั้งค่า", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["ตั้งค่า", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
   it("preserves initial template deep links", async () => {
