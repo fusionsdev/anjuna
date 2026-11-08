@@ -86,7 +86,7 @@ describe("nav groups", () => {
   it("makes the sidebar item current on every view of its group", () => {
     expect(groupViews(NAV_GROUPS.traffic)).toEqual(["traffic", "funnel", "errors"]);
     expect(groupViews(NAV_GROUPS.leads)).toEqual(["leads", "conversions"]);
-    expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "deploys", "new-brand"]);
+    expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "campaigns", "deploys", "new-brand"]);
     expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["audit", "builder-keys", "mailing", "settings", "suppressions", "users"]);
   });
 });

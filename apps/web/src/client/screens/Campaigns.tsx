@@ -1,8 +1,9 @@
-import type { PanelCampaign, PanelCampaignsResponse } from "@anjuna/contracts";
+import { roleAtLeast, type PanelCampaign, type PanelCampaignsResponse } from "@anjuna/contracts";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
+import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import "./Campaigns.css";
 
 type State = PanelCampaign["state"];
@@ -64,7 +65,9 @@ function thaiError(e: unknown): string {
 type BrandInfo = { id: string; name: string; domain: string };
 
 export function CampaignsScreen({ me }: { me: Me }) {
-  const isOwner = me.role === "owner";
+  // The server refuses these for a lower role whatever the UI shows; hiding the buttons only spares a 403.
+  const canEnable = roleAtLeast(me.role, PANEL_ROLE_TABLE.enableCampaign);
+  const canPause = roleAtLeast(me.role, PANEL_ROLE_TABLE.pauseCampaign);
   const [data, setData] = useState<PanelCampaignsResponse | null>(null);
   const [brands, setBrands] = useState<BrandInfo[]>([]);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
@@ -175,10 +178,10 @@ export function CampaignsScreen({ me }: { me: Me }) {
                   <td className="num">{budgetText(c)}</td>
                   <td className="num">{account(c.account)}</td>
                   <td className="campaigns-actions">
-                    {isOwner && c.campaign_id && ENABLEABLE.has(c.state) && (
+                    {canEnable && c.campaign_id && ENABLEABLE.has(c.state) && (
                       <button type="button" className="btn pri" disabled={busy !== null} aria-label={`ตรวจและเปิดใช้งาน ${c.name}`} onClick={() => void enable(c)}>ตรวจและเปิดใช้งาน</button>
                     )}
-                    {isOwner && c.campaign_id && PAUSABLE.has(c.state) && (
+                    {canPause && c.campaign_id && PAUSABLE.has(c.state) && (
                       <button type="button" className="btn" disabled={busy !== null} aria-label={`หยุด ${c.name}`} onClick={() => void pause(c)}>หยุด</button>
                     )}
                     {c.campaign_id && c.state !== "removed" && (
@@ -219,7 +222,7 @@ export function CampaignsScreen({ me }: { me: Me }) {
                 })}
               </tbody>
             </table></div>
-            <p className="campaigns-muted">นับงบของแคมเปญที่ทำงาน กำลังเปิด หรือไม่ทราบผล เพดานจำกัดงบที่เปิดได้ ไม่ใช่เป้าการใช้เงิน{isOwner ? " แก้เพดานได้ในหน้าตั้งค่า" : ""}</p>
+            <p className="campaigns-muted">นับงบของแคมเปญที่ทำงาน กำลังเปิด หรือไม่ทราบผล เพดานจำกัดงบที่เปิดได้ ไม่ใช่เป้าการใช้เงิน{roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings) ? " แก้เพดานได้ในหน้าตั้งค่า" : ""}</p>
           </section>
         )}
       </div>

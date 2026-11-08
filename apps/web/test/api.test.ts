@@ -312,6 +312,12 @@ describe("role table coverage", () => {
       viewBrandTimeline: "employee",
       createAdsEvent: "employee",
       deleteAdsEvent: "owner",
+      viewCampaigns: "employee",
+      createCampaignDraft: "employee",
+      enableCampaign: "owner",
+      pauseCampaign: "owner",
+      updateCampaignBudget: "owner",
+      checkCampaignStatus: "employee",
     });
   });
 });

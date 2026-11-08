@@ -156,7 +156,7 @@ describe("Console rail", () => {
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
     expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("แบรนด์");
     const tabs = screen.getByRole("navigation", { name: "หมวดย่อย" });
-    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["แบรนด์", "ประวัติการติดตั้ง"]);
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["แบรนด์", "แคมเปญ", "ประวัติการติดตั้ง"]);
     expect(within(tabs).getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
   });
 
