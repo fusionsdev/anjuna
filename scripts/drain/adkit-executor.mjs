@@ -361,6 +361,9 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
   // The largest total and totalPages any page reported. A later page that omits them does not erase them.
   let maxTotal = null;
   let maxTotalPages = null;
+  // Every page token already followed. A token that comes back means AdKit is looping over pages it already sent,
+  // so the rows read prove nothing about the rest: the lookup ends incomplete at once.
+  const tokensSeen = new Set();
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
     if (now() + ADKIT_CALL_MS > deadline) return { rows, complete: false };
     const out = checked(await run(withRoute([
@@ -375,6 +378,10 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
     if (page.total !== null) maxTotal = Math.max(maxTotal ?? 0, page.total);
     if (page.totalPages !== null) maxTotalPages = Math.max(maxTotalPages ?? 0, page.totalPages);
     token = page.token;
+    if (token !== null) {
+      if (tokensSeen.has(token)) return { rows, complete: false };
+      tokensSeen.add(token);
+    }
     if (!token) {
       // A total or page count reported on ANY page above what was read means rows exist that this lookup never saw.
       const short = (maxTotal !== null && rawSeen < maxTotal) || (maxTotalPages !== null && pagesRead < maxTotalPages);

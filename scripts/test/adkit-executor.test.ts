@@ -622,6 +622,24 @@ describe("G2: a malformed or truncated list is never complete", () => {
       }
     });
 
+    it("M2: a page token that repeats ends the lookup as incomplete: no NOT_FOUND, no create", async () => {
+      const x1 = { id: "30000000001", name: "other-search-1", status: "PAUSED", dailyBudget: 10 };
+      for (const [kind, payload] of [["campaign.status_check", ref], ["campaign.draft.create", draftPayload]] as const) {
+        const core = fakeCore([job({ kind, payload, attempts: 1 })]);
+        const calls: string[][] = [];
+        const runAdkit = async (args: string[]) => {
+          calls.push(args);
+          if (args[3] !== "list") throw new Error("create must not run");
+          // page 1: X, token p2. page 2 (asked with p2): X again, token p2 again. A third call would return X, no token.
+          if (!args.includes("--page-token")) return JSON.stringify({ campaigns: [x1], total: 3, totalPages: 3, nextPageToken: "p2" });
+          return calls.length === 2 ? JSON.stringify({ campaigns: [x1], nextPageToken: "p2" }) : JSON.stringify({ campaigns: [x1] });
+        };
+        expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+        expect(calls.map((a) => a[3]), kind).toEqual(["list", "list"]);
+        expect(core.results, kind).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "lookup_incomplete", retryable: false }]);
+      }
+    });
+
     it("totalPages alone on page 1 (3 pages) with 2 pages read is incomplete", async () => {
       const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
       const { runAdkit } = pagedRun([{ campaigns: filler(1), totalPages: 3, nextPageToken: "p2" }, { campaigns: filler(1) }]);
