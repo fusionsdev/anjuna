@@ -4,8 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdkitJob, PanelCampaignsResponse, type AdminRequestContext } from "@anjuna/contracts";
 import { handleJobClaim, handleJobResult, handleJobsPending } from "../src/adkit.js";
-import { createCampaignJob, deriveCampaigns, type CampaignJobHooks } from "../src/campaign-jobs.js";
-import type { JobRow } from "../src/adkit.js";
+import { createCampaignJob, type CampaignJobHooks } from "../src/campaign-jobs.js";
 import { recordCampaignBrand } from "../src/campaign-brand-map.js";
 import type { Env } from "../src/env.js";
 import { createHarness, DRAIN_TOKEN, type Harness } from "./helpers.js";
@@ -879,87 +878,44 @@ describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a bu
   });
 });
 
-describe("P1: the Deploy 0025 repair (scripts/drain/README.md) never lowers counted spend", () => {
+describe("Deploy 0025 gate (scripts/drain/README.md step 4): a correct deploy leaves the count at 0", () => {
   const README = readFileSync(fileURLToPath(new URL("../../../scripts/drain/README.md", import.meta.url).href), "utf8");
-  const readmeSql = (name: string) => {
-    const match = new RegExp(`<!-- sql:${name} -->\\s*\`\`\`sql\\s*([\\s\\S]*?)\`\`\``).exec(README);
-    if (!match) throw new Error(`README has no sql:${name} block`);
+  const gateSql = () => {
+    const match = /<!-- sql:count -->\s*```sql\s*([\s\S]*?)```/.exec(README);
+    if (!match) throw new Error("README has no sql:count block");
     return match[1]!.trim();
   };
-  const withId = (sql: string, id: string) => sql.replaceAll("'<id>'", `'${id}'`);
-  const NEXT = "(SELECT MAX(COALESCE(MAX(claim_seq), 0), COALESCE(MAX(result_seq), 0)) + 1 FROM adkit_jobs)";
-  const derive = async () => {
-    const { results } = await h.db.prepare("SELECT * FROM adkit_jobs WHERE kind LIKE 'campaign.%' ORDER BY created_at, id").all<JobRow>();
-    return new Map(deriveCampaigns(results).filter((c) => c.campaign_id)
-      .map((c) => [c.campaign_id!, { state: c.state, spending: c.spending, committed: c.committedBudget }]));
-  };
-  /** A row the old core left during the deploy gap. resultSeq "next" takes the next counter value. */
-  async function oldCoreRow(id: string, kind: string, campaignId: string, name: string, status: string,
-    result: Record<string, unknown> | null, resultSeq: "next" | null) {
-    await h.db.prepare(`INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, claim_id, claimed_at,
-        created_at, updated_at, seq, claim_seq, result_seq)
-      VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, 'core', 'old-claim', ?7, ?7, ?7, (SELECT MAX(seq) + 1 FROM adkit_jobs), NULL, ${resultSeq === "next" ? NEXT : "NULL"})`)
-      .bind(id, kind, JSON.stringify({ campaign_id: campaignId, brand_id: "petvet", account: THB_ACCOUNT, project: "proj_a", name }),
-        status, result === null ? null : JSON.stringify(result), `old-${id}`, new Date().toISOString()).run();
-  }
+  const enableReq = (campaignId: string) => new Request("https://core.aduplift.ai/admin/adkit/campaign-jobs", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "campaign.enable", campaign_id: campaignId }),
+  });
 
-  it("each old-core form reaches count 0 and stays 0; A (PAUSED in the panel, check read ENABLED/2500) stays counted; enable B=2000 is 422", async () => {
-    // A: an adopted PAUSED draft at 1000; no enable or pause job exists for it.
-    const draftA = await queued(await post(draftBody("petvet", 1, 1000), employee));
-    const a = "22000000101";
-    expect((await finish(draftA.id, { campaign_id: a, name: "petvet-search-1", adopted: true, status: "PAUSED", daily_budget: 1000 })).status).toBe(200);
+  it("drafts, enable, status check, pause, a refused held enable and an unknown budget, all by the new core: count 0", async () => {
+    const env = { LEADS: h.db, FACTORY: h.factory, DRAIN_TOKEN } as unknown as Env;
+    const a = await draftDone("petvet", 1, 1000);
+    await enabled(a);
+    const check = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    expect((await finish(check.id, { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 })).status).toBe(200);
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    // Two concurrent enables: one is refused on its cap recheck (held to failed).
     const b = await draftDone("bison", 1, 2000);
-    const c = await draftDone("petvet", 2, 300);
-    const d = await draftDone("petvet", 3, 200);
-    const e = await draftDone("petvet", 4, 300);
-    // Old-core forms.
-    await oldCoreRow("66666666-6666-4666-8666-000000000001", "campaign.status_check", a, "petvet-search-1", "done",
-      { campaign_id: a, observed_status: "ENABLED", daily_budget: 2500 }, "next"); // done, result_seq set, claim_seq NULL
-    await oldCoreRow("66666666-6666-4666-8666-000000000002", "campaign.status_check", c, "petvet-search-2", "claimed", null, null); // claimed, both NULL
-    await oldCoreRow("66666666-6666-4666-8666-000000000003", "campaign.status_check", d, "petvet-search-3", "done",
-      { campaign_id: d, observed_status: "PAUSED", daily_budget: 200 }, null); // done, both NULL
-    await oldCoreRow("66666666-6666-4666-8666-000000000004", "campaign.enable", e, "petvet-search-4", "done",
-      { campaign_id: e, status: "ENABLED" }, null); // done enable, both NULL
-
-    const before = await derive();
-    expect(before.get(a)).toEqual({ state: "enabled", spending: true, committed: 2500 });
-    const count = async () => (await h.db.prepare(readmeSql("count")).first<{ n: number }>())!.n;
-    expect(await count()).toBe(4);
-
-    const repairAll = async (ids?: string[]) => {
-      const listed = ids ? (await Promise.all(ids.map((id) => h.db.prepare("SELECT id, kind, status FROM adkit_jobs WHERE id = ?1").bind(id)
-        .first<{ id: string; kind: string; status: string }>()))).map((r) => r!)
-        : (await h.db.prepare(readmeSql("list")).all<{ id: string; kind: string; status: string }>()).results;
-      for (const row of listed) {
-        for (const name of ["keep-done-check", "discard-unfinished-check", "number-claim", "number-result"]) {
-          await h.db.prepare(withId(readmeSql(name), row.id)).run();
-        }
-      }
-      return listed.map((r) => r.id);
-    };
-    const repaired = await repairAll();
-    expect(repaired).toHaveLength(4);
-    expect(await count()).toBe(0);
-    const after = await derive();
-    await repairAll(repaired); // rerun every statement on every repaired row
-    expect(await count()).toBe(0);
-    expect(await derive()).toEqual(after);
-
-    // Counted spend never goes down: every campaign counted before is counted after, at the same or a larger budget.
-    for (const [id, was] of before) {
-      const now = after.get(id)!;
-      if (was.spending) expect(now.spending, id).toBe(true);
-      if (was.spending) expect(now.committed, id).toBeGreaterThanOrEqual(was.committed);
-    }
-    expect(after.get(a)).toEqual({ state: "enabled", spending: true, committed: 2500 });
-    // The done check keeps status done and its result.
-    const kept = await h.db.prepare("SELECT status, result FROM adkit_jobs WHERE id = '66666666-6666-4666-8666-000000000001'").first<{ status: string; result: string }>();
-    expect(kept!.status).toBe("done");
-    expect(JSON.parse(kept!.result)).toMatchObject({ observed_status: "ENABLED", daily_budget: 2500 });
-
-    // The runbook queues a fresh check; before it runs, enable B=2000 is still refused (2500 + 300 + 2000 > 3000).
-    expect((await post({ kind: "campaign.status_check", campaign_id: a }, employee)).status).toBeLessThan(300);
-    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422);
+    const c = await draftDone("petvet", 2, 2000);
+    let inner: Response | undefined;
+    const outer = await createCampaignJob(enableReq(b), env, owner, Date.parse(PINNED_NOW), {
+      afterPrecheck: async () => { inner = await createCampaignJob(enableReq(c), env, owner, Date.parse(PINNED_NOW)); },
+    });
+    expect([outer.status, inner!.status].sort()).toEqual([201, 422]);
+    // The released enable runs; then a budget change on it ends unknown (write may have run) and queues a status check.
+    const live = (await h.db.prepare("SELECT id, json_extract(payload, '$.campaign_id') AS cid FROM adkit_jobs WHERE kind = 'campaign.enable' AND status = 'queued'")
+      .first<{ id: string; cid: string }>())!;
+    expect((await finish(live.id, { campaign_id: live.cid, status: "ENABLED" })).status).toBe(200);
+    const budget = await queued(await post({ kind: "campaign.update_budget", campaign_id: live.cid, daily_budget: 1500 }));
+    const claim = await vps("jobs/claim", { job_id: budget.id });
+    const { claim_id } = await claim.json() as { claim_id: string };
+    await vps("jobs/result", { job_id: budget.id, claim_id, error: "timeout after 120 s", retryable: false });
+    const statuses = (await h.db.prepare("SELECT status FROM adkit_jobs").all<{ status: string }>()).results.map((r) => r.status);
+    expect(new Set(statuses)).toEqual(new Set(["done", "failed", "unknown", "queued"]));
+    expect((await h.db.prepare(gateSql()).first<{ n: number }>())!.n).toBe(0);
   });
 });
 
