@@ -106,7 +106,7 @@ describe("allocation tab", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "แบรนด์ของแคมเปญ 222" }), { target: { value: "bisoncash" } });
     await waitFor(() => expect(campaigns.getByText("กำหนดเอง")).toBeTruthy());
     expect(sent).toEqual([{ account: "5381163935", campaign_id: "222", brand_id: "bisoncash" }]);
-    expect((screen.getByRole("combobox", { name: "แบรนด์ของแคมเปญ 222" }) as HTMLSelectElement).value).toBe("bisoncash");
+    expect((screen.getByRole("combobox", { name: "แบรนด์ของแคมเปญ 222" }) as unknown as HTMLSelectElement).value).toBe("bisoncash");
     expect(campaigns.queryByText("ยังไม่จัดสรร")).toBeNull();
   });
 
