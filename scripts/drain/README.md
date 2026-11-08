@@ -80,7 +80,7 @@ Run these steps once per deployment, for the aduplift core (`wrangler.deploy.adu
 
    The first clause has no status filter on purpose. The backfill numbers every claimed row, the new core sets `claim_seq` in every claim, and a retry sets `claimed_at` back to NULL. So a first-clause match is a claim the old core made during the gap. That includes a status check the old core claimed and the new core finished: it is `done` with `result_seq` set and `claim_seq` NULL, and its NULL claim (read as 0) would put every earlier enable or pause inside its window and drop ENABLED evidence.
 
-   A non-zero count means the old core recorded a claim or result after step 2. Keep the executor stopped, list the rows, and repair them one at a time in this order:
+   Every final result the new core records sets `result_seq`, including a held enable or budget job refused on its cap recheck (T13-4f; a core from T13-4d or T13-4e left that refused row with `result_seq` NULL, and `number-result` below repairs it). A non-zero count therefore means the old core recorded a claim or result after step 2, or a refused held row from a T13-4d/T13-4e core. Keep the executor stopped, list the rows, and repair them one at a time in this order:
 
    <!-- sql:list -->
    ```sql

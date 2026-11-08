@@ -500,6 +500,22 @@ describe("F1: an enable that has not passed the cap recheck is never claimable",
     expect(results.map((r) => r.b)).toEqual([1800]);
   });
 
+  it("N3: a held job refused on its recheck gets a result_seq, so the Deploy 0025 step 4 count stays 0", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const env = coreEnv();
+    const aResponse = await inProc(env, { kind: "campaign.enable", campaign_id: a }, {
+      afterPrecheck: async () => { expect((await inProc(env, { kind: "campaign.enable", campaign_id: b })).status).toBe(201); },
+    });
+    expect(aResponse.status).toBe(422);
+    const refused = (await enableRows()).find((r) => r.status === "failed")!;
+    const row = await h.db.prepare("SELECT result_seq FROM adkit_jobs WHERE id = ?1").bind(refused.id).first<{ result_seq: number | null }>();
+    expect(row!.result_seq).not.toBeNull();
+    const count = await h.db.prepare(`SELECT COUNT(*) AS n FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL)
+      OR (status IN ('done','failed','unknown') AND result_seq IS NULL)`).first<{ n: number }>();
+    expect(count!.n).toBe(0);
+  });
+
   it("a held enable counts toward the caps of the next request", async () => {
     const a = await draftDone("petvet", 1, 2000);
     const b = await draftDone("bison", 1, 2000);

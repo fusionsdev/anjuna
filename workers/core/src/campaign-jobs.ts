@@ -57,7 +57,7 @@ import {
   type PanelCampaign,
 } from "@anjuna/contracts";
 import { checkBudget } from "./ads-caps.js";
-import { JOB_BODY_LIMIT, NEXT_SEQ, adminError, audit, parseBody, publicJob, type JobRow } from "./adkit.js";
+import { JOB_BODY_LIMIT, NEXT_EVENT, NEXT_SEQ, adminError, audit, parseBody, publicJob, type JobRow } from "./adkit.js";
 import type { Env } from "./env.js";
 import { json } from "./http.js";
 
@@ -474,7 +474,7 @@ async function recheckHeldJob(env: Env, jobId: string, at: string, hooks: Campai
       : ({ ok: false, reason: "total_cap" } as const);
     if (!check.ok) {
       await env.LEADS.prepare(`
-        UPDATE adkit_jobs SET status = 'failed', result = json_object('error', ?2), updated_at = ?3
+        UPDATE adkit_jobs SET status = 'failed', result = json_object('error', ?2), updated_at = ?3, result_seq = ${NEXT_EVENT}
         WHERE id = ?1 AND status = 'held'`)
         .bind(jobId, `refused: ${check.reason} on the cap recheck`, at).run();
       await audit(env, { id: "core", role: "system" }, "adkit.job.refused", jobId, { kind: job.kind, reason: check.reason }, at);
