@@ -38,6 +38,7 @@ vi.mock("../src/client/screens/Leads", () => ({ LeadsScreen: () => <h1>Leads scr
 vi.mock("../src/client/screens/Suppressions", () => ({ SuppressionsScreen: () => <h1>Suppressions screen</h1> }));
 vi.mock("../src/client/screens/Settings", () => ({ SettingsScreen: () => <h1>Settings screen</h1> }));
 vi.mock("../src/client/screens/Deploys", () => ({ DeploysScreen: () => <h1>Deploys screen</h1> }));
+vi.mock("../src/client/screens/Campaigns", () => ({ CampaignsScreen: ({ me }: { me: { role: string } }) => <h1>Campaigns screen {me.role}</h1> }));
 vi.mock("../src/client/screens/BrandTimeline", () => ({ BrandTimelineScreen: ({ brandId }: { brandId: string }) => <h1>Timeline screen {brandId}</h1> }));
 vi.mock("../src/client/screens/SignIn", () => ({ SignIn: () => <h1>Sign in screen</h1> }));
 
@@ -107,6 +108,7 @@ describe("Console rail", () => {
 
   it.each([
     ["/deploys", "ประวัติการติดตั้ง", "Deploys screen"],
+    ["/brands", "แคมเปญ", "Campaigns screen owner"],
     ["/traffic", "ฟันเนล", "Funnel screen"],
     ["/funnel", "ข้อผิดพลาดฝั่งเว็บ", "Client errors screen"],
     ["/errors", "ทราฟฟิก", "Traffic screen"],
@@ -239,6 +241,7 @@ describe("Console rail", () => {
     ["/suppressions", "Suppressions screen", "ตั้งค่า"],
     ["/audit", "Audit screen", "ตั้งค่า"],
     ["/builder-keys", "Builder keys screen", "ตั้งค่า"],
+    ["/campaigns", "Campaigns screen owner", "แบรนด์"],
   ])("deep link %s renders its screen", async (path, heading, label) => {
     window.history.replaceState(null, "", path);
     render(<App />);

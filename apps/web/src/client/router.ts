@@ -24,6 +24,8 @@ export type Route =
   // spec traffic
   | { view: "traffic" }
   | { view: "errors" }
+  // T13 Part B
+  | { view: "campaigns" }
   | { view: "not-found"; path: string };
 export type View = Route["view"];
 
@@ -49,6 +51,8 @@ const STATIC: Record<string, Route> = {
   // spec traffic
   "/traffic": { view: "traffic" },
   "/errors": { view: "errors" },
+  // T13 Part B
+  "/campaigns": { view: "campaigns" },
 };
 
 /** A bad escape such as "%" reads as no id, so the list opens. */

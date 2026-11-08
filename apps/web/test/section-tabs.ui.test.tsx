@@ -53,7 +53,7 @@ describe("nav groups", () => {
   const labels = (group: keyof typeof NAV_GROUPS, role: "owner" | "employee") => visibleTabs(NAV_GROUPS[group], role).map((t) => t.label);
 
   it("lists the tab sets of the brief for an owner", () => {
-    expect(labels("brands", "owner")).toEqual(["แบรนด์", "ประวัติการติดตั้ง"]);
+    expect(labels("brands", "owner")).toEqual(["แบรนด์", "แคมเปญ", "ประวัติการติดตั้ง"]);
     expect(labels("traffic", "owner")).toEqual(["ทราฟฟิก", "ฟันเนล", "ข้อผิดพลาดฝั่งเว็บ"]);
     expect(labels("leads", "owner")).toEqual(["ลีด", "คอนเวอร์ชัน"]);
     expect(labels("settings", "owner")).toEqual(["ตั้งค่า", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
@@ -68,7 +68,7 @@ describe("nav groups", () => {
     // A Record forces a new view to be listed here, so a screen added later cannot silently miss the menu.
     const grouped: Record<View, string | null> = {
       home: null, templates: null, alerts: null, "not-found": null,
-      brands: "brands", "new-brand": "brands", "brand-timeline": "brands", deploys: "brands",
+      brands: "brands", "new-brand": "brands", "brand-timeline": "brands", deploys: "brands", campaigns: "brands",
       traffic: "traffic", funnel: "traffic", errors: "traffic",
       leads: "leads", conversions: "leads",
       settings: "settings", users: "settings", mailing: "settings", suppressions: "settings", audit: "settings", "builder-keys": "settings",

@@ -6,6 +6,7 @@ import { BrandLifecycle } from "./screens/BrandLifecycle";
 import { BrandTimelineScreen } from "./screens/BrandTimeline";
 import { ConversionsScreen } from "./screens/Conversions";
 import { DeploysScreen } from "./screens/Deploys";
+import { CampaignsScreen } from "./screens/Campaigns";
 import { FunnelScreen } from "./screens/Funnel";
 import { HomeScreen } from "./screens/Home";
 import { LeadDetailScreen } from "./screens/LeadDetail";
@@ -116,6 +117,7 @@ export function App() {
       {/* spec timeline */}
       {route.view === "brand-timeline" && <BrandTimelineScreen me={me} brandId={route.brandId} />}
       {view === "deploys" && <DeploysScreen me={me} />}
+      {view === "campaigns" && <CampaignsScreen me={me} />}
       {view === "templates" && (
         <TemplatesScreen
           me={me}
