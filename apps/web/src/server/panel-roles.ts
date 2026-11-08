@@ -75,6 +75,8 @@ export const PANEL_ROLE_TABLE = {
   createAdsEvent: "employee",
   /** Deleting a manual Ads account event: Owner only. */
   deleteAdsEvent: "owner",
+  /** T13 A3: the allocation tab (shared accounts, campaign owners, unallocated cost). Owner only; an employee never sees it. */
+  adAllocation: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 
