@@ -364,6 +364,10 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
   // Every page token already followed. A token that comes back means AdKit is looping over pages it already sent,
   // so the rows read prove nothing about the rest: the lookup ends incomplete at once.
   const tokensSeen = new Set();
+  // Every campaign id already read. An id that comes back (on the same page or a later one) means the pages overlap,
+  // for example offset paging while campaigns are added or removed, so the raw row count overstates what was seen
+  // and rows may have been skipped: the lookup ends incomplete at once.
+  const idsSeen = new Set();
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
     if (now() + ADKIT_CALL_MS > deadline) return { rows, complete: false };
     const out = checked(await run(withRoute([
@@ -371,7 +375,11 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
       ...(token ? ["--page-token", token] : []), "--json",
     ], payload, fallbackProject)));
     const page = campaignPage(out);
-    rows.push(...page.rows);
+    for (const row of page.rows) {
+      if (idsSeen.has(row.id)) return { rows, complete: false };
+      idsSeen.add(row.id);
+      rows.push(row);
+    }
     if (!page.ok) return { rows, complete: false };
     rawSeen += page.rawCount;
     pagesRead++;
