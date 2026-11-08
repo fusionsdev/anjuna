@@ -430,6 +430,61 @@ describe("F1: an enable that has not passed the cap recheck is never claimable",
     expect(await pendingAt(env, LATER)).toEqual([job.id]);
   });
 
+  /**
+   * G1: B passes its precheck, then A runs: A inserts first and reads its recheck snapshot (only A). B inserts and
+   * rechecks while A is still held, then A's release UPDATE runs. B has the earlier created_at (or the same
+   * millisecond) and the smaller id, so a created_at or id order would hide A from B and release both.
+   */
+  it.each([
+    ["an earlier created_at and a smaller id", NOW - 1000],
+    ["the same millisecond and a smaller id", NOW],
+  ])("a concurrent enable inserted after the other's snapshot read: B has %s; only one row ends queued", async (_label, bNow) => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const env = coreEnv();
+    let bPassed!: () => void;
+    const bPrecheck = new Promise<void>((r) => { bPassed = r; });
+    let openB!: () => void;
+    const bGate = new Promise<void>((r) => { openB = r; });
+    const enableReq = (campaignId: string) => new Request("https://core.aduplift.ai/admin/adkit/campaign-jobs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "campaign.enable", campaign_id: campaignId }),
+    });
+    const bDone = createCampaignJob(enableReq(b), env, owner, bNow, {
+      newId: () => "00000000-0000-4000-8000-000000000000",
+      afterPrecheck: async () => { bPassed(); await bGate; },
+    });
+    let releases = 0;
+    const aDone = createCampaignJob(enableReq(a), env, owner, NOW, {
+      newId: () => "ffffffff-ffff-4fff-bfff-ffffffffffff",
+      afterPrecheck: async () => { await bPrecheck; },
+      beforeRelease: async () => {
+        if (releases++ > 0) return;
+        openB();
+        await bDone;
+      },
+    });
+    const [aResponse, bResponse] = await Promise.all([aDone, bDone]);
+    const rows = await enableRows();
+    expect(rows.map((r) => r.status).sort(), `A ${aResponse.status}, B ${bResponse.status}`).toEqual(["failed", "queued"]);
+    expect([aResponse.status, bResponse.status].sort()).toEqual([201, 422]);
+    expect(await pendingAt(env, LATER)).toEqual(rows.filter((r) => r.status === "queued").map((r) => r.id));
+  });
+
+  it("seq follows insert order whatever created_at says", async () => {
+    const a = await draftDone("petvet", 1, 500);
+    const b = await draftDone("bison", 1, 500);
+    const env = coreEnv();
+    const enableAt = (campaignId: string, nowMs: number) => createCampaignJob(new Request("https://core.aduplift.ai/admin/adkit/campaign-jobs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "campaign.enable", campaign_id: campaignId }),
+    }), env, owner, nowMs);
+    expect((await enableAt(a, NOW)).status).toBe(201);
+    expect((await enableAt(b, NOW - 60_000)).status).toBe(201);
+    const { results } = await h.db.prepare("SELECT seq, json_extract(payload, '$.campaign_id') AS campaign_id FROM adkit_jobs ORDER BY seq")
+      .all<{ seq: number; campaign_id: string | null }>();
+    expect(results.map((r) => r.seq)).toEqual([...results.keys()].map((i) => results[0]!.seq + i));
+    expect(results.slice(-2).map((r) => r.campaign_id)).toEqual([a, b]);
+  });
+
   it("a held enable counts toward the caps of the next request", async () => {
     const a = await draftDone("petvet", 1, 2000);
     const b = await draftDone("bison", 1, 2000);
@@ -517,6 +572,48 @@ describe("F2: a lost enable result keeps the budget counted", () => {
     expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(nextEnable);
   });
 
+  it("G3: a status check without a readable budget confirms status only; the unknown budget stays counted", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    const budget = await queued(await post({ kind: "campaign.update_budget", campaign_id: a, daily_budget: 2500 }));
+    const claim = await vps("jobs/claim", { job_id: budget.id });
+    const { claim_id } = await claim.json() as { claim_id: string };
+    await vps("jobs/result", { job_id: budget.id, claim_id, error: "timeout after 120 s", retryable: false });
+    expect(await status(budget.id)).toBe("unknown");
+    const check = (await pendingAt(LATE)).find((j) => j.kind === "campaign.status_check")!;
+    expect((await finish(check.id, { campaign_id: a, observed_status: "ENABLED", daily_budget: null })).status).toBe(200);
+    expect(await stateOf(a)).toBe("enabled");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2500 + 2000 > 3000
+
+    const next = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    expect((await finish(next.id, { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 })).status).toBe(200);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(201); // real budget read: 1000 + 2000
+  });
+
+  it("G4: a status check claimed before a later enable finished is ignored; the campaign stays counted and a fresh check is queued", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    // R1 claims a status check and reads PAUSED, but its result is slow.
+    const check = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    const r1 = await vps("jobs/claim", { job_id: check.id });
+    const { claim_id: r1Claim } = await r1.json() as { claim_id: string };
+    await new Promise((r) => setTimeout(r, 5));
+    // R2 enables the campaign and posts done first.
+    const enable = await queued(await post({ kind: "campaign.enable", campaign_id: a }));
+    expect((await finish(enable.id, { campaign_id: a, status: "ENABLED" })).status).toBe(200);
+    // R1's PAUSED arrives later.
+    expect((await vps("jobs/result", { job_id: check.id, claim_id: r1Claim, result: { campaign_id: a, observed_status: "PAUSED", daily_budget: 2000 } })).status).toBe(200);
+    expect(await stateOf(a)).toBe("enabled");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2000 + 2000 > 3000
+    const fresh = await h.db.prepare("SELECT status, json_extract(payload, '$.campaign_id') AS campaign_id FROM adkit_jobs WHERE idempotency_key = ?1")
+      .bind(`campaign.status_check:stale:${check.id}`).first<{ status: string; campaign_id: string }>();
+    expect(fresh).toEqual({ status: "queued", campaign_id: a });
+  });
+
   it("a confirmed pause resolves the unknown enable", async () => {
     const a = await draftDone("petvet", 1, 2000);
     const b = await draftDone("bison", 1, 2000);
@@ -562,5 +659,13 @@ describe("F4: core stores a draft only when the result matches the job's budget 
     const row = await h.db.prepare("SELECT status, result FROM adkit_jobs WHERE id = ?1").bind(job.id).first<{ status: string; result: string }>();
     expect(row!.status).toBe("done");
     expect(JSON.parse(row!.result)).toEqual(result);
+  });
+
+  it("the campaign list shows an adopted PAUSED campaign as paused and a new DRAFT as draft", async () => {
+    const { job, claim_id } = await claimedDraft(500);
+    await vps("jobs/result", { job_id: job.id, claim_id, result: { campaign_id: "9001", name: "petvet-search-1", adopted: true, status: "PAUSED", daily_budget: 500 } });
+    await draftDone("bison", 1, 300);
+    const body = PanelCampaignsResponse.parse(await (await h.admin("/admin/adkit/campaigns", employee)).json());
+    expect(body.campaigns.map((c) => [c.name, c.state])).toEqual([["petvet-search-1", "paused"], ["bison-search-1", "draft"]]);
   });
 });

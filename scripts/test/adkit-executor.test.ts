@@ -447,7 +447,23 @@ describe("F3: a draft retry never creates a second campaign", () => {
       return JSON.stringify({ campaigns: filler(lists * 500, 500), nextPageToken: `tok-${lists + 1}` });
     };
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
-    expect(lists).toBe(20);
+    expect(lists).toBe(8);
+    expect(core.results[0]).toMatchObject({ error: "lookup_incomplete", retryable: false });
+  });
+
+  it("stops listing when the next page could run past the job deadline (25 min after the claim) and fails without a create", async () => {
+    const core = fakeCore([draftJob()]);
+    let clock = 1_000_000;
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] !== "list") throw new Error("create must not run");
+      lists++;
+      clock += 7 * 60_000; // each page takes 7 minutes
+      return JSON.stringify({ campaigns: filler(lists * 500, 500), nextPageToken: `tok-${lists + 1}` });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, now: () => clock, ...quiet } as never)).toBe(1);
+    // Page 4 starts at 21 min (its 120 s CLI timeout ends by 23 min). Page 5 would start at 28 min: refused.
+    expect(lists).toBe(4);
     expect(core.results[0]).toMatchObject({ error: "lookup_incomplete", retryable: false });
   });
 
@@ -468,10 +484,70 @@ describe("F3: a draft retry never creates a second campaign", () => {
     expect(core.results[0]).toMatchObject({ error: expect.stringContaining("created_without_id"), retryable: false });
   });
 
+  it.each([
+    ["a timeout", { message: "Command failed", stderr: "timed out after 120 s" }, "timed out after 120 s"],
+    ["a duplicate the lookup cannot find", { message: "Command failed", stderr: "campaign already exists" }, "campaign already exists"],
+  ])("a create that fails with %s after it started fails for good, so no retry creates a second campaign", async (_label, err, text) => {
+    const core = fakeCore([draftJob()]);
+    let creates = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] === "list") return JSON.stringify({ campaigns: [] });
+      creates++;
+      throw Object.assign(new Error(err.message), { stderr: err.stderr });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(creates).toBe(1);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: expect.stringContaining(text), retryable: false }]);
+    expect(String(core.results[0]!.error)).toMatch(/^create_failed: /);
+  });
+
   it("a page token that looks like a flag is refused by the allowlist", async () => {
     const guarded = x.guardAdkit(vi.fn(async () => "{}"));
     await expect(guarded(["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", "--publish", "--json"]))
       .rejects.toThrow(/not allowed/);
+  });
+});
+
+describe("G2: a malformed or truncated list is never complete", () => {
+  const ACCOUNT = "4811219623";
+  const draftPayload = {
+    brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1", daily_budget: 500,
+    bid_strategy: "maximize_conversions", geo: { country: "US" }, keywords: ["personal loans"], final_url: "https://petvet.example/",
+  };
+  const ref = { campaign_id: "22000000001", brand_id: "petvet", account: ACCOUNT, project: "proj_a", name: "petvet-search-1" };
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => ({ id: String(30000000000 + i), name: `other-search-${i + 1}`, status: "PAUSED", dailyBudget: 10 }));
+  const runBoth = async (listOutput: unknown) => {
+    const out: Record<string, { calls: string[][]; results: Array<Record<string, unknown>> }> = {};
+    for (const [kind, payload] of [["campaign.draft.create", draftPayload], ["campaign.status_check", ref]] as const) {
+      const core = fakeCore([job({ kind, payload, attempts: 1 })]);
+      const calls: string[][] = [];
+      const runAdkit = async (args: string[]) => {
+        calls.push(args);
+        if (args[3] !== "list") throw new Error("create must not run");
+        return JSON.stringify(listOutput);
+      };
+      expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+      out[kind] = { calls, results: core.results };
+    }
+    return out;
+  };
+  const failsClosed = (out: Awaited<ReturnType<typeof runBoth>>) => {
+    for (const [kind, { calls, results }] of Object.entries(out)) {
+      expect(calls.map((a) => a[3]), kind).toEqual(["list"]);
+      expect(results, kind).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: "lookup_incomplete", retryable: false }]);
+    }
+  };
+
+  it.each([
+    ["{}", {}],
+    ["an object without a rows array", { campaigns: "none", nextPageToken: null }],
+    ["null", null],
+    ["500 raw rows with 1 unparseable", { campaigns: [...filler(499), { name: "broken-search-1", status: "PAUSED" }] }],
+    ["3 raw rows with 1 unparseable", { campaigns: [...filler(2), { id: "not-a-number", name: "x-search-1" }] }],
+    ["a row that is not an object", { campaigns: [...filler(2), "22000000001"] }],
+    ["a next page token that is not a string", { campaigns: filler(2), nextPageToken: 7 }],
+  ])("%s: no create, no NOT_FOUND", async (_label, listOutput) => {
+    failsClosed(await runBoth(listOutput));
   });
 });
 

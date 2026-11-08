@@ -22,7 +22,7 @@ describe("migration 0023 on a populated adkit_jobs", () => {
       .bind(id, status, result, attempts, `key-${id}`, claimId, claimedAt, next)));
     const before = (await env.DB.prepare("SELECT * FROM adkit_jobs ORDER BY id").all()).results;
 
-    await applyD1Migrations(env.DB, env.MIGRATIONS);
+    await applyD1Migrations(env.DB, env.MIGRATIONS.filter((m) => m.name < "0024"));
     const applied = (await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{ name: string }>())!.name;
     expect(applied).toBe("0023_adkit_campaign_jobs.sql");
 
