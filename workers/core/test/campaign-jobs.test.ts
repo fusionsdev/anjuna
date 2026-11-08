@@ -660,4 +660,12 @@ describe("F4: core stores a draft only when the result matches the job's budget 
     expect(row!.status).toBe("done");
     expect(JSON.parse(row!.result)).toEqual(result);
   });
+
+  it("the campaign list shows an adopted PAUSED campaign as paused and a new DRAFT as draft", async () => {
+    const { job, claim_id } = await claimedDraft(500);
+    await vps("jobs/result", { job_id: job.id, claim_id, result: { campaign_id: "9001", name: "petvet-search-1", adopted: true, status: "PAUSED", daily_budget: 500 } });
+    await draftDone("bison", 1, 300);
+    const body = PanelCampaignsResponse.parse(await (await h.admin("/admin/adkit/campaigns", employee)).json());
+    expect(body.campaigns.map((c) => [c.name, c.state])).toEqual([["petvet-search-1", "paused"], ["bison-search-1", "draft"]]);
+  });
 });

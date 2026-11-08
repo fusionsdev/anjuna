@@ -171,8 +171,11 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
   for (const row of rows.filter((r) => r.kind === "campaign.draft.create").sort(byCreated)) {
     const payload = CampaignDraftPayload.parse(JSON.parse(row.payload));
     let campaignId: string | null = null;
-    if (row.status === "done" && row.result) campaignId = (JSON.parse(row.result) as { campaign_id?: string }).campaign_id ?? null;
-    const state = row.status === "done" ? "draft" : row.status === "failed" ? "failed" : "drafting";
+    const result = row.status === "done" && row.result ? JSON.parse(row.result) as { campaign_id?: string; status?: string } : null;
+    if (result) campaignId = result.campaign_id ?? null;
+    // A draft result reports what AdKit holds: DRAFT for a new campaign, PAUSED for an adopted paused one.
+    const state = row.status === "done" ? (result?.status === "PAUSED" ? "paused" : "draft")
+      : row.status === "failed" ? "failed" : "drafting";
     const c: Campaign = {
       draft: row, payload, campaign_id: campaignId, state, budget: payload.daily_budget, committedBudget: payload.daily_budget,
       spending: false, updated_at: row.updated_at, finished: {},
