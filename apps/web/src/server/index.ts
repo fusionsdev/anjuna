@@ -26,15 +26,16 @@ import { callCore, type CoreResult } from "./core.js";
 import type { Env } from "./env.js";
 import { isLocalDev } from "./local-dev.js";
 import { authorizePanel } from "./panel-roles.js";
-import { decodePathSegment, handleLifecycleRoute } from "./lifecycle.js";
+import { decodePathSegment, handleLifecycleRoute, readBrandChecklists } from "./lifecycle.js";
 import { withMockBindings } from "./mock-bindings.js"; // spec polish
 import { handleDeployRoute } from "./deploys.js";
 import { handleTimelineRoute } from "./timeline.js";
 import { handleAuditRoute } from "./audit-route.js";
 import { handleBrandEditRoute } from "./brand-edit.js";
 import { handleBuilderKeyRoute } from "./builder-keys.js";
+import { handleApiKeyRoute, handleApiV1 } from "./api-v1.js";
 import { handleLeadsRoute } from "./leads.js";
-import { handleFxSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
+import { handleFxSettingRoute, handleMicrosoftAdsSettingRoute, handleSettingsRoute, readFxSetting } from "./settings.js";
 import { withUsd } from "./money.js";
 import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
@@ -88,6 +89,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return auth.handler(request);
   }
 
+  // API v1: a bearer key or the session, with scopes (api-v1.ts).
+  if (path === "/api/v1" || path.startsWith("/api/v1/")) return handleApiV1(request, env, url, path, auth);
+
   const session = await auth.api.getSession({ headers: request.headers });
   const role = AdminRole.safeParse(session?.user.role);
   if (!session || !role.success) return json(401, { error: "unauthorized" });
@@ -112,6 +116,9 @@ async function route(
   const { method } = request;
   const rid = ctx.request_id;
   let m: RegExpMatchArray | null;
+
+  // Panel redesign (Task 4): every live brand's checklist in one read, for Home and the Brands screen.
+  if (path === "/api/brands/checklists" && method === "GET") return readBrandChecklists(env, ctx);
 
   const lifecycle = await handleLifecycleRoute(request, env, url, path, ctx);
   if (lifecycle) return lifecycle;
@@ -140,6 +147,12 @@ async function route(
 
   const builderKeys = await handleBuilderKeyRoute(request, env, path, ctx);
   if (builderKeys) return builderKeys;
+
+  const apiKeys = await handleApiKeyRoute(request, env, path, ctx);
+  if (apiKeys) return apiKeys;
+
+  const microsoftAds = await handleMicrosoftAdsSettingRoute(request, env, path, ctx);
+  if (microsoftAds) return microsoftAds;
 
   const brandEdit = await handleBrandEditRoute(request, env, path, ctx);
   if (brandEdit) return brandEdit;

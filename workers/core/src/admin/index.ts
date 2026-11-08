@@ -3,8 +3,10 @@ import {
   AlertsQuery,
   AlertsReportResponse,
   AuditQuery,
+  AdkitProject,
   BrandId,
   ConversionsQuery,
+  GoogleAdsAccount,
   FunnelQuery,
   TrafficBreakdownQuery,
   TrafficReportQuery, // spec traffic
@@ -59,6 +61,7 @@ import { parseStoredTheme } from "../rpc/runtime.js";
 import { loadConversions } from "./conversions-report.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 import { loadConversionSetupState } from "../conversion-setup.js";
+import { createAdkitJob, loadAdkitDirectory } from "../adkit.js";
 import { loadSpendReport } from "../spend.js";
 import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
 
@@ -1243,6 +1246,18 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
       return state ? json(state) : adminError(context, { error: "not_found", resource: "brand" });
     }
   }
+
+  // T9 AdKit directory and job queue (ADR-0005); authorize() above already limited these to the owner.
+  if (route.endpoint === "adkitProjects") return json(await loadAdkitDirectory(env, "project", null));
+  if (route.endpoint === "adkitAccounts") {
+    const project = routeParam(AdkitProject, route.params.project!, "project", context);
+    return project instanceof Response ? project : json(await loadAdkitDirectory(env, "account", project));
+  }
+  if (route.endpoint === "adkitConversionActions") {
+    const account = routeParam(GoogleAdsAccount, route.params.account!, "account", context);
+    return account instanceof Response ? account : json(await loadAdkitDirectory(env, "conversion_action", account));
+  }
+  if (route.endpoint === "createAdkitJob") return createAdkitJob(request, env, context);
 
   // spec leads
   if (route.endpoint === "listLeads") return listLeads(new URL(request.url), env, context);

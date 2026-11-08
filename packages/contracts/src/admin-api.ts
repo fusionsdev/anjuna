@@ -27,6 +27,7 @@ import { TrafficBreakdownQuery, TrafficBreakdownResponse } from "./traffic.js";
 import { z } from "zod";
 import { AdkitProject, BrandId, GoogleAdsAccount, GoogleConversionAction, Hostname, ExperimentId, OpaqueToken, VariantId } from "./common.js";
 import { ConversionSetupStateResponse } from "./conversion-setup.js";
+import { AdkitDirectoryResponse, AdkitJobCreateRequest, AdkitJobCreateResponse } from "./adkit.js";
 import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { BrandTheme } from "./theme.js";
@@ -1044,6 +1045,33 @@ export const AdminApi = {
     path: "/admin/brands/:id/conversion-setup",
     min_role: "owner",
     response: ConversionSetupStateResponse,
+  },
+  /** T9 AdKit directory (ADR-0005): fresh rows only, synced from the VPS. */
+  adkitProjects: {
+    method: "GET",
+    path: "/admin/adkit/projects",
+    min_role: "owner",
+    response: AdkitDirectoryResponse,
+  },
+  adkitAccounts: {
+    method: "GET",
+    path: "/admin/adkit/projects/:project/accounts",
+    min_role: "owner",
+    response: AdkitDirectoryResponse,
+  },
+  adkitConversionActions: {
+    method: "GET",
+    path: "/admin/adkit/accounts/:account/conversion-actions",
+    min_role: "owner",
+    response: AdkitDirectoryResponse,
+  },
+  /** Queue one AdKit job. Idempotent: a repeat answers the existing row with `created: false`. */
+  createAdkitJob: {
+    method: "POST",
+    path: "/admin/adkit/jobs",
+    min_role: "owner",
+    request: AdkitJobCreateRequest,
+    response: AdkitJobCreateResponse,
   },
   conversionsReport: {
     method: "GET",

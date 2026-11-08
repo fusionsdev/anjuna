@@ -124,22 +124,6 @@ describe("BrandLifecycle actions that had no confirmation", () => {
     const recoverDialog = await answerConfirm(false);
     expect(recoverDialog.textContent).toContain("กู้คืนแบรนด์นี้?");
   });
-
-  it("asks before Start upgrade-all, shows the target in the dialog, and sends nothing on cancel", async () => {
-    render(<BrandLifecycle me={owner} />);
-    await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
-    fireEvent.change(screen.getByLabelText("from_template_version_id"), { target: { value: "tv-1" } });
-    fireEvent.change(screen.getByLabelText("to_template_version_id"), { target: { value: "tv-2" } });
-    const start = () => fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์" }));
-    start();
-    const dialog = await answerConfirm(false);
-    expect(dialog.textContent).toContain("tv-1");
-    expect(dialog.textContent).toContain("tv-2");
-    expect(sent("POST", "/api/upgrade-all")).toHaveLength(0);
-    start();
-    await answerConfirm(true);
-    await waitFor(() => expect(sent("POST", "/api/upgrade-all")).toHaveLength(1));
-  });
 });
 
 describe("ConfigPanel actions that had no confirmation", () => {

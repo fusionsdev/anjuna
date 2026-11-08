@@ -44,3 +44,47 @@ export function spendSeries(report: PanelSpendReportResponse): number[] | null {
   const count = Math.round((Date.parse(`${report.to}T00:00:00.000Z`) - first) / 86_400_000) + 1;
   return Array.from({ length: count }, (_, i) => byDay.get(new Date(first + i * 86_400_000).toISOString().slice(0, 10)) ?? 0);
 }
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * True when `updatedAt` (an ISO instant, the newest AdKit sync of a brand) is more than `maxHours` before `now`.
+ * A time that cannot be read counts as stale, so a number of unknown age is never shown.
+ */
+export function isStale(updatedAt: string, now: Date, maxHours = 2): boolean {
+  const at = Date.parse(updatedAt);
+  return Number.isNaN(at) || now.getTime() - at > maxHours * HOUR_MS;
+}
+
+/**
+ * True when the report holds spend rows for the brand and every one was synced within `maxHours`.
+ * No report, no rows, or one stale currency row gives false: the brand page then shows "—" and never a number of unknown age.
+ */
+export function brandSpendFresh(report: PanelSpendReportResponse | null, brandId: string, now: Date, maxHours = 2): boolean {
+  const rows = report?.brands.filter((row) => row.brand_id === brandId) ?? [];
+  return rows.length > 0 && rows.every((row) => !isStale(row.updated_at, now, maxHours));
+}
+
+/**
+ * True when fewer than 5 percent of the paid clicks reached the site, judged only from 20 paid clicks up:
+ * a handful of clicks says nothing. `reachedSite` is the count of visitors the brands' funnel recorded.
+ */
+export function clickLossWarning(paidClicks: number, reachedSite: number): boolean {
+  return paidClicks >= 20 && reachedSite / paidClicks < 0.05;
+}
+
+/** The checklist items a live brand needs. A brand is failing while any of them has no evidence row. */
+const CHECKLIST_ITEMS = ["drain_route", "leadsgate_postbacks", "test_sold", "final_url"] as const;
+
+/**
+ * What one brand's checklist rows say, in the three fields the brand screens read.
+ * `entry` is the brand's entry of GET /api/brands/checklists, or undefined when the brand is not in it (not live) or the read failed.
+ * An `unknown` entry means core did not answer, so the rows cannot tell a missing setting from an outage.
+ * In both cases nothing is known and every field is undefined: nothing is raised and no step is offered.
+ */
+export function checklistFlags(entry: { checklist: ReadonlyArray<{ item: string }>; unknown?: boolean } | undefined): { checklistFailing?: boolean; drain_route?: boolean; test_sold?: boolean } {
+  if (!entry || entry.unknown) return {};
+  const rows = entry.checklist;
+  const has = (item: string) => rows.some((row) => row.item === item);
+  return { checklistFailing: CHECKLIST_ITEMS.some((item) => !has(item)), drain_route: has("drain_route"), test_sold: has("test_sold") };
+}

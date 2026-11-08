@@ -348,6 +348,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport"] },
   { action: "View auto conversion setup status for a brand (FUS-384)", employee: "no", covered_by: ["conversionSetup"] },
   { action: "View conversion upload status, money hidden from employees (FUS-375)", employee: "yes", covered_by: ["conversionsReport"] },
+  { action: "Read the AdKit directory and queue AdKit jobs (panel redesign T9)", employee: "no", covered_by: ["adkitProjects", "adkitAccounts", "adkitConversionActions", "createAdkitJob"] },
 ];
 const PLAN_ROWS_OUT_OF_SCOPE = [
   "Add a brand (domain + keyword) and run install", // T10
@@ -448,7 +449,12 @@ describe("routing", () => {
     expect(matchAdminRoute("POST", "/admin/suppressions/remove")).toEqual({ endpoint: "removeSuppression", params: {} });
     expect(matchAdminRoute("GET", "/admin/traffic/report")).toEqual({ endpoint: "trafficReport", params: {} }); // spec traffic
     expect(matchAdminRoute("GET", "/admin/client-errors")).toEqual({ endpoint: "clientErrors", params: {} }); // spec traffic
-    expect(ADMIN_ENDPOINTS).toHaveLength(24);
+    expect(matchAdminRoute("GET", "/admin/adkit/projects")).toEqual({ endpoint: "adkitProjects", params: {} });
+    expect(matchAdminRoute("GET", "/admin/adkit/projects/proj_a/accounts")).toEqual({ endpoint: "adkitAccounts", params: { project: "proj_a" } });
+    expect(matchAdminRoute("GET", "/admin/adkit/accounts/4811219623/conversion-actions"))
+      .toEqual({ endpoint: "adkitConversionActions", params: { account: "4811219623" } });
+    expect(matchAdminRoute("POST", "/admin/adkit/jobs")).toEqual({ endpoint: "createAdkitJob", params: {} });
+    expect(ADMIN_ENDPOINTS).toHaveLength(28);
   });
 });
 

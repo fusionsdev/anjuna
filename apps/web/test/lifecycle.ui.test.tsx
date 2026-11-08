@@ -33,6 +33,12 @@ let lifecycleRows: LifecycleBrandSummary[];
 let requests: Array<{ method: string; path: string; body: Record<string, unknown> }>;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const lastBody = (path: string) => requests.filter((r) => r.path === path && r.method === "PATCH").at(-1)?.body;
+/** The Test sold fix button, once the install history read is done: it is disabled while that read runs, and a click then does nothing. */
+const enabledSoldButton = async () => {
+  const button = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+  return button;
+};
 const history = (installs: unknown[]) => routes.set("GET /api/brands/brand-a/installs", () => json({ brand_id: "brand-a", installs }));
 const detail = (install: InstallWithReceipts) => routes.set(`GET /api/installs/${install.install_id}`, () => json(install));
 /** The row also has an Install and a Recover button (its primary one): the detail aside is the scope of these names. */
@@ -185,15 +191,11 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
   });
 
-  it("reloads latest outcomes immediately after an accepted upgrade-all", async () => {
-    routes.set("POST /api/upgrade-all", () => json({ instance_id: "new-upgrade" }, 201));
+  it("no longer shows the upgrade-all card on Brands", async () => {
     render(<BrandLifecycle me={owner} />);
-    await screen.findByText("ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)");
-    const reads = () => requests.filter((r) => r.path === "/api/upgrade-all/latest").length;
-    const before = reads();
-    fireEvent.click(screen.getByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์" }));
-    await answerConfirm(true);
-    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    await screen.findByRole("heading", { name: "renderable.test" });
+    expect(screen.queryByRole("button", { name: "เริ่มอัปเกรดทุกแบรนด์" })).toBeNull();
+    expect(screen.queryByLabelText("from_template_version_id")).toBeNull();
   });
 
   it("shows Rollback to Employees on a live brand disabled with the reason, and sends nothing", async () => {
@@ -259,7 +261,10 @@ describe("mounted lifecycle UI with API responses", () => {
     await openRuntimeConfig();
     const panel = await screen.findByRole("complementary", { name: configLabel });
     await within(panel).findAllByRole("textbox");
-    expect(within(panel).queryByRole("button", { name: pauseName })).toBeNull();
+    // Pause shows disabled with its reason instead of being hidden.
+    const pause = within(panel).getByRole("button", { name: pauseName }) as HTMLButtonElement;
+    expect(pause.disabled).toBe(true);
+    expect(pause.title).toBe("เฉพาะเจ้าของหยุดแบรนด์ได้");
     expect(section(panel, keywordSection).getByRole("textbox")).toBeDefined();
     expect(within(panel).queryByRole("heading", { name: abSummarySection })).toBeNull();
     expect(within(panel).queryByRole("textbox", { name: bucketsLabel })).toBeNull();
@@ -361,35 +366,6 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(await inAside().findByRole("button", { name: installName })).toHaveProperty("disabled", true);
     expect((await screen.findByRole("note")).textContent).toBe("ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว");
     expect(screen.queryByRole("button", { name: "ตั้งค่าแบรนด์" })).toBeNull();
-  });
-
-  it("reloads terminal upgrade outcomes after an install retry is accepted", async () => {
-    runtimeAvailable = false;
-    lifecycleRows = [{ ...brand, status: "draft", runtime_sync_status: "queued" }];
-    detail(failed);
-    const outcomeRow = (install_id: string, status: string, retry_of: string | null) => ({
-      brand_id: "brand-a", domain: "renderable.test", is_canary: true, install_id, retry_of, status, error: status === "failed" ? "Smoke check failed" : null,
-    });
-    const upgradeBody = (outcomes: unknown[]) => ({ upgrade: {
-      audit_id: 1, accepted_at: "2026-10-09T00:00:00Z",
-      command: { from_template_version_id: "tv-1", to_template_version_id: "tv-2", form_artifact_id: "fa-1", canary_brand_id: "brand-a", started_by: "owner", started_role: "owner" },
-      outcomes,
-    } });
-    let retried = false;
-    routes.set("GET /api/upgrade-all/latest", () => json(upgradeBody([retried ? outcomeRow("retry-install", "ready", "failed-1") : outcomeRow("failed-1", "failed", null)])));
-    routes.set("POST /api/brands/brand-a/install", () => json({ error: "factory_dispatch_failed", install_id: failed.install_id, message: "Factory Worker binding is missing" }, 502));
-    routes.set("POST /api/installs/failed-1/retry", () => {
-      retried = true;
-      detail({ ...failed, status: "running", runtime_sync_status: "running" });
-      return json({ install_id: failed.install_id, brand_id: "brand-a", status: "running" }, 201);
-    });
-    render(<BrandLifecycle me={owner} />);
-    expect(await screen.findByText("Smoke check failed")).toBeDefined();
-    fireEvent.click(await inAside().findByRole("button", { name: installName }));
-    fireEvent.click(await screen.findByRole("button", { name: retryName }));
-    await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/installs/failed-1/retry")).toBe(true));
-    expect(await screen.findByText("retry-install", { selector: "code" })).toBeDefined();
-    expect(screen.queryByText("Smoke check failed")).toBeNull();
   });
 
   describe("runtime sync cell after a redeploy", () => {
@@ -710,9 +686,142 @@ describe("lifecycle detail header", () => {
   it("a brand without a hostname shows its name once in the detail header", () => {
     // The contract needs one hostname, so a hostname-less row is a cast: a factory-only draft can still arrive that way.
     const bare = { ...brand, hostnames: [], name: "Solo Draft" } as unknown as LifecycleBrandSummary;
-    render(<LifecycleDetail me={owner} brand={bare} checklist={{}} leadId="" onLeadIdChange={() => {}} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} onChecklist={() => {}} />);
+    render(<LifecycleDetail me={owner} brand={bare} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} />);
     expect(screen.getByRole("heading", { name: "Solo Draft" })).toBeTruthy();
     expect(screen.getAllByText(/Solo Draft/)).toHaveLength(1);
+  });
+});
+
+describe("checklist actions and the brand selection", { timeout: 15_000 }, () => {
+  const gateOf = () => { let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); return { gate, release }; };
+  const second = () => LifecycleBrandSummary.parse({ ...brand, brand_id: "brand-b", hostnames: ["second.test"] });
+
+  it("drops a checklist Retry read that finishes after another brand was selected", async () => {
+    lifecycleRows = [structuredClone(brand), second()];
+    history([{ ...failed, error: null }]);
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    const hold = gateOf();
+    let reads = 0;
+    routes.set("GET /api/installs/failed-1", async () => { reads += 1; if (reads > 1) await hold.gate; return json(failed); });
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect((screen.getByRole("button", { name: "ลองติดตั้งใหม่" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "ลองติดตั้งใหม่" }));
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: /second\.test/ }));
+    await screen.findByRole("heading", { name: "second.test" });
+    await act(async () => { hold.release(); });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("keeps the open config and its typed input of another brand when a Test sold of the first brand finishes", { timeout: 15_000 }, async () => {
+    lifecycleRows = [structuredClone(brand), second()];
+    const configB = { ...structuredClone(config), brand_id: "brand-b", hostnames: ["second.test"] };
+    routes.set("GET /api/brands", () => json({ brands: [config, configB].map((c) => ({ brand_id: c.brand_id, hostnames: c.hostnames, status: c.status, flow_gate_mode: c.flow_gate_mode, ab_config: c.ab_config, form_version: c.form_version, stats_7d: { leads: 0, sold: 0, pending: 0 } })), generated_at: "2026-10-06T00:00:00Z" }));
+    routes.set("GET /api/brands/brand-b", () => json({ brand: configB }));
+    routes.set("GET /api/brands/brand-b/site-text", () => json({ brand_id: "brand-b", defaults: null }));
+    routes.set("GET /api/brands/brand-b/installs", () => json({ brand_id: "brand-b", installs: [] }));
+    routes.set("GET /api/brands/brand-b/checklist", () => json({ brand_id: "brand-b", checklist: [] }));
+    routes.set("GET /api/brands/brand-b/revisions", () => json({ brand_id: "brand-b", current_revision_id: null, rollback_target_revision_id: null, revisions: [] }));
+    routes.set("GET /api/brands/brand-b/assets", () => json({ brand_id: "brand-b", assets: [] }));
+    routes.set("GET /api/brands/brand-b/edit", () => json({ brand_id: "brand-b", status: "live", template_version_id: "tv-1", microsoft_ads_account: null }));
+    const hold = gateOf();
+    routes.set("POST /api/brands/brand-a/checklist", async () => { await hold.gate; return json({ evidence: { brand_id: "brand-a", item: "test_sold", actor_id: "owner", verified_at: "2026-11-07T00:00:00Z" } }); });
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await enabledSoldButton());
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
+    await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/brands/brand-a/checklist")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: /second\.test/ }));
+    await screen.findByRole("heading", { name: "second.test" });
+    await openRuntimeConfig();
+    const panel = await screen.findByRole("complementary", { name: configLabel });
+    const keyword = (await within(panel).findByRole("heading", { name: keywordSection })).closest("section")!.querySelector("input")!;
+    fireEvent.change(keyword, { target: { value: "typed not saved" } });
+    const listReads = () => requests.filter((r) => r.path === "/api/lifecycle/brands").length;
+    const before = listReads();
+    await act(async () => { hold.release(); });
+    await waitFor(() => expect(listReads()).toBeGreaterThan(before));
+    expect(screen.getByRole("complementary", { name: configLabel })).toBe(panel);
+    expect((keyword as HTMLInputElement).value).toBe("typed not saved");
+  });
+
+  it("reads the first brand's checklist again after its Test sold, and the step turns done", async () => {
+    let attested = false;
+    routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: attested ? [{ item: "test_sold", evidence: { brand_id: "brand-a", item: "test_sold", actor_id: "owner", verified_at: "2026-11-07T00:00:00Z" } }] : [] }));
+    routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({}); });
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await enabledSoldButton());
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
+    await waitFor(() => expect((screen.getByRole("checkbox", { name: /test_sold/ }) as HTMLInputElement).checked).toBe(true));
+    expect(screen.queryByRole("button", { name: "ยืนยัน Test sold" })).toBeNull();
+  });
+
+  it("turns the fix buttons off while an install runs", async () => {
+    history([{ install_id: "running-1", status: "running", error: null }]);
+    routes.set("GET /api/installs/running-1", () => json({ install_id: "running-1", brand_id: "brand-a", revision_id: "rev-1", status: "running", runtime_sync_status: "queued", receipts: [] }));
+    render(<BrandLifecycle me={owner} />);
+    const fix = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    await waitFor(() => expect((fix as HTMLButtonElement).disabled).toBe(true));
+  });
+});
+
+describe("AdKit numbers on the brand detail", () => {
+  const spendBody = (updatedAt: string) => ({
+    period: "7d", from: "2026-10-01", to: "2026-10-07",
+    totals: { cost_by_currency: { THB: 3500, USD: 0 }, clicks: 25, impressions: 100 },
+    brands: [{ brand_id: "brand-a", currency: "THB", cost: 3500, clicks: 25, impressions: 100, updated_at: updatedAt, cost_usd: 100 }],
+    total_cost_usd: 100, fx: { thbPerUsd: 35 },
+  });
+  const block = async () => screen.findByRole("region", { name: "ตัวเลขโฆษณา" });
+
+  it("shows baht spend and USD profit for the owner when the sync is fresh", async () => {
+    routes.set("GET /api/spend?period=7d", () => json(spendBody(new Date().toISOString())));
+    render(<BrandLifecycle me={owner} />);
+    const adkit = await block();
+    await waitFor(() => expect(adkit.textContent).toContain("฿3,500"));
+    // Revenue 0 in the funnel fixture minus 100 USD cost.
+    expect(adkit.textContent).toContain("−$100");
+  });
+
+  it("shows — for spend and profit when the sync is older than 2 hours", async () => {
+    routes.set("GET /api/spend?period=7d", () => json(spendBody(new Date(Date.now() - 3 * 3_600_000).toISOString())));
+    render(<BrandLifecycle me={owner} />);
+    const adkit = await block();
+    await waitFor(() => expect(requests.some((r) => r.path === "/api/spend?period=7d")).toBe(true));
+    // The spend answer is committed before the assertion: a stale number would be on screen by now.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    expect(adkit.textContent).not.toContain("฿");
+    expect(adkit.textContent).not.toContain("$");
+    expect(adkit.textContent?.match(/—/g)).toHaveLength(2);
+  });
+
+  it("turns a shown number into — once the clock passes 2 hours, with no other change on the screen", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-07T12:00:00.000Z"));
+      routes.set("GET /api/spend?period=7d", () => json(spendBody("2026-11-07T11:30:00.000Z")));
+      // Every checklist step is done and nothing is pending: this brand never re-renders on its own.
+      const done = ["final_url", "leadsgate_postbacks", "test_sold", "drain_route"].map((item) => ({ item, evidence: { brand_id: "brand-a", item, actor_id: "system", verified_at: "2026-11-07T00:00:00Z" } }));
+      routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: done }));
+      render(<BrandLifecycle me={owner} />);
+      const adkit = await block();
+      await waitFor(() => expect(adkit.textContent).toContain("฿3,500"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(3 * 3_600_000); });
+      expect(adkit.textContent).not.toContain("฿");
+      expect(adkit.textContent).not.toContain("$");
+      expect(adkit.textContent?.match(/—/g)).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("has no block and no spend request for an employee", async () => {
+    render(<BrandLifecycle me={employee} />);
+    await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    expect(screen.queryByRole("region", { name: "ตัวเลขโฆษณา" })).toBeNull();
+    expect(requests.some((r) => r.path.startsWith("/api/spend"))).toBe(false);
   });
 });
 
@@ -723,7 +832,7 @@ describe("checklist auto-refresh (FUS-385)", () => {
   const setVisibility = (state: "visible" | "hidden") => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
   const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
   beforeEach(() => vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] }));
-  afterEach(() => { Reflect.deleteProperty(document, "visibilityState"); });
+  afterEach(() => { Reflect.deleteProperty(document, "visibilityState"); vi.useRealTimers(); });
 
   it("refetches after 60 s while drain_route is open and checks the box from the second response", async () => {
     const responses = [[], [{ item: "drain_route", evidence: evidence("drain_route") }]];
@@ -784,16 +893,14 @@ describe("checklist auto-refresh (FUS-385)", () => {
   const deferred = () => { let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); return { gate, release }; };
   const boxChecked = (name: RegExp) => (screen.getByRole("checkbox", { name }) as HTMLInputElement).checked;
 
-  it("keeps a typed lead_id when a poll completes every computed item, then stops requesting", async () => {
+  it("stops requesting once a poll completes every computed item", async () => {
     let reads = 0;
     routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: ++reads === 1 ? [] : allComputed() }));
     render(<BrandLifecycle me={owner} />);
-    const input = await screen.findByLabelText("lead_id");
+    await screen.findByRole("button", { name: "ยืนยัน Test sold" });
     await waitFor(() => expect(checklistReads()).toBe(1));
-    fireEvent.change(input, { target: { value: "lead-typed" } });
     await tick(60_000);
     await waitFor(() => expect(boxChecked(/final_url/)).toBe(true));
-    expect((screen.getByLabelText("lead_id") as HTMLInputElement).value).toBe("lead-typed");
     const before = checklistReads();
     await tick(240_000);
     expect(checklistReads()).toBe(before);
@@ -840,20 +947,51 @@ describe("checklist auto-refresh (FUS-385)", () => {
     errors.mockRestore();
   });
 
+  it.each([["refresh first", [0, 1]], ["poll first", [1, 0]]])("shows test_sold done when the action refresh and the 60 s poll are both in flight (%s)", { timeout: 15_000 }, async (_name, order) => {
+    let attested = false;
+    const holds: Array<ReturnType<typeof deferred>> = [];
+    const sold = { item: "test_sold", evidence: { ...evidence("test_sold"), event_id: "ev-1" } };
+    routes.set("GET /api/brands/brand-a/checklist", async () => {
+      if (!attested || checklistReads() < 2) return json({ brand_id: "brand-a", checklist: [] });
+      const hold = deferred();
+      holds.push(hold);
+      await hold.gate;
+      return json({ brand_id: "brand-a", checklist: [sold] });
+    });
+    routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({}); });
+    render(<BrandLifecycle me={owner} />);
+    fireEvent.click(await enabledSoldButton());
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
+    // waitFor polls with setInterval, which is faked here: step the clock by hand until the reads are in flight.
+    const until = async (count: number) => { for (let i = 0; i < 100 && holds.length < count; i += 1) await tick(10); expect(holds).toHaveLength(count); };
+    await until(1);
+    await tick(60_000);
+    await until(2);
+    for (const index of order) await act(async () => { holds[index]!.release(); });
+    await waitFor(() => expect(boxChecked(/test_sold/)).toBe(true));
+  });
+
   it("keeps test_sold checked when a poll that began before the attest resolves after it", async () => {
     const hold = deferred();
+    let attested = false;
     routes.set("GET /api/brands/brand-a/checklist", async () => {
-      if (checklistReads() >= 2) { await hold.gate; return json({ brand_id: "brand-a", checklist: allComputed() }); }
+      if (attested) return json({ brand_id: "brand-a", checklist: [...allComputed(), { item: "test_sold", evidence: { ...evidence("test_sold"), event_id: "ev-1" } }] });
+      if (checklistReads() === 2) { await hold.gate; return json({ brand_id: "brand-a", checklist: allComputed() }); }
       return json({ brand_id: "brand-a", checklist: [] });
     });
-    routes.set("POST /api/brands/brand-a/checklist", () => json({ evidence: { ...evidence("test_sold"), event_id: "ev-1" } }));
+    routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({ evidence: { ...evidence("test_sold"), event_id: "ev-1" } }); });
     render(<BrandLifecycle me={owner} />);
-    const input = await screen.findByLabelText("lead_id");
+    const fix = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
     await waitFor(() => expect(checklistReads()).toBe(1));
     await tick(60_000);
     await waitFor(() => expect(checklistReads()).toBe(2));
-    fireEvent.change(input, { target: { value: "lead-1" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: /test_sold/ }));
+    fireEvent.click(fix);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("renderable.test");
+    fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/brands/brand-a/checklist")).toBe(true));
     await waitFor(() => expect(boxChecked(/test_sold/)).toBe(true));
     await act(async () => { hold.release(); });

@@ -11,7 +11,7 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   traffic_events: ["risk_score", "risk_signals"], // 0015, FUS-372
   suppressions: ["added_by"], // 0017, FUS-382
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup", "bot_hits"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup", "adkit_directory", "adkit_jobs", "campaign_brand_map", "ad_spend_unallocated", "bot_hits"];
 
 interface ColumnInfo {
   cid: number;
@@ -117,8 +117,12 @@ describe("leads-db migrations", () => {
       [
         "account_credentials",
         "ad_spend",
+        "ad_spend_unallocated",
+        "adkit_directory",
+        "adkit_jobs",
         "bot_hits",
         "brand_runtime",
+        "campaign_brand_map",
         "click_sessions",
         "client_errors",
         "consent_evidence",
@@ -382,8 +386,51 @@ describe("Anjuna additions", () => {
       ["timestamp date", "INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('b', '2026-10-21T00', 1, 1, 'x')"],
       ["unknown source", "INSERT INTO ad_spend (brand_id, date, hour, cost, source, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'bing', 'x')"],
       ["unknown currency", "INSERT INTO ad_spend (brand_id, date, hour, cost, currency, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'EUR', 'x')"],
+      ["unknown allocation", "INSERT INTO ad_spend (brand_id, date, hour, cost, allocation, updated_at) VALUES ('b', '2026-10-21', 1, 1, 'guess', 'x')"],
+      ["short account", "INSERT INTO ad_spend (brand_id, date, hour, cost, account, updated_at) VALUES ('b', '2026-10-21', 1, 1, '538116393', 'x')"],
     ])("rejects %s", async (_name, sql) => {
       await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
+    });
+
+    it("stores exact and a NULL account for a row written without them (0022: earlier rows are exact)", async () => {
+      await env.DB.prepare("INSERT INTO ad_spend (brand_id, date, hour, cost, updated_at) VALUES ('brand-alloc', '2026-10-21', 7, 1, 'x')").run();
+      const row = await env.DB.prepare("SELECT allocation, account FROM ad_spend WHERE brand_id = 'brand-alloc'").first();
+      expect(row).toEqual({ allocation: "exact", account: null });
+    });
+  });
+
+  describe("campaign_brand_map and ad_spend_unallocated (0022)", () => {
+    it("keeps one map row per account and campaign", async () => {
+      const insert = (brand: string) => env.DB.prepare(`INSERT INTO campaign_brand_map
+        (account, campaign_id, brand_id, source, first_seen, updated_at) VALUES ('5381163935', '987', ?1, 'click', 'x', 'x')`).bind(brand);
+      await insert("brand-one").run();
+      await expect(insert("brand-two").run()).rejects.toThrow(/UNIQUE constraint failed/);
+    });
+
+    it.each([
+      ["unknown source", "INSERT INTO campaign_brand_map VALUES ('5381163935', '1', 'b', 'guess', 'x', 'x')"],
+      ["short account", "INSERT INTO campaign_brand_map VALUES ('538116393', '1', 'b', 'click', 'x', 'x')"],
+      ["non-numeric campaign", "INSERT INTO campaign_brand_map VALUES ('5381163935', 'summer', 'b', 'click', 'x', 'x')"],
+      ["negative unallocated cost", "INSERT INTO ad_spend_unallocated VALUES ('5381163935', '2026-10-21', 1, -1, 'THB', 'x')"],
+      ["unallocated hour 24", "INSERT INTO ad_spend_unallocated VALUES ('5381163935', '2026-10-21', 24, 1, 'THB', 'x')"],
+      ["unallocated currency", "INSERT INTO ad_spend_unallocated VALUES ('5381163935', '2026-10-21', 1, 1, 'EUR', 'x')"],
+    ])("rejects %s", async (_name, sql) => {
+      await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
+    });
+
+    it("indexes click_sessions by campaign and by brand, each with click_seen_at", async () => {
+      const ix = await indexes(env.DB, "click_sessions");
+      expect(ix.idx_click_sessions_campaign?.columns).toEqual(["utm_campaign", "click_seen_at"]);
+      expect(ix.click_sessions_brand_seen?.columns).toEqual(["brand_id", "click_seen_at"]);
+    });
+
+    it("keys unallocated rows by account, date, hour (NULL = whole day) and currency", async () => {
+      const insert = (hour: number | null, currency: string) => env.DB.prepare(
+        "INSERT INTO ad_spend_unallocated VALUES ('1231231234', '2026-10-21', ?1, 1, ?2, 'x')").bind(hour, currency);
+      await insert(null, "THB").run();
+      await insert(null, "USD").run();
+      await insert(3, "THB").run();
+      await expect(insert(null, "THB").run()).rejects.toThrow(/UNIQUE constraint failed/);
     });
   });
 
@@ -420,6 +467,34 @@ describe("Anjuna additions", () => {
       for (const stmt of bad) await expect(stmt.run()).rejects.toThrow(/CHECK constraint failed/);
       await insert(GOOD_ACCOUNT, GOOD_NAME, "1".repeat(20), "e".repeat(500)).run();
       await env.DB.prepare("DELETE FROM conversion_setup WHERE brand_id = 'brand-cs'").run();
+    });
+  });
+
+  describe("adkit_directory and adkit_jobs", () => {
+    const directory = (kind: string, currency: string | null) =>
+      env.DB.prepare("INSERT INTO adkit_directory (kind, id, parent_id, name, currency, updated_at) VALUES (?1, 'd1', NULL, 'n', ?2, 'x')")
+        .bind(kind, currency);
+    const job = (id: string, key: string, status: string, claimId: string | null, payload = "{}") =>
+      env.DB.prepare(`INSERT INTO adkit_jobs (id, kind, payload, status, attempts, idempotency_key, requested_by, claim_id, claimed_at, created_at, updated_at)
+        VALUES (?1, 'conversion_action.create', ?2, ?3, 0, ?4, 'usr', ?5, ?6, 'x', 'x')`)
+        .bind(id, payload, status, key, claimId, claimId === null ? null : "x");
+
+    it("directory CHECKs reject an unknown kind and a bad currency", async () => {
+      for (const stmt of [directory("campaign", null), directory("account", "thb"), directory("account", "USDT")]) {
+        await expect(stmt.run()).rejects.toThrow(/CHECK constraint failed/);
+      }
+      await directory("account", "THB").run();
+      await env.DB.prepare("DELETE FROM adkit_directory").run();
+    });
+
+    it("jobs keep one row per idempotency key and a claimed row needs its claim", async () => {
+      await job("j1", "key-1", "queued", null).run();
+      await expect(job("j2", "key-1", "queued", null).run()).rejects.toThrow(/UNIQUE constraint failed/);
+      await expect(job("j3", "key-3", "claimed", null).run()).rejects.toThrow(/CHECK constraint failed/);
+      await expect(job("j4", "key-4", "running", null).run()).rejects.toThrow(/CHECK constraint failed/);
+      await expect(job("j5", "key-5", "queued", null, "not json").run()).rejects.toThrow(/CHECK constraint failed/);
+      await job("j6", "key-6", "claimed", "claim").run();
+      await env.DB.prepare("DELETE FROM adkit_jobs").run();
     });
   });
 

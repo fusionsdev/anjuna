@@ -407,6 +407,13 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
     case "conversionSetup":
       return json(200, conversionSetup);
+    // T9 AdKit routes: the mock has no VPS sync and no job queue, so the directory is empty (shown as "—").
+    case "adkitProjects":
+    case "adkitAccounts":
+    case "adkitConversionActions":
+      return json(200, { items: [], synced_at: null });
+    case "createAdkitJob":
+      return err({ error: "invalid", request_id: rid, issues: [{ path: "body", message: "Mock core has no AdKit job queue" }] });
     case "conversionsReport": {
       const q = conversionsQuery!;
       const owner = ctx.actor_role === "owner";
