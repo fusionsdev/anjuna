@@ -5,7 +5,7 @@ import { nextAction, type LifecycleRow, type NextAction, type Role } from "../..
 import { navigate, routePath } from "../../router";
 import type { ActionBrand, BrandAction } from "../../useBrandActions";
 import type { BrandChecklistEntry, BrandChecklists } from "../../api";
-import { byCurrencyText, type ByCurrency } from "../BrandStatsRow";
+import { SpendText, byCurrencyText, spendEstimated, type ByCurrency } from "../BrandStatsRow";
 import { num } from "./shared";
 
 const MAX_ROWS = 10;
@@ -113,14 +113,15 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, onA
         {rows.slice(0, MAX_ROWS).map(({ brand, action }) => {
           const leads = brandLeads(funnel, brand);
           const cost = owner && spend ? brandSpend(spend, brand.brand_id, now) : null;
+          const estimated = cost !== null && spendEstimated(spend, brand.brand_id);
           const perLead: ByCurrency | null = cost && leads ? Object.fromEntries(Object.entries(cost).map(([currency, amount]) => [currency, amount / leads])) as ByCurrency : null;
           return (
             <li className="home-brand" key={brand.brand_id} data-brand-id={brand.brand_id}>
               <span className="n" data-col="name"><b>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</b>{brand.name && brand.name !== brand.hostnames[0] && <small className="muted"> {brand.name}</small>}</span>
               <span data-col="state" data-label="สถานะ">{STATUS_TEXT[brand.status] ?? brand.status}</span>
               <span data-col="leads" data-label="ลีด">{funnel === undefined ? "…" : leads === null ? "—" : num(leads)}</span>
-              {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : byCurrencyText(cost)}</span>}
-              {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : byCurrencyText(perLead)}</span>}
+              {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : <SpendText text={byCurrencyText(cost)} estimated={estimated} />}</span>}
+              {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : <SpendText text={byCurrencyText(perLead)} estimated={estimated} />}</span>}
               <button type="button" className={`btn${needsPerson(action, brand) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => click(action, brand)}>{action.label}</button>
             </li>
           );

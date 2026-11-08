@@ -220,3 +220,6 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
   .data-table td[data-label=""]::before { content: none; }
   .data-table .num { text-align: left; }
 }
+
+/* T13 A3: "~" on a spend number that includes an unmapped campaign split by click share; the title explains it. */
+.est { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }

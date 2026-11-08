@@ -34,6 +34,7 @@ export const NAV_GROUPS: Record<NavGroupId, NavGroup> = {
     label: "ตั้งค่า",
     tabs: [
       { id: "settings", label: "ตั้งค่า", minRole: PANEL_ROLE_TABLE.viewSettings },
+      { id: "ad-allocation", label: "จัดสรรค่าโฆษณา", minRole: PANEL_ROLE_TABLE.adAllocation },
       { id: "users", label: "ผู้ใช้", minRole: "owner" },
       { id: "mailing", label: "รายชื่ออีเมล" },
       { id: "suppressions", label: "อีเมลที่บล็อก", minRole: "owner" },
