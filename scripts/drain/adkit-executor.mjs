@@ -341,6 +341,9 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
   let token = null;
   let rawSeen = 0;
   let pagesRead = 0;
+  // The largest total and totalPages any page reported. A later page that omits them does not erase them.
+  let maxTotal = null;
+  let maxTotalPages = null;
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
     if (now() + ADKIT_CALL_MS > deadline) return { rows, complete: false };
     const out = checked(await run(withRoute([
@@ -351,11 +354,15 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
     rows.push(...page.rows);
     if (!page.ok) return { rows, complete: false };
     rawSeen += page.rawCount;
-    token = page.token;
-    // A total or page count above what was read means rows exist that this lookup never saw.
-    const short = (page.total !== null && page.total > rawSeen) || (page.totalPages !== null && page.totalPages > pagesRead + 1);
-    if (!token) return { rows, complete: page.rawCount < LIST_LIMIT && !short };
     pagesRead++;
+    if (page.total !== null) maxTotal = Math.max(maxTotal ?? 0, page.total);
+    if (page.totalPages !== null) maxTotalPages = Math.max(maxTotalPages ?? 0, page.totalPages);
+    token = page.token;
+    if (!token) {
+      // A total or page count reported on ANY page above what was read means rows exist that this lookup never saw.
+      const short = (maxTotal !== null && rawSeen < maxTotal) || (maxTotalPages !== null && pagesRead < maxTotalPages);
+      return { rows, complete: page.rawCount < LIST_LIMIT && !short };
+    }
   }
   return { rows, complete: false };
 }

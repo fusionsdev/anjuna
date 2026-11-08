@@ -10,8 +10,14 @@
 --
 -- Backfill: every existing claim (claimed_at set) and every final result (status done, failed or unknown) is one
 -- event. Events are numbered 1..n by time (claimed_at for a claim, updated_at for a result), then rowid, with a
--- row's claim before its own result. A row claimed or finished later by old core (deploy order broken) keeps NULL,
--- which core reads as 0: such a check sorts first and is more often stale.
+-- row's claim before its own result. A row claimed or finished by the old core after this migration keeps NULL,
+-- which the new core reads as 0, and that is a hazard in both directions: a NULL done write (an enable) sorts before
+-- every backfilled write (a pause) and the campaign stops counting; a NULL check claim puts every earlier write in
+-- the check's window and its ENABLED evidence is dropped. Only the adkit executor triggers claims, results and the
+-- lease-expiry sweep, so stop it on every VPS before applying this file, deploy core, require
+--   SELECT COUNT(*) FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND status = 'claimed' AND claim_seq IS NULL)
+--     OR (status IN ('done','failed','unknown') AND result_seq IS NULL)
+-- to return 0, then start it again (scripts/drain/README.md, "Deploy 0025").
 --
 -- Columns are added with ADD COLUMN (nullable, no rebuild), so the 0023 unique key, the CHECKs and the 0023/0024
 -- indexes stay as they are.
