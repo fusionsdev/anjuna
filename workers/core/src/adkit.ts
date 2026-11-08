@@ -56,7 +56,12 @@ export interface JobRow {
   next_attempt_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Insert order (migration 0024), set in the INSERT by NEXT_SEQ. */
+  seq: number;
 }
+
+/** The next insert order value, used inside an INSERT so it is atomic with the row (D1 runs one write at a time). */
+export const NEXT_SEQ = "(SELECT COALESCE(MAX(seq), 0) + 1 FROM adkit_jobs)";
 
 type Schema<T> = {
   safeParse(raw: unknown): { success: true; data: T } | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
@@ -289,8 +294,8 @@ async function queueStatusChecks(env: Env, at: string): Promise<void> {
     const p = JSON.parse(row.payload) as Record<string, unknown>;
     const ref = { campaign_id: p.campaign_id, brand_id: p.brand_id, account: p.account, project: p.project, name: p.name };
     await env.LEADS.prepare(`
-      INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at)
-      VALUES (?1, 'campaign.status_check', ?2, 'queued', NULL, 0, ?3, 'core', ?4, ?4)
+      INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at, seq)
+      VALUES (?1, 'campaign.status_check', ?2, 'queued', NULL, 0, ?3, 'core', ?4, ?4, ${NEXT_SEQ})
       ON CONFLICT (idempotency_key) DO NOTHING`)
       .bind(crypto.randomUUID(), JSON.stringify(ref), `campaign.status_check:${row.id}`, at).run();
   }
@@ -443,8 +448,8 @@ export async function createAdkitJob(request: Request, env: Env, context: AdminR
     brand_draft_id: brandId, account: ads.account, project: ads.project, name: prior?.name ?? conversionName(),
   });
   await env.LEADS.prepare(`
-    INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at)
-    VALUES (?1, ?2, ?3, 'queued', NULL, 0, ?4, ?5, ?6, ?6)
+    INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at, seq)
+    VALUES (?1, ?2, ?3, 'queued', NULL, 0, ?4, ?5, ?6, ?6, ${NEXT_SEQ})
     ON CONFLICT (idempotency_key) DO NOTHING`)
     .bind(id, kind, JSON.stringify(payload), key, context.actor_id, at).run();
   const row = await env.LEADS.prepare("SELECT * FROM adkit_jobs WHERE idempotency_key = ?1").bind(key).first<JobRow>();

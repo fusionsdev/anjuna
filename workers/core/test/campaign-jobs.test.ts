@@ -430,6 +430,61 @@ describe("F1: an enable that has not passed the cap recheck is never claimable",
     expect(await pendingAt(env, LATER)).toEqual([job.id]);
   });
 
+  /**
+   * G1: B passes its precheck, then A runs: A inserts first and reads its recheck snapshot (only A). B inserts and
+   * rechecks while A is still held, then A's release UPDATE runs. B has the earlier created_at (or the same
+   * millisecond) and the smaller id, so a created_at or id order would hide A from B and release both.
+   */
+  it.each([
+    ["an earlier created_at and a smaller id", NOW - 1000],
+    ["the same millisecond and a smaller id", NOW],
+  ])("a concurrent enable inserted after the other's snapshot read: B has %s; only one row ends queued", async (_label, bNow) => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    const env = coreEnv();
+    let bPassed!: () => void;
+    const bPrecheck = new Promise<void>((r) => { bPassed = r; });
+    let openB!: () => void;
+    const bGate = new Promise<void>((r) => { openB = r; });
+    const enableReq = (campaignId: string) => new Request("https://core.aduplift.ai/admin/adkit/campaign-jobs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "campaign.enable", campaign_id: campaignId }),
+    });
+    const bDone = createCampaignJob(enableReq(b), env, owner, bNow, {
+      newId: () => "00000000-0000-4000-8000-000000000000",
+      afterPrecheck: async () => { bPassed(); await bGate; },
+    });
+    let releases = 0;
+    const aDone = createCampaignJob(enableReq(a), env, owner, NOW, {
+      newId: () => "ffffffff-ffff-4fff-bfff-ffffffffffff",
+      afterPrecheck: async () => { await bPrecheck; },
+      beforeRelease: async () => {
+        if (releases++ > 0) return;
+        openB();
+        await bDone;
+      },
+    });
+    const [aResponse, bResponse] = await Promise.all([aDone, bDone]);
+    const rows = await enableRows();
+    expect(rows.map((r) => r.status).sort(), `A ${aResponse.status}, B ${bResponse.status}`).toEqual(["failed", "queued"]);
+    expect([aResponse.status, bResponse.status].sort()).toEqual([201, 422]);
+    expect(await pendingAt(env, LATER)).toEqual(rows.filter((r) => r.status === "queued").map((r) => r.id));
+  });
+
+  it("seq follows insert order whatever created_at says", async () => {
+    const a = await draftDone("petvet", 1, 500);
+    const b = await draftDone("bison", 1, 500);
+    const env = coreEnv();
+    const enableAt = (campaignId: string, nowMs: number) => createCampaignJob(new Request("https://core.aduplift.ai/admin/adkit/campaign-jobs", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "campaign.enable", campaign_id: campaignId }),
+    }), env, owner, nowMs);
+    expect((await enableAt(a, NOW)).status).toBe(201);
+    expect((await enableAt(b, NOW - 60_000)).status).toBe(201);
+    const { results } = await h.db.prepare("SELECT seq, json_extract(payload, '$.campaign_id') AS campaign_id FROM adkit_jobs ORDER BY seq")
+      .all<{ seq: number; campaign_id: string | null }>();
+    expect(results.map((r) => r.seq)).toEqual([...results.keys()].map((i) => results[0]!.seq + i));
+    expect(results.slice(-2).map((r) => r.campaign_id)).toEqual([a, b]);
+  });
+
   it("a held enable counts toward the caps of the next request", async () => {
     const a = await draftDone("petvet", 1, 2000);
     const b = await draftDone("bison", 1, 2000);
