@@ -14,6 +14,9 @@
  *     whose last status job is a done enable, every enable job still held, queued or claimed, and every enable whose
  *     outcome is unknown until a status check or a confirmed pause resolves it. A budget counts at the largest of the
  *     done budget and any pending or unknown budget job.
+ *   - A campaign.status_check result confirms the status. It resolves an unknown budget only when it read a budget
+ *     (daily_budget not null). It counts only when it was claimed after the last done enable, pause or budget job of
+ *     its campaign; an older one is ignored and core queues a fresh check (adkit.ts requeueStaleStatusCheck).
  *   - A budget is in the account currency (adkit_directory). THB counts as is, USD is converted with fx_thb_per_usd,
  *     any other or unknown currency is refused.
  *   - Two owner requests at the same moment could each pass the check before the other's row exists. An enable or
