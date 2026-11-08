@@ -119,6 +119,12 @@ const SpendBrandRow = z.strictObject({
   impressions: Count,
   /** Latest ingest time of any row counted for this brand and currency. */
   updated_at: z.iso.datetime(),
+  /**
+   * T13 A3: `estimated` when any counted row of this brand and currency split an unmapped campaign by click
+   * share; the panel marks such a number with "~". Core always sends it. It is optional so a panel built with
+   * this contract still reads an older core; a missing value reads as `exact`.
+   */
+  allocation: SpendAllocation.optional(),
 });
 
 /** One UTC day of cost in one currency, all brands together. A day with two currencies has two entries. */
@@ -162,3 +168,72 @@ export function spendPeriodRange(period: SpendPeriod, now: Date = new Date()): {
   const from = new Date(Date.parse(`${to}T00:00:00.000Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
   return { from, to };
 }
+
+// --- T13 A3: allocation tab (owner) ----------------------------------------------------------------
+
+/** Days of cost the allocation tab and the ad_spend_unallocated alert look at, ending today (UTC days). */
+export const AD_ALLOCATION_WINDOW_DAYS = 7;
+/** The alert fires when the unmapped cost of an account is above this share of its cost (20 percent is not above). */
+export const AD_SPEND_UNALLOCATED_ALERT_AT = 0.2;
+
+/** Why a campaign belongs to a brand: the panel created it, its clicks showed it, or the owner chose it. */
+export const CAMPAIGN_MAP_SOURCES = ["create", "click", "manual"] as const;
+export const CampaignMapSource = z.enum(CAMPAIGN_MAP_SOURCES);
+export type CampaignMapSource = z.infer<typeof CampaignMapSource>;
+
+/** `now` pins the window end (tests); absent means the current time. */
+export const AdAllocationQuery = z.strictObject({ now: z.iso.datetime().optional() });
+export type AdAllocationQuery = z.infer<typeof AdAllocationQuery>;
+
+/** One Google Ads account that two or more brands share, with its campaign cost of the window per currency. */
+export const AdAllocationAccount = z.strictObject({
+  account: GoogleAdsAccount,
+  /** brand_runtime rows on this account, sorted. Always 2 or more. */
+  brands: z.array(BrandId).min(2),
+  cost_by_currency: SpendCostByCurrency,
+  /** The part of `cost_by_currency` from campaigns no brand owns. */
+  unmapped_cost_by_currency: SpendCostByCurrency,
+});
+export type AdAllocationAccount = z.infer<typeof AdAllocationAccount>;
+
+/** One campaign of a shared account with cost in the window. `brand_id` and `source` are null while unmapped. */
+export const AdAllocationCampaign = z.strictObject({
+  account: GoogleAdsAccount,
+  campaign_id: CampaignId,
+  currency: SpendCurrency,
+  cost: Money,
+  clicks: Count,
+  brand_id: BrandId.nullable(),
+  source: CampaignMapSource.nullable(),
+});
+export type AdAllocationCampaign = z.infer<typeof AdAllocationCampaign>;
+
+/** Core `GET /admin/ad-allocation` (owner only). Money stays per currency, never added across them. */
+export const AdAllocationResponse = z.strictObject({
+  mode: AdsAllocationMode,
+  from: z.iso.date(),
+  to: z.iso.date(),
+  accounts: z.array(AdAllocationAccount),
+  /** Unmapped campaigns first, then by cost (highest first), then account and campaign id. */
+  campaigns: z.array(AdAllocationCampaign),
+  /** ad_spend_unallocated inside the window (only `exact_only` mode writes it). */
+  unallocated_by_currency: SpendCostByCurrency,
+});
+export type AdAllocationResponse = z.infer<typeof AdAllocationResponse>;
+
+/** Core `PATCH /admin/ad-allocation/campaign` (owner only): the owner gives a campaign to a brand of its account. */
+export const AdAllocationAssignRequest = z.strictObject({
+  account: GoogleAdsAccount,
+  campaign_id: CampaignId,
+  brand_id: BrandId,
+});
+export type AdAllocationAssignRequest = z.infer<typeof AdAllocationAssignRequest>;
+
+export const AdAllocationAssignResponse = z.strictObject({
+  account: GoogleAdsAccount,
+  campaign_id: CampaignId,
+  brand_id: BrandId,
+  source: z.literal("manual"),
+  updated_at: z.iso.datetime(),
+});
+export type AdAllocationAssignResponse = z.infer<typeof AdAllocationAssignResponse>;

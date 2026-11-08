@@ -162,8 +162,8 @@ describe("GET /admin/spend", () => {
     expect(pick(day)).toEqual({
       totals: { cost_by_currency: { THB: 8.3, USD: 0 }, clicks: 7, impressions: 70 },
       brands: [
-        { brand_id: "brand-a", currency: "THB", cost: 3.3, clicks: 3, impressions: 30 },
-        { brand_id: "brand-b", currency: "THB", cost: 5, clicks: 4, impressions: 40 },
+        { brand_id: "brand-a", currency: "THB", cost: 3.3, clicks: 3, impressions: 30, allocation: "exact" },
+        { brand_id: "brand-b", currency: "THB", cost: 5, clicks: 4, impressions: 40, allocation: "exact" },
       ],
     });
     expect(Date.parse(day.brands[0]!.updated_at)).toBeGreaterThan(Date.now() - 60_000);
@@ -171,8 +171,8 @@ describe("GET /admin/spend", () => {
     expect(pick(await read("7d"))).toEqual({
       totals: { cost_by_currency: { THB: 25.3, USD: 0 }, clicks: 24, impressions: 240 },
       brands: [
-        { brand_id: "brand-a", currency: "THB", cost: 13.3, clicks: 13, impressions: 130 },
-        { brand_id: "brand-b", currency: "THB", cost: 12, clicks: 11, impressions: 110 },
+        { brand_id: "brand-a", currency: "THB", cost: 13.3, clicks: 13, impressions: 130, allocation: "exact" },
+        { brand_id: "brand-b", currency: "THB", cost: 12, clicks: 11, impressions: 110, allocation: "exact" },
       ],
     });
     const month = await read("30d");
@@ -180,8 +180,8 @@ describe("GET /admin/spend", () => {
     expect(pick(month)).toEqual({
       totals: { cost_by_currency: { THB: 45.3, USD: 0 }, clicks: 44, impressions: 440 },
       brands: [
-        { brand_id: "brand-a", currency: "THB", cost: 13.3, clicks: 13, impressions: 130 },
-        { brand_id: "brand-b", currency: "THB", cost: 32, clicks: 31, impressions: 310 },
+        { brand_id: "brand-a", currency: "THB", cost: 13.3, clicks: 13, impressions: 130, allocation: "exact" },
+        { brand_id: "brand-b", currency: "THB", cost: 32, clicks: 31, impressions: 310, allocation: "exact" },
       ],
     });
   });

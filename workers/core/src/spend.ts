@@ -17,7 +17,7 @@ import {
 import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
-import { allocateSpend, deriveCampaignMap } from "./spend-allocation.js";
+import { allocateSpend, deriveCampaignMap, slotUnits } from "./spend-allocation.js";
 
 /** 5000 rows of about 110 bytes each, with headroom. */
 const INGEST_BODY_LIMIT = 1_000_000;
@@ -93,7 +93,7 @@ export async function handleSpendIngest(request: Request, env: Env): Promise<Res
 }
 
 /** Panel setting `ads_allocation_mode` from factory panel_settings. A missing or unreadable row is `estimated`. */
-async function loadAllocationMode(env: Env): Promise<AdsAllocationMode> {
+export async function loadAllocationMode(env: Pick<Env, "FACTORY">): Promise<AdsAllocationMode> {
   const row = await env.FACTORY.prepare("SELECT value_json FROM panel_settings WHERE key = 'ads_allocation_mode'")
     .first<{ value_json: string }>();
   if (!row) return "estimated";
@@ -111,6 +111,21 @@ const UNALLOCATED_UPSERT_SQL = `
   FROM json_each(?1) WHERE true
   ON CONFLICT (account, date, COALESCE(hour, -1), currency) DO UPDATE SET
     cost = excluded.cost, updated_at = excluded.updated_at`;
+
+/** Campaign rows of the posted slots (?1) for this account (?2) and currency (?3): a rerun replaces them all. */
+const CAMPAIGN_CLEAR_SQL = `
+  DELETE FROM ad_spend_campaign
+  WHERE account = ?2 AND currency = ?3 AND EXISTS (
+    SELECT 1 FROM json_each(?1) j
+    WHERE json_extract(j.value, '$.date') = ad_spend_campaign.date
+      AND COALESCE(json_extract(j.value, '$.hour'), -1) = COALESCE(ad_spend_campaign.hour, -1))`;
+
+/** One row per campaign and slot (migration 0026), read by the allocation tab and the unallocated alert. */
+const CAMPAIGN_INSERT_SQL = `
+  INSERT INTO ad_spend_campaign (account, date, hour, campaign_id, cost, currency, clicks, impressions, updated_at)
+  SELECT ?3, json_extract(value, '$.date'), json_extract(value, '$.hour'), json_extract(value, '$.campaign_id'),
+         json_extract(value, '$.cost'), ?4, json_extract(value, '$.clicks'), json_extract(value, '$.impressions'), ?2
+  FROM json_each(?1) WHERE true`;
 
 /** A slot with no unallocated cost keeps no unallocated row, so a rerun in `estimated` mode clears it. */
 const UNALLOCATED_CLEAR_SQL = `
@@ -209,6 +224,7 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
   const mode = await loadAllocationMode(env);
 
   const spend: Record<string, unknown>[] = [];
+  const campaignRows: Record<string, unknown>[] = [];
   const unallocated: { date: string; hour: number | null; cost: number }[] = [];
   const cleared: { date: string; hour: number | null }[] = [];
   let unallocatedUnits = 0;
@@ -219,6 +235,11 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
     let brandClicks = weightsFrom(hour === null ? undefined : hourClicks.get(slotKey(date, hour)));
     if (total(brandClicks) === 0) brandClicks = weightsFrom(dayClicks.get(date));
     const result = allocateSpend({ campaigns, map, brandClicks, mode });
+    // The same hundredths allocateSpend used, so the campaign rows of a slot add up to its brand rows.
+    slotUnits(campaigns.map((c) => c.cost)).forEach((u, i) => {
+      const c = campaigns[i]!;
+      campaignRows.push({ date, hour, campaign_id: c.campaign_id, cost: u / 100, clicks: c.clicks, impressions: c.impressions });
+    });
     for (const brand of brands) {
       const parts = result.rows.filter((r) => r.brand_id === brand);
       spend.push({
@@ -241,12 +262,13 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
   // One brand row per slot can reach brands x 5000 rows: chunks of 2000 keep each JSON parameter well
   // under D1's 2 MB value bound. The batch is one transaction, so a failure writes nothing.
   const stamp = new Date().toISOString();
-  const chunks = Array.from({ length: Math.ceil(spend.length / 2000) }, (_, i) => spend.slice(i * 2000, (i + 1) * 2000));
+  const chunksOf = <T>(rows: T[]) => Array.from({ length: Math.ceil(rows.length / 2000) }, (_, i) => rows.slice(i * 2000, (i + 1) * 2000));
+  const slotList = JSON.stringify([...slots.values()].map(({ date, hour }) => ({ date, hour })));
   await env.LEADS.batch([
-    ...chunks.map((chunk) => env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(chunk), stamp)),
-    env.LEADS.prepare(STALE_BRAND_CLEAR_SQL).bind(
-      account, JSON.stringify(brands), JSON.stringify([...slots.values()].map(({ date, hour }) => ({ date, hour }))),
-    ),
+    ...chunksOf(spend).map((chunk) => env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(chunk), stamp)),
+    env.LEADS.prepare(CAMPAIGN_CLEAR_SQL).bind(slotList, account, currency),
+    ...chunksOf(campaignRows).map((chunk) => env.LEADS.prepare(CAMPAIGN_INSERT_SQL).bind(JSON.stringify(chunk), stamp, account, currency)),
+    env.LEADS.prepare(STALE_BRAND_CLEAR_SQL).bind(account, JSON.stringify(brands), slotList),
     env.LEADS.prepare(UNALLOCATED_UPSERT_SQL).bind(JSON.stringify(unallocated), stamp, account, currency),
     env.LEADS.prepare(UNALLOCATED_CLEAR_SQL).bind(JSON.stringify(cleared), account, currency),
   ]);
@@ -277,7 +299,7 @@ export async function loadSpendReport(env: Env, period: SpendPeriod, now = new D
   const [brandRows, dayRows] = await env.LEADS.batch([
     env.LEADS.prepare(`
     SELECT s.brand_id, s.currency, SUM(s.cost) AS cost, SUM(s.clicks) AS clicks, SUM(s.impressions) AS impressions,
-           MAX(s.updated_at) AS updated_at${COUNTED_ROWS_SQL}
+           MAX(s.updated_at) AS updated_at, MAX(s.allocation = 'estimated') AS estimated${COUNTED_ROWS_SQL}
     GROUP BY s.brand_id, s.currency
     ORDER BY s.brand_id, s.currency`).bind(from, to),
     env.LEADS.prepare(`
@@ -286,7 +308,7 @@ export async function loadSpendReport(env: Env, period: SpendPeriod, now = new D
     ORDER BY s.date, s.currency`).bind(from, to),
   ]);
   const results = (brandRows as D1Result<{
-    brand_id: string; currency: SpendCurrency; cost: number; clicks: number; impressions: number; updated_at: string;
+    brand_id: string; currency: SpendCurrency; cost: number; clicks: number; impressions: number; updated_at: string; estimated: number;
   }>).results;
   const daily = (dayRows as D1Result<{ date: string; currency: SpendCurrency; cost: number }>).results
     .map((r) => ({ date: r.date, cost: cents(Number(r.cost)), currency: r.currency }));
@@ -297,6 +319,7 @@ export async function loadSpendReport(env: Env, period: SpendPeriod, now = new D
     clicks: Number(r.clicks),
     impressions: Number(r.impressions),
     updated_at: r.updated_at,
+    allocation: Number(r.estimated) === 1 ? "estimated" as const : "exact" as const,
   }));
   const totals = { cost_by_currency: { THB: 0, USD: 0 }, clicks: 0, impressions: 0 };
   for (const b of brands) {

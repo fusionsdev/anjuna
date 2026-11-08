@@ -19,6 +19,7 @@ import {
 } from "@anjuna/insights";
 import type { Env } from "../env.js";
 import { loadBotHits } from "./bot-hits.js";
+import { loadUnallocatedAlert } from "../ad-allocation.js";
 import { listmonkConfigured } from "../listmonk-config.js";
 
 const EMPTY_EVENTS = new InMemoryFunnelEvents([]);
@@ -36,7 +37,13 @@ export async function loadAlerts(env: Env, query: AlertsQuery): Promise<AlertsRe
   const report = await runAlerts(env.LEADS, { submitErrorCounts: EMPTY_SUBMIT_ERRORS }, { now });
   // The crawler block is extra: a failed read omits it and never breaks the alerts report.
   const bot_hits = await loadBotHits(env, now).catch(() => undefined);
-  return AlertsReportResponse.parse(bot_hits ? { ...report, bot_hits } : report);
+  // T13 A3: same rule, a failed read omits the block.
+  const ad_spend_unallocated = await loadUnallocatedAlert(env, now).catch(() => undefined);
+  return AlertsReportResponse.parse({
+    ...report,
+    ...(bot_hits ? { bot_hits } : {}),
+    ...(ad_spend_unallocated ? { ad_spend_unallocated } : {}),
+  });
 }
 
 export async function loadMailingStatus(env: Env): Promise<MailingStatusResponse> {
