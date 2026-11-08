@@ -375,6 +375,8 @@ async function handleCampaignResult(
     if (row.claim_id === claimId) {
       await writeDoneAudit(env, jobId, outcome, row.updated_at, true);
       await recordMap(row.payload);
+      // The first call may have stopped after the done UPDATE; the requeue is idempotent (ON CONFLICT on the key).
+      if (row.kind === "campaign.status_check") await requeueStaleStatusCheck(env, jobId, row.payload, at);
     }
     return json({ status: "done", already: true });
   }

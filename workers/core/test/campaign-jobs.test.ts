@@ -842,6 +842,22 @@ describe("K1/K2: status checks are ordered by claim_seq and result_seq, and a bu
     expect([campaign.state, campaign.daily_budget]).toEqual(["enabled", 1800]); // R2 owns status, R1 the only budget read
     expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 1800 + 1500 > 3000
   });
+
+  it("a repeated result of a stale check queues the fresh check again if the first call stopped before it", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    await enabled(a);
+    const r1 = (await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee))).id;
+    const r1Claim = await claimAt(r1, Date.now());
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    expect((await finish(pause.id, { campaign_id: a, status: "PAUSED" })).status).toBe(200);
+    const result = { campaign_id: a, observed_status: "ENABLED", daily_budget: 2000 };
+    expect((await postResult(r1, r1Claim, result)).status).toBe(200);
+    const freshKey = `campaign.status_check:stale:${r1}`;
+    // The first call stopped after the done UPDATE: no fresh check exists.
+    await h.db.prepare("DELETE FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).run();
+    expect(await (await postResult(r1, r1Claim, result)).json()).toEqual({ status: "done", already: true });
+    expect((await h.db.prepare("SELECT status FROM adkit_jobs WHERE idempotency_key = ?1").bind(freshKey).first<{ status: string }>())?.status).toBe("queued");
+  });
 });
 
 describe("F4: core stores a draft only when the result matches the job's budget and a draft or paused status", () => {
