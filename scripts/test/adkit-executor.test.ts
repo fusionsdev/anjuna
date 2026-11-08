@@ -566,6 +566,13 @@ describe("G2: a malformed or truncated list is never complete", () => {
     ["a total above the rows read", { campaigns: filler(2), total: 600 }],
     ["a totalCount above the rows read", { campaigns: filler(2), totalCount: 3 }],
     ["totalPages above the pages read", { campaigns: filler(2), totalPages: 2 }],
+    ["M1: a numeric string total above the rows read", { campaigns: filler(2), total: "600" }],
+    ["M1: a negative total", { campaigns: filler(2), total: -1 }],
+    ["M1: a fractional total", { campaigns: filler(2), total: 1.5 }],
+    ["M1: a total that is an object", { campaigns: filler(2), total: { value: 2 } }],
+    ["M1: a total string that is not a clean integer", { campaigns: filler(2), total: "2.0" }],
+    ["M1: a totalPages string that is not a number", { campaigns: filler(2), totalPages: "one" }],
+    ["M1: a negative totalPages under pageInfo", { campaigns: filler(2), pageInfo: { totalPages: -3 } }],
   ])("%s: no create, no NOT_FOUND", async (_label, listOutput) => {
     failsClosed(await runBoth(listOutput));
   });
@@ -573,6 +580,18 @@ describe("G2: a malformed or truncated list is never complete", () => {
   it("a page that says there is no more (hasMore: false, empty cursor) stays complete: NOT_FOUND", async () => {
     const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
     const runAdkit = async () => JSON.stringify({ campaigns: filler(2), hasMore: false, cursor: "", pageInfo: { hasNextPage: false }, total: 2, totalPages: 1 });
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(core.results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND" } });
+  });
+
+  it.each([
+    ["absent", {}],
+    ["null (treated as absent)", { total: null, totalPages: null }],
+    ["a clean numeric string equal to the rows read", { total: "2", totalPages: "1" }],
+    ["a number equal to the rows read", { total: 2, totalPages: 1 }],
+  ])("M1: a total that is %s stays complete: NOT_FOUND", async (_label, totals) => {
+    const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
+    const runAdkit = async () => JSON.stringify({ campaigns: filler(2), ...totals });
     expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
     expect(core.results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND" } });
   });
