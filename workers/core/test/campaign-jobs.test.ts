@@ -632,6 +632,104 @@ describe("F2: a lost enable result keeps the budget counted", () => {
   });
 });
 
+describe("H1: an old status check never lowers counted spend or undoes a newer confirmation", () => {
+  // Claims and results go through the real routes, which read the real clock; tick keeps their times apart.
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+  const claimOf = async (jobId: string) => ((await (await vps("jobs/claim", { job_id: jobId })).json()) as { claim_id: string }).claim_id;
+  const campaignOf = async (campaignId: string) => {
+    const body = PanelCampaignsResponse.parse(await (await h.admin("/admin/adkit/campaigns", owner)).json());
+    return { campaign: body.campaigns.find((c) => c.campaign_id === campaignId)!, enabledTotal: body.enabled_total_thb_day };
+  };
+  const autoCheck = async (unknownJobId: string) => (await h.db.prepare("SELECT id FROM adkit_jobs WHERE idempotency_key = ?1")
+    .bind(`campaign.status_check:${unknownJobId}`).first<{ id: string }>())!.id;
+  const freshCheckFor = async (staleJobId: string) => (await h.db.prepare("SELECT status FROM adkit_jobs WHERE idempotency_key = ?1")
+    .bind(`campaign.status_check:stale:${staleJobId}`).first<{ status: string }>())?.status ?? null;
+  /** A spend job whose write ran but whose result was lost: a final error without wrote: false. */
+  async function lostWrite(body: Record<string, unknown>) {
+    const job = await queued(await post(body));
+    await vps("jobs/result", { job_id: job.id, claim_id: await claimOf(job.id), error: "timeout after 120 s", retryable: false });
+    return job;
+  }
+
+  it("R1 reads ENABLED/1000, a lost budget change to 2500, R2 reads 2500, R1 posts late: A stays at 2500 and enable B is 422", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    await tick();
+    const r1 = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    const r1Claim = await claimOf(r1.id);
+    await tick();
+    const budget = await lostWrite({ kind: "campaign.update_budget", campaign_id: a, daily_budget: 2500 });
+    await tick();
+    const r2 = await autoCheck(budget.id);
+    expect((await finish(r2, { campaign_id: a, observed_status: "ENABLED", daily_budget: 2500 })).status).toBe(200);
+    await tick();
+    expect((await vps("jobs/result", { job_id: r1.id, claim_id: r1Claim, result: { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 } })).status).toBe(200);
+    const { campaign, enabledTotal } = await campaignOf(a);
+    expect([campaign.state, campaign.daily_budget, enabledTotal]).toEqual(["enabled", 2500, 2500]);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 2500 + 2000 > 3000
+    expect(await freshCheckFor(r1.id)).toBe("queued");
+  });
+
+  it("mirror for an unknown enable: R1 reads PAUSED, a lost enable, R2 reads ENABLED, R1 posts late: A stays enabled and enable B is 422", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    await tick();
+    const r1 = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    const r1Claim = await claimOf(r1.id);
+    await tick();
+    const enable = await lostWrite({ kind: "campaign.enable", campaign_id: a });
+    await tick();
+    const r2 = await autoCheck(enable.id);
+    expect((await finish(r2, { campaign_id: a, observed_status: "ENABLED", daily_budget: 2000 })).status).toBe(200);
+    await tick();
+    expect((await vps("jobs/result", { job_id: r1.id, claim_id: r1Claim, result: { campaign_id: a, observed_status: "PAUSED", daily_budget: 2000 } })).status).toBe(200);
+    expect((await campaignOf(a)).campaign.state).toBe("enabled");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422);
+    expect(await freshCheckFor(r1.id)).toBe("queued");
+  });
+
+  it("mirror for a lost pause (a pause never ends unknown, it ends failed): R1 reads ENABLED, R2 claimed later reads PAUSED, R1 posts late: R2 stands", async () => {
+    const a = await draftDone("petvet", 1, 2000);
+    const b = await draftDone("bison", 1, 2000);
+    await enabled(a);
+    await tick();
+    const r1 = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    const r1Claim = await claimOf(r1.id);
+    await tick();
+    const pause = await queued(await post({ kind: "campaign.pause", campaign_id: a }));
+    await vps("jobs/result", { job_id: pause.id, claim_id: await claimOf(pause.id), error: "timeout after 120 s", retryable: false });
+    expect((await h.db.prepare("SELECT status FROM adkit_jobs WHERE id = ?1").bind(pause.id).first<{ status: string }>())!.status).toBe("failed");
+    expect((await campaignOf(a)).campaign.state).toBe("enabled"); // a failed pause keeps A counted
+    await tick();
+    // R2: a second check (another key, as an automatic check has) claimed after R1.
+    await h.db.prepare(`INSERT INTO adkit_jobs (id, kind, payload, status, attempts, idempotency_key, requested_by, created_at, updated_at, seq)
+      SELECT '33333333-3333-4333-8333-333333333333', 'campaign.status_check', payload, 'queued', 0, 'campaign.status_check:r2', 'core', ?2, ?2, (SELECT MAX(seq) + 1 FROM adkit_jobs)
+      FROM adkit_jobs WHERE id = ?1`).bind(r1.id, new Date().toISOString()).run();
+    expect((await finish("33333333-3333-4333-8333-333333333333", { campaign_id: a, observed_status: "PAUSED", daily_budget: 2000 })).status).toBe(200);
+    await tick();
+    expect((await vps("jobs/result", { job_id: r1.id, claim_id: r1Claim, result: { campaign_id: a, observed_status: "ENABLED", daily_budget: 2000 } })).status).toBe(200);
+    expect((await campaignOf(a)).campaign.state).toBe("paused");
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(201);
+  });
+
+  it("a write that finished after a check posted does not make that check stale afterwards (campaign enabled outside the panel)", async () => {
+    const a = await draftDone("petvet", 1, 1000);
+    const b = await draftDone("bison", 1, 2000);
+    await tick();
+    const check = await queued(await post({ kind: "campaign.status_check", campaign_id: a }, employee));
+    expect((await finish(check.id, { campaign_id: a, observed_status: "ENABLED", daily_budget: 1000 })).status).toBe(200);
+    await tick();
+    const budget = await queued(await post({ kind: "campaign.update_budget", campaign_id: a, daily_budget: 1500 }));
+    await tick();
+    expect((await finish(budget.id, { campaign_id: a, daily_budget: 1500 })).status).toBe(200);
+    const { campaign } = await campaignOf(a);
+    expect([campaign.state, campaign.daily_budget]).toEqual(["enabled", 1500]);
+    expect((await post({ kind: "campaign.enable", campaign_id: b })).status).toBe(422); // 1500 + 2000 > 3000
+    expect(await freshCheckFor(check.id)).toBeNull();
+  });
+});
+
 describe("F4: core stores a draft only when the result matches the job's budget and a draft or paused status", () => {
   async function claimedDraft(budget: number) {
     const job = await queued(await post(draftBody("petvet", 1, budget), employee));

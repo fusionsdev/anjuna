@@ -370,9 +370,10 @@ async function handleCampaignResult(
 }
 
 /**
- * A status check claimed at or before the last done enable, pause or budget job of its campaign may describe the
- * campaign before that write. deriveCampaigns ignores it (staleStatusCheck); this queues a fresh check
- * (key `campaign.status_check:stale:<job id>`) so core still learns the current state.
+ * A status check is stale when an enable, pause or budget job of its campaign that may have written (done or
+ * unknown) finished between the check's claim and its result: it may describe the campaign before that write.
+ * deriveCampaigns ignores it (staleStatusCheck); this queues a fresh check (key `campaign.status_check:stale:<job id>`)
+ * so core still learns the current state. The same rule on both sides, ties included.
  */
 async function requeueStaleStatusCheck(env: Env, jobId: string, payload: string, at: string): Promise<void> {
   await env.LEADS.prepare(`
@@ -380,9 +381,10 @@ async function requeueStaleStatusCheck(env: Env, jobId: string, payload: string,
     SELECT ?1, 'campaign.status_check', ?2, 'queued', NULL, 0, ?3, 'core', ?4, ?4, ${NEXT_SEQ}
     WHERE EXISTS (
       SELECT 1 FROM adkit_jobs w
-      WHERE w.status = 'done' AND w.kind IN ('campaign.enable', 'campaign.pause', 'campaign.update_budget')
+      WHERE w.status IN ('done', 'unknown') AND w.kind IN ('campaign.enable', 'campaign.pause', 'campaign.update_budget')
         AND json_extract(w.payload, '$.campaign_id') = json_extract(?2, '$.campaign_id')
-        AND w.updated_at >= (SELECT COALESCE(claimed_at, '') FROM adkit_jobs WHERE id = ?5))
+        AND w.updated_at >= (SELECT COALESCE(claimed_at, '') FROM adkit_jobs WHERE id = ?5)
+        AND w.updated_at <= ?4)
     ON CONFLICT (idempotency_key) DO NOTHING`)
     .bind(crypto.randomUUID(), payload, `campaign.status_check:stale:${jobId}`, at, jobId).run();
 }

@@ -15,8 +15,9 @@
  *     outcome is unknown until a status check or a confirmed pause resolves it. A budget counts at the largest of the
  *     done budget and any pending or unknown budget job.
  *   - A campaign.status_check result confirms the status. It resolves an unknown budget only when it read a budget
- *     (daily_budget not null). It counts only when it was claimed after the last done enable, pause or budget job of
- *     its campaign; an older one is ignored and core queues a fresh check (adkit.ts requeueStaleStatusCheck).
+ *     (daily_budget not null). It is ignored when an enable, pause or budget job of its campaign that may have
+ *     written (done or unknown) finished between its claim and its result; core then queues a fresh check (adkit.ts
+ *     requeueStaleStatusCheck). Among checks, one claimed earlier never overrides one claimed later.
  *   - A budget is in the account currency (adkit_directory). THB counts as is, USD is converted with fx_thb_per_usd,
  *     any other or unknown currency is refused.
  *   - Two owner requests at the same moment could each pass the check before the other's row exists. An enable or
@@ -188,9 +189,11 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
   }
   // Done rows set the state and budget in completion order.
   const others = rows.filter((r) => r.kind !== "campaign.draft.create").sort(byUpdated);
-  // A status check describes the campaign as it was when it was claimed. One claimed before (or at) the last done
-  // enable, pause or budget of its campaign may describe the state before that write, so it is ignored (staleStatusCheck).
-  const lastWrite = lastWriteByCampaign(rows);
+  // A status check describes the campaign as it was when it was claimed. It is ignored when an enable, pause or budget
+  // job that may have written (done or unknown) finished between its claim and its result (staleStatusCheck), and
+  // when a check of the same campaign claimed later was already applied: an older read never overrides a newer one.
+  const writes = writesByCampaign(rows);
+  const lastCheckClaim = new Map<Campaign, string>();
   const unknowns = new Map<Campaign, JobRow[]>();
   const dones = new Map<Campaign, JobRow[]>();
   for (const row of others) {
@@ -201,7 +204,12 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
     if (row.updated_at > c.updated_at) c.updated_at = row.updated_at;
     if (row.status === "unknown") unknowns.set(c, [...(unknowns.get(c) ?? []), row]);
     if (row.status !== "done") continue;
-    if (row.kind === "campaign.status_check" && staleStatusCheck(row, lastWrite.get(ref.campaign_id!))) continue;
+    if (row.kind === "campaign.status_check") {
+      const claimed = row.claimed_at ?? "";
+      if (staleStatusCheck(row, writes.get(ref.campaign_id!) ?? [])) continue;
+      if (claimed < (lastCheckClaim.get(c) ?? "")) continue;
+      lastCheckClaim.set(c, claimed);
+    }
     dones.set(c, [...(dones.get(c) ?? []), row]);
     if (row.kind === "campaign.enable") c.state = "enabled";
     if (row.kind === "campaign.pause") c.state = "paused";
@@ -247,20 +255,27 @@ export function deriveCampaigns(allRows: JobRow[], options: { heldUpTo?: JobRow 
 
 const WRITE_KINDS = new Set(["campaign.enable", "campaign.pause", "campaign.update_budget"]);
 
-/** Per campaign id, the latest updated_at of a done enable, pause or budget job. */
-export function lastWriteByCampaign(rows: JobRow[]): Map<string, string> {
-  const last = new Map<string, string>();
+/**
+ * Per campaign id, the finish times (updated_at) of every enable, pause or budget job that may have written: done, or
+ * unknown (its outcome was lost after the write may have run).
+ */
+export function writesByCampaign(rows: JobRow[]): Map<string, string[]> {
+  const writes = new Map<string, string[]>();
   for (const row of rows) {
-    if (row.status !== "done" || !WRITE_KINDS.has(row.kind)) continue;
+    if ((row.status !== "done" && row.status !== "unknown") || !WRITE_KINDS.has(row.kind)) continue;
     const id = (JSON.parse(row.payload) as { campaign_id?: string }).campaign_id;
-    if (id && row.updated_at > (last.get(id) ?? "")) last.set(id, row.updated_at);
+    if (id) writes.set(id, [...(writes.get(id) ?? []), row.updated_at]);
   }
-  return last;
+  return writes;
 }
 
-/** A done status check is stale when it was claimed at or before the last done write of its campaign. */
-export const staleStatusCheck = (row: JobRow, lastWrite: string | undefined) =>
-  lastWrite !== undefined && (row.claimed_at ?? "") <= lastWrite;
+/**
+ * A done status check is stale when a write of its campaign finished between its claim and its result (both ends
+ * included): it may describe the campaign before that write. A write that finished after the result does not make
+ * the check stale; that write is applied after it anyway.
+ */
+export const staleStatusCheck = (row: JobRow, writes: string[]) =>
+  writes.some((w) => (row.claimed_at ?? "") <= w && w <= row.updated_at);
 
 /** Baht per day the spending campaigns hold, in total and for one brand, leaving `skip` out. Null: a currency is unknown. */
 function enabledThb(campaigns: Campaign[], rates: Rates, brandId: string, skip?: Campaign): { total: number; brand: number } | null {
