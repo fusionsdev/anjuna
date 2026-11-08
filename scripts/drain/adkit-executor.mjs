@@ -393,9 +393,11 @@ export async function runCampaignDraftCreate(payload, run, fallbackProject, { li
       "manage", "google", "campaigns", "create", "--account", payload.account, "--data", JSON.stringify(data), "--json",
     ], payload, fallbackProject)));
   } catch (e) {
-    if (e instanceof CommandNotAllowedError || e instanceof JobFailure || !DUPLICATE.test(errorFull(e))) throw e;
-    const adopted = await lookup();
-    if (!adopted) throw e;
+    if (e instanceof CommandNotAllowedError || e instanceof JobFailure) throw e;
+    // The create started, so it may have made the campaign. A retry could create a second one if `campaigns list`
+    // does not show it, so every failure from here on is final; only a duplicate the lookup can see is adopted.
+    const adopted = DUPLICATE.test(errorFull(e)) ? await lookup() : null;
+    if (!adopted) throw new JobFailure(`create_failed: ${errorText(e)}`.slice(0, ERROR_MAX), false);
     return adopt(adopted);
   }
   try {

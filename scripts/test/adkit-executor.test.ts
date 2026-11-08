@@ -484,6 +484,23 @@ describe("F3: a draft retry never creates a second campaign", () => {
     expect(core.results[0]).toMatchObject({ error: expect.stringContaining("created_without_id"), retryable: false });
   });
 
+  it.each([
+    ["a timeout", { message: "Command failed", stderr: "timed out after 120 s" }, "timed out after 120 s"],
+    ["a duplicate the lookup cannot find", { message: "Command failed", stderr: "campaign already exists" }, "campaign already exists"],
+  ])("a create that fails with %s after it started fails for good, so no retry creates a second campaign", async (_label, err, text) => {
+    const core = fakeCore([draftJob()]);
+    let creates = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] === "list") return JSON.stringify({ campaigns: [] });
+      creates++;
+      throw Object.assign(new Error(err.message), { stderr: err.stderr });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(creates).toBe(1);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: expect.stringContaining(text), retryable: false }]);
+    expect(String(core.results[0]!.error)).toMatch(/^create_failed: /);
+  });
+
   it("a page token that looks like a flag is refused by the allowlist", async () => {
     const guarded = x.guardAdkit(vi.fn(async () => "{}"));
     await expect(guarded(["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", "--publish", "--json"]))
