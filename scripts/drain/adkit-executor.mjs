@@ -286,7 +286,21 @@ export function campaignPage(out) {
   const t = Array.isArray(out) ? undefined
     : out.nextPageToken ?? out.next_page_token ?? out.pagination?.nextPageToken ?? out.pageInfo?.nextPageToken;
   const tokenOk = t === undefined || t === null || typeof t === "string";
-  return { rows, rawCount: list.length, ok: rows.length === list.length && tokenOk, token: typeof t === "string" && t !== "" ? t : null };
+  const token = typeof t === "string" && t !== "" ? t : null;
+  // A next-page signal under a name the executor cannot follow (cursor, hasMore, hasNextPage, nextOffset, ...) means
+  // more rows exist that this lookup cannot read: the page is not ok unless a known token is present.
+  const strayMore = !token && !Array.isArray(out) && [out, out.pagination, out.pageInfo].some(morePageSignal);
+  return { rows, rawCount: list.length, ok: rows.length === list.length && tokenOk && !strayMore, token };
+}
+
+const KNOWN_TOKEN_KEYS = new Set(["nextPageToken", "next_page_token"]);
+const MORE_KEY = /cursor|next|more|offset|continu/i;
+
+/** True when an object holds a truthy value under a pagination-like key other than the known token names. */
+function morePageSignal(holder) {
+  if (!holder || typeof holder !== "object" || Array.isArray(holder)) return false;
+  return Object.entries(holder).some(([key, value]) => !KNOWN_TOKEN_KEYS.has(key) && MORE_KEY.test(key)
+    && value !== null && value !== undefined && value !== false && value !== "" && value !== 0);
 }
 
 /** The parsed campaign rows of one `campaigns list` output (rows that do not parse are left out). */
@@ -396,7 +410,14 @@ export async function runCampaignDraftCreate(payload, run, fallbackProject, { li
     if (e instanceof CommandNotAllowedError || e instanceof JobFailure) throw e;
     // The create started, so it may have made the campaign. A retry could create a second one if `campaigns list`
     // does not show it, so every failure from here on is final; only a duplicate the lookup can see is adopted.
-    const adopted = DUPLICATE.test(errorFull(e)) ? await lookup() : null;
+    let adopted = null;
+    try {
+      adopted = DUPLICATE.test(errorFull(e)) ? await lookup() : null;
+    } catch (lookupError) {
+      // A JobFailure (lookup_incomplete) is already final; any other lookup error is made final too.
+      if (lookupError instanceof JobFailure) throw lookupError;
+      throw new JobFailure(`create_failed: ${errorText(e)}; lookup: ${errorText(lookupError)}`.slice(0, ERROR_MAX), false);
+    }
     if (!adopted) throw new JobFailure(`create_failed: ${errorText(e)}`.slice(0, ERROR_MAX), false);
     return adopt(adopted);
   }

@@ -501,6 +501,19 @@ describe("F3: a draft retry never creates a second campaign", () => {
     expect(String(core.results[0]!.error)).toMatch(/^create_failed: /);
   });
 
+  it("a duplicate create whose follow-up lookup times out fails for good, so no retry creates a second campaign", async () => {
+    const core = fakeCore([draftJob()]);
+    let lists = 0;
+    const runAdkit = async (args: string[]) => {
+      if (args[3] === "list" && ++lists === 1) return JSON.stringify({ campaigns: [] });
+      if (args[3] === "list") throw Object.assign(new Error("Command failed"), { stderr: "list timed out after 120 s" });
+      throw Object.assign(new Error("Command failed"), { stderr: "campaign already exists" });
+    };
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(1);
+    expect(lists).toBe(2);
+    expect(core.results).toEqual([{ job_id: JOB_ID, claim_id: CLAIM_ID, error: expect.stringMatching(/^create_failed: .*list timed out/), retryable: false }]);
+  });
+
   it("a page token that looks like a flag is refused by the allowlist", async () => {
     const guarded = x.guardAdkit(vi.fn(async () => "{}"));
     await expect(guarded(["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", "--publish", "--json"]))
@@ -546,8 +559,19 @@ describe("G2: a malformed or truncated list is never complete", () => {
     ["3 raw rows with 1 unparseable", { campaigns: [...filler(2), { id: "not-a-number", name: "x-search-1" }] }],
     ["a row that is not an object", { campaigns: [...filler(2), "22000000001"] }],
     ["a next page token that is not a string", { campaigns: filler(2), nextPageToken: 7 }],
+    ["a page cursor under an unknown name", { campaigns: filler(100), cursor: "c-2" }],
+    ["hasMore: true without a token", { campaigns: filler(2), hasMore: true }],
+    ["pageInfo.hasNextPage: true without a token", { campaigns: filler(2), pageInfo: { hasNextPage: true } }],
+    ["an offset for the next page", { data: filler(2), nextOffset: 100 }],
   ])("%s: no create, no NOT_FOUND", async (_label, listOutput) => {
     failsClosed(await runBoth(listOutput));
+  });
+
+  it("a page that says there is no more (hasMore: false, empty cursor) stays complete: NOT_FOUND", async () => {
+    const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
+    const runAdkit = async () => JSON.stringify({ campaigns: filler(2), hasMore: false, cursor: "", pageInfo: { hasNextPage: false } });
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(core.results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND" } });
   });
 });
 
