@@ -290,22 +290,39 @@ export function campaignPage(out) {
   // A next-page signal under a name the executor cannot follow (cursor, hasMore, hasNextPage, nextOffset, ...) means
   // more rows exist that this lookup cannot read: the page is not ok unless a known token is present.
   const strayMore = !token && !Array.isArray(out) && [out, out.pagination, out.pageInfo].some(morePageSignal);
+  const total = Array.isArray(out) ? { value: null, invalid: false } : countField(out, TOTAL_KEYS);
+  const totalPages = Array.isArray(out) ? { value: null, invalid: false } : countField(out, TOTAL_PAGE_KEYS);
   return {
-    rows, rawCount: list.length, ok: rows.length === list.length && tokenOk && !strayMore, token,
-    total: Array.isArray(out) ? null : countField(out, TOTAL_KEYS), totalPages: Array.isArray(out) ? null : countField(out, TOTAL_PAGE_KEYS),
+    rows, rawCount: list.length,
+    ok: rows.length === list.length && tokenOk && !strayMore && !total.invalid && !totalPages.invalid,
+    token, total: total.value, totalPages: totalPages.value,
   };
 }
 
 const TOTAL_KEYS = ["total", "totalCount", "total_count", "totalResults", "totalSize"];
 const TOTAL_PAGE_KEYS = ["totalPages", "total_pages", "pageCount"];
 
-/** The first number under one of `keys` in the output or its pagination/pageInfo object, else null. */
+/**
+ * A count field (total or totalPages) under any of `keys` in the output or its pagination/pageInfo object.
+ * Rule: absent or null means "not reported". A non-negative safe integer counts, and so does a string of digits
+ * only ("600"); the largest such value is returned. Anything else that is present (a negative or fractional number,
+ * NaN, another string such as "2.0", an object, a boolean) is `invalid`, and the caller treats the page as not ok,
+ * so the lookup ends lookup_incomplete: no NOT_FOUND, no create.
+ */
 function countField(out, keys) {
+  let value = null;
+  let invalid = false;
   for (const holder of [out, out.pagination, out.pageInfo]) {
     if (!holder || typeof holder !== "object") continue;
-    for (const key of keys) if (typeof holder[key] === "number" && Number.isFinite(holder[key])) return holder[key];
+    for (const key of keys) {
+      const raw = holder[key];
+      if (raw === undefined || raw === null) continue;
+      const n = typeof raw === "number" ? raw : typeof raw === "string" && /^\d{1,15}$/.test(raw) ? Number(raw) : NaN;
+      if (Number.isSafeInteger(n) && n >= 0) value = Math.max(value ?? 0, n);
+      else invalid = true;
+    }
   }
-  return null;
+  return { value, invalid };
 }
 
 const KNOWN_TOKEN_KEYS = new Set(["nextPageToken", "next_page_token"]);
@@ -344,6 +361,13 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
   // The largest total and totalPages any page reported. A later page that omits them does not erase them.
   let maxTotal = null;
   let maxTotalPages = null;
+  // Every page token already followed. A token that comes back means AdKit is looping over pages it already sent,
+  // so the rows read prove nothing about the rest: the lookup ends incomplete at once.
+  const tokensSeen = new Set();
+  // Every campaign id already read. An id that comes back (on the same page or a later one) means the pages overlap,
+  // for example offset paging while campaigns are added or removed, so the raw row count overstates what was seen
+  // and rows may have been skipped: the lookup ends incomplete at once.
+  const idsSeen = new Set();
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
     if (now() + ADKIT_CALL_MS > deadline) return { rows, complete: false };
     const out = checked(await run(withRoute([
@@ -351,13 +375,21 @@ export async function listAllCampaigns(run, payload, fallbackProject, { now = Da
       ...(token ? ["--page-token", token] : []), "--json",
     ], payload, fallbackProject)));
     const page = campaignPage(out);
-    rows.push(...page.rows);
+    for (const row of page.rows) {
+      if (idsSeen.has(row.id)) return { rows, complete: false };
+      idsSeen.add(row.id);
+      rows.push(row);
+    }
     if (!page.ok) return { rows, complete: false };
     rawSeen += page.rawCount;
     pagesRead++;
     if (page.total !== null) maxTotal = Math.max(maxTotal ?? 0, page.total);
     if (page.totalPages !== null) maxTotalPages = Math.max(maxTotalPages ?? 0, page.totalPages);
     token = page.token;
+    if (token !== null) {
+      if (tokensSeen.has(token)) return { rows, complete: false };
+      tokensSeen.add(token);
+    }
     if (!token) {
       // A total or page count reported on ANY page above what was read means rows exist that this lookup never saw.
       const short = (maxTotal !== null && rawSeen < maxTotal) || (maxTotalPages !== null && pagesRead < maxTotalPages);
