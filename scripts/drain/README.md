@@ -72,8 +72,12 @@ Run these steps once per deployment, for the aduplift core (`wrangler.deploy.adu
 2. Apply the migration: `cd workers/core && bunx wrangler d1 migrations apply <db> --remote -c <deploy config>`.
 3. Deploy core: `bunx wrangler deploy -c <deploy config>`.
 4. Check for NULL rows and require 0:
-   `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "SELECT COUNT(*) FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND status = 'claimed' AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL)"`.
-   A non-zero count means the old core recorded a claim or result after step 2. Keep the executor stopped: give those rows numbers above the current maximum of both columns, one row at a time in updated_at order (claim before result), then repeat step 4.
+   `bunx wrangler d1 execute <db> --remote -c <deploy config> --command "SELECT COUNT(*) FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL) OR (status IN ('done','failed','unknown') AND result_seq IS NULL)"`.
+   The first clause has no status filter on purpose. The backfill numbers every claimed row and the new core sets `claim_seq` in every claim, and a retry sets `claimed_at` back to NULL, so a match is always a claim the old core made during the gap. That includes a status check the old core claimed and the new core finished: it is `done` with `result_seq` set and `claim_seq` NULL, and its NULL claim (read as 0) would put every earlier enable or pause inside its window and drop ENABLED evidence.
+   A non-zero count means the old core recorded a claim or result after step 2. Keep the executor stopped and repair each matching row:
+   - A `campaign.status_check` with `claim_seq` NULL: never give it a claim number, because any number would rank that old reading as the newest check. Discard it: `UPDATE adkit_jobs SET status = 'failed', result = json_object('error', 'discarded: claimed by the old core during the 0025 deploy'), claimed_at = NULL WHERE id = '<id>'`. Then queue a fresh status check for its campaign from the panel (`POST /admin/adkit/campaign-jobs` with `{"kind":"campaign.status_check","campaign_id":"<id>"}`); it runs when the executor restarts.
+   - Any other row: give each NULL column a number above the current maximum of both columns, one row at a time in updated_at order, a row's claim before its result.
+   Repeat step 4. Start the executor only when the count is 0.
 5. Start the executor again on both VPS (restore the crontab line, restart the container or scheduler step).
 
 The steps are idempotent. A run with nothing claimed or finished during the gap returns 0 at step 4.
