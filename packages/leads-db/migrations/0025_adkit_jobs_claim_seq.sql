@@ -14,11 +14,13 @@
 -- which the new core reads as 0, and that is a hazard in both directions: a NULL done write (an enable) sorts before
 -- every backfilled write (a pause) and the campaign stops counting; a NULL check claim puts every earlier write in
 -- the check's window and its ENABLED evidence is dropped. Only the adkit executor triggers claims, results and the
--- lease-expiry sweep, so stop it on every VPS before applying this file, deploy core, require
+-- lease-expiry sweep, so stop it on hstgr and maimax and verify it stopped before applying this file, deploy core,
+-- then require
 --   SELECT COUNT(*) FROM adkit_jobs WHERE (claimed_at IS NOT NULL AND claim_seq IS NULL)
 --     OR (status IN ('done','failed','unknown') AND result_seq IS NULL)
--- to return 0 (no status filter on the first clause: it must also catch a done status check the old core claimed),
--- repair any match as scripts/drain/README.md "Deploy 0025" says, then start it again.
+-- to return 0 before starting it again. No SQL repair exists: renumbering such rows can apply an old result after
+-- newer ones and lower counted spend. With a non-zero count the executor stays stopped, ads_cap_total_thb_day is set
+-- to 0 and the owner decides (scripts/drain/README.md "Deploy 0025").
 --
 -- Columns are added with ADD COLUMN (nullable, no rebuild), so the 0023 unique key, the CHECKs and the 0023/0024
 -- indexes stay as they are.
