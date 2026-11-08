@@ -559,8 +559,19 @@ describe("G2: a malformed or truncated list is never complete", () => {
     ["3 raw rows with 1 unparseable", { campaigns: [...filler(2), { id: "not-a-number", name: "x-search-1" }] }],
     ["a row that is not an object", { campaigns: [...filler(2), "22000000001"] }],
     ["a next page token that is not a string", { campaigns: filler(2), nextPageToken: 7 }],
+    ["a page cursor under an unknown name", { campaigns: filler(100), cursor: "c-2" }],
+    ["hasMore: true without a token", { campaigns: filler(2), hasMore: true }],
+    ["pageInfo.hasNextPage: true without a token", { campaigns: filler(2), pageInfo: { hasNextPage: true } }],
+    ["an offset for the next page", { data: filler(2), nextOffset: 100 }],
   ])("%s: no create, no NOT_FOUND", async (_label, listOutput) => {
     failsClosed(await runBoth(listOutput));
+  });
+
+  it("a page that says there is no more (hasMore: false, empty cursor) stays complete: NOT_FOUND", async () => {
+    const core = fakeCore([job({ kind: "campaign.status_check", payload: ref })]);
+    const runAdkit = async () => JSON.stringify({ campaigns: filler(2), hasMore: false, cursor: "", pageInfo: { hasNextPage: false } });
+    expect(await x.executeJobs({ baseUrl: "https://core.test", token: "tok", runAdkit, fetchImpl: core.fetchImpl, ...quiet })).toBe(0);
+    expect(core.results[0]).toMatchObject({ result: { observed_status: "NOT_FOUND" } });
   });
 });
 
