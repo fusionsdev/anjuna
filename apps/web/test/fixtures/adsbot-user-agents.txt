@@ -1,0 +1,9 @@
+# Verified 2026-11-10 against Google's documented HTTP User-Agent strings.
+# https://developers.google.com/crawling/docs/crawlers-fetchers/google-special-case-crawlers
+# Chrome/W.X.Y.Z is Google's version placeholder, not a pinned browser release.
+AdsBot-Google (+http://www.google.com/adsbot.html)
+Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/W.X.Y.Z Mobile Safari/537.36 (compatible; AdsBot-Google-Mobile; +http://www.google.com/mobile/adsbot.html)
+# https://developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers
+Googlebot/2.1 (+http://www.google.com/bot.html)
+Googlebot-Image/1.0
+Mozilla/5.0 (compatible; Google-InspectionTool/1.0)

@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-11-10T12:15:00.000Z",
+  "conversion_stalled": {
+    "state": "ok",
+    "detail": {
+      "max_hours": 6,
+      "stuck_count": 0,
+      "oldest_created_at": null
+    }
+  },
+  "brands_without_postbacks": {
+    "state": "ok",
+    "detail": {
+      "window_hours": 24,
+      "brands": []
+    }
+  },
+  "submit_error_rate": {
+    "state": "alert",
+    "detail": {
+      "window_hours": 1,
+      "warn_at": 0.1,
+      "alert_at": 0.2,
+      "samples": [
+        {
+          "brand": "brand-a",
+          "submits": 100,
+          "errors": 30,
+          "rate": 0.3
+        }
+      ]
+    }
+  },
+  "reject_rate": {
+    "state": "ok",
+    "detail": {
+      "window_hours": 24,
+      "warn_at": 0.3,
+      "alert_at": 0.5,
+      "brands": []
+    }
+  },
+  "click_risk": {
+    "state": "ok",
+    "detail": {
+      "window_hours": 24,
+      "alert_at": 0.5,
+      "min_visits": 10,
+      "hostnames": []
+    }
+  },
+  "bot_hits": {
+    "state": "ok",
+    "detail": {
+      "window_hours": 24,
+      "brands": [],
+      "adsbot_hours": []
+    }
+  },
+  "ad_spend_unallocated": {
+    "state": "ok",
+    "detail": {
+      "window_days": 7,
+      "alert_at": 0.2,
+      "accounts": []
+    }
+  }
+}

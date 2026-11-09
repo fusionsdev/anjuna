@@ -1,0 +1,920 @@
+{
+  "period": "24h",
+  "from": "2026-11-09T13:00:00.000Z",
+  "to": "2026-11-10T12:30:00.000Z",
+  "kpis": {
+    "landing_views": 12,
+    "form_starts": 4,
+    "leads": 4,
+    "validation_errors": 4,
+    "redirect_errors": 4,
+    "suspicious_sessions": 1,
+    "no_gclid_landings": {
+      "count": 5,
+      "pct": 41.666666666666664
+    },
+    "gate_drops": 3,
+    "non_us_pct": 10
+  },
+  "deltas": {
+    "landing_views": null,
+    "form_starts": null,
+    "leads": null,
+    "validation_errors": null,
+    "redirect_errors": null,
+    "suspicious_sessions": null,
+    "no_gclid_landings": null,
+    "gate_drops": null,
+    "non_us_pct": null
+  },
+  "bots_now": {
+    "googlebot": {
+      "current_hour": 0,
+      "24h": 2
+    },
+    "adsbot": {
+      "current_hour": 1,
+      "24h": 3
+    },
+    "other-bot": {
+      "current_hour": 0,
+      "24h": 1
+    }
+  },
+  "adsbot_last": [
+    {
+      "brand": "brand-d",
+      "url": "https://brand-d.example/",
+      "at": "2026-11-10T12:20:00.000Z",
+      "http_status": null,
+      "response_ms": null,
+      "gate_passed": null
+    },
+    {
+      "brand": "brand-b",
+      "url": "https://brand-b.example/",
+      "at": "2026-11-09T20:00:00.000Z",
+      "http_status": null,
+      "response_ms": null,
+      "gate_passed": null
+    },
+    {
+      "brand": "brand-a",
+      "url": "https://brand-a.example/",
+      "at": "2026-11-09T13:20:00.000Z",
+      "http_status": null,
+      "response_ms": null,
+      "gate_passed": null
+    }
+  ],
+  "breakdowns": {
+    "source": [
+      {
+        "key": "source-00",
+        "count": 4,
+        "pct": 10
+      },
+      {
+        "key": "source-01",
+        "count": 4,
+        "pct": 10
+      },
+      {
+        "key": "source-02",
+        "count": 4,
+        "pct": 10
+      },
+      {
+        "key": "source-03",
+        "count": 4,
+        "pct": 10
+      },
+      {
+        "key": "source-04",
+        "count": 3,
+        "pct": 7.5
+      },
+      {
+        "key": "source-05",
+        "count": 3,
+        "pct": 7.5
+      },
+      {
+        "key": "source-06",
+        "count": 3,
+        "pct": 7.5
+      },
+      {
+        "key": "source-07",
+        "count": 3,
+        "pct": 7.5
+      },
+      {
+        "key": "source-08",
+        "count": 3,
+        "pct": 7.5
+      },
+      {
+        "key": "source-09",
+        "count": 3,
+        "pct": 7.5
+      }
+    ],
+    "hostname": [
+      {
+        "key": "brand-a.example",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "brand-b.example",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "brand-c.example",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "brand-d.example",
+        "count": 10,
+        "pct": 25
+      }
+    ],
+    "device": [
+      {
+        "key": "desktop",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "mobile",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "tablet",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "unknown",
+        "count": 10,
+        "pct": 25
+      }
+    ],
+    "browser": [
+      {
+        "key": "chrome",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "edge",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "firefox",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "safari",
+        "count": 10,
+        "pct": 25
+      }
+    ],
+    "brand": [
+      {
+        "key": "brand-a",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "brand-b",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "brand-c",
+        "count": 10,
+        "pct": 25
+      },
+      {
+        "key": "brand-d",
+        "count": 10,
+        "pct": 25
+      }
+    ]
+  },
+  "trend": [
+    {
+      "at": "2026-11-09T13:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T14:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 1,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T15:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T16:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T17:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 1
+    },
+    {
+      "at": "2026-11-09T18:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T19:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T20:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 1,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T21:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T22:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-09T23:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 1
+    },
+    {
+      "at": "2026-11-10T00:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T01:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T02:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 1,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T03:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T04:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T05:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 1
+    },
+    {
+      "at": "2026-11-10T06:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T07:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T08:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 1,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T09:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T10:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 0
+    },
+    {
+      "at": "2026-11-10T11:00:00.000Z",
+      "landing_views": 1,
+      "form_starts": 0,
+      "leads": 1
+    },
+    {
+      "at": "2026-11-10T12:00:00.000Z",
+      "landing_views": 0,
+      "form_starts": 0,
+      "leads": 0
+    }
+  ],
+  "recent": [
+    {
+      "at": "2026-11-10T12:20:00.000Z",
+      "event_type": "redirect_failed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "adsbot"
+    },
+    {
+      "at": "2026-11-10T11:20:00.000Z",
+      "event_type": "lead_submitted",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T11:00:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "googlebot"
+    },
+    {
+      "at": "2026-11-10T10:20:00.000Z",
+      "event_type": "form_validation_failed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-11",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": "field_validation",
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T10:00:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T09:00:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-10",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T08:20:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-09",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T08:00:00.000Z",
+      "event_type": "form_started",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-08",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T07:20:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-07",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "3dab1be1cd1b8cc3",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T07:00:00.000Z",
+      "event_type": "gate_viewed",
+      "hostname": "brand-d.example",
+      "brand": "brand-d",
+      "source": "source-06",
+      "campaign": "fixture-campaign",
+      "device": "unknown",
+      "browser": "edge",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "4804fff407920975",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T06:20:00.000Z",
+      "event_type": "redirect_failed",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-05",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T05:20:00.000Z",
+      "event_type": "lead_submitted",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T05:00:00.000Z",
+      "event_type": "redirect_started",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-04",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T04:20:00.000Z",
+      "event_type": "form_validation_failed",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": "field_validation",
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T04:00:00.000Z",
+      "event_type": "lead_submission_started",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T03:00:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T02:20:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-11",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T02:00:00.000Z",
+      "event_type": "form_started",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-10",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T01:20:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-09",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "49a9cd3a1f37f7fb",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-10T01:00:00.000Z",
+      "event_type": "gate_viewed",
+      "hostname": "brand-c.example",
+      "brand": "brand-c",
+      "source": "source-08",
+      "campaign": "fixture-campaign",
+      "device": "tablet",
+      "browser": "firefox",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "c8b6fea5c296701a",
+      "user_agent_family": "other-bot"
+    },
+    {
+      "at": "2026-11-10T00:20:00.000Z",
+      "event_type": "redirect_failed",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-07",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T23:20:00.000Z",
+      "event_type": "lead_submitted",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-05",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T23:00:00.000Z",
+      "event_type": "redirect_started",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-06",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T22:20:00.000Z",
+      "event_type": "form_validation_failed",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": "field_validation",
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T22:00:00.000Z",
+      "event_type": "lead_submission_started",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-04",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T21:00:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T20:20:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T20:00:00.000Z",
+      "event_type": "form_started",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "adsbot"
+    },
+    {
+      "at": "2026-11-09T19:20:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-11",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "d655c7a72d39376c",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T19:00:00.000Z",
+      "event_type": "gate_viewed",
+      "hostname": "brand-b.example",
+      "brand": "brand-b",
+      "source": "source-10",
+      "campaign": "fixture-campaign",
+      "device": "mobile",
+      "browser": "safari",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "fe320498a7f93efa",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T18:20:00.000Z",
+      "event_type": "redirect_failed",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-09",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T17:20:00.000Z",
+      "event_type": "lead_submitted",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-07",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T17:00:00.000Z",
+      "event_type": "redirect_started",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-08",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T16:20:00.000Z",
+      "event_type": "form_validation_failed",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-05",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": "field_validation",
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "googlebot"
+    },
+    {
+      "at": "2026-11-09T16:00:00.000Z",
+      "event_type": "lead_submission_started",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-06",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T15:00:00.000Z",
+      "event_type": "form_step_completed",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-04",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": 2,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T14:20:00.000Z",
+      "event_type": "form_step_viewed",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": 2,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T14:00:00.000Z",
+      "event_type": "form_started",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    },
+    {
+      "at": "2026-11-09T13:20:00.000Z",
+      "event_type": "landing_viewed",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "adsbot"
+    },
+    {
+      "at": "2026-11-09T13:00:00.000Z",
+      "event_type": "gate_viewed",
+      "hostname": "brand-a.example",
+      "brand": "brand-a",
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "device": "desktop",
+      "browser": "chrome",
+      "form_step": null,
+      "error_code": null,
+      "session_ref": "0e0fe7997050e459",
+      "user_agent_family": "browser"
+    }
+  ]
+}
