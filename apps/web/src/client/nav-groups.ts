@@ -45,6 +45,7 @@ export const NAV_GROUPS: Record<NavGroupId, NavGroup> = {
       { id: "suppressions", label: "อีเมลที่บล็อก", minRole: "owner" },
       { id: "audit", label: "ประวัติการแก้ไข" },
       { id: "builder-keys", label: "คีย์ Builder" },
+      { id: "adkit-terminal", label: "AdKit Terminal", minRole: PANEL_ROLE_TABLE.useTerminal },
     ],
   },
 };

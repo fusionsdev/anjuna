@@ -319,6 +319,7 @@ describe("role table coverage", () => {
       updateCampaignBudget: "owner",
       checkCampaignStatus: "employee",
       adAllocation: "owner",
+      useTerminal: "owner",
     });
   });
 });

@@ -29,6 +29,7 @@ import { AdkitProject, BrandId, GoogleAdsAccount, GoogleConversionAction, Hostna
 import { ConversionSetupStateResponse } from "./conversion-setup.js";
 import {
   AdkitDirectoryResponse, AdkitJobCreateRequest, AdkitJobCreateResponse, CampaignJobCreateRequest, PanelCampaignsResponse,
+  TerminalJobResponse, TerminalRunRequest, TerminalRunResponse,
 } from "./adkit.js";
 import { Keyword } from "./runtime-config.js";
 import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
@@ -706,7 +707,7 @@ export const AdminError = z.discriminatedUnion("error", [
     /** PATCH fields the caller may not change (absent when the whole endpoint is denied). */
     denied_fields: z.array(z.string()).min(1).optional(),
   }),
-  z.strictObject({ error: z.literal("not_found"), ...errorBase, resource: z.enum(["brand", "lead", "route", "suppression", "campaign"]) }),
+  z.strictObject({ error: z.literal("not_found"), ...errorBase, resource: z.enum(["brand", "lead", "route", "suppression", "campaign", "adkit_job"]) }),
   z.strictObject({ error: z.literal("conflict"), ...errorBase, current_updated_at: Timestamp }),
   z.strictObject({
     error: z.literal("invalid"),
@@ -1137,6 +1138,24 @@ export const AdminApi = {
     path: "/admin/adkit/campaigns",
     min_role: "employee",
     response: PanelCampaignsResponse,
+  },
+  /**
+   * T13-6 AdKit Terminal, owner only. Core parses the line against the executor allowlist and answers 422 before any job
+   * row exists when it is refused. `dry_run` returns the parsed argv with no job; publish mode needs `confirm: true`.
+   */
+  createTerminalJob: {
+    method: "POST",
+    path: "/admin/adkit/terminal",
+    min_role: "owner",
+    request: TerminalRunRequest,
+    response: TerminalRunResponse,
+  },
+  /** One terminal job with its masked output (at most 20 KB). Any other job kind is 404. */
+  getTerminalJob: {
+    method: "GET",
+    path: "/admin/adkit/jobs/:id",
+    min_role: "owner",
+    response: TerminalJobResponse,
   },
   conversionsReport: {
     method: "GET",

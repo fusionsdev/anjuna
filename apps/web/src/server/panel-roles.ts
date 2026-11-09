@@ -87,6 +87,8 @@ export const PANEL_ROLE_TABLE = {
   pauseCampaign: "owner",
   updateCampaignBudget: "owner",
   checkCampaignStatus: "employee",
+  /** AdKit Terminal (T13-6): parse, run and read allowlisted AdKit lines. Owner only; core and this table both refuse an employee. */
+  useTerminal: "owner",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 

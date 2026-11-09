@@ -7,6 +7,7 @@ import { BrandTimelineScreen } from "./screens/BrandTimeline";
 import { ConversionsScreen } from "./screens/Conversions";
 import { DeploysScreen } from "./screens/Deploys";
 import { CampaignsScreen } from "./screens/Campaigns";
+import { AdkitTerminalScreen } from "./screens/AdkitTerminal";
 import { FunnelScreen } from "./screens/Funnel";
 import { HomeScreen } from "./screens/Home";
 import { LeadDetailScreen } from "./screens/LeadDetail";
@@ -120,6 +121,7 @@ export function App() {
       {route.view === "brand-timeline" && <BrandTimelineScreen me={me} brandId={route.brandId} />}
       {view === "deploys" && <DeploysScreen me={me} />}
       {view === "campaigns" && <CampaignsScreen me={me} />}
+      {view === "adkit-terminal" && <AdkitTerminalScreen me={me} />}
       {view === "templates" && (
         <TemplatesScreen
           me={me}

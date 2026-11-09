@@ -28,6 +28,8 @@ export type Route =
   | { view: "errors" }
   // T13 Part B
   | { view: "campaigns" }
+  // T13-6
+  | { view: "adkit-terminal" }
   | { view: "not-found"; path: string };
 export type View = Route["view"];
 
@@ -56,6 +58,8 @@ const STATIC: Record<string, Route> = {
   "/errors": { view: "errors" },
   // T13 Part B
   "/campaigns": { view: "campaigns" },
+  // T13-6
+  "/adkit-terminal": { view: "adkit-terminal" },
 };
 
 /** A bad escape such as "%" reads as no id, so the list opens. */
