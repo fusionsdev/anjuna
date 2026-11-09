@@ -78,6 +78,8 @@ let requests: string[];
 // Answers the per-status upload reads of the brand table. Unset, they fall through to `conversions`.
 let convFacts: ((url: URL) => Response | Promise<Response>) | undefined;
 let adsReply: () => Response | Promise<Response>;
+// The realtime report of one brand, for its gclid warning. Default: plenty of landings, few without a gclid.
+let realtimeReply: (brand: string) => Response | Promise<Response>;
 // Google Ads state: Creditgenie has an account and an enabled campaign; Sixpack has no account.
 const ADS_BODY = {
   campaigns: [{ draft_job_id: "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", campaign_id: null, brand_id: "cg", account: "1234567890", name: "cg-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-22T00:00:00.000Z", geo: { country: "US" }, final_url: "https://cg.test/" }],
@@ -91,6 +93,7 @@ beforeEach(() => {
   requests = [];
   convFacts = undefined;
   adsReply = () => json(ADS_BODY);
+  realtimeReply = () => json({ kpis: { landing_views: 400, no_gclid_landings: { count: 20, pct: 5 } } });
   funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
   conversions = (period) => json(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER);
   aggregates = (from, to) => json(aggregatesBody(from, to));
@@ -112,6 +115,7 @@ beforeEach(() => {
     if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
     if (url.pathname === "/api/lifecycle/brands") return brandsReply();
     if (url.pathname === "/api/ads/campaigns") return adsReply();
+    if (url.pathname === "/api/traffic/realtime") return realtimeReply(url.searchParams.get("brand") ?? "");
     if (url.pathname === "/api/brands/checklists") return checklistsReply();
     if (url.pathname === "/api/brands") return runtimeReply();
     throw new Error(`Unexpected test HTTP request: ${input}`);
@@ -1188,6 +1192,34 @@ describe("Home screen, facts behind the brand table", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
       expect(chip()).toBe("ใช้งาน");
     }
+  });
+
+  it("shows ไม่มี gclid when the brand's landings of the last 24 hours had too few gclids, and keeps it across periods", async () => {
+    realtimeReply = (brand) => json({ kpis: { landing_views: 300, no_gclid_landings: { count: brand === "cg" ? 120 : 3, pct: brand === "cg" ? 40 : 1 } } });
+    render(<HomeScreen me={owner} />);
+    const chip = () => brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent;
+    await waitFor(() => expect(chip()).toBe("ไม่มี gclid"));
+    for (const label of ["7 วัน", "30 วัน", "วันนี้"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
+      expect(chip()).toBe("ไม่มี gclid");
+    }
+    // Asked for 24 hours and for the brand that spends today only (Sixpack has no spend row).
+    const asked = requests.filter((r) => r.startsWith("/api/traffic/realtime"));
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((r) => r === "/api/traffic/realtime?period=24h&brand=cg")).toBe(true);
+  });
+
+  it("keeps ใช้งาน when the gclid read fails, and never asks for an employee", async () => {
+    realtimeReply = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("ใช้งาน"));
+    cleanup();
+    requests = [];
+    render(<HomeScreen me={employee} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(requests.some((r) => r.startsWith("/api/traffic/realtime"))).toBe(false);
   });
 
   it("shows a dash in the Google Ads cell while the campaigns read fails, never not connected", async () => {

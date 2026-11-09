@@ -71,7 +71,7 @@ const DIALOG_ACTION: Partial<Record<NextAction["kind"], BrandAction>> = { "test-
  * One row per brand with the numbers of the period and the one button `nextAction` picks. Spend and cost per lead are owner only
  * and come from the server's baht rows. `undefined` is loading, `null` is failed.
  */
-export function BrandRows({ role, brands, checklists, paused, funnel, spend, stageFunnel, uploadFacts, adsData, spendToday, onAction }: {
+export function BrandRows({ role, brands, checklists, paused, funnel, spend, stageFunnel, uploadFacts, adsData, noGclid, spendToday, onAction }: {
   role: Role;
   brands: LifecycleBrandSummary[] | null | undefined;
   checklists: BrandChecklists | null | undefined;
@@ -86,6 +86,8 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, sta
   uploadFacts?: Map<string, UploadFacts>;
   /** The panel campaigns, read for the Google Ads chip. Undefined loading, null failed. */
   adsData?: PanelCampaignsResponse | null;
+  /** Per brand that spends today: whether landings of the last 24 hours had too few gclids. A brand absent here is not known or not asked. */
+  noGclid?: Map<string, boolean>;
   /** Owner only: today's spend report, which decides the Google Ads chip. Null when it is unreadable. */
   spendToday?: PanelSpendReportResponse | null;
   /** Runs a dialog action on one brand. Without it the row button opens the brand. */
@@ -128,7 +130,7 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, sta
     const stages = stageStatuses(stageInput);
     // Cost of today for this brand: 0 when the report answered without it, null when the report is not known (employee, failed, loading).
     const todayCost = owner && spendToday ? spendToday.brands.filter((row) => row.brand_id === brand.brand_id).reduce((sum, row) => sum + row.cost, 0) : null;
-    const ads = adsChip({ brand, paused: paused?.has(brand.brand_id) === true, ads: adsData, spendToday: todayCost });
+    const ads = adsChip({ brand, paused: paused?.has(brand.brand_id) === true, ads: adsData, spendToday: todayCost, noGclid: noGclid?.get(brand.brand_id) });
     return {
       id: brand.brand_id,
       title: brand.hostnames[0] ?? brand.name ?? brand.brand_id,

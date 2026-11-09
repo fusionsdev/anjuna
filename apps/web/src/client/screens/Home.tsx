@@ -7,7 +7,7 @@ import { Chip } from "../components/Chip";
 import { isDemoBrand } from "../brand-health";
 import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals, spendWindowThb } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
-import { useAdsCampaigns, useUploadFacts } from "../brand-facts";
+import { useAdsCampaigns, useNoGclid, useUploadFacts } from "../brand-facts";
 import { conversionsPath } from "./Conversions";
 import { BrandRows } from "./home/BrandRows";
 import { HumanTasks, type HumanTask } from "./home/HumanTasks";
@@ -202,6 +202,9 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const scopedIds = useMemo(() => (scopedBrands ?? []).map((brand) => brand.brand_id), [scopedBrands]);
   const uploadFacts = useUploadFacts(scopedIds, reloadKey);
   const adsData = useAdsCampaigns(reloadKey);
+  // The gclid warning is about paid clicks, so only brands that spend today are asked (owner only: an employee has no spend report).
+  const spendingIds = useMemo(() => (spendTodayRaw ? [...new Set(scopeSpend(spendTodayRaw, inScopeId).brands.filter((row) => row.cost > 0).map((row) => row.brand_id))].sort() : []), [spendTodayRaw, inScopeId]);
+  const noGclid = useNoGclid(spendingIds, reloadKey);
   const stageFunnel = useMemo(() => (stageFunnelRaw ? scopeFunnel(stageFunnelRaw, inScopeId) : stageFunnelRaw), [stageFunnelRaw, inScopeId]);
   const spendToday = useMemo(() => (spendTodayRaw ? scopeSpend(spendTodayRaw, inScopeId) : spendTodayRaw), [spendTodayRaw, inScopeId]);
   // The alert items that name a brand follow the scope. The conversion items count every brand and say so ("ทุกแบรนด์").
@@ -340,7 +343,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </>
           )}
         </div>
-        <BrandRows role={me.role} brands={scopedBrands} stageFunnel={stageFunnel} uploadFacts={uploadFacts} adsData={adsData} spendToday={spendToday} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
+        <BrandRows role={me.role} brands={scopedBrands} stageFunnel={stageFunnel} uploadFacts={uploadFacts} adsData={adsData} noGclid={noGclid} spendToday={spendToday} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
         <div className="home-grid-fq">
         <section className="panel" aria-label="เงินไหลไปถึงไหน">
           <div className="home-ptitle">

@@ -2,7 +2,7 @@ import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/client/api";
-import { loadUploadFacts } from "../src/client/brand-facts";
+import { NO_GCLID_MIN_LANDINGS, NO_GCLID_MIN_PCT, loadUploadFacts, noGclidWarning } from "../src/client/brand-facts";
 import { adsChip, stageStatuses, stageUnknowns, STAGE_LABELS, type StageInput, type StageStatus } from "../src/client/brand-stages";
 import { StageDots } from "../src/client/components/StageDots";
 
@@ -73,6 +73,13 @@ describe("Google Ads chip", () => {
   const chip = (over: Partial<Parameters<typeof adsChip>[0]> = {}) => adsChip({ brand: brand({ brand_id: "b1" }), paused: false, ads: ads([camp("enabled")]), spendToday: null, ...over });
   it.each([
     ["spend today on an enabled campaign", { spendToday: 120 }, { label: "ใช้งาน", tone: "success" }],
+    ["spend today and landings without a gclid above the threshold", { spendToday: 120, noGclid: true }, { label: "ไม่มี gclid", tone: "warning" }],
+    ["the warning outranks a campaign still being drafted", { noGclid: true, ads: ads([camp("draft")]) }, { label: "ไม่มี gclid", tone: "warning" }],
+    ["a campaign being drafted outranks spend today", { spendToday: 120, ads: ads([camp("draft")]) }, { label: "กำลังสร้าง", tone: "info" }],
+    ["no warning keeps ใช้งาน", { spendToday: 120, noGclid: false }, { label: "ใช้งาน", tone: "success" }],
+    ["no account outranks the warning", { noGclid: true, ads: ads([], false) }, { label: "ยังไม่เชื่อม", tone: "neutral" }],
+    ["no campaign outranks the warning", { noGclid: true, ads: ads([]) }, { label: "ยังไม่มีแคมเปญ", tone: "neutral" }],
+    ["paused in core outranks the warning", { noGclid: true, paused: true }, { label: "หยุดชั่วคราว", tone: "neutral" }],
     ["no Google Ads account for the brand", { ads: ads([], false) }, { label: "ยังไม่เชื่อม", tone: "neutral" }],
     ["an account with no campaign", { ads: ads([]) }, { label: "ยังไม่มีแคมเปญ", tone: "neutral" }],
     ["only a removed campaign counts as none", { ads: ads([camp("removed")]) }, { label: "ยังไม่มีแคมเปญ", tone: "neutral" }],
@@ -94,6 +101,18 @@ describe("Google Ads chip", () => {
     for (const spendToday of [0, null]) for (const campaigns of [[camp("enabled")], [camp("draft")], []]) {
       expect(chip({ spendToday, ads: ads(campaigns) })?.label).not.toBe("กำลังเรียนรู้");
     }
+  });
+});
+
+describe("gclid warning threshold", () => {
+  const kpis = (landing_views: number, pct: number) => ({ landing_views, no_gclid_landings: { count: Math.round((landing_views * pct) / 100), pct } });
+  it("warns from 50 landings and 20 percent without a gclid, the click risk thresholds", () => {
+    expect([NO_GCLID_MIN_LANDINGS, NO_GCLID_MIN_PCT]).toEqual([50, 20]);
+    expect(noGclidWarning(kpis(50, 20))).toBe(true);
+    expect(noGclidWarning(kpis(400, 35))).toBe(true);
+    expect(noGclidWarning(kpis(49, 80))).toBe(false); // too few landings to say anything
+    expect(noGclidWarning(kpis(400, 19))).toBe(false);
+    expect(noGclidWarning(kpis(0, 0))).toBe(false);
   });
 });
 

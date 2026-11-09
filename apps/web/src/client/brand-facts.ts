@@ -85,3 +85,32 @@ export function useBrandDeadCount(brandId: string | null, period: "today" | "7d"
   if (!result || result.key !== key) return { state: "loading", count: 0, more: false };
   return { state: result.state, count: result.count, more: result.more };
 }
+
+/**
+ * The brand's gclid warning: landings of the last 24 hours that came without a gclid, from the same realtime report the Traffic page
+ * reads. It warns when at least NO_GCLID_MIN_LANDINGS landings were counted and NO_GCLID_MIN_PCT percent of them had no gclid,
+ * the thresholds the click risk alert uses (50 visits, 20 percent). A handful of landings says nothing.
+ */
+export const NO_GCLID_MIN_LANDINGS = 50;
+export const NO_GCLID_MIN_PCT = 20;
+export const noGclidWarning = (kpis: { landing_views: number; no_gclid_landings: { count: number; pct: number } }): boolean =>
+  kpis.landing_views >= NO_GCLID_MIN_LANDINGS && kpis.no_gclid_landings.pct >= NO_GCLID_MIN_PCT;
+
+/**
+ * The gclid warning of each given brand. `true` warns, `false` is fine, and a brand whose read failed is absent (unknown).
+ * Pass only brands that spend today: the warning is about paid clicks, so a brand with no spend is never asked.
+ */
+export function useNoGclid(brandIds: string[], refresh = 0): Map<string, boolean> {
+  const [warnings, setWarnings] = useState<Map<string, boolean>>(new Map());
+  const key = brandIds.join(",");
+  useEffect(() => {
+    if (brandIds.length === 0) { setWarnings(new Map()); return; }
+    let active = true;
+    void Promise.all(brandIds.map((id) => api.brandNoGclid(id).then((kpis) => [id, noGclidWarning(kpis)] as const, () => null))).then((answers) => {
+      if (active) setWarnings(new Map(answers.filter((a): a is readonly [string, boolean] => a !== null)));
+    });
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, refresh]);
+  return warnings;
+}

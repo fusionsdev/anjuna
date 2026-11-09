@@ -3,6 +3,7 @@ import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contr
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
+import { z } from "zod";
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, TerminalJobResponse, TerminalRunResponse, type CampaignJobCreateRequest, type TerminalRunRequest } from "@anjuna/contracts";
 import { AdAllocationAssignResponse, AdAllocationResponse, type AdAllocationAssignRequest } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
@@ -326,6 +327,13 @@ export const api = {
   /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */
   trafficRiskExportUrl: (period: RiskPeriod, hostname?: string) =>
     `/api/traffic/risk/export?${new URLSearchParams({ period, ...(hostname ? { hostname } : {}) })}`,
+  /**
+   * GET /api/traffic/realtime for one brand: the landings of the last 24 hours and how many came without a gclid.
+   * Only the two numbers the Google Ads chip needs are read, so a new field in the report never breaks the chip.
+   */
+  brandNoGclid: (brandId: string) =>
+    request<unknown>("GET", `/api/traffic/realtime?${new URLSearchParams({ period: "24h", brand: brandId })}`)
+      .then((body) => z.looseObject({ kpis: z.looseObject({ landing_views: z.number(), no_gclid_landings: z.looseObject({ count: z.number(), pct: z.number() }) }) }).parse(body).kpis),
   // spec traffic
   trafficReport: (period: TrafficLogPeriod) =>
     request<unknown>("GET", `/api/traffic/report?${new URLSearchParams({ period })}`).then((body) => TrafficReportResponse.parse(body)),

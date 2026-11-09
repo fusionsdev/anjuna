@@ -73,6 +73,8 @@ beforeEach(() => {
     ["GET /api/brands", () => json({ brands: lifecycleRows.map((row) => runtimeRow(row.brand_id)), generated_at: "2026-10-06T00:00:00Z" })],
     ["GET /api/funnel", () => json({ from: "2026-10-01T00:00:00.000Z", to: "2026-10-07T00:00:00.000Z", rows: DATA["7d"]!.funnel })],
   ]);
+  // The gclid warning of the brands that spend today (Credit Genie, FloatMe, Alpha Loans): few landings without a gclid, unless a test says otherwise.
+  for (const id of ["brand-cg", "brand-fm", "brand-al"]) routes.set(`GET /api/traffic/realtime?period=24h&brand=${id}`, () => json({ kpis: { landing_views: 400, no_gclid_landings: { count: 20, pct: 5 } } }));
   for (const row of lifecycleRows) {
     routes.set(`GET /api/brands/${row.brand_id}/checklist`, () => json({ brand_id: row.brand_id, checklist: [] }));
     routes.set(`GET /api/brands/${row.brand_id}/installs`, () => json({ brand_id: row.brand_id, installs: [] }));
@@ -196,6 +198,19 @@ describe("brands table for the Owner", () => {
 });
 
 describe("brands table for an Employee", () => {
+  it("shows ไม่มี gclid for a brand whose landings of the last 24 hours had too few gclids, and keeps it when the period changes", async () => {
+    routes.set("GET /api/traffic/realtime?period=24h&brand=brand-cg", () => json({ kpis: { landing_views: 300, no_gclid_landings: { count: 120, pct: 40 } } }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid"));
+    expect(cells("alpha.test").ads).toBe("ยังไม่เชื่อม");
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(spend).toHaveBeenCalledWith("30d"));
+    expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid");
+    // Only the brands that spend today were asked, each for 24 hours.
+    const asked = requests.filter((r) => r.path.startsWith("/api/traffic/realtime")).map((r) => r.path).sort();
+    expect([...new Set(asked)]).toEqual(["/api/traffic/realtime?period=24h&brand=brand-al", "/api/traffic/realtime?period=24h&brand=brand-cg", "/api/traffic/realtime?period=24h&brand=brand-fm"]);
+  });
+
   it("has no money column, never asks for spend and shows no dollar amount", async () => {
     render(<BrandLifecycle me={employee} />);
     // The chip reads the campaigns, which an employee may read. With no spend report it says เปิดแล้ว, never ใช้งาน.

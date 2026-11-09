@@ -4,7 +4,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useId, useLayoutEffec
 import { ApiError, api, stepsFromChecklist, type BrandChecklists, type ChecklistStep, type Me } from "../api";
 import { brandSpendFresh, checklistFlags } from "../home-metrics";
 import { adsChip, stageStatuses, stageUnknowns } from "../brand-stages";
-import { useAdsCampaigns, useBrandDeadCount, useUploadFacts } from "../brand-facts";
+import { useAdsCampaigns, useBrandDeadCount, useNoGclid, useUploadFacts } from "../brand-facts";
 import { BrandTable, type BrandTableRow } from "../components/BrandTable";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, nextAction, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleRow, type LifecycleState, type NextAction } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
@@ -251,6 +251,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const spendToday = useSpendReportState("today", owner, refresh) ?? null;
   const dead = useBrandDeadCount(selectedId, period, owner, refresh);
   const adsData = useAdsCampaigns(refresh);
+  // The gclid warning is about paid clicks, so only brands that spend today are asked.
+  const spendingIds = useMemo(() => (spendToday ? [...new Set(spendToday.brands.filter((row) => row.cost > 0).map((row) => row.brand_id))].sort() : []), [spendToday]);
+  const noGclid = useNoGclid(spendingIds, refresh);
   const brandIds = useMemo(() => brands.map((b) => b.brand_id), [brands]);
   const uploadFacts = useUploadFacts(brandIds, refresh);
 
@@ -892,7 +895,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     const paused = runtime?.status === "paused";
     // Cost of today for this brand: 0 when the report answered without it, null when it is not known (employee, failed, loading).
     const todayCost = owner && spendToday ? spendToday.brands.filter((r) => r.brand_id === brand.brand_id).reduce((sum, r) => sum + r.cost, 0) : null;
-    const ads = adsChip({ brand, paused, ads: adsData, spendToday: todayCost });
+    const ads = adsChip({ brand, paused, ads: adsData, spendToday: todayCost, noGclid: noGclid.get(brand.brand_id) });
     return {
       id: brand.brand_id,
       title: name,
