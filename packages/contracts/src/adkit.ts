@@ -83,7 +83,11 @@ export const CampaignJobKind = z.enum([
 ]);
 export type CampaignJobKind = z.infer<typeof CampaignJobKind>;
 
-export const AdkitJobKind = z.enum([...ConversionJobKind.options, ...CampaignJobKind.options]);
+/** The panel's AdKit Terminal (T13-6): one allowlisted `adkit manage ...` line, run once by the executor. */
+export const TerminalJobKind = z.enum(["terminal.run"]);
+export type TerminalJobKind = z.infer<typeof TerminalJobKind>;
+
+export const AdkitJobKind = z.enum([...ConversionJobKind.options, ...CampaignJobKind.options, ...TerminalJobKind.options]);
 export type AdkitJobKind = z.infer<typeof AdkitJobKind>;
 
 /**
@@ -262,6 +266,62 @@ export const PanelCampaignsResponse = z.strictObject({
 });
 export type PanelCampaignsResponse = z.infer<typeof PanelCampaignsResponse>;
 
+// --- AdKit Terminal (T13-6) -------------------------------------------------------------------------
+
+export const TerminalMode = z.enum(["read", "draft", "publish"]);
+export type TerminalMode = z.infer<typeof TerminalMode>;
+/** Longest line the Terminal takes. Same value as TERMINAL_LINE_MAX in scripts/drain/adkit-allowlist.mjs. */
+export const TERMINAL_LINE_MAX = 4000;
+/** Most bytes of output a terminal job keeps. Same value as TERMINAL_OUTPUT_MAX in adkit-allowlist.mjs. */
+export const TERMINAL_OUTPUT_MAX = 20 * 1024;
+/** How often the result view polls, and when it gives up (spec Part C). */
+export const TERMINAL_POLL_MS = 3000;
+export const TERMINAL_POLL_MAX_MS = 120_000;
+
+/** terminal.run as stored: the parsed argv, never the raw line alone. The executor checks it again. */
+export const TerminalRunPayload = z.strictObject({
+  line: z.string().max(TERMINAL_LINE_MAX),
+  argv: z.array(z.string().max(TERMINAL_LINE_MAX)).min(4).max(60),
+  mode: TerminalMode,
+});
+export type TerminalRunPayload = z.infer<typeof TerminalRunPayload>;
+/** Output is masked and cut by the executor before it is posted; core masks and cuts again before it stores. */
+export const TerminalRunResult = z.strictObject({ output: z.string().max(65536) });
+export type TerminalRunResult = z.infer<typeof TerminalRunResult>;
+
+/** POST /admin/adkit/terminal. `dry_run` parses and answers the argv without a job. Publish mode needs `confirm: true`. */
+export const TerminalRunRequest = z.strictObject({
+  line: z.string().max(TERMINAL_LINE_MAX),
+  mode: TerminalMode,
+  dry_run: z.boolean().optional(),
+  confirm: z.boolean().optional(),
+});
+export type TerminalRunRequest = z.infer<typeof TerminalRunRequest>;
+
+/** What the panel may read of a terminal job. `output` is masked and at most 20 KB. */
+export const TerminalJobView = z.strictObject({
+  id: z.string().uuid(),
+  status: AdkitJobStatus,
+  mode: TerminalMode,
+  line: z.string(),
+  output: z.string().nullable(),
+  error: z.string().nullable(),
+  requested_by: z.string(),
+  created_at: Timestamp,
+  updated_at: Timestamp,
+});
+export type TerminalJobView = z.infer<typeof TerminalJobView>;
+/** `job` is null for a dry run. */
+export const TerminalRunResponse = z.strictObject({
+  preview: z.boolean(),
+  argv: z.array(z.string()),
+  mode: TerminalMode,
+  job: TerminalJobView.nullable(),
+});
+export type TerminalRunResponse = z.infer<typeof TerminalRunResponse>;
+export const TerminalJobResponse = z.strictObject({ job: TerminalJobView });
+export type TerminalJobResponse = z.infer<typeof TerminalJobResponse>;
+
 export const IdempotencyKey = z.string().regex(/^[A-Za-z0-9:._-]{8,160}$/, "Invalid idempotency_key");
 
 /** POST /admin/adkit/jobs. Without a key, core derives `<kind>:<brand_draft_id>`. */
@@ -305,6 +365,7 @@ const ExecutorJob = z.discriminatedUnion("kind", [
   executorJob(z.literal("campaign.pause"), CampaignRefPayload),
   executorJob(z.literal("campaign.enable"), CampaignRefPayload),
   executorJob(z.literal("campaign.status_check"), CampaignRefPayload),
+  executorJob(z.literal("terminal.run"), TerminalRunPayload),
 ]);
 
 export const AdkitJobsPendingResponse = z.strictObject({ jobs: z.array(ExecutorJob) });
@@ -326,6 +387,8 @@ export type AdkitJobClaimResponse = z.infer<typeof AdkitJobClaimResponse>;
  */
 export const AdkitJobResultRequest = z.union([
   z.strictObject({ job_id: z.string().uuid(), claim_id: z.string().uuid(), result: AdkitJobOutcome }),
+  /** terminal.run (T13-6): the masked, cut output. */
+  z.strictObject({ job_id: z.string().uuid(), claim_id: z.string().uuid(), result: TerminalRunResult }),
   z.strictObject({
     job_id: z.string().uuid(), claim_id: z.string().uuid(), error: z.string().min(1).max(500), retryable: z.boolean().optional(),
     /** false: the executor failed before any campaigns create or update ran. Absent counts as a possible write. */

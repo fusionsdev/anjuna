@@ -37,8 +37,11 @@ import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
 import { recordCampaignBrand, type RecordCampaignBrand } from "./campaign-brand-map.js";
 import { recheckHeldJobs } from "./campaign-jobs.js";
+import { handleTerminalResult, redactTerminalOutput } from "./adkit-terminal.js";
 
 export const JOB_BODY_LIMIT = 4096;
+/** A result may carry up to 20 KB of terminal output (JSON-escaped it can be several times larger). */
+const RESULT_BODY_LIMIT = 128 * 1024;
 const INGEST_BODY_LIMIT = 512 * 1024;
 const PENDING_LIMIT = 50;
 
@@ -107,8 +110,9 @@ export function adminError(context: AdminRequestContext, error: AdminError): Res
 }
 
 /** Rows a claim may take: queued and due, or claimed past the lease; attempts left either way. ?1 now, ?2 lease cutoff, ?3 max. */
+// A terminal.run claim is never taken again after its lease: the line may already have run (a write could run twice).
 const ELIGIBLE = `((status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= ?1))
-    OR (status = 'claimed' AND claimed_at <= ?2))
+    OR (status = 'claimed' AND claimed_at <= ?2 AND kind != 'terminal.run'))
   AND attempts < ?3`;
 
 const leaseCutoff = (nowMs: number) => new Date(nowMs - ADKIT_JOB_LEASE_MS).toISOString();
@@ -134,7 +138,7 @@ export async function audit(
 const DRAIN_ACTOR = { id: "drain", role: "system" };
 
 /** The done audit row, once per job. `onlyIfMissing` is the repair path of a repeated result. */
-async function writeDoneAudit(env: Env, jobId: string, outcome: Record<string, unknown>, at: string, onlyIfMissing = false): Promise<void> {
+export async function writeDoneAudit(env: Env, jobId: string, outcome: Record<string, unknown>, at: string, onlyIfMissing = false): Promise<void> {
   if (onlyIfMissing) {
     const existing = await env.FACTORY.prepare(
       "SELECT 1 FROM audit_log WHERE action = 'adkit.job.done' AND entity_type = 'adkit_job' AND entity_id = ?1",
@@ -176,6 +180,12 @@ export async function handleJobsPending(request: Request, env: Env, nowMs = Date
       result = json_object('error', 'claim lease expired on the last attempt'), updated_at = ?1
     WHERE status = 'claimed' AND claimed_at <= ?2 AND attempts >= ?3`)
     .bind(now, leaseCutoff(nowMs), ADKIT_JOB_MAX_ATTEMPTS).run();
+  // A terminal job whose claim expired is failed at once, whatever its attempt count (see ELIGIBLE).
+  await env.LEADS.prepare(`
+    UPDATE adkit_jobs SET status = 'failed', result_seq = ${NEXT_EVENT},
+      result = json_object('error', 'claim lease expired; a terminal job is never run twice'), updated_at = ?1
+    WHERE kind = 'terminal.run' AND status = 'claimed' AND claimed_at <= ?2`)
+    .bind(now, leaseCutoff(nowMs)).run();
   await queueStatusChecks(env, now);
   const { results } = await env.LEADS.prepare(`
     SELECT id, kind, payload, attempts FROM adkit_jobs WHERE ${ELIGIBLE}
@@ -222,13 +232,15 @@ export interface JobResultDeps { recordCampaignBrand: RecordCampaignBrand }
  */
 export async function handleJobResult(request: Request, env: Env, deps: JobResultDeps = { recordCampaignBrand }): Promise<Response> {
   if (!await drainAuthorized(request, env)) return unauthorized();
-  const body = await parseBody(request, AdkitJobResultRequest, JOB_BODY_LIMIT);
+  const body = await parseBody(request, AdkitJobResultRequest, RESULT_BODY_LIMIT);
   if (!body.ok) return vpsError(body);
   const data = body.data;
   const at = new Date().toISOString();
 
-  if ("result" in data && !("conversion_action_id" in data.result)) {
-    return handleCampaignResult(env, data.job_id, data.claim_id, data.result, at, deps);
+  const reported = "result" in data ? data.result : undefined;
+  if (reported && "output" in reported) return handleTerminalResult(env, data.job_id, data.claim_id, reported, at);
+  if (reported && !("conversion_action_id" in reported)) {
+    return handleCampaignResult(env, data.job_id, data.claim_id, reported, at, deps);
   }
   if ("result" in data && "conversion_action_id" in data.result) {
     const outcome = data.result;
@@ -269,7 +281,9 @@ export async function handleJobResult(request: Request, env: Env, deps: JobResul
   const row = await loadJob(env, data.job_id);
   if (!row) return json({ status: "invalid", message: "Unknown job_id" }, 404);
   if (row.status !== "claimed" || row.claim_id !== data.claim_id) return stale();
-  const retry = data.retryable !== false && row.attempts < ADKIT_JOB_MAX_ATTEMPTS;
+  // A terminal job is never retried (a write could run twice), and its error text is masked like its output.
+  const terminal = row.kind === "terminal.run";
+  const retry = !terminal && data.retryable !== false && row.attempts < ADKIT_JOB_MAX_ATTEMPTS;
   // A spend job (enable, budget) that may have written remotely ends 'unknown' and stays counted. Only `wrote: false`
   // from the executor (it failed before any create or update ran) lets it end 'failed'.
   const final = SPEND_KIND_LIST.includes(row.kind) && data.wrote !== false ? "unknown" : "failed";
@@ -280,7 +294,7 @@ export async function handleJobResult(request: Request, env: Env, deps: JobResul
         claimed_at = CASE WHEN ?3 = 'queued' THEN NULL ELSE claimed_at END, next_attempt_at = ?5, updated_at = ?6,
         result_seq = CASE WHEN ?3 = 'queued' THEN result_seq ELSE ${NEXT_EVENT} END
     WHERE id = ?1 AND claim_id = ?2 AND status = 'claimed' AND attempts = ?7`)
-    .bind(data.job_id, data.claim_id, retry ? "queued" : final, JSON.stringify({ error: data.error }), nextAttemptAt, at, row.attempts)
+    .bind(data.job_id, data.claim_id, retry ? "queued" : final, JSON.stringify({ error: terminal ? redactTerminalOutput(data.error).slice(0, 500) : data.error }), nextAttemptAt, at, row.attempts)
     .run();
   if (!update.meta.changes) return stale();
   if (!retry) await audit(env, DRAIN_ACTOR, `adkit.job.${final}`, data.job_id, { error: data.error, attempts: row.attempts }, at);
@@ -313,7 +327,7 @@ async function queueStatusChecks(env: Env, at: string): Promise<void> {
   }
 }
 
-type CampaignOutcome = Exclude<Extract<AdkitJobResultRequest, { result: unknown }>["result"], { conversion_action_id: string }>;
+type CampaignOutcome = Exclude<Extract<AdkitJobResultRequest, { result: unknown }>["result"], { conversion_action_id: string } | { output: string }>;
 
 /**
  * A campaign job's result. The kind the result shape implies and the payload must match the claimed row: a draft

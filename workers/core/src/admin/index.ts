@@ -62,6 +62,7 @@ import { loadConversions } from "./conversions-report.js";
 import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 import { loadConversionSetupState } from "../conversion-setup.js";
 import { createAdkitJob, loadAdkitDirectory } from "../adkit.js";
+import { createTerminalJob, getTerminalJob } from "../adkit-terminal.js";
 import { createCampaignJob, listPanelCampaigns } from "../campaign-jobs.js";
 import { loadSpendReport } from "../spend.js";
 import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
@@ -1259,6 +1260,9 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     return account instanceof Response ? account : json(await loadAdkitDirectory(env, "conversion_action", account));
   }
   if (route.endpoint === "createAdkitJob") return createAdkitJob(request, env, context);
+  // T13-6 AdKit Terminal: owner only; core parses the line against the executor allowlist before any row exists.
+  if (route.endpoint === "createTerminalJob") return createTerminalJob(request, env, context);
+  if (route.endpoint === "getTerminalJob") return getTerminalJob(env, context, route.params.id!);
   // T13 Part B campaign jobs: employee and owner; createCampaignJob refuses enable, pause and budget below owner.
   if (route.endpoint === "createCampaignJob") return createCampaignJob(request, env, context);
   if (route.endpoint === "listCampaigns") return json(await listPanelCampaigns(env));

@@ -350,6 +350,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "View conversion upload status, money hidden from employees (FUS-375)", employee: "yes", covered_by: ["conversionsReport"] },
   { action: "Read the AdKit directory and queue AdKit jobs (panel redesign T9)", employee: "no", covered_by: ["adkitProjects", "adkitAccounts", "adkitConversionActions", "createAdkitJob"] },
   { action: "Read panel campaigns and queue campaign jobs; core limits enable, pause and budget to the owner (T13 Part B)", employee: "yes", covered_by: ["createCampaignJob", "listCampaigns"] },
+  { action: "Run an allowlisted AdKit Terminal line and read its output (T13-6)", employee: "no", covered_by: ["createTerminalJob", "getTerminalJob"] },
 ];
 const PLAN_ROWS_OUT_OF_SCOPE = [
   "Add a brand (domain + keyword) and run install", // T10
@@ -457,7 +458,10 @@ describe("routing", () => {
     expect(matchAdminRoute("POST", "/admin/adkit/jobs")).toEqual({ endpoint: "createAdkitJob", params: {} });
     expect(matchAdminRoute("POST", "/admin/adkit/campaign-jobs")).toEqual({ endpoint: "createCampaignJob", params: {} });
     expect(matchAdminRoute("GET", "/admin/adkit/campaigns")).toEqual({ endpoint: "listCampaigns", params: {} });
-    expect(ADMIN_ENDPOINTS).toHaveLength(30);
+    expect(matchAdminRoute("POST", "/admin/adkit/terminal")).toEqual({ endpoint: "createTerminalJob", params: {} });
+    expect(matchAdminRoute("GET", "/admin/adkit/jobs/11111111-1111-4111-8111-111111111111"))
+      .toEqual({ endpoint: "getTerminalJob", params: { id: "11111111-1111-4111-8111-111111111111" } });
+    expect(ADMIN_ENDPOINTS).toHaveLength(32);
   });
 });
 
