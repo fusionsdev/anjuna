@@ -142,10 +142,22 @@ Expected row counts and values:
 
 | Query | Expected |
 | --- | --- |
-| V1 (leads) | rows `0028…`, `0029…`, `0030…` (full names below) |
-| V1 (auth) | rows including `0002_user_prefs` |
+| V1 (leads) | three rows, full names in the list below |
+| V1 (auth) | including `0001_better_auth.sql`, `0002_user_prefs.sql` |
 | V2 | 3 rows, all `notnull = 0`, `dflt_value = NULL` |
 | V3 | `alert_state` = 0, `notification_log` = 0, `user_prefs` = 0 |
+
+V1 (leads) must list exactly these three ledger names:
+
+- `0028_traffic_ua_country.sql`
+- `0029_alert_state.sql`
+- `0030_notification_log.sql`
+
+The ledger stores the **full filename, `.sql` included** — Wrangler inserts
+the relative filename it read from `migrations_dir` and matches it exactly
+when it computes pending migrations. Copy these strings verbatim into any
+`d1_migrations` query; a name without `.sql` matches 0 rows and silently
+leaves the ledger unchanged.
 
 (V3 rows appear only after the first cron tick / a panel save.)
 
@@ -169,10 +181,17 @@ this order:
 3. **Erase the `d1_migrations` ledger rows in the same command.** Wrangler
    decides "pending" from the ledger, so a rolled-back migration whose
    ledger row survives would never be re-applied by
-   `d1 migrations apply`. The ledger `name` is the migration filename
-   without the `.sql` extension — V1 above shows the exact names.
-4. **Re-run V2/V3 to confirm the objects are gone**, then re-apply the
-   migrations and redeploy when the tenant moves forward again.
+   `d1 migrations apply`. The ledger `name` is the **full migration
+   filename including the `.sql` extension** — Wrangler inserts the
+   relative filename it read from `migrations_dir` and compares it exactly
+   when computing pending migrations. Get the exact strings from V1 and
+   keep them verbatim.
+4. **Verify the rollback: objects gone, ledger empty, no rows.** Run R1,
+   R2 and R3 below. Do not re-run V3 here: it selects from the tables step 2
+   just dropped, so it would fail with `no such table` instead of reporting
+   a result.
+5. **Re-apply when the tenant moves forward again** (the Apply commands
+   above), then redeploy core and web.
 
 Rollback (aduplift, leads then auth):
 
@@ -190,12 +209,13 @@ ALTER TABLE traffic_events DROP COLUMN user_agent_family; \
 ALTER TABLE traffic_events DROP COLUMN country; \
 ALTER TABLE traffic_events DROP COLUMN region; \
 DELETE FROM d1_migrations WHERE name IN \
-('0030_notification_log','0029_alert_state','0028_traffic_ua_country');"
+('0030_notification_log.sql','0029_alert_state.sql', \
+'0028_traffic_ua_country.sql');"
 
 # auth: reverse SQL of 0002 (separate database)
 bunx wrangler d1 execute aduplift-auth --remote --config "$CA" \
   --command "DROP TABLE IF EXISTS user_prefs; \
-DELETE FROM d1_migrations WHERE name = '0002_user_prefs';"
+DELETE FROM d1_migrations WHERE name = '0002_user_prefs.sql';"
 ```
 
 Rollback (maimax, same SQL, maimax database and configs):
@@ -213,11 +233,12 @@ ALTER TABLE traffic_events DROP COLUMN user_agent_family; \
 ALTER TABLE traffic_events DROP COLUMN country; \
 ALTER TABLE traffic_events DROP COLUMN region; \
 DELETE FROM d1_migrations WHERE name IN \
-('0030_notification_log','0029_alert_state','0028_traffic_ua_country');"
+('0030_notification_log.sql','0029_alert_state.sql', \
+'0028_traffic_ua_country.sql');"
 
 bunx wrangler d1 execute maimax-auth --remote --config "$CA" \
   --command "DROP TABLE IF EXISTS user_prefs; \
-DELETE FROM d1_migrations WHERE name = '0002_user_prefs';"
+DELETE FROM d1_migrations WHERE name = '0002_user_prefs.sql';"
 ```
 
 Index names are the ones PR 198 actually creates
@@ -225,6 +246,56 @@ Index names are the ones PR 198 actually creates
 copy them from the migration files if a later Wave 5 PR renames them.
 `ALTER TABLE ... DROP COLUMN` is supported by D1 (SQLite ≥ 3.35); the
 pre-existing `idx_traffic_events_created_step` stays untouched by design.
+
+## Verify after rollback — aduplift
+
+Run these instead of V2/V3. V2 still works (it reads `pragma_table_info`,
+which simply returns no rows once the columns are gone), but V3 selects
+from the tables that step 2 dropped, so it errors with `no such table`.
+Check object existence through `sqlite_master` instead.
+
+```sh
+CF=workers/core/wrangler.deploy.aduplift.jsonc
+CA=apps/web/wrangler.deploy.aduplift.jsonc
+
+# R1 the Wave 5 objects are gone (expect an empty result on both)
+bunx wrangler d1 execute aduplift-leads --remote --config "$CF" \
+  --command "SELECT type, name FROM sqlite_master WHERE \
+name IN ('alert_state','notification_log', \
+'idx_notification_log_sent_at','idx_traffic_events_brand_created')"
+bunx wrangler d1 execute aduplift-auth --remote --config "$CA" \
+  --command "SELECT type, name FROM sqlite_master WHERE name = 'user_prefs'"
+
+# R2 the ledger no longer lists this set, and nothing else was lost
+bunx wrangler d1 execute aduplift-leads --remote --config "$CF" \
+  --command "SELECT name FROM d1_migrations WHERE name IN \
+('0028_traffic_ua_country.sql','0029_alert_state.sql', \
+'0030_notification_log.sql')"
+bunx wrangler d1 execute aduplift-auth --remote --config "$CA" \
+  --command "SELECT name FROM d1_migrations WHERE name = '0002_user_prefs.sql'"
+
+# R3 V2 again: the three columns are gone, so 0 rows
+bunx wrangler d1 execute aduplift-leads --remote --config "$CF" \
+  --command "SELECT name FROM pragma_table_info('traffic_events') \
+WHERE name IN ('user_agent_family','country','region')"
+```
+
+Expected after a clean rollback:
+
+| Query | Expected |
+| --- | --- |
+| R1 (leads) | empty result — 0 objects from the `IN` list |
+| R1 (auth) | empty result — no `user_prefs` |
+| R2 (leads) | empty result — 0 ledger rows for 0028–0030; earlier rows stay |
+| R2 (auth) | empty result — 0 ledger rows for 0002; `0001_*` stays |
+| R3 | 0 rows (was 3 rows after apply, V2) |
+
+If R2 still returns a name, the `.sql` suffix in step 3 did not match the
+ledger — copy the string from V1 verbatim and rerun step 3 only. If R1
+still returns an object, the reverse SQL did not run in full; check the
+command's `--command` string for a missing `;`.
+
+Repeat with maimax database names and the maimax configs.
 
 Rolling back tables that have already collected rows loses only state for
 this feature: `alert_state` is re-derived from the current report on the
