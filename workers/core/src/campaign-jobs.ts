@@ -55,6 +55,7 @@ import {
   type AdminRequestContext,
   type CampaignJobKind,
   type PanelCampaign,
+  type PanelCampaignBrand,
 } from "@anjuna/contracts";
 import { checkBudget } from "./ads-caps.js";
 import { JOB_BODY_LIMIT, NEXT_EVENT, NEXT_SEQ, adminError, audit, parseBody, publicJob, type JobRow } from "./adkit.js";
@@ -354,7 +355,16 @@ export async function listPanelCampaigns(env: Env): Promise<PanelCampaignsRespon
       daily_budget_thb: thb, state: c.state, updated_at: c.updated_at, geo: c.payload.geo, final_url: c.payload.final_url,
     };
   });
-  return PanelCampaignsResponse.parse({ campaigns: items, caps, enabled_total_thb_day: round2(enabledTotal) });
+  const { results: brandRows } = await env.LEADS.prepare("SELECT brand_id, google_ads_account FROM brand_runtime WHERE google_ads_account IS NOT NULL ORDER BY brand_id")
+    .all<{ brand_id: string; google_ads_account: string }>();
+  const brands = brandRows.map((b): PanelCampaignBrand => {
+    const committed = enabledThb(campaigns, rates, b.brand_id);
+    return {
+      brand_id: b.brand_id, currency: rates.currency(b.google_ads_account), thb_per_unit: rates(b.google_ads_account),
+      committed_thb_day: committed === null ? null : round2(committed.brand),
+    };
+  });
+  return PanelCampaignsResponse.parse({ campaigns: items, brands, caps, enabled_total_thb_day: round2(enabledTotal) });
 }
 
 /** POST /admin/adkit/campaign-jobs. 201 with the new row, 200 with the row the key already holds. */

@@ -18,19 +18,29 @@ const running = campaign({ draft_job_id: "33333333-3333-4333-8333-333333333333",
 
 let campaigns: Campaign[];
 let enabledTotal: number;
+let capError: { message: string } | null;
+let brandsOverride: Array<Record<string, unknown>> | null;
 let requests: Array<{ method: string; path: string; body: unknown }>;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 beforeEach(() => {
   campaigns = [campaign({}), running];
   enabledTotal = 1000;
+  brandsOverride = null;
+  capError = null;
   requests = [];
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     requests.push({ method, path: input, body });
     if (method === "GET" && input === "/api/ads/campaigns") {
-      return json({ campaigns, caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: enabledTotal });
+      // Default: every brand is a baht account; committed is the sum of its spending campaigns.
+      const ids = [...new Set(campaigns.map((c) => c.brand_id as string))];
+      const brands = brandsOverride ?? ids.map((id) => ({
+        brand_id: id, currency: "THB", thb_per_unit: 1,
+        committed_thb_day: campaigns.filter((c) => c.brand_id === id && c.state === "enabled").reduce((n, c) => n + (c.daily_budget_thb as number), 0),
+      }));
+      return json({ campaigns, brands, caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: enabledTotal });
     }
     if (method === "GET" && input === "/api/lifecycle/brands") {
       return json({ brands: [
@@ -40,6 +50,15 @@ beforeEach(() => {
     }
     if (method === "GET" && input === "/api/brands") {
       return json({ brands: [{ brand_id: "petvet", hostnames: ["petvetpay.com"] }, { brand_id: "bison", hostnames: ["bisoncash.com"] }], generated_at: AT });
+    }
+    if (method === "POST" && capError) return json({ error: "invalid", request_id: "r1", issues: [{ path: "daily_budget", message: capError.message }] }, 422);
+    if (method === "POST" && input === "/api/ads/campaigns/draft") {
+      const job = {
+        id: "66666666-6666-4666-8666-666666666666", kind: "campaign.draft.create", status: "queued", attempts: 0,
+        payload: { ...(body as object), account: "5381163935", project: null }, result: null, idempotency_key: "campaign:abcdefgh",
+        requested_by: "u1", next_attempt_at: null, created_at: AT, updated_at: AT,
+      };
+      return json({ job, created: true }, 201);
     }
     if (method === "POST" && input.startsWith("/api/ads/campaigns/")) return json({ job: {}, created: true }, 201);
     throw new Error(`Unexpected test HTTP request: ${method} ${input}`);
@@ -150,6 +169,120 @@ describe("Campaigns screen", () => {
     fireEvent.change(within(form).getByLabelText("งบต่อวัน"), { target: { value: "2000.01" } });
     expect(form.textContent).toContain("งบต่อวันเกินเพดานที่เหลือ");
     expect((within(form).getByRole("button", { name: "ส่งร่างไป AdKit" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  const fillDraft = async () => {
+    const form = await screen.findByRole("form", { name: "ร่างแคมเปญใหม่" });
+    await screen.findByText("petvet-search-1");
+    fireEvent.change(within(form).getByLabelText("แบรนด์"), { target: { value: "petvet" } });
+    fireEvent.change(within(form).getByLabelText("งบต่อวัน"), { target: { value: "300" } });
+    fireEvent.change(within(form).getByLabelText("รหัสประเทศหรือรหัสเมือง"), { target: { value: "US" } });
+    fireEvent.change(within(form).getByLabelText("คีย์เวิร์ด หนึ่งบรรทัดต่อคำ"), { target: { value: "pet loans" } });
+    return form;
+  };
+  const brandValue = (form: HTMLElement) => (within(form).getByLabelText("แบรนด์") as unknown as HTMLSelectElement).value;
+  const sendBtn = (form: HTMLElement) => within(form).getByRole("button", { name: "ส่งร่างไป AdKit" }) as HTMLButtonElement;
+
+  it("a second click after a successful draft creates no second job", async () => {
+    render(<CampaignsScreen me={employee} />);
+    const form = await fillDraft();
+    fireEvent.click(sendBtn(form));
+    await waitFor(() => expect(requests.filter((r) => r.method === "POST")).toHaveLength(1));
+    await waitFor(() => expect(brandValue(form)).toBe(""));
+    expect(sendBtn(form).disabled).toBe(true);
+    fireEvent.click(sendBtn(form));
+    fireEvent.submit(form);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(1);
+  });
+
+  it("two clicks while the draft POST is pending send exactly one POST", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === "POST") { requests.push({ method: "POST", path: String(input), body: null }); await gate; }
+      return original(input, init);
+    });
+    render(<CampaignsScreen me={employee} />);
+    const form = await fillDraft();
+    fireEvent.click(sendBtn(form));
+    await waitFor(() => expect(requests.filter((r) => r.method === "POST")).toHaveLength(1));
+    fireEvent.click(sendBtn(form));
+    fireEvent.submit(form);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(1);
+    release();
+    await waitFor(() => expect(brandValue(form)).toBe(""));
+  });
+
+  it("a null rate or committed figure shows the Thai reason", async () => {
+    brandsOverride = [{ brand_id: "petvet", currency: "USD", thb_per_unit: null, committed_thb_day: null }];
+    render(<CampaignsScreen me={employee} />);
+    const form = await fillDraft();
+    expect(form.textContent).toContain("ยังคำนวณเพดานเป็นบาทไม่ได้ ระบบจะตรวจตอนส่ง");
+  });
+
+  it("a failed draft keeps the form so the user can fix it", async () => {
+    render(<CampaignsScreen me={employee} />);
+    const form = await fillDraft();
+    capError = { message: "brand_cap: x" };
+    fireEvent.click(sendBtn(form));
+    await screen.findByRole("alert");
+    expect(brandValue(form)).toBe("petvet");
+  });
+
+  it("a brand_cap refusal from core reads in Thai", async () => {
+    capError = { message: "brand_cap: 4000 THB/day is above ads_cap_brand_thb_day 3000 THB/day with the campaigns already enabled" };
+    render(<CampaignsScreen me={employee} />);
+    fireEvent.click(sendBtn(await fillDraft()));
+    expect((await screen.findByRole("alert")).textContent).toBe("งบเกินเพดานต่อแบรนด์ ระบบไม่สร้างงาน");
+  });
+
+  it("a total_cap refusal from core reads in Thai", async () => {
+    capError = { message: "total_cap: 4000 THB/day is above ads_cap_total_thb_day 3000 THB/day with the campaigns already enabled" };
+    render(<CampaignsScreen me={employee} />);
+    fireEvent.click(sendBtn(await fillDraft()));
+    expect((await screen.findByRole("alert")).textContent).toBe("งบเกินเพดานรวมทุกแบรนด์ ระบบไม่สร้างงาน");
+  });
+
+  it("a first draft for a USD brand shows the currency and makes no baht cap claim while the rate is unknown", async () => {
+    campaigns = [];
+    brandsOverride = [{ brand_id: "bison", currency: "USD", thb_per_unit: null, committed_thb_day: 0 }];
+    render(<CampaignsScreen me={employee} />);
+    const form = await screen.findByRole("form", { name: "ร่างแคมเปญใหม่" });
+    await screen.findByText("ยังไม่มีแคมเปญจากหน้านี้");
+    fireEvent.change(within(form).getByLabelText("แบรนด์"), { target: { value: "bison" } });
+    fireEvent.change(within(form).getByLabelText("งบต่อวัน"), { target: { value: "9999" } });
+    fireEvent.change(within(form).getByLabelText("รหัสประเทศหรือรหัสเมือง"), { target: { value: "US" } });
+    fireEvent.change(within(form).getByLabelText("คีย์เวิร์ด หนึ่งบรรทัดต่อคำ"), { target: { value: "cash" } });
+    expect(form.textContent).toContain("USD");
+    expect(form.textContent).not.toContain("งบต่อวันเกินเพดานที่เหลือ");
+    expect(sendBtn(form).disabled).toBe(false);
+  });
+
+  it("a USD brand with a known rate checks the cap in baht", async () => {
+    campaigns = [];
+    enabledTotal = 0;
+    brandsOverride = [{ brand_id: "bison", currency: "USD", thb_per_unit: 36, committed_thb_day: 0 }];
+    render(<CampaignsScreen me={employee} />);
+    const form = await screen.findByRole("form", { name: "ร่างแคมเปญใหม่" });
+    await screen.findByText("ยังไม่มีแคมเปญจากหน้านี้");
+    fireEvent.change(within(form).getByLabelText("แบรนด์"), { target: { value: "bison" } });
+    fireEvent.change(within(form).getByLabelText("งบต่อวัน"), { target: { value: "100" } }); // 3,600 baht
+    expect(form.textContent).toContain("งบต่อวันเกินเพดานที่เหลือ");
+    fireEvent.change(within(form).getByLabelText("งบต่อวัน"), { target: { value: "80" } }); // 2,880 baht
+    expect(form.textContent).not.toContain("งบต่อวันเกินเพดานที่เหลือ");
+  });
+
+  it("the brand used figure is the committed budget core returns, so pending budget jobs count", async () => {
+    // Enabled at 1,000 baht but core holds a pending 2,500 baht budget job: 2,500 committed, 500 left.
+    brandsOverride = [{ brand_id: "petvet", currency: "THB", thb_per_unit: 1, committed_thb_day: 2500 }];
+    render(<CampaignsScreen me={employee} />);
+    const caps = await screen.findByRole("table", { name: "เพดานงบต่อวัน" });
+    const brand = within(caps).getByText("PetVetPay").closest("tr")!;
+    expect(brand.textContent).toContain("฿2,500");
+    expect(brand.textContent).toContain("฿500");
   });
 
   it("the owner pauses an enabled campaign after a confirm", async () => {

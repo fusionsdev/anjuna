@@ -20,8 +20,6 @@ const STATE: Record<State, { label: string; tone: Tone }> = {
   unknown: { label: "ไม่ทราบผล รอตรวจสถานะ", tone: "warn" },
   removed: { label: "ถูกลบใน Google Ads", tone: "mute" },
 };
-/** States whose budget core counts against the caps. */
-const SPENDING: ReadonlySet<State> = new Set(["enabled", "enabling", "unknown"]);
 /** Only these may be enabled; enabling, enabled and unknown never offer enable again. */
 const ENABLEABLE: ReadonlySet<State> = new Set(["draft", "paused"]);
 const PAUSABLE: ReadonlySet<State> = new Set(["enabled", "unknown"]);
@@ -38,14 +36,14 @@ function budgetText(c: PanelCampaign): string {
   return `${c.daily_budget.toLocaleString("en-US", { maximumFractionDigits: 2 })} สกุลเงินไม่ทราบ`;
 }
 
-/** Cap figures in baht per day. `brandUsed` is null when a spending campaign of the brand has no baht amount. */
+/**
+ * Cap figures in baht per day. `brandUsed` is the committed figure core returns (spending campaigns plus pending
+ * budget jobs), the same one core checks the caps with; null when core cannot convert a currency.
+ */
 function capsFor(data: PanelCampaignsResponse, brandId: string): { brandUsed: number | null; left: number | null } {
-  let used = 0;
-  for (const c of data.campaigns) {
-    if (c.brand_id !== brandId || !SPENDING.has(c.state)) continue;
-    if (c.daily_budget_thb === null) return { brandUsed: null, left: null };
-    used += satang(c.daily_budget_thb);
-  }
+  const committed = data.brands.find((b) => b.brand_id === brandId)?.committed_thb_day ?? null;
+  if (committed === null) return { brandUsed: null, left: null };
+  const used = satang(committed);
   const brandLeft = satang(data.caps.brand_thb_day) - used;
   const totalLeft = satang(data.caps.total_thb_day) - satang(data.enabled_total_thb_day);
   return { brandUsed: used / 100, left: Math.max(0, Math.min(brandLeft, totalLeft)) / 100 };
@@ -93,19 +91,23 @@ export function CampaignsScreen({ me }: { me: Me }) {
 
   const brandOf = (id: string): BrandInfo => brands.find((b) => b.id === id) ?? { id, name: id, domain: "" };
 
-  async function run(key: string, fn: () => Promise<unknown>, done: string) {
-    if (busy) return;
+  /** True when the call succeeded. Busy stays set until the list reloaded, so no click lands on stale figures. */
+  async function run(key: string, fn: () => Promise<unknown>, done: string): Promise<boolean> {
+    if (busy) return false;
     setBusy(key);
     setMsg(null);
+    let ok = false;
     try {
       await fn();
       setMsg({ tone: "ok", text: done });
+      ok = true;
     } catch (e) {
       setMsg({ tone: "err", text: thaiError(e) });
     } finally {
-      setBusy(null);
       await load();
+      setBusy(null);
     }
+    return ok;
   }
 
   async function enable(c: PanelCampaign) {
@@ -233,7 +235,7 @@ export function CampaignsScreen({ me }: { me: Me }) {
 
 type DraftBody = Parameters<typeof api.draftAdsCampaign>[0];
 
-function DraftForm({ data, brands, busy, onSubmit }: { data: PanelCampaignsResponse | null; brands: BrandInfo[]; busy: boolean; onSubmit: (body: DraftBody) => Promise<void> }) {
+function DraftForm({ data, brands, busy, onSubmit }: { data: PanelCampaignsResponse | null; brands: BrandInfo[]; busy: boolean; onSubmit: (body: DraftBody) => Promise<boolean> }) {
   const [brandId, setBrandId] = useState("");
   const [budget, setBudget] = useState("");
   const [bid, setBid] = useState<DraftBody["bid_strategy"]>("maximize_conversions");
@@ -253,11 +255,11 @@ function DraftForm({ data, brands, busy, onSubmit }: { data: PanelCampaignsRespo
 
   const amount = Number(budget);
   const amountOk = budget.trim() !== "" && Number.isFinite(amount) && amount > 0;
-  // The account currency is known once a campaign of the brand exists; until then core converts and rechecks.
-  const sample = data?.campaigns.find((c) => c.brand_id === brandId && c.daily_budget_thb !== null && c.daily_budget > 0);
-  const rate = sample ? sample.daily_budget_thb! / sample.daily_budget : 1;
+  // The budget is in the account currency. Without a baht rate the pre-check is skipped and core decides (it always rechecks).
+  const info = data?.brands.find((b) => b.brand_id === brandId);
+  const rate = info?.thb_per_unit ?? null;
   const left = data && brandId ? capsFor(data, brandId).left : null;
-  const over = amountOk && left !== null && satang(amount * rate) > satang(left);
+  const over = amountOk && rate !== null && left !== null && satang(amount * rate) > satang(left);
   const lines = keywords.split("\n").map((k) => k.trim()).filter(Boolean);
   const ready = !!brandId && amountOk && !over && geoValue.trim() !== "" && lines.length > 0 && finalUrl.trim() !== "" && !busy;
 
@@ -271,7 +273,15 @@ function DraftForm({ data, brands, busy, onSubmit }: { data: PanelCampaignsRespo
     e.preventDefault();
     if (!ready) return;
     const geo: Geo = geoType === "country" ? { country: geoValue.trim().toUpperCase() } : { city_code: geoValue.trim() };
-    await onSubmit({ brand_id: brandId, name, daily_budget: amount, bid_strategy: bid, geo, keywords: lines, final_url: finalUrl.trim() });
+    const ok = await onSubmit({ brand_id: brandId, name, daily_budget: amount, bid_strategy: bid, geo, keywords: lines, final_url: finalUrl.trim() });
+    // A second click would send the same draft again under the next auto-name, so a sent draft empties the form.
+    if (ok) {
+      setBrandId("");
+      setBudget("");
+      setGeoValue("");
+      setKeywords("");
+      setFinalUrl("");
+    }
   }
 
   return (
@@ -294,7 +304,12 @@ function DraftForm({ data, brands, busy, onSubmit }: { data: PanelCampaignsRespo
         <div className="campaigns-field">
           <label htmlFor="cmp-budget">งบต่อวัน</label>
           <input id="cmp-budget" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} />
-          <small>สกุลเงินของบัญชี Google Ads{left !== null ? ` · เพดานที่เหลือ ${baht(left)}` : ""}</small>
+          <small>
+            {info?.currency ? `สกุลเงินของบัญชี Google Ads: ${info.currency}` : "สกุลเงินของบัญชี Google Ads"}
+            {rate !== null && info?.currency !== "THB" ? ` · 1 ${info?.currency} = ${baht(rate)}` : ""}
+            {left !== null ? ` · เพดานที่เหลือ ${baht(left)}` : ""}
+            {brandId && (rate === null || left === null) ? " · ยังคำนวณเพดานเป็นบาทไม่ได้ ระบบจะตรวจตอนส่ง" : ""}
+          </small>
           {over && <small className="campaigns-reason" role="note">{OVER_CAP}</small>}
         </div>
         <div className="campaigns-field">
