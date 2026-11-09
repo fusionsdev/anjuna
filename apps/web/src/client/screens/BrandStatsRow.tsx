@@ -92,6 +92,21 @@ export interface BrandMoney {
   /** `spend` and `costPerLead` as the table shows them, e.g. "฿3,500" or "฿350 + $5". */
   spendText: string;
   costPerLeadText: string;
+  /** Part of the spend is an unmapped campaign split by click share (T13 A3): the table shows "~". */
+  estimated: boolean;
+}
+
+/** Tooltip of every "~" number: the brand's share of an unmapped campaign comes from its share of the clicks. */
+export const ESTIMATED_TITLE = "ประมาณจากสัดส่วนคลิก";
+
+/** A spend or cost-per-lead text, with "~" and the tooltip when it is estimated. "—" never gets a mark. */
+export function SpendText({ text, estimated }: { text: string; estimated: boolean }) {
+  return estimated && text !== "—" ? <span className="est" title={ESTIMATED_TITLE}>~{text}</span> : <>{text}</>;
+}
+
+/** True when any spend row of the brand is estimated. A row from a core that predates the field reads as exact. */
+export function spendEstimated(spend: SpendReport | null | undefined, brandId: string): boolean {
+  return !!spend?.brands.some((row) => row.brand_id === brandId && row.allocation === "estimated");
 }
 
 const SYMBOL: Record<SpendCurrency, string> = { THB: "฿", USD: "$" };
@@ -132,6 +147,7 @@ export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funn
     profit: costUsd !== null && revenue !== null ? Math.round((revenue - costUsd) * 100) / 100 : null,
     spendText: byCurrencyText(cost),
     costPerLeadText: byCurrencyText(costPerLead),
+    estimated: spendRows.some((row) => row.allocation === "estimated"),
   };
 }
 

@@ -34,6 +34,7 @@ export const LEADS_DB_MIGRATIONS = [
   "0023_adkit_campaign_jobs.sql",
   "0024_adkit_jobs_seq.sql",
   "0025_adkit_jobs_claim_seq.sql",
+  "0026_ad_spend_campaign.sql",
   "0027_adkit_terminal_jobs.sql",
 ] as const;
 

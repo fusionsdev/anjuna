@@ -145,6 +145,19 @@ describe("brands table for the Owner", () => {
     }
   });
 
+  it("marks spend, cost per lead and profit with ~ when the spend row is an estimated campaign share", async () => {
+    const week = DATA["7d"]!;
+    const saved = { funnel: week.funnel, spend: week.spend };
+    week.funnel = [funnelRow("brand-al", 50, 5, 20)];
+    week.spend = [{ ...cost("brand-al", 10), allocation: "estimated" } as never];
+    try {
+      render(<BrandLifecycle me={owner} />);
+      await waitFor(() => expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "~฿350", "50", "5", "~฿70", "~$10"]));
+    } finally {
+      Object.assign(week, saved);
+    }
+  });
+
   it("shows a loss in the negative colour class and a gain in the positive one", async () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(cells("floatsme.test")[6]).toBe("−$620"));
@@ -234,7 +247,7 @@ describe("brandMoney, periodWindow and sortWorstProfitFirst", () => {
 
   it("sums the funnel rows of a brand and derives cost per lead and profit", () => {
     expect(brandMoney("b", runtime, funnel, spendFixture)).toEqual({
-      clicks: 15, leads: 5, spend: { THB: 350 }, costPerLead: { THB: 70 }, profit: 140, spendText: "฿350", costPerLeadText: "฿70",
+      clicks: 15, leads: 5, spend: { THB: 350 }, costPerLead: { THB: 70 }, profit: 140, estimated: false, spendText: "฿350", costPerLeadText: "฿70",
     });
   });
 
@@ -244,12 +257,12 @@ describe("brandMoney, periodWindow and sortWorstProfitFirst", () => {
       brands: [...spendFixture.brands, { brand_id: "b", currency: "USD", cost: 5, cost_usd: 5, clicks: 0, impressions: 0, updated_at: "2026-10-06T00:00:00.000Z" }],
     };
     expect(brandMoney("b", runtime, funnel, twoCurrencies)).toEqual({
-      clicks: 15, leads: 5, spend: { THB: 350, USD: 5 }, costPerLead: { THB: 70, USD: 1 }, profit: 135, spendText: "฿350 + $5", costPerLeadText: "฿70 + $1",
+      clicks: 15, leads: 5, spend: { THB: 350, USD: 5 }, costPerLead: { THB: 70, USD: 1 }, profit: 135, estimated: false, spendText: "฿350 + $5", costPerLeadText: "฿70 + $1",
     });
   });
 
   it("keeps a missing source unknown instead of 0", () => {
-    const unknown = { spend: null, costPerLead: null, profit: null, spendText: "—", costPerLeadText: "—" };
+    const unknown = { spend: null, costPerLead: null, profit: null, estimated: false, spendText: "—", costPerLeadText: "—" };
     expect(brandMoney("c", runtime, funnel, spendFixture)).toEqual({ clicks: 0, leads: 0, ...unknown });
     expect(brandMoney("b", runtime, null, spendFixture)).toEqual({ clicks: null, leads: null, ...unknown, spend: { THB: 350 }, spendText: "฿350" });
     expect(brandMoney("b", null, funnel, null)).toEqual({ clicks: null, leads: null, ...unknown });

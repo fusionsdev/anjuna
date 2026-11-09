@@ -19,6 +19,8 @@ export type Route =
   | { view: "suppressions" }
   // spec settings
   | { view: "settings" }
+  // T13 A3 allocation tab (owner)
+  | { view: "ad-allocation" }
   // spec timeline
   | { view: "brand-timeline"; brandId: string }
   // spec traffic
@@ -50,6 +52,7 @@ const STATIC: Record<string, Route> = {
   "/suppressions": { view: "suppressions" },
   // spec settings
   "/settings": { view: "settings" },
+  "/ad-allocation": { view: "ad-allocation" },
   // spec traffic
   "/traffic": { view: "traffic" },
   "/errors": { view: "errors" },

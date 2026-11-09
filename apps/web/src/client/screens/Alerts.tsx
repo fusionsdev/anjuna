@@ -68,6 +68,13 @@ export function AlertsScreen() {
               : `ไม่มีโดเมนที่คนเข้าเว็บได้คะแนนเสี่ยงสูงเกิน ${Math.round(report.click_risk.detail.alert_at * 100)}% ใน ${report.click_risk.detail.window_hours} ชม.`}>
               {report.click_risk.detail.hostnames.length ? <ul>{report.click_risk.detail.hostnames.map((h) => <li key={h.hostname}>{h.hostname} · เสี่ยงสูง {h.high_risk} จาก {h.visits} คน</li>)}</ul> : "ไม่มีโดเมนเกินเกณฑ์"}
             </AlertRow>
+            {report.ad_spend_unallocated && <AlertRow state={report.ad_spend_unallocated.state} title="ค่าโฆษณายังไม่จัดสรร" detail={report.ad_spend_unallocated.detail.accounts.length
+              ? `${report.ad_spend_unallocated.detail.accounts.length} บัญชีมีแคมเปญที่ยังไม่จัดสรรเกิน ${Math.round(report.ad_spend_unallocated.detail.alert_at * 100)}% ของค่าโฆษณา ${report.ad_spend_unallocated.detail.window_days} วัน`
+              : `ไม่มีบัญชีที่แคมเปญยังไม่จัดสรรเกิน ${Math.round(report.ad_spend_unallocated.detail.alert_at * 100)}% ของค่าโฆษณา ${report.ad_spend_unallocated.detail.window_days} วัน`}>
+              {report.ad_spend_unallocated.detail.accounts.length
+                ? <ul>{report.ad_spend_unallocated.detail.accounts.map((a) => <li key={`${a.account}:${a.currency}`}>บัญชี {a.account.slice(0, 3)}-{a.account.slice(3, 6)}-{a.account.slice(6)} · {a.currency} · ยังไม่จัดสรร {(a.share * 100).toLocaleString("th-TH", { maximumFractionDigits: 1 })}%</li>)}</ul>
+                : "ไม่มีบัญชีเกินเกณฑ์"}
+            </AlertRow>}
             <p className="hint">ข้อมูล ณ {new Date(report.generated_at).toLocaleString("th-TH", { hour12: false })}</p>
           </section>
           <section className="panel" style={{ marginTop: 16 }} aria-label="เกณฑ์แจ้งเตือน">

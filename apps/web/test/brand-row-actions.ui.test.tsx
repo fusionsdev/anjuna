@@ -285,10 +285,10 @@ describe("brand row actions menu", () => {
     await screen.findByRole("button", { name: "จัดการ" });
     fireEvent.click(screen.getByRole("button", { name: "จัดการ" }));
     fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /คัดลอก Final URL/ }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://brand-a.test/?keyword={keyword}"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://brand-a.test/?keyword={keyword}&utm_campaign={campaignid}"));
     writeText.mockClear();
     fireEvent.click(within(document.querySelector(".brands-aside")!).getByRole("button", { name: /คัดลอก Final URL/ }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://brand-a.test/?keyword={keyword}"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://brand-a.test/?keyword={keyword}&utm_campaign={campaignid}"));
   });
 
   /** brand-a is a selected draft; brand-b is a non-selected failed brand whose latest_install has the given status. */

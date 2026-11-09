@@ -5,6 +5,8 @@
  * Remove once the panel runs against the CORE service binding.
  */
 import {
+  AdAllocationAssignRequest,
+  AdAllocationQuery,
   AddSuppressionRequest,
   AdminApi,
   BRAND_PATCH_FIELDS,
@@ -19,6 +21,8 @@ import {
   AuditQuery,
   FunnelQuery,
   SpendQuery,
+  SpendRowsQuery,
+  spendPeriodRange,
   TrafficRiskExportQuery,
   TrafficRiskQuery,
   LeadsQuery,
@@ -69,6 +73,7 @@ interface State {
   audit: AuditEntry[];
   nextAuditId: number;
   suppressions: SuppressionRow[];
+  campaignOwners: Map<string, { brand_id: string; source: "create" | "click" | "manual" }>;
 }
 
 function initialState(): State {
@@ -108,8 +113,16 @@ function initialState(): State {
     audit,
     nextAuditId: Math.max(0, ...audit.map((e) => e.id)) + 1,
     suppressions: SuppressionRow.array().parse(structuredClone(suppressionsList.rows)),
+    /** T13 A3 demo: brand-a and brand-b share one account; campaign 2222 is unmapped until the owner assigns it. */
+    campaignOwners: new Map([["1111", { brand_id: "brand-a", source: "click" as const }]]),
   };
 }
+
+const MOCK_SHARED_ACCOUNT = "5381163935";
+const MOCK_CAMPAIGNS = [
+  { campaign_id: "1111", cost: 820, clicks: 41 },
+  { campaign_id: "2222", cost: 310, clicks: 12 },
+] as const;
 
 let state = initialState();
 
@@ -201,6 +214,9 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   } else if (endpoint === "spendReport") {
     const q = SpendQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "spendRows") {
+    const q = SpendRowsQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   } else if (endpoint === "conversionsReport") {
     const q = ConversionsQuery.safeParse(Object.fromEntries(url.searchParams));
@@ -405,15 +421,46 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, mailingStatus);
     case "spendReport":
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
+    case "spendRows": {
+      const range = spendPeriodRange("7d");
+      return json(200, { from: url.searchParams.get("from") ?? range.from, to: url.searchParams.get("to") ?? range.to, rows: [] });
+    }
     case "conversionSetup":
       return json(200, conversionSetup);
+    case "adAllocation": {
+      const q = AdAllocationQuery.safeParse(Object.fromEntries(url.searchParams));
+      if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+      const to = (q.data.now ?? new Date().toISOString()).slice(0, 10);
+      const from = new Date(Date.parse(`${to}T00:00:00.000Z`) - 6 * 86_400_000).toISOString().slice(0, 10);
+      const campaigns = MOCK_CAMPAIGNS.map((c) => {
+        const owner = state.campaignOwners.get(c.campaign_id);
+        return { account: MOCK_SHARED_ACCOUNT, campaign_id: c.campaign_id, currency: "THB" as const, cost: c.cost, clicks: c.clicks,
+          brand_id: owner?.brand_id ?? null, source: owner?.source ?? null };
+      }).sort((a, b) => Number(a.brand_id !== null) - Number(b.brand_id !== null) || b.cost - a.cost);
+      const unmapped = campaigns.filter((c) => c.brand_id === null).reduce((t, c) => t + c.cost, 0);
+      return json(200, {
+        mode: "estimated", from, to,
+        accounts: [{ account: MOCK_SHARED_ACCOUNT, brands: ["brand-a", "brand-b"], cost_by_currency: { THB: 1130, USD: 0 }, unmapped_cost_by_currency: { THB: unmapped, USD: 0 } }],
+        campaigns,
+        unallocated_by_currency: { THB: 0, USD: 0 },
+      });
+    }
+    case "assignAdCampaign": {
+      const b = AdAllocationAssignRequest.safeParse(rawObj);
+      if (!b.success) return err({ error: "invalid", request_id: rid, issues: issues(b.error) });
+      if (b.data.account !== MOCK_SHARED_ACCOUNT || !["brand-a", "brand-b"].includes(b.data.brand_id)) {
+        return err({ error: "invalid", request_id: rid, issues: [{ path: "brand_id", message: "The brand is not on this Google Ads account" }] });
+      }
+      state.campaignOwners.set(b.data.campaign_id, { brand_id: b.data.brand_id, source: "manual" });
+      return json(200, { ...b.data, source: "manual", updated_at: new Date().toISOString() });
+    }
     // T9 AdKit routes: the mock has no VPS sync and no job queue, so the directory is empty (shown as "—").
     case "adkitProjects":
     case "adkitAccounts":
     case "adkitConversionActions":
       return json(200, { items: [], synced_at: null });
     case "listCampaigns":
-      return json(200, { campaigns: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
+      return json(200, { campaigns: [], brands: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
     case "createCampaignJob":
     case "createTerminalJob":
     case "getTerminalJob":
