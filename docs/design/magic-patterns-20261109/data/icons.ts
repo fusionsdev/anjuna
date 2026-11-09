@@ -1,0 +1,6 @@
+import { Activity, BadgeCheck, Bell, Bot, Bug, Calculator, DoorClosed, DoorOpen, Eye, Filter, Globe, History, Hourglass, KeyRound, LayoutTemplate, ListChecks, Mail, MailX, Megaphone, MousePointerBan, PencilLine, Radio, Rocket, Send, Settings, ShieldAlert, Store, Target, Terminal, ThumbsDown, Timer, TriangleAlert, Unlink, Users, Wallet, Webhook } from 'lucide-react'
+
+export const eventTypeIcon = { landing_viewed: Eye, form_started: PencilLine, form_step_viewed: ListChecks, gate_viewed: DoorOpen, lead_submitted: Send, redirect_failed: Unlink, bot: Bot }
+export const kpiIcon = { spend: Wallet, leads: Users, cpl: Calculator, sold: BadgeCheck, profit: Activity, landing: Eye, form: PencilLine, submit: Send, formError: TriangleAlert, redirectError: Unlink, suspicious: ShieldAlert, noGclid: MousePointerBan, gateDrop: DoorClosed, outsideUs: Globe }
+export const ruleIcon = { postback: Webhook, conversion: TriangleAlert, reject: ThumbsDown, clickLoss: MousePointerBan, slow: Timer, adsbot: Bot, quiet: Hourglass, dns: Globe }
+export const sectionIcon = { home: Store, brands: Store, templates: LayoutTemplate, campaigns: Megaphone, traffic: Activity, leads: Users, conversions: BadgeCheck, alerts: Bell, history: History, adkit: Terminal, settings: Settings, budget: Wallet, mail: Mail, blocked: MailX, keys: KeyRound, funnel: Filter, wizard: Target, launch: Rocket }

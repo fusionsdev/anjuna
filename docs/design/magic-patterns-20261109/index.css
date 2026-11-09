@@ -1,0 +1,42 @@
+/* --- MANAGED FONT IMPORTS START (do not edit manually) --- */
+/* INTERNAL USE NAME: Heading */
+@import url('https://fonts.googleapis.com/css2?family=Geist:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+/* INTERNAL USE NAME: Mono */
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+/* --- MANAGED FONT IMPORTS END --- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap');
+
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+:root { --background:#f6f6f4; --foreground:#111111; --card:#ffffff; --card-foreground:#111111; --popover:#ffffff; --popover-foreground:#111111; --primary:#f83808; --primary-foreground:#ffffff; --secondary:#f6f6f4; --secondary-foreground:#111111; --muted:#f6f6f4; --muted-foreground:#46464c; --accent:#ffe9e2; --accent-foreground:#c42a03; --destructive:#b42318; --destructive-foreground:#b42318; --border:#d9d9d4; --input:#d9d9d4; --ring:#f83808; --chart-1:#f83808; --chart-2:#0e7a4f; --chart-3:#2f5da8; --chart-4:#805000; --chart-5:#46464c; --radius:1rem; --sidebar:#ffffff; --sidebar-foreground:#111111; --sidebar-primary:#f83808; --sidebar-primary-foreground:#ffffff; --sidebar-accent:#ffe9e2; --sidebar-accent-foreground:#c42a03; --sidebar-border:#d9d9d4; --sidebar-ring:#f83808; }
+@layer base {
+  * { @apply border-border; }
+  html { line-height: 1.65; }
+  body { @apply bg-canvas font-sans text-[15px] leading-[1.65] text-ink antialiased; }
+  h1, h2, h3, h4 { line-height: 1.3; }
+  button, input, select, textarea { font: inherit; }
+  table { @apply w-full text-[15px]; }
+  thead tr { border-bottom: 2px solid #d9d9d4; }
+  th { @apply bg-canvas px-4 py-3 text-left text-[13px] font-semibold text-ink; }
+  tbody tr { height: 52px; }
+  tbody tr:nth-child(even) { background: rgba(246,246,244,.5); }
+  tbody tr:hover { background: rgba(255,233,226,.3); }
+  td { @apply px-4 py-3 text-[15px]; }
+}
+@layer components {
+  .focus-ring { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-white; }
+  .num { @apply font-mono tabular-nums; }
+  .text-secondary { @apply text-[13px] text-sub; }
+  .table-head { @apply bg-canvas px-4 py-3 text-left text-[13px] font-semibold text-ink; }
+  .table-cell { @apply px-4 py-3 text-[15px]; }
+  table th { font-size: 13px !important; font-weight: 600 !important; color: #111111 !important; background: #f6f6f4; }
+  table td { font-size: 15px !important; }
+  table td .text-xs, table td .text-sm, table td .font-mono { font-size: 13px; }
+  .rounded-card > :not(header) h3 { font-size: 15px; font-weight: 600; color: #111111; }
+  body .text-sm { font-size: 15px; }
+  body .text-xs { font-size: 13px; }
+  body .num.text-xl, body .num.text-lg { font-size: 28px; line-height: 1; font-weight: 600; }
+  body .space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem; }
+}
