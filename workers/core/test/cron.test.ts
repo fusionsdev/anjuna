@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { RecordingNotifier } from "@anjuna/insights";
 import { ListmonkClient } from "@anjuna/mailing";
-import { ALERTS_CRON, MAILING_CRON, MAX_OUTBOX_BATCHES, handleScheduled, runAlertsCron, runMailing } from "../src/cron.js";
+import { ALERTS_CRON, DIGEST_CRON, MAILING_CRON, MAX_OUTBOX_BATCHES, handleScheduled, runAlertsCron, runMailing } from "../src/cron.js";
 import type { Env } from "../src/env.js";
 import { createHarness, ROOT, type Harness } from "./helpers.js";
 
@@ -48,10 +48,10 @@ const outbox = (leadId: string) => h.db.prepare("INSERT INTO mailing_outbox (lea
 const status = (leadId: string) => h.db.prepare("SELECT status, attempts FROM mailing_outbox WHERE lead_id = ?1").bind(leadId).first<{ status: string; attempts: number }>();
 
 describe("wrangler triggers", () => {
-  it("declare exactly the two cron strings the handler dispatches on", () => {
+  it("declares exactly the three cron strings the handler dispatches on", () => {
     const text = readFileSync(join(ROOT, "workers/core/wrangler.jsonc"), "utf8");
     const config = JSON.parse(text.replace(/^\s*\/\/.*$/gm, ""));
-    expect(config.triggers).toEqual({ crons: [MAILING_CRON, ALERTS_CRON] });
+    expect(config.triggers).toEqual({ crons: [MAILING_CRON, ALERTS_CRON, DIGEST_CRON] });
   });
 });
 

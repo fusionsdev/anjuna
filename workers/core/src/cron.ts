@@ -1,22 +1,26 @@
 /**
- * Scheduled handlers (CO-7, FA-5). Two Cron Triggers, matched by the exact cron string in
- * wrangler.jsonc: the mailing sync (every 5 minutes) and the alerts check (every 15 minutes).
+ * Scheduled handlers (CO-7, FA-5). Exact cron strings dispatch mailing, alert checks and the daily digest.
  * Anything else is ignored, so a trigger added later cannot run the wrong job.
  */
 import {
-  ConsoleNotifier,
   InMemorySubmitErrorCounts,
   runAlerts,
   type AlertsReport,
   type Notifier,
   type SubmitErrorCountsSource,
+  reportNotices,
+  RULE_TEXT,
 } from "@anjuna/insights";
+import { DEFAULT_THB_PER_USD, FX_THB_PER_USD_KEY } from "@anjuna/contracts";
 import { ListmonkClient, brandListIds, syncOutbox, syncSuppressions } from "@anjuna/mailing";
 import type { Env } from "./env.js";
 import { fallbackListMap } from "./listmonk-config.js";
+import { createNotifier } from "./traffic-tail/alerts.js";
+import { loadSpendReport } from "./spend.js";
 
 export const MAILING_CRON = "*/5 * * * *";
 export const ALERTS_CRON = "*/15 * * * *";
+export const DIGEST_CRON = "0 2 * * *";
 /** Batches of 50 per run; a larger backlog continues on the next trigger. */
 export const MAX_OUTBOX_BATCHES = 5;
 
@@ -73,8 +77,37 @@ export async function runAlertsCron(env: Env, scheduledTime: number, deps: CronD
     report.reject_rate.state,
     report.click_risk.state,
   ];
-  if (states.some((state) => state !== "ok")) await (deps.notifier ?? new ConsoleNotifier()).notify(report);
+  if (deps.notifier) {
+    if (states.some((state) => state !== "ok")) await deps.notifier.notify(report);
+  } else {
+    // Clear acknowledged/closed incidents on recovery, including all-ok reports.
+    await (await createNotifier(env)).notify(report);
+  }
   return report;
+}
+
+/** Same UTC day boundaries and FX setting as the panel. Digest summarizes the completed previous day. */
+export async function runDigest(env: Env, scheduledTime: number): Promise<void> {
+  const notifier = await createNotifier(env);
+  const now = new Date(scheduledTime);
+  if (!notifier.digestDue(now.toISOString())) return;
+  const spend = await loadSpendReport(env, "yesterday", now);
+  const from = `${spend.from}T00:00:00.000Z`;
+  const to = `${now.toISOString().slice(0, 10)}T00:00:00.000Z`;
+  const [leads, sold, fx, report] = await Promise.all([
+    env.LEADS.prepare("SELECT COUNT(*) AS n FROM leads WHERE created_at >= ?1 AND created_at < ?2").bind(from, to).first<{ n: number }>(),
+    env.LEADS.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(payout),0) AS revenue FROM postback_events WHERE event_type='soldLead' AND created_at >= ?1 AND created_at < ?2").bind(from, to).first<{ n: number; revenue: number }>(),
+    env.FACTORY.prepare("SELECT value_json FROM panel_settings WHERE key=?1").bind(FX_THB_PER_USD_KEY).first<{ value_json: string }>(),
+    runAlerts(env.LEADS, { submitErrorCounts: new InMemorySubmitErrorCounts([]) }, { now: now.toISOString() }),
+  ]);
+  let rate: number = DEFAULT_THB_PER_USD;
+  try { const value = JSON.parse(fx?.value_json ?? "null") as unknown; if (typeof value === "number" && Number.isFinite(value) && value > 0) rate = value; } catch { /* default matches panel */ }
+  const cost = spend.totals.cost_by_currency.USD + spend.totals.cost_by_currency.THB / rate;
+  const count = leads?.n ?? 0;
+  const fixes = reportNotices(report).filter(n => n.level !== "ok").sort((a, b) => Number(b.level === "alert") - Number(a.level === "alert"));
+  const first = fixes[0];
+  await notifier.digest({ spend: cost, leads: count, cpl: count ? cost / count : 0, sold: sold?.n ?? 0,
+    profit: (sold?.revenue ?? 0) - cost, top_fix: first ? `${RULE_TEXT[first.rule]} · ${first.brand}` : "ไม่มี" }, now.toISOString());
 }
 
 /** B-01 retention: expired duplicate snapshots are cleared even if their token is never claimed. */
@@ -95,6 +128,10 @@ export async function handleScheduled(
       return;
     case ALERTS_CRON:
       await runAlertsCron(env, controller.scheduledTime, deps);
+      await runDigest(env, controller.scheduledTime);
+      return;
+    case DIGEST_CRON:
+      await runDigest(env, controller.scheduledTime);
       return;
     default:
       console.warn(`ignoring unknown cron trigger ${JSON.stringify(controller.cron)}`);
