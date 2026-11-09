@@ -4,11 +4,13 @@
  * first incomplete step.
  */
 import { EMPTY_THEME_VARS, roleAtLeast, type BrandTheme, type TemplateTextDefaults, type TemplateThemeVars, type TemplateVersionSummary, type UpdateBrandDraftRequest } from "@anjuna/contracts";
+import { Check } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WizardDefaultsResponse, WizardDraft } from "../../shared/wizard";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import { api, type Me } from "../api";
 import { GENERATE_OWNER_ONLY, wizardErrorText } from "../wizard/messages";
+import { WizardSummary } from "../wizard/WizardSummary";
 import { BrandPanel, CopyPanel, TemplatePanel, TrackingPanel, ZoneStatus, zoneBlocks, type ZoneState } from "../wizard/StepPanels";
 import {
   STEPS, STEP_LABEL, adsOf, contactOf, copyOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep,
@@ -42,6 +44,8 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [notice, setNotice] = useState<string | null>(null);
+  // True right after a Next saved the draft, until the form changes again.
+  const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [zone, setZone] = useState<ZoneState>({ state: "idle" });
   const [templateText, setTemplateText] = useState<TemplateTextDefaults | null>(null);
@@ -119,6 +123,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
     setForm((previous) => ({ ...previous, [field]: value }));
     setErrors(({ [field]: _removed, ...rest }) => rest);
     setNotice(null);
+    setSaved(false);
   };
 
   async function patch(body: UpdateBrandDraftRequest): Promise<void> {
@@ -169,6 +174,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
     setNotice(null);
     try {
       await save();
+      setSaved(true);
       setStep((current) => current + 1);
     } catch (e) {
       setNotice(wizardErrorText(e));
@@ -200,36 +206,51 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
   const chosen = templates.find((t) => t.template_version_id === templateId);
   const blocked = zoneBlocks(zone);
 
+  const stepName = (id: (typeof STEPS)[number]) => STEP_LABEL[id];
   return (
-    <section className="panel" aria-label="วิซาร์ดแบรนด์ใหม่ (New brand wizard)">
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-        <h1 aria-label="แบรนด์ใหม่ (New brand)">แบรนด์ใหม่</h1>
-        <button type="button" className="btn" onClick={onClose} aria-label="ปิด (Close)">ปิด</button>
+    <section className="wizard-page" aria-label="วิซาร์ดแบรนด์ใหม่">
+      <button type="button" className="wizard-back" onClick={onClose}>← กลับไปแบรนด์</button>
+      <div className="wizard-head">
+        <div>
+          <h1>สร้างแบรนด์ใหม่</h1>
+          <p className="wizard-sub">ขั้นที่ <span className="num">{step + 1}</span> จาก <span className="num">{STEPS.length}</span></p>
+        </div>
+        {saved && <p className="wizard-saved" role="status"><Check size={16} aria-hidden="true" />บันทึกร่างแล้ว</p>}
       </div>
-      <p className="hint">บันทึกฉบับร่างทุกครั้งที่กดถัดไป (The draft is saved at each Next)</p>
-      <ol style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: 0, listStyle: "none", marginBlock: 16 }} aria-label="ขั้นตอน (Steps)">
-        {STEPS.map((id, index) => (
-          <li key={id} aria-current={index === step ? "step" : undefined} className={`pill ${index === step ? "p-blue" : index < step ? "p-live" : "p-mute"}`} style={{ padding: "4px 12px", ...(index === step ? { background: "var(--ink)", color: "var(--paper)" } : {}) }}>{index + 1}. {STEP_LABEL[id].split(" (")[0]}</li>
-        ))}
+      <ol className="wizard-stepper" aria-label="ขั้นตอน">
+        {STEPS.map((id, index) => {
+          const state = index === step ? "current" : index < step ? "done" : "todo";
+          const label = <><span className="wizard-num">{index < step ? <Check size={14} aria-hidden="true" /> : index + 1}</span>{stepName(id)}</>;
+          return (
+            <li key={id} aria-current={index === step ? "step" : undefined} className={`wizard-step ${state}`}>
+              {index < step
+                ? <button type="button" onClick={() => { setErrors({}); setNotice(null); setStep(index); }}>{label}</button>
+                : <span>{label}</span>}
+            </li>
+          );
+        })}
       </ol>
       {loading && <p className="hint" role="status">กำลังโหลด… (Loading)</p>}
       {loadError && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert"><p>{loadError}</p><button type="button" className="btn" onClick={() => setReload((n) => n + 1)}>ลองใหม่ (Retry)</button></div>}
-      {!loading && !loadError && <>
-        <h2 aria-label={STEP_LABEL[stepId]}>{STEP_LABEL[stepId].split(" (")[0]}</h2>
-        {stepId === "brand" && <BrandPanel form={form} errors={errors} set={set} hasDraft={draft !== null} zone={zone} onCheckZone={() => void checkZone()} />}
-        {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} theme={theme} onTheme={setTheme} themeVars={themeVars} />}
-        {stepId === "copy" && <CopyPanel form={form} errors={errors} set={set} templateText={templateText} />}
-        {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} draftId={draft?.brand.brand_id ?? null} saveAds={() => patch({ profile: { ...(draft?.profile ?? {}), ads: adsOf(form) } })} />}
-        {stepId === "review" && <ReviewPanel form={form} templateName={chosen ? `${chosen.name} v${chosen.version}` : templateId} defaults={defaults} zone={zone} onCheckZone={() => void checkZone()} previewSrc={draft ? `/api/wizard/preview/${encodeURIComponent(draft.brand.brand_id)}?r=${previewNonce}` : null} canEditTracking={canEditTracking} />}
-        {notice && <p className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{notice}</p>}
-        <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginTop: 18 }}>
-          <button type="button" className="btn" disabled={busy || step === 0} onClick={() => { setErrors({}); setNotice(null); setStep(step - 1); }} aria-label="ย้อนกลับ (Back)">ย้อนกลับ</button>
-          {stepId !== "review"
-            ? <button type="button" className="btn pri" disabled={busy || (stepId === "template" && templates.length === 0)} onClick={() => void next()} aria-label="ถัดไป (Next)">ถัดไป</button>
-            : <button type="button" className="btn pri" disabled={busy || blocked || !canGenerate} aria-describedby={canGenerate ? undefined : "generate-owner-only"} onClick={() => void generate()} aria-label="สร้างเว็บไซต์ (Generate)">สร้างเว็บไซต์</button>}
+      {!loading && !loadError && <div className="wizard-grid">
+        <div className="wizard-main panel">
+          <h2>{STEP_LABEL[stepId]}</h2>
+          {stepId === "brand" && <BrandPanel form={form} errors={errors} set={set} hasDraft={draft !== null} zone={zone} onCheckZone={() => void checkZone()} />}
+          {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} theme={theme} onTheme={setTheme} themeVars={themeVars} />}
+          {stepId === "copy" && <CopyPanel form={form} errors={errors} set={set} templateText={templateText} />}
+          {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} draftId={draft?.brand.brand_id ?? null} saveAds={() => patch({ profile: { ...(draft?.profile ?? {}), ads: adsOf(form) } })} />}
+          {stepId === "review" && <ReviewPanel form={form} templateName={chosen ? `${chosen.name} v${chosen.version}` : templateId} defaults={defaults} zone={zone} onCheckZone={() => void checkZone()} previewSrc={draft ? `/api/wizard/preview/${encodeURIComponent(draft.brand.brand_id)}?r=${previewNonce}` : null} canEditTracking={canEditTracking} />}
+          {notice && <p className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{notice}</p>}
+          <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginTop: 18 }}>
+            <button type="button" className="btn" disabled={busy || step === 0} onClick={() => { setErrors({}); setNotice(null); setStep(step - 1); }}>ย้อนกลับ</button>
+            {stepId !== "review"
+              ? <button type="button" className="btn pri" disabled={busy || (stepId === "template" && templates.length === 0)} onClick={() => void next()}>ถัดไป</button>
+              : <button type="button" className="btn pri" disabled={busy || blocked || !canGenerate} aria-describedby={canGenerate ? undefined : "generate-owner-only"} onClick={() => void generate()}>สร้างเว็บไซต์</button>}
+          </div>
+          {stepId === "review" && !canGenerate && <p id="generate-owner-only" role="note" className="hint">{GENERATE_OWNER_ONLY}</p>}
         </div>
-        {stepId === "review" && !canGenerate && <p id="generate-owner-only" role="note" className="hint">{GENERATE_OWNER_ONLY}</p>}
-      </>}
+        <WizardSummary form={form} templateName={chosen ? `${chosen.name} v${chosen.version}` : ""} customTheme={theme !== null} drafted={draft !== null} />
+      </div>}
     </section>
   );
 }

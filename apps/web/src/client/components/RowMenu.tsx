@@ -1,3 +1,4 @@
+import { MoreHorizontal } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /** disabled with a reason: the item stays in the list, announced as disabled, with the reason as its title. Choosing it does nothing and keeps the menu open. */
@@ -106,11 +107,11 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
     // Focus moving to another element outside the wrapper closes the menu. A null target (a click on a non-focusable
     // spot, Safari not focusing buttons on click) keeps it open; the outside mousedown handler covers that click.
     onBlur={(e) => { const next = e.relatedTarget as Node | null; if (open && next && !e.currentTarget.contains(next)) setOpen(false); }}>
-    <button type="button" className="btn row-action" aria-haspopup="menu" aria-expanded={open}
+    <button type="button" className="btn row-action row-menu-btn" aria-haspopup="menu" aria-expanded={open} aria-label={label} title={label}
       ref={buttonRef}
       onClick={(e) => { e.stopPropagation(); setOpen((was) => !was); }}
       onKeyDown={(e) => { if (e.key === "ArrowDown" && !open) { e.preventDefault(); setOpen(true); } }}>
-      {label}
+      <MoreHorizontal size={18} aria-hidden="true" />
     </button>
     {open && <div className="row-menu-list" role="menu" aria-label={label} onKeyDown={onMenuKeyDown} ref={listRef}
       style={pos ? { position: "fixed", top: pos.top, left: pos.left, right: "auto", maxHeight: pos.maxHeight, maxWidth: "calc(100vw - 16px)", overflowY: "auto" } : undefined}>

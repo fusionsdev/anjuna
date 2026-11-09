@@ -183,9 +183,9 @@ describe("mounted lifecycle UI with API responses", () => {
   it("shows the wizard while wizardRoute is true and closes it when it turns false", async () => {
     routes.set("GET /api/templates", () => json({ templates: [] }));
     routes.set("GET /api/wizard/defaults", () => json({ amount_buckets: [100, 200, 300], form_route: "/request" }));
-    const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" });
+    const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" });
     const view = render(<BrandLifecycle me={owner} wizardRoute />);
-    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeTruthy();
     view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
     await waitFor(() => expect(wizard()).toBeNull());
     expect(await screen.findByRole("heading", { name: "แบรนด์" })).toBeTruthy();
@@ -582,7 +582,7 @@ describe("a confirm left open when the operator leaves the brand", () => {
     fireEvent.click(await screen.findByRole("button", { name: "ติดตั้งใหม่" }));
     await screen.findByRole("alertdialog");
     view.rerender(<BrandLifecycle me={owner} wizardRoute />);
-    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeDefined();
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeDefined();
     view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
     expect(await screen.findByRole("heading", { name: "แบรนด์" })).toBeDefined();
     await new Promise((resolve) => setTimeout(resolve, 50));

@@ -73,12 +73,12 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); Object.assign(ADKIT_POLL, { 
 
 const atTracking = async (me: typeof owner | typeof employee = owner) => {
   render(<BrandWizard me={me} brandId="brand_new" initialStep={3} onClose={vi.fn()} onGenerated={vi.fn()} />);
-  await screen.findByRole("heading", { level: 2, name: "ติดตามผล (Tracking)" });
+  await screen.findByRole("heading", { level: 2, name: "ติดตามผล" });
 };
 const select = (name: string) => screen.getByRole("combobox", { name }) as unknown as HTMLSelectElement;
 const choose = (name: string, value: string) => fireEvent.change(select(name), { target: { value } });
 const options = (name: string) => [...select(name).options].map((o) => [o.value, o.textContent]);
-const next = () => fireEvent.click(screen.getByRole("button", { name: "ถัดไป (Next)" }));
+const next = () => fireEvent.click(screen.getByRole("button", { name: "ถัดไป" }));
 const createButton = () => screen.getByRole("button", { name: "สร้าง conversion action" });
 
 describe("wizard step 4 from the AdKit directory", () => {
@@ -94,7 +94,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     choose("บัญชี Google Ads", "1234567890");
     expect(screen.getByText("conversion action:").parentElement!.textContent).toContain("—");
     next();
-    await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" });
+    await screen.findByRole("heading", { level: 2, name: "ตรวจและสร้าง" });
     expect(patches().at(-1)!.body).toEqual({ profile: { contact: CONTACT, copy: {}, ads: { google_ads_account: "1234567890", adkit_project: "proj_a" } } });
     expect(screen.queryByText(/Microsoft/)).toBeNull();
   });
@@ -129,7 +129,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     expect(jobPosts()).toHaveLength(polls);
 
     next();
-    await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" });
+    await screen.findByRole("heading", { level: 2, name: "ตรวจและสร้าง" });
     expect((patches().at(-1)!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: "1234567890", google_conversion_action: "7300000001", adkit_project: "proj_a" });
   });
 
@@ -184,7 +184,7 @@ describe("wizard step 4 from the AdKit directory", () => {
     expect(screen.queryByText("รอคิว")).toBeNull();
     expect(jobPosts()).toHaveLength(2);
     next();
-    await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" });
+    await screen.findByRole("heading", { level: 2, name: "ตรวจและสร้าง" });
     expect((patches().at(-1)!.body.profile as { ads: object }).ads).toEqual({ google_ads_account: "2222222222", adkit_project: "proj_a" });
   });
 
@@ -278,7 +278,25 @@ describe("wizard step 4 from the AdKit directory", () => {
     expect(screen.getByText("1234567890")).toBeTruthy();
     expect(requests.some((r) => r.path.startsWith("/api/v1/adkit"))).toBe(false);
     next();
-    await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" });
+    await screen.findByRole("heading", { level: 2, name: "ตรวจและสร้าง" });
     expect(patches()).toHaveLength(0);
+  });
+});
+
+describe("tracking step currency strip", () => {
+  it("shows the currency of the chosen account, read only, with the ตรวจพบอัตโนมัติ chip", async () => {
+    await atTracking();
+    const strip = () => document.querySelector(".currency-strip")!;
+    expect(strip().textContent).toContain("—");
+    expect(strip().textContent).not.toContain("ตรวจพบอัตโนมัติ");
+    await waitFor(() => expect(options("โปรเจกต์ AdKit").length).toBeGreaterThan(1));
+    choose("โปรเจกต์ AdKit", "proj_a");
+    await waitFor(() => expect(options("บัญชี Google Ads").length).toBeGreaterThan(1));
+    choose("บัญชี Google Ads", "1234567890");
+    await waitFor(() => expect(strip().textContent).toContain("THB"));
+    expect(strip().textContent).toContain("ตรวจพบอัตโนมัติ");
+    expect(strip().querySelector("input, select")).toBeNull();
+    choose("บัญชี Google Ads", "2222222222");
+    await waitFor(() => expect(strip().textContent).toContain("USD"));
   });
 });

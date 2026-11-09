@@ -11,11 +11,11 @@ export const STEPS = ["brand", "template", "copy", "tracking", "review"] as cons
 export type StepId = (typeof STEPS)[number];
 
 export const STEP_LABEL: Record<StepId, string> = {
-  brand: "แบรนด์ (Brand)",
-  template: "เทมเพลต (Template)",
-  copy: "ข้อความ (Copy)",
-  tracking: "ติดตามผล (Tracking)",
-  review: "ตรวจสอบ (Review)",
+  brand: "ข้อมูลแบรนด์",
+  template: "เทมเพลต",
+  copy: "ข้อความ",
+  tracking: "ติดตามผล",
+  review: "ตรวจและสร้าง",
 };
 
 export interface WizardForm {
