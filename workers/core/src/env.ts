@@ -1,5 +1,6 @@
 export interface Env {
   TRAFFIC_TAIL?: DurableObjectNamespace;
+  TELEGRAM_BOT_TOKEN?: string;
   LEADS: D1Database;
   FACTORY: D1Database;
   DRAIN_TOKEN?: string;

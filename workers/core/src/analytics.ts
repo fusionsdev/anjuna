@@ -9,6 +9,7 @@ import type { RpcHandler } from "./index.js";
 import { getRuntime, ownsHostname } from "./rpc/runtime.js";
 import { TrafficTailEvent } from "@anjuna/contracts";
 import { classifyUserAgent, pushTail, tailSessionRef } from "./traffic-tail/index.js";
+import { onTailEvent } from "./traffic-tail/alerts.js";
 
 const POSTHOG_DEFAULT_HOST = "https://us.i.posthog.com";
 /** Ingest endpoints only. Static assets, replay and the admin API are never reachable through the proxy. */
@@ -171,6 +172,7 @@ async function telemetry(request: AnalyticsForwardRequest, env: Env, incoming: R
         device_type: pick(body.device_class, TRAFFIC_DEVICE_CLASSES), browser: pick(body.browser_family, TRAFFIC_BROWSERS),
         user_agent_family: family, url: `https://${hostname}/`, http_status: null, response_ms: null, gate_passed: null });
       await pushTail(env, event);
+      await onTailEvent(event, env);
     };
     const pending = publish().catch(() => { console.warn("traffic_tail_publish_failed"); });
     if (ctx) ctx.waitUntil(pending); else await pending;

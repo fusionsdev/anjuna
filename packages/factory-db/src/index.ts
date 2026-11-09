@@ -19,6 +19,7 @@ export const FACTORY_DB_MIGRATIONS = [
   "0012_panel_settings.sql",
   "0013_template_categories.sql",
   "0014_api_keys.sql",
+  "0015_notify_settings_keys.sql",
 ] as const;
 
 export const TEMPLATE_FRAMEWORKS = ["astro", "next_export", "react_spa"] as const;
