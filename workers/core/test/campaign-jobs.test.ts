@@ -300,6 +300,23 @@ describe("GET /admin/adkit/campaigns", () => {
     expect(brand("petvet")).toEqual({ brand_id: "petvet", currency: "THB", thb_per_unit: 1, committed_thb_day: 1200 });
     expect(brand("usdbrand")).toEqual({ brand_id: "usdbrand", currency: "USD", thb_per_unit: 35, committed_thb_day: 0 });
   });
+
+  it("committed_thb_day rounds a fractional USD total to 2 decimals", async () => {
+    await enabled(await draftDone("usdbrand", 1, 1.01));
+    await enabled(await draftDone("usdbrand", 2, 2.02));
+    const body = PanelCampaignsResponse.parse(await (await h.admin("/admin/adkit/campaigns", employee)).json());
+    // 3.03 USD x 35 = 106.05 THB, which is 106.05000000000001 in floating point.
+    expect(body.brands.find((b) => b.brand_id === "usdbrand")?.committed_thb_day).toBe(106.05);
+  });
+
+  it("a spending campaign in an unknown currency makes committed and the rate null for every brand (core refuses those drafts anyway)", async () => {
+    await enabled(await draftDone("usdbrand", 1, 10));
+    await enabled(await draftDone("petvet", 1, 100));
+    await h.db.prepare("UPDATE adkit_directory SET currency = NULL WHERE id = ?1").bind(USD_ACCOUNT).run();
+    const body = PanelCampaignsResponse.parse(await (await h.admin("/admin/adkit/campaigns", employee)).json());
+    expect(body.brands.find((b) => b.brand_id === "usdbrand")).toEqual({ brand_id: "usdbrand", currency: null, thb_per_unit: null, committed_thb_day: null });
+    expect(body.brands.find((b) => b.brand_id === "petvet")).toEqual({ brand_id: "petvet", currency: "THB", thb_per_unit: 1, committed_thb_day: null });
+  });
 });
 
 describe("campaign_brand_map on a done draft (injected writer)", () => {

@@ -308,7 +308,7 @@ function DraftForm({ data, brands, busy, onSubmit }: { data: PanelCampaignsRespo
             {info?.currency ? `สกุลเงินของบัญชี Google Ads: ${info.currency}` : "สกุลเงินของบัญชี Google Ads"}
             {rate !== null && info?.currency !== "THB" ? ` · 1 ${info?.currency} = ${baht(rate)}` : ""}
             {left !== null ? ` · เพดานที่เหลือ ${baht(left)}` : ""}
-            {brandId && rate === null ? " · ยังไม่ทราบอัตราแลกเปลี่ยน ระบบตรวจเพดานตอนส่ง" : ""}
+            {brandId && (rate === null || left === null) ? " · ยังคำนวณเพดานเป็นบาทไม่ได้ ระบบจะตรวจตอนส่ง" : ""}
           </small>
           {over && <small className="campaigns-reason" role="note">{OVER_CAP}</small>}
         </div>

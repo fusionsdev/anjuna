@@ -196,6 +196,33 @@ describe("Campaigns screen", () => {
     expect(requests.filter((r) => r.method === "POST")).toHaveLength(1);
   });
 
+  it("two clicks while the draft POST is pending send exactly one POST", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (init?.method === "POST") { requests.push({ method: "POST", path: String(input), body: null }); await gate; }
+      return original(input, init);
+    });
+    render(<CampaignsScreen me={employee} />);
+    const form = await fillDraft();
+    fireEvent.click(sendBtn(form));
+    await waitFor(() => expect(requests.filter((r) => r.method === "POST")).toHaveLength(1));
+    fireEvent.click(sendBtn(form));
+    fireEvent.submit(form);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(1);
+    release();
+    await waitFor(() => expect(brandValue(form)).toBe(""));
+  });
+
+  it("a null rate or committed figure shows the Thai reason", async () => {
+    brandsOverride = [{ brand_id: "petvet", currency: "USD", thb_per_unit: null, committed_thb_day: null }];
+    render(<CampaignsScreen me={employee} />);
+    const form = await fillDraft();
+    expect(form.textContent).toContain("ยังคำนวณเพดานเป็นบาทไม่ได้ ระบบจะตรวจตอนส่ง");
+  });
+
   it("a failed draft keeps the form so the user can fix it", async () => {
     render(<CampaignsScreen me={employee} />);
     const form = await fillDraft();
