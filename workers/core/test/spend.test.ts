@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { AdminError, SpendReportResponse, spendPeriodRange, type AdminRequestContext } from "@anjuna/contracts";
+import { AdminError, SpendReportResponse, SpendRowsResponse, spendPeriodRange, type AdminRequestContext } from "@anjuna/contracts";
 import { createHarness, DRAIN_TOKEN, fixtureText, type Harness } from "./helpers.js";
 
 const owner: AdminRequestContext = { actor_id: "usr_owner_01", actor_role: "owner", request_id: "req_spend_owner" };
@@ -533,5 +533,47 @@ describe("POST /api/spend/campaign-ingest", () => {
     const parsed = SpendReportResponse.parse(await (await report("today")).json());
     expect(parsed.totals.cost_by_currency.THB).toBe(100);
     expect(parsed.brands.map((b) => [b.brand_id, b.cost])).toEqual([["bisoncash", 33.33], ["petvetpay", 66.67]]);
+  });
+});
+
+describe("GET /admin/spend/rows", () => {
+  const rows = (query: string, context = owner) => h.admin(`/admin/spend/rows${query}`, context);
+  const put = (brand: string, date: string, hour: number, cost: number, currency: string, allocation: string) => h.db.prepare(
+    "INSERT INTO ad_spend (brand_id, date, hour, cost, currency, clicks, impressions, source, allocation, account, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 1, 10, 'google', ?6, NULL, '2026-11-08T00:00:00.000Z')",
+  ).bind(brand, date, hour, cost, currency, allocation).run();
+
+  it("returns 403 forbidden_role for an employee", async () => {
+    const response = await rows("", employee);
+    expect(response.status).toBe(403);
+    expect(AdminError.parse(await response.json())).toMatchObject({ error: "forbidden_role", required_role: "owner" });
+  });
+
+  it.each(["?from=2026-10-01", "?from=2026-10-05&to=2026-10-01", "?from=2026-01-01&to=2026-12-31", "?brand=Bad%20Brand", "?x=1"])("rejects %j with 422", async (query) => {
+    expect((await rows(query)).status).toBe(422);
+  });
+
+  it("splits one brand by currency and allocation and never adds across them", async () => {
+    await put("brand-a", today(), 1, 10, "THB", "exact");
+    await put("brand-a", today(), 2, 5, "THB", "estimated");
+    await put("brand-a", today(), 3, 3, "USD", "exact");
+    await put("brand-b", today(), 1, 7, "THB", "exact");
+    await put("brand-a", daysAgo(40), 1, 100, "THB", "exact");
+    const response = await rows(`?brand=brand-a&from=${daysAgo(1)}&to=${today()}`);
+    expect(response.status).toBe(200);
+    const body = SpendRowsResponse.parse(await response.json());
+    expect(body).toMatchObject({ from: daysAgo(1), to: today() });
+    expect(body.rows.map(({ updated_at: _, ...r }) => r)).toEqual([
+      { brand_id: "brand-a", currency: "THB", allocation: "estimated", cost: 5, clicks: 1, impressions: 10 },
+      { brand_id: "brand-a", currency: "THB", allocation: "exact", cost: 10, clicks: 1, impressions: 10 },
+      { brand_id: "brand-a", currency: "USD", allocation: "exact", cost: 3, clicks: 1, impressions: 10 },
+    ]);
+  });
+
+  it("defaults to the last 7 days and every brand", async () => {
+    await put("brand-a", today(), 1, 2, "THB", "exact");
+    await put("brand-b", daysAgo(6), 1, 4, "THB", "exact");
+    await put("brand-b", daysAgo(7), 1, 8, "THB", "exact");
+    const body = SpendRowsResponse.parse(await (await rows("")).json());
+    expect(body.rows.map((r) => [r.brand_id, r.cost])).toEqual([["brand-a", 2], ["brand-b", 4]]);
   });
 });

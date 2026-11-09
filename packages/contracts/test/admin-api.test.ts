@@ -345,7 +345,7 @@ const PLAN_MATRIX: { action: string; employee: "yes" | "no" | "own"; covered_by:
   { action: "View individual leads without PII", employee: "yes", covered_by: ["listLeads", "getLead", "leadExport"] },
   { action: "Search the email suppression list; add and remove manually (FUS-382)", employee: "no", covered_by: ["listSuppressions", "addSuppression", "removeSuppression"] },
   { action: "View audit log", employee: "own", covered_by: ["listAudit"] },
-  { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport"] },
+  { action: "View ad spend, cost per lead and profit (FUS-368)", employee: "no", covered_by: ["spendReport", "spendRows"] },
   { action: "View auto conversion setup status for a brand (FUS-384)", employee: "no", covered_by: ["conversionSetup"] },
   { action: "View conversion upload status, money hidden from employees (FUS-375)", employee: "yes", covered_by: ["conversionsReport"] },
   { action: "Read the AdKit directory and queue AdKit jobs (panel redesign T9)", employee: "no", covered_by: ["adkitProjects", "adkitAccounts", "adkitConversionActions", "createAdkitJob"] },
@@ -460,7 +460,8 @@ describe("routing", () => {
     expect(matchAdminRoute("GET", "/admin/adkit/campaigns")).toEqual({ endpoint: "listCampaigns", params: {} });
     expect(matchAdminRoute("GET", "/admin/ad-allocation")).toEqual({ endpoint: "adAllocation", params: {} });
     expect(matchAdminRoute("PATCH", "/admin/ad-allocation/campaign")).toEqual({ endpoint: "assignAdCampaign", params: {} });
-    expect(ADMIN_ENDPOINTS).toHaveLength(32);
+    expect(matchAdminRoute("GET", "/admin/spend/rows")).toEqual({ endpoint: "spendRows", params: {} });
+    expect(ADMIN_ENDPOINTS).toHaveLength(33);
   });
 });
 

@@ -15,6 +15,7 @@ import {
   FunnelReportResponse,
   MailingStatusResponse,
   SpendQuery,
+  SpendRowsQuery,
   TrafficRiskExportQuery,
   TrafficRiskQuery,
   BrandPatchRequest,
@@ -65,7 +66,7 @@ import { loadConversionSetupState } from "../conversion-setup.js";
 import { createAdkitJob, loadAdkitDirectory } from "../adkit.js";
 import { createCampaignJob, listPanelCampaigns } from "../campaign-jobs.js";
 import { assignAdCampaign, loadAdAllocation } from "../ad-allocation.js";
-import { loadSpendReport } from "../spend.js";
+import { loadSpendReport, loadSpendRows } from "../spend.js";
 import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
 
 import { loadTrafficBreakdown } from "./traffic.js";
@@ -1310,6 +1311,11 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const query = parseWith(SpendQuery, parseQuery(new URL(request.url)), context);
     if (query instanceof Response) return query;
     return json(await loadSpendReport(env, query.period));
+  }
+  if (route.endpoint === "spendRows") {
+    const query = parseWith(SpendRowsQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadSpendRows(env, query));
   }
   if (route.endpoint === "conversionsReport") {
     const query = parseWith(ConversionsQuery, parseQuery(new URL(request.url)), context);

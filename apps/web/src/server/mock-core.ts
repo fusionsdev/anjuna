@@ -21,6 +21,8 @@ import {
   AuditQuery,
   FunnelQuery,
   SpendQuery,
+  SpendRowsQuery,
+  spendPeriodRange,
   TrafficRiskExportQuery,
   TrafficRiskQuery,
   LeadsQuery,
@@ -212,6 +214,9 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   } else if (endpoint === "spendReport") {
     const q = SpendQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
+  } else if (endpoint === "spendRows") {
+    const q = SpendRowsQuery.safeParse(Object.fromEntries(url.searchParams));
     if (!q.success) return err({ error: "invalid", request_id: rid, issues: issues(q.error) });
   } else if (endpoint === "conversionsReport") {
     const q = ConversionsQuery.safeParse(Object.fromEntries(url.searchParams));
@@ -416,6 +421,10 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
       return json(200, mailingStatus);
     case "spendReport":
       return json(200, { ...spendReport, period: url.searchParams.get("period") });
+    case "spendRows": {
+      const range = spendPeriodRange("7d");
+      return json(200, { from: url.searchParams.get("from") ?? range.from, to: url.searchParams.get("to") ?? range.to, rows: [] });
+    }
     case "conversionSetup":
       return json(200, conversionSetup);
     case "adAllocation": {

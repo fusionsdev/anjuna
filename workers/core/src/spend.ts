@@ -9,10 +9,12 @@ import {
   CampaignSpendIngestRequest,
   SpendIngestRequest,
   SpendReportResponse,
+  SpendRowsResponse,
   spendPeriodRange,
   type CampaignSpendRow,
   type SpendCurrency,
   type SpendPeriod,
+  type SpendRowsQuery,
 } from "@anjuna/contracts";
 import { drainAuthorized } from "./auth.js";
 import type { Env } from "./env.js";
@@ -360,4 +362,30 @@ export async function loadSpendReport(env: Env, period: SpendPeriod, now = new D
     totals.impressions += b.impressions;
   }
   return SpendReportResponse.parse({ period, from, to, totals, brands, daily });
+}
+
+/**
+ * Spend per brand, currency and allocation for the UTC days in [from, to] (default: the last 7 days including today),
+ * with the same counted-rows rule as the period report. One row per group; costs of different currencies or
+ * allocations are never added together. `brand` narrows to one brand.
+ */
+export async function loadSpendRows(env: Env, query: SpendRowsQuery, now = new Date()): Promise<SpendRowsResponse> {
+  const range = spendPeriodRange("7d", now);
+  const from = query.from ?? range.from;
+  const to = query.to ?? range.to;
+  const { results } = await env.LEADS.prepare(`
+    SELECT s.brand_id, s.currency, s.allocation, SUM(s.cost) AS cost, SUM(s.clicks) AS clicks,
+           SUM(s.impressions) AS impressions, MAX(s.updated_at) AS updated_at${COUNTED_ROWS_SQL}
+      AND (?3 IS NULL OR s.brand_id = ?3)
+    GROUP BY s.brand_id, s.currency, s.allocation
+    ORDER BY s.brand_id, s.currency, s.allocation`).bind(from, to, query.brand ?? null).all<{
+    brand_id: string; currency: SpendCurrency; allocation: "exact" | "estimated"; cost: number; clicks: number; impressions: number; updated_at: string;
+  }>();
+  return SpendRowsResponse.parse({
+    from, to,
+    rows: results.map((r) => ({
+      brand_id: r.brand_id, currency: r.currency, allocation: r.allocation, cost: cents(Number(r.cost)),
+      clicks: Number(r.clicks), impressions: Number(r.impressions), updated_at: r.updated_at,
+    })),
+  });
 }
