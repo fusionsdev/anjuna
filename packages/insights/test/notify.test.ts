@@ -40,7 +40,7 @@ it("5xx retries once, logs failure and never persists provider body or token", a
 });
 it("ok to warn sends; unchanged warn waits; escalation sends; acknowledgement holds until recovery", async () => {
   const notifier = new MultiNotifier(env.DB, settings(), ok);
-  await notifier.process({ ...notice, level: "ok" }, at);
+  await notifier.process({ ...notice, level: "ok" }, "2026-11-10T01:59:00.000Z");
   await notifier.process(notice, at);
   await notifier.process(notice, "2026-11-10T02:30:00.000Z");
   expect(await logs()).toHaveLength(1);
@@ -53,6 +53,56 @@ it("ok to warn sends; unchanged warn waits; escalation sends; acknowledgement ho
   await notifier.process(notice, "2026-11-11T02:02:00.000Z");
   expect(await logs()).toHaveLength(3);
   expect(await env.DB.prepare("SELECT acknowledged_at FROM alert_state WHERE alert_key=?1").bind(notice.key).first("acknowledged_at")).toBeNull();
+});
+it.each(["ok", "alert"] as const)("a delayed %s cron tick cannot overwrite a newer tick and acknowledgement", async level => {
+  const config = settings();
+  config.routing = { submit_error_rate: { telegram: true, repeat_hours: 1, quiet: null } };
+  const notifier = new MultiNotifier(env.DB, config, ok);
+  await notifier.process({ ...notice, level: "alert" }, "2026-11-10T00:00:00.000Z");
+  let resume!: () => void;
+  let paused!: () => void;
+  const held = new Promise<void>(resolve => { resume = resolve; });
+  const reachedWrite = new Promise<void>(resolve => { paused = resolve; });
+  let writesAfterRelease = 0;
+  let released = false;
+  // Hold the old tick immediately before its real D1 UPSERT, after it read the old state.
+  const delayedDb = new Proxy(env.DB, { get(db, property) {
+    if (property !== "prepare") return Reflect.get(db, property);
+    return (sql: string) => {
+      if (released) writesAfterRelease++;
+      const prepared = db.prepare(sql);
+      if (!sql.startsWith("INSERT INTO alert_state")) return prepared;
+      return new Proxy(prepared, { get(statement, method) {
+        if (method !== "bind") return Reflect.get(statement, method);
+        return (...values: unknown[]) => {
+          const bound = statement.bind(...values);
+          return new Proxy(bound, { get(target, operation) {
+            if (operation !== "run") return Reflect.get(target, operation);
+            return async () => { paused(); await held; return target.run(); };
+          } });
+        };
+      } });
+    };
+  } });
+  const source = (errors: number) => ({ submitErrorCounts: new InMemorySubmitErrorCounts([{ brand: "brand-a", submits: 50, errors }]) });
+  const oldReport = await runAlerts(env.DB, source(level === "ok" ? 0 : 50), { now: "2026-11-10T02:15:00.000Z" });
+  const oldTick = new MultiNotifier(delayedDb, config, ok).notify(oldReport);
+  await reachedWrite;
+  let acknowledged: unknown;
+  try {
+    await notifier.notify(await runAlerts(env.DB, source(50), { now: "2026-11-10T02:30:00.000Z" }));
+    await env.DB.prepare("UPDATE alert_state SET acknowledged_by='owner',acknowledged_at=?1,updated_at=?1 WHERE alert_key=?2")
+      .bind("2026-11-10T02:31:00.000Z", notice.key).run();
+    acknowledged = await env.DB.prepare("SELECT * FROM alert_state WHERE alert_key=?1").bind(notice.key).first();
+  } finally {
+    released = true;
+    resume();
+    await oldTick;
+  }
+  expect(await env.DB.prepare("SELECT * FROM alert_state WHERE alert_key=?1").bind(notice.key).first()).toEqual(acknowledged);
+  expect(writesAfterRelease).toBe(0);
+  await notifier.notify(await runAlerts(env.DB, source(50), { now: "2026-11-10T08:45:00.000Z" }));
+  expect(await logs()).toHaveLength(2);
 });
 it("quiet hours use Bangkok time across midnight; held first alert sends when quiet ends", async () => {
   const config = settings();

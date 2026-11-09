@@ -77,14 +77,17 @@ export class MultiNotifier implements Notifier {
     const before = await this.db.prepare("SELECT * FROM alert_state WHERE alert_key=?1").bind(notice.key).first<AlertStateRow>();
     const resetSend = cooldownMs === undefined && before !== null && notice.level !== "ok" &&
       (before.state === "ok" || (before.state === "warn" && notice.level === "alert"));
-    await this.db.prepare(`INSERT INTO alert_state(alert_key,state,first_seen,updated_at) VALUES (?1,?2,?3,?3)
+    const update = await this.db.prepare(`INSERT INTO alert_state(alert_key,state,first_seen,updated_at) VALUES (?1,?2,?3,?3)
       ON CONFLICT(alert_key) DO UPDATE SET state=excluded.state,
       first_seen=CASE WHEN alert_state.state='ok' AND excluded.state<>'ok' THEN excluded.first_seen ELSE alert_state.first_seen END,
       acknowledged_by=CASE WHEN excluded.state='ok' OR alert_state.state='ok' THEN NULL ELSE alert_state.acknowledged_by END,
       acknowledged_at=CASE WHEN excluded.state='ok' OR alert_state.state='ok' THEN NULL ELSE alert_state.acknowledged_at END,
       closed_at=CASE WHEN excluded.state='ok' OR alert_state.state='ok' THEN NULL ELSE alert_state.closed_at END,
       last_sent=CASE WHEN ?4=1 AND (alert_state.state='ok' OR (alert_state.state='warn' AND excluded.state='alert')) THEN NULL ELSE alert_state.last_sent END,
-      updated_at=excluded.updated_at`).bind(notice.key, notice.level, at, resetSend ? 1 : 0).run();
+      updated_at=excluded.updated_at
+      WHERE alert_state.updated_at < excluded.updated_at`).bind(notice.key, notice.level, at, resetSend ? 1 : 0).run();
+    // A delayed or duplicate tick must not overwrite newer state or evaluate a send from its stale snapshot.
+    if (!update.meta.changes) return [];
     if (notice.level === "ok") return [];
     const routing = this.settings.routing[notice.rule] ?? { telegram: true, repeat_hours: 6, quiet: null };
     if (!this.telegram || !this.settings.telegram.enabled || !routing.telegram || !this.settings.telegram.chat_ids.length || inQuietHours(at, routing.quiet)) return [];
