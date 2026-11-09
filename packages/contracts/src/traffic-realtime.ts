@@ -21,6 +21,15 @@ export const TrafficTailEvent = z.strictObject({
 });
 export type TrafficTailEvent = z.infer<typeof TrafficTailEvent>;
 
+export const TrafficRealtimeQuery = z.strictObject({
+  period: TrafficLogPeriod.default("24h"),
+  brand: z.string().max(32500).refine(value => {
+    const ids = value.split(",");
+    return ids.length <= 500 && ids.every(id => BrandId.safeParse(id).success);
+  }, "Invalid brand list").optional(),
+});
+export type TrafficRealtimeQuery = z.infer<typeof TrafficRealtimeQuery>;
+
 const Count = z.number().int().nonnegative();
 const Pct = z.number().min(0).max(100);
 const NullableDelta = z.number().finite().nullable();
