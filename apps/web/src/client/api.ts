@@ -1,5 +1,7 @@
 import { TrafficBreakdownResponse, type TemplateThemeVars, type TrafficPeriod, type TrafficDimension } from "@anjuna/contracts";
 import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contracts";
+import { AlertStateRow, NotificationLogRow } from "@anjuna/contracts";
+import { z } from "zod";
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
@@ -7,6 +9,7 @@ import { z } from "zod";
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, TerminalJobResponse, TerminalRunResponse, type CampaignJobCreateRequest, type TerminalRunRequest } from "@anjuna/contracts";
 import { AdAllocationAssignResponse, AdAllocationResponse, type AdAllocationAssignRequest } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
+import { NotifySettings } from "@anjuna/contracts";
 import type { BrandScopePrefs } from "./brand-scope";
 import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
@@ -236,10 +239,16 @@ export const api = {
   enableAdsCampaign: (campaignId: string) => request<unknown>("POST", `/api/ads/campaigns/${encodeURIComponent(campaignId)}/enable`, {}),
   pauseAdsCampaign: (campaignId: string) => request<unknown>("POST", `/api/ads/campaigns/${encodeURIComponent(campaignId)}/pause`, {}),
   checkAdsCampaignStatus: (campaignId: string) => request<unknown>("POST", `/api/ads/campaigns/${encodeURIComponent(campaignId)}/status-check`, {}),
+  /** Owner only. Queues campaign.update_budget through the v1 route with the session; core checks the caps. `daily_budget` is in the account currency. */
+  updateAdsCampaignBudget: (campaignId: string, dailyBudget: number) => request<unknown>("POST", `/api/v1/ads/campaigns/${encodeURIComponent(campaignId)}/budget`, { daily_budget: dailyBudget }),
   signIn: (email: string, password: string) => request<unknown>("POST", "/api/auth/sign-in/email", { email, password }),
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
   brands: () => request<{ brands: BrandSummary[]; generated_at: string }>("GET", "/api/brands"),
   settingsBrands: () => request<unknown>("GET", "/api/settings/brands").then((body) => SettingsBrandsResponse.parse(body)), // spec settings
+  notifySettings: () => request<unknown>("GET", "/api/settings/notify").then((body) => NotifySettings.parse(body)),
+  putNotifySettings: (settings: NotifySettings) => request<unknown>("PUT", "/api/settings/notify", settings).then((body) => NotifySettings.parse(body)),
+  /** Sends one test message to every saved chat id. The answer is core's delivery result. */
+  testNotify: () => request<{ status: "sent" | "failed"; response_code: number | null }>("POST", "/api/settings/notify/test"),
   microsoftAdsSetting: () => request<unknown>("GET", "/api/settings/microsoft-ads").then((body) => MicrosoftAdsSettingResponse.parse(body)),
   putMicrosoftAdsSetting: (account: string | null) => request<unknown>("PUT", "/api/settings/microsoft-ads", { microsoft_ads_account: account }).then((body) => MicrosoftAdsSettingResponse.parse(body)),
   brand: (id: string) => request<{ brand: BrandConfig }>("GET", `/api/brands/${encodeURIComponent(id)}`).then((r) => r.brand),
@@ -316,6 +325,12 @@ export const api = {
   leadAggregates: (query: { from: string; to: string }) =>
     request<LeadAggregatesResponse>("GET", `/api/leads/aggregates?${new URLSearchParams({ from: query.from, to: query.to })}`),
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
+  /** The last sends of the Telegram notifier, newest first. Core caps the limit at 100. */
+  alertsLog: (limit = 100) => request<unknown>("GET", `/api/alerts/log?limit=${limit}`).then((body) => z.object({ rows: z.array(NotificationLogRow) }).parse(body).rows),
+  /** Acknowledge or close one alert. The key is `<rule>:<brand>`. Core answers 404 when the alert is no longer active. */
+  alertAction: (key: string, action: "ack" | "close") => request<unknown>("POST", `/api/alerts/${encodeURIComponent(key)}/${action}`, {}).then((body) => AlertStateRow.parse(body)),
+  /** Send a failed notification again. Owner only. */
+  retryAlertSend: (id: string) => request<unknown>("POST", `/api/alerts/log/${encodeURIComponent(id)}/retry`, {}).then((body) => z.object({ status: z.enum(["sent", "failed"]), response_code: z.number().nullable() }).parse(body)),
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
   /** Owner only: an employee gets 403 forbidden_role. */
   spend: (period: SpendPeriod) => request<PanelSpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),

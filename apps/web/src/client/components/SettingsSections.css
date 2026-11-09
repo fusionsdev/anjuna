@@ -1,0 +1,20 @@
+/* The section list of the Settings group: a column at the left from 1024px, a row of chips under it. */
+.settings-shell { display: block; min-width: 0; }
+.settings-sections { margin: 0 0 var(--space-4); }
+.settings-sections ul { display: flex; gap: var(--space-2); margin: 0; padding: 0; list-style: none; overflow-x: auto; scrollbar-width: thin; }
+.settings-sections a { display: inline-flex; align-items: center; gap: 10px; min-height: var(--control-h); padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-chip); background: var(--card); color: var(--ink); text-decoration: none; font-size: var(--text-md); white-space: nowrap; flex-shrink: 0; }
+.settings-sections a:hover { background: var(--canvas); }
+.settings-sections a svg { width: 16px; height: 16px; color: var(--sub); flex-shrink: 0; }
+.settings-sections a[aria-current="page"] { background: var(--brand-tint); border-color: var(--brand-tint); color: var(--brand-ink); font-weight: 600; }
+.settings-sections a[aria-current="page"] svg { color: var(--brand-ink); }
+@media (min-width: 1024px) {
+  .settings-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); column-gap: var(--space-5); align-items: start; }
+  .settings-shell > :not(.settings-sections) { grid-column: 2; }
+  .settings-sections { grid-column: 1; grid-row: 1 / span 40; position: sticky; top: var(--space-4); margin: 0; padding: var(--space-2); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }
+  .settings-sections ul { flex-direction: column; gap: 4px; overflow: visible; }
+  .settings-sections a { border-color: transparent; border-radius: var(--radius-control); background: transparent; width: 100%; }
+  .settings-sections a:hover { background: var(--canvas); }
+  .settings-sections a[aria-current="page"] { background: var(--brand-tint); }
+}
+/* Every other page: the wrapper takes no box, so its children lay out as before. */
+.page-body { display: contents; }

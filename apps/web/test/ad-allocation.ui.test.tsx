@@ -130,8 +130,9 @@ describe("alert row ค่าโฆษณายังไม่จัดสรร
       return json({ brands: [] });
     }));
     render(<AlertsScreen />);
-    expect(await screen.findByText("ค่าโฆษณายังไม่จัดสรร")).toBeTruthy();
-    expect(screen.getByText("1 บัญชีมีแคมเปญที่ยังไม่จัดสรรเกิน 20% ของค่าโฆษณา 7 วัน")).toBeTruthy();
+    // The title is on the row and on the rules card.
+    expect((await screen.findAllByText("ค่าโฆษณายังไม่จัดสรร")).length).toBe(2);
+    expect(screen.getByText("แคมเปญที่ยังไม่จัดสรรเกิน 20% ของค่าโฆษณา 7 วัน")).toBeTruthy();
     expect(screen.getByText(/บัญชี 538-116-3935 · THB · ยังไม่จัดสรร 21%/)).toBeTruthy();
   });
 });

@@ -2,7 +2,7 @@ import {
   BrandId, CONVERSIONS_MAX_LIMIT, CONVERSIONS_ROW_LIMIT, CONVERSION_STALLED_HOURS, CONVERSION_STATUSES, SPEND_PERIODS,
   type ConversionsReportResponse, type ConversionStatus, type SpendPeriod,
 } from "@anjuna/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { type Column, DataTable } from "../components/DataTable";
@@ -134,12 +134,28 @@ export function ConversionsScreen({ me }: { me: Me }) {
     return () => { current = false; };
   }, [period, status, brand, limit, filterKey]);
 
+  // Rows picked for a bulk resend. Only dead rows can be picked; a filter change clears the pick.
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => { setPicked(new Set()); }, [filterKey]);
+  const togglePick = (id: string) => setPicked((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+
   // replace: a filter click edits the open page and adds no history entry.
   const change = (patch: Partial<ConversionFilters>) => navigate(conversionsPath({ period, status, brand, ...patch }), { replace: true });
   const labelOf = (id: string) => domains.get(id) ?? id;
   const options = [...domains].map(([id, domain]) => ({ id, text: domain === id ? id : `${domain} (${id})` })).sort((a, b) => a.text.localeCompare(b.text));
 
+  const visibleRows = useMemo(() => (load && "report" in load ? load.report.rows.filter((row) => inScopeId(row.brand)) : []), [load, inScopeId]);
+  const deadIds = visibleRows.filter((row) => row.status === "dead").map((row) => row.lead_id);
+  const allDeadPicked = deadIds.length > 0 && deadIds.every((id) => picked.has(id));
   const columns: Column<Row>[] = [
+    ...(owner ? [{
+      key: "pick",
+      header: <input type="checkbox" aria-label="เลือกทุกรายการที่ส่งไม่ได้" checked={allDeadPicked} disabled={deadIds.length === 0} onChange={() => setPicked(allDeadPicked ? new Set() : new Set(deadIds))} />,
+      label: "",
+      cell: (row: Row) => (row.status === "dead"
+        ? <input type="checkbox" aria-label={`เลือก ${row.lead_id.slice(0, 8)}`} checked={picked.has(row.lead_id)} onChange={() => togglePick(row.lead_id)} />
+        : null),
+    }] : []),
     { key: "brand", header: "แบรนด์", cell: (row) => <BrandLabel brandId={row.brand} domain={labelOf(row.brand)} /> },
     { key: "status", header: "สถานะ", cell: (row) => <StatusBadge {...STATUS_BADGE[row.status]} /> },
     { key: "reason", header: "เหตุผล", cell: (row) => <Reason row={row} /> },
@@ -174,9 +190,16 @@ export function ConversionsScreen({ me }: { me: Me }) {
       <FilterBar label="ตัวกรองคอนเวอร์ชัน (Conversion filters)" activeCount={(status !== "all" ? 1 : 0) + (brand ? 1 : 0)}>
       <div className="conv-filters">
         <div className="conv-chips" role="group" aria-label="สถานะ">
-          {STATUS_CHIPS.map(([key, label]) => (
-            <button key={key} type="button" aria-pressed={status === key} onClick={() => change({ status: key })}>{label}</button>
-          ))}
+          {STATUS_CHIPS.map(([key, label]) => {
+            // The totals cover the period and the brand, whatever status is chosen.
+            const totals = load && "report" in load ? load.report.totals : null;
+            const n = totals ? (key === "all" ? totals.pending + totals.processing + totals.uploaded + totals.dead : totals[key]) : null;
+            return (
+              <button key={key} type="button" aria-pressed={status === key} aria-label={label} onClick={() => change({ status: key })}>
+                {label}{n !== null && <span className="num">{count(n)}</span>}
+              </button>
+            );
+          })}
         </div>
         <select aria-label="แบรนด์" value={brand ?? ""} onChange={(e) => change({ brand: e.target.value || null })}>
           <option value="">ทุกแบรนด์</option>
@@ -190,7 +213,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
       {report && (
         <div className="conv-stack">
           <AllBrandsNote>ยอดสรุปด้านล่างนับทุกแบรนด์ ส่วนตารางตามขอบเขตแบรนด์</AllBrandsNote>
-          <div className="ledger" role="group" aria-label="สรุปคอนเวอร์ชัน">
+          <div className="ledger conv-stats" role="group" aria-label="สรุปคอนเวอร์ชัน">
             {COUNT_CELLS.map(([key, label]) => (
               <div className="cell" key={key}><p className="k">{label}</p><p className={key === "dead" && report.totals.dead > 0 ? "v neg" : "v"}>{count(report.totals[key])}</p></div>
             ))}
@@ -205,15 +228,24 @@ export function ConversionsScreen({ me }: { me: Me }) {
             )}
           </div>
           <section className="panel" aria-label="รายการคอนเวอร์ชัน">
+            <h2>คิวคอนเวอร์ชัน</h2>
+            {owner && picked.size > 0 && (
+              <div className="conv-bulk" role="toolbar" aria-label="จัดการรายการที่เลือก">
+                <span className="num">เลือก {count(picked.size)} รายการ</span>
+                <button type="button" className="btn" disabled title="ยังไม่มีเส้นทางส่งใหม่ที่ฝั่งเซิร์ฟเวอร์ ปุ่มจะใช้ได้เมื่อมี">ส่งใหม่ {count(picked.size)} รายการ</button>
+                <span className="hint">ส่งใหม่ยังใช้ไม่ได้ ยังไม่มีเส้นทางส่งใหม่ที่ฝั่งเซิร์ฟเวอร์</span>
+                <button type="button" className="btn conv-bulk-clear" aria-label="ล้างการเลือก" onClick={() => setPicked(new Set())}>ล้าง</button>
+              </div>
+            )}
             <DataTable
               label="รายการคอนเวอร์ชัน (Conversions)"
               columns={columns}
-              rows={report.rows.filter((row) => inScopeId(row.brand))}
+              rows={visibleRows}
               rowKey={(row) => row.lead_id}
               empty={<EmptyState title="ยังไม่มีคอนเวอร์ชันในช่วงนี้" />}
             />
             {loadMoreError && <p role="alert">{loadMoreError}</p>}
-            <LoadMore shown={report.rows.filter((row) => inScopeId(row.brand)).length} hasMore={report.truncated} atMax={shownLimit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
+            <LoadMore shown={visibleRows.length} hasMore={report.truncated} atMax={shownLimit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
           </section>
         </div>
       )}

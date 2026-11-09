@@ -33,6 +33,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const leadRequests = () => requests.filter((r) => r.startsWith("/api/leads"));
 const rowOf = (leadId: string) => within(screen.getByTitle(leadId).closest("tr")!);
+const statusChip = (name: string) => within(screen.getByRole("group", { name: /สถานะ/ })).getByRole("button", { name: new RegExp(`^${name}`) });
 const renderScreen = (me: Me = owner) => render(<LeadsScreen me={me} selectedId={null} onSelect={() => {}} />);
 
 describe("Leads screen", () => {
@@ -70,7 +71,7 @@ describe("Leads screen", () => {
 
     // A filter write replaces the history entry instead of pushing one.
     const historyLength = window.history.length;
-    fireEvent.change(screen.getByLabelText(/สถานะ/), { target: { value: "sold" } });
+    fireEvent.click(statusChip("ขายได้"));
     await waitFor(() => expect(leadRequests()).toHaveLength(2));
     expect(window.history.length).toBe(historyLength);
     expect(leadRequests()[1]).toBe(`/api/leads?from=${from}&to=${today}&brand=brand-a&status=sold`);
@@ -223,7 +224,7 @@ describe("Leads screen", () => {
     expect(screen.queryByRole("button", { name: "ถัดไป (Next)" })).toBeNull();
 
     // A filter change goes back to page 1.
-    fireEvent.change(screen.getByLabelText(/สถานะ/), { target: { value: "rejected" } });
+    fireEvent.click(statusChip("ถูกปฏิเสธ"));
     await waitFor(() => expect(leadRequests()).toHaveLength(3));
     expect(leadRequests()[2]).not.toContain("cursor");
     expect(leadRequests()[2]).toContain("status=rejected");
@@ -299,5 +300,45 @@ describe("Leads screen", () => {
     } finally {
       window.matchMedia = original;
     }
+  });
+});
+
+describe("Leads screen: chips, range and the lead panel", () => {
+  it("counts the loaded rows on the status chips and sends the chosen status", async () => {
+    renderScreen();
+    await screen.findByTitle(SOLD_ID);
+    const group = screen.getByRole("group", { name: /สถานะ/ });
+    const rows = (leadsFixture as LeadsResponse).rows;
+    const text = (name: string) => within(group).getByRole("button", { name: new RegExp(`^${name}`) }).textContent;
+    expect(text("ทั้งหมด")).toContain(`${rows.length}`);
+    expect(text("ขายได้")).toContain(`${rows.filter((r) => r.outcome === "sold").length}`);
+    expect(text("รอผล")).toContain(`${rows.filter((r) => r.outcome === "pending").length}`);
+    fireEvent.click(statusChip("รอผล"));
+    await waitFor(() => expect(leadRequests()).toHaveLength(2));
+    expect(leadRequests()[1]).toContain("status=pending");
+    expect(statusChip("รอผล").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("sets the window from the range buttons and writes it to the URL", async () => {
+    renderScreen();
+    await screen.findByTitle(SOLD_ID);
+    const today = new Date().toISOString().slice(0, 10);
+    const from7 = new Date(Date.parse(today) - 6 * 86_400_000).toISOString().slice(0, 10);
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(leadRequests()).toHaveLength(2));
+    expect(leadRequests()[1]).toBe(`/api/leads?from=${from7}&to=${today}`);
+    expect(screen.getByRole("button", { name: "7 วัน" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
+    await waitFor(() => expect(leadRequests()).toHaveLength(3));
+    expect(leadRequests()[2]).toBe(`/api/leads?from=${today}&to=${today}`);
+  });
+
+  it("opens a lead from its row button, marks the row and shows the panel beside the table", async () => {
+    const onSelect = vi.fn();
+    const view = render(<LeadsScreen me={owner} selectedId={null} onSelect={onSelect} />);
+    await screen.findByTitle(SOLD_ID);
+    fireEvent.click(within(screen.getByTitle(SOLD_ID).closest("tr")!).getByRole("button", { name: "ดูรายละเอียดลีด 6f1c2b9e" }));
+    expect(onSelect).toHaveBeenCalledWith(SOLD_ID);
+    expect(view.container.querySelector(".lead-panel")).toBeNull();
   });
 });

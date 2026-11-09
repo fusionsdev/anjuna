@@ -9,3 +9,17 @@
 .conv-reason details { margin-top: 4px; font-size: var(--text-sm); }
 .conv-reason summary { cursor: pointer; color: var(--muted); }
 .conv-reason code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--text-xs); }
+/* v9: chips with counts, stat boxes, bulk bar. */
+.conv-chips button { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; font-size: var(--text-body); background: var(--card); color: var(--ink); }
+.conv-chips button:hover { background: var(--canvas); }
+.conv-chips button[aria-pressed="true"] { background: var(--brand-tint); border-color: var(--brand-tint); color: var(--brand-ink); font-weight: 500; }
+.conv-chips .num { font-size: var(--text-xs); }
+.conv-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.conv-stats .cell { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); padding: 16px; }
+.conv-stats .k { font-size: var(--text-xs); color: var(--sub); margin: 0; }
+.conv-stats .v { font-size: var(--text-kpi); font-weight: 600; margin: 4px 0 0; }
+.conv-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; padding: 8px 16px; background: var(--ink); color: var(--on); border-radius: var(--radius-control); }
+.conv-bulk .btn { background: transparent; color: var(--on); border-color: rgba(255, 255, 255, .3); }
+.conv-bulk .btn:disabled { opacity: .6; cursor: not-allowed; }
+.conv-bulk .hint { color: rgba(255, 255, 255, .8); }
+.conv-bulk-clear { margin-left: auto; }

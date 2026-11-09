@@ -157,8 +157,9 @@ describe("Settings in the app", () => {
     const employeeNav = await screen.findByRole("navigation", { name: "เมนูหลัก" });
     expect(within(employeeNav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("href")).toBe("/mailing");
     // The Settings tab is owner only, so the tab strip leaves it out for an employee.
-    const tabs = within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
-    expect(tabs.queryByRole("link", { name: "ตั้งค่า" })).toBeNull();
+    const tabs = within(screen.getByRole("navigation", { name: "หมวดตั้งค่า" }));
+    expect(tabs.queryByRole("link", { name: "ทั่วไป" })).toBeNull();
+    expect(tabs.queryByRole("link", { name: "ช่องทางแจ้งเตือน" })).toBeNull();
   });
 
   it("an owner opening /settings sees the table", async () => {
@@ -167,8 +168,8 @@ describe("Settings in the app", () => {
     expect(await screen.findByRole("table", { name: "ตั้งค่าแบรนด์ (Brand settings)" })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
     expect(within(nav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("aria-current")).toBe("page");
-    const tabs = within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
-    expect(tabs.getByRole("link", { name: "ตั้งค่า" }).getAttribute("aria-current")).toBe("page");
+    const tabs = within(screen.getByRole("navigation", { name: "หมวดตั้งค่า" }));
+    expect(tabs.getByRole("link", { name: "ทั่วไป" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("an employee opening /settings sees the Owner-only card and no request goes to /api/settings/brands", async () => {

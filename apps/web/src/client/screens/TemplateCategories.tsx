@@ -1,12 +1,20 @@
 import type { TemplateCategory } from "@anjuna/contracts";
+import { Folder, Plus } from "lucide-react";
 import { useState } from "react";
+import { Chip } from "../components/Chip";
 
-/** "all" shows every template that is not archived, "archived" shows only archived ones, any other value is a category id. */
-export type CategoryFilter = "all" | "archived" | (string & {});
+/** "all" shows every template that is not archived; any other value is a category id. Archived templates have their own status chip. */
+export type CategoryFilter = "all" | (string & {});
 
-/** Category filter for the template list. The owner also adds categories here. */
-export function TemplateCategoryBar({ categories, filter, onFilter, owner, busy, onCreate }: {
+/**
+ * Left category list of the template page. Each row shows how many templates (not archived) the category holds.
+ * The owner adds a category from the field under the list.
+ */
+export function CategoryList({ categories, counts, total, filter, onFilter, owner, busy, onCreate }: {
   categories: TemplateCategory[];
+  /** Templates per category id, archived ones left out. */
+  counts: ReadonlyMap<string, number>;
+  total: number;
   filter: CategoryFilter;
   onFilter: (next: CategoryFilter) => void;
   owner: boolean;
@@ -16,23 +24,31 @@ export function TemplateCategoryBar({ categories, filter, onFilter, owner, busy,
 }) {
   const [name, setName] = useState("");
   const trimmed = name.trim();
+  const item = (id: CategoryFilter, label: string, count: number) => (
+    <li key={id}>
+      <button type="button" className="tpl-cat" aria-pressed={filter === id} onClick={() => onFilter(id)}>
+        <Folder size={16} aria-hidden="true" />
+        <span className="tpl-cat-name">{label}</span>
+        <span className="tpl-cat-count">{count}</span>
+      </button>
+    </li>
+  );
   return (
-    <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
-      <div className="seg" role="group" aria-label="กรองหมวดเทมเพลต" style={{ flexWrap: "wrap" }}>
-        <button type="button" aria-pressed={filter === "all"} onClick={() => onFilter("all")}>ทุกหมวด</button>
-        {categories.map((c) => <button type="button" key={c.id} aria-pressed={filter === c.id} onClick={() => onFilter(c.id)}>{c.name}</button>)}
-        <button type="button" aria-pressed={filter === "archived"} onClick={() => onFilter("archived")}>เก็บถาวร</button>
-      </div>
+    <nav className="tpl-cats" aria-label="หมวดเทมเพลต">
+      <ul>
+        {item("all", "ทุกหมวด", total)}
+        {categories.map((c) => item(c.id, c.name, counts.get(c.id) ?? 0))}
+      </ul>
       {owner && (
-        <form className="row" style={{ gap: 8 }} onSubmit={async (event) => {
+        <form className="tpl-cat-add" onSubmit={async (event) => {
           event.preventDefault();
           if (trimmed && await onCreate(trimmed)) setName("");
         }}>
           <input aria-label="ชื่อหมวดใหม่" placeholder="ชื่อหมวดใหม่" maxLength={64} value={name} onChange={(e) => setName(e.target.value)} />
-          <button type="submit" className="btn" disabled={busy || !trimmed}>เพิ่มหมวด</button>
+          <button type="submit" className="btn" disabled={busy || !trimmed}><Plus size={16} aria-hidden="true" />เพิ่มหมวด</button>
         </form>
       )}
-    </div>
+    </nav>
   );
 }
 
@@ -47,10 +63,10 @@ export function TemplateCategoryPicker({ templateName, value, categories, owner,
 }) {
   if (!owner) {
     const current = categories.find((c) => c.id === value);
-    return current ? <span className="pill p-blue">{current.name}</span> : null;
+    return current ? <Chip tone="neutral">{current.name}</Chip> : <span className="hint">ไม่มีหมวด</span>;
   }
   return (
-    <select aria-label={`หมวดของ ${templateName}`} value={value ?? ""} disabled={busy} onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}>
+    <select className="tpl-select" aria-label={`หมวดของ ${templateName}`} value={value ?? ""} disabled={busy} onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}>
       <option value="">ไม่มีหมวด</option>
       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
     </select>

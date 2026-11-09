@@ -1,0 +1,50 @@
+/* Notification channels screen only. Shared classes (.panel .head .sub .hint .btn .chip .note .neg .pos .mono) come from styles.css. */
+.notify-page { display: grid; gap: var(--space-4); min-width: 0; }
+.notify-card { display: grid; gap: var(--space-3); }
+.notify-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.notify-card-head h2 { margin: 0; }
+.notify-card-head h2 svg { color: var(--sub); flex-shrink: 0; }
+.notify-muted { opacity: .6; background: var(--canvas); }
+.notify-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.notify-error p { margin: 0; }
+
+.notify-switch { display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--control-h); font-size: var(--text-md); }
+.notify-switch input { width: 18px; height: 18px; accent-color: var(--brand); margin: 0; }
+
+.notify-chats { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.notify-chats li { display: flex; align-items: center; gap: var(--space-2); min-height: var(--row-h); padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.notify-chats li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-md); }
+.notify-chats li.hint { border-style: dashed; }
+.notify-icon-btn { min-width: var(--control-h); padding: 0; }
+
+.notify-add { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.notify-add input { flex: 1 1 200px; min-width: 0; min-height: var(--control-h); font-size: var(--text-md); }
+.notify-test { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.notify-result { font-size: var(--text-sm); font-weight: 500; }
+
+.notify-table-wrap { overflow-x: auto; }
+.notify-rules { width: 100%; border-collapse: collapse; }
+.notify-rules th { text-align: left; font-size: var(--text-sm); font-weight: 600; padding: 12px var(--space-3); border-bottom: 1px solid var(--line); background: var(--canvas); white-space: nowrap; }
+.notify-rules td { padding: 0 var(--space-3); height: var(--row-h); border-bottom: 1px solid var(--line); font-size: var(--text-md); vertical-align: middle; }
+.notify-rules tbody tr:last-child td { border-bottom: 0; }
+.notify-rules input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brand); }
+.notify-rules select, .notify-rules input[type="time"], .notify-digest input[type="time"] { min-height: var(--control-h); font-size: var(--text-md); }
+.notify-quiet { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+.notify-digest { display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap; }
+.notify-digest label:not(.notify-switch) { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-md); }
+
+.notify-save { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+
+/* Under 768px each rule becomes a stacked card: the label of the column sits in front of its control. */
+@media (max-width: 767px) {
+  .notify-rules thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .notify-rules, .notify-rules tbody, .notify-rules tr, .notify-rules td { display: block; width: 100%; }
+  .notify-rules tr { padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
+  .notify-rules tbody tr:last-child { border-bottom: 0; }
+  .notify-rules td { height: auto; min-height: var(--control-h); border: 0; padding: var(--space-1) 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .notify-rules td:first-child { font-weight: 600; }
+  .notify-rules td:first-child::before { content: none; }
+  .notify-rules td::before { content: attr(data-label); font-size: var(--text-sm); color: var(--sub); flex-shrink: 0; }
+  .notify-quiet { justify-content: flex-end; }
+}

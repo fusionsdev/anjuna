@@ -22,6 +22,7 @@ const detail = {
   screenshots: { desktop: "/api/templates/tv-bolt-1/screenshots/desktop", mobile: null },
 };
 
+const openUpload = () => fireEvent.click(screen.getByRole("button", { name: "อัปโหลดเทมเพลต" }));
 const detail2 = { ...detail, template: { ...detail.template, template_version_id: "tv-bolt-2", version: 2, text_defaults: { ...detail.template.text_defaults, title: "Marina | Funding" } } };
 // jsdom also fires its own async hashchange; the manual dispatch makes the event deterministic.
 const goTo = (hash: string) => act(() => { window.location.hash = hash; window.dispatchEvent(new HashChangeEvent("hashchange")); });
@@ -57,12 +58,51 @@ describe("Templates screen", () => {
     return file;
   };
 
-  it("shows screenshot cards, status and brands-using count", async () => {
+  it("lists the template as a table row with thumbnail, id, status, version and brands using", async () => {
     render(<TemplatesScreen me={owner} />);
     expect(await screen.findByRole("img", { name: "ตัวอย่าง Bolt Harbor (Template preview)" })).toBeTruthy();
-    expect(screen.getByText("แบรนด์ที่ใช้ (Brands using): 3")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Bolt Harbor/, pressed: false }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByRole("table")).toBeNull();
+    const row = screen.getByText("Bolt Harbor").closest("tr")!;
+    expect(within(row).getByText("tpl-bolt").tagName).toBe("CODE");
+    expect(within(row).getByText(/Somchai \(bolt.new\)/)).toBeTruthy();
+    expect(within(row).getByText("รออนุมัติ")).toBeTruthy();
+    expect(within(row).getByText("v1")).toBeTruthy();
+    const cells = within(row).getAllByRole("cell").map((c) => c.textContent);
+    expect(cells).toContain("3");
+    expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["", "เทมเพลต", "หมวด", "สถานะ", "เวอร์ชัน", "แบรนด์ที่ใช้", "การทำงาน"]);
+  });
+
+  it("counts templates in the status chips and in the category list", async () => {
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Bolt Harbor");
+    const chips = within(screen.getByRole("group", { name: "กรองสถานะเทมเพลต" })).getAllByRole("button").map((b) => b.textContent);
+    expect(chips).toEqual(["ทุกสถานะ1", "ใช้ได้0", "รออนุมัติ1", "ไม่ผ่าน0", "กำลังตรวจ0", "เก็บถาวร0"]);
+    expect(within(screen.getByRole("navigation", { name: "หมวดเทมเพลต" })).getByRole("button", { name: /^ทุกหมวด/ }).textContent).toBe("ทุกหมวด1");
+  });
+
+  it("opens the detail in a drawer, which closes on Escape and on the scrim", async () => {
+    render(<TemplatesScreen me={owner} />);
+    expect(screen.queryByRole("dialog", { name: "เทมเพลตที่เลือก" })).toBeNull();
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    const drawer = await screen.findByRole("dialog", { name: "เทมเพลตที่เลือก" });
+    expect(await within(drawer).findByText("Harbor | Funding")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "เทมเพลตที่เลือก" })).toBeNull());
+    fireEvent.click(screen.getByText("Bolt Harbor"));
+    await screen.findByRole("dialog", { name: "เทมเพลตที่เลือก" });
+    fireEvent.click(screen.getByTestId("template-scrim"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "เทมเพลตที่เลือก" })).toBeNull());
+  });
+
+  it("holds the zip and URL imports in a dialog behind the upload button", async () => {
+    render(<TemplatesScreen me={employee} />);
+    await screen.findByText("Bolt Harbor");
+    expect(screen.queryByLabelText("ไฟล์ ZIP (ZIP file)")).toBeNull();
+    openUpload();
+    const dialog = await screen.findByRole("dialog", { name: "อัปโหลดเทมเพลต" });
+    expect(within(dialog).getByLabelText("ไฟล์ ZIP (ZIP file)")).toBeTruthy();
+    expect(within(dialog).getByLabelText("URL ของเว็บที่เผยแพร่ (Published URL)")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "อัปโหลดเทมเพลต" })).toBeNull());
   });
 
   it.each([
@@ -71,6 +111,7 @@ describe("Templates screen", () => {
     ["vite_react", { "index.html": '<script type="module" src="/assets/index.js"></script>', "assets/index.js": "built" }],
   ] as const)("renders detected type %s before upload", async (type, entries) => {
     render(<TemplatesScreen me={employee} />);
+    openUpload();
     fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [zipFile(entries)] } });
     expect(await screen.findByText(`ชนิดที่ตรวจพบ (Detected type): ${type}`)).toBeTruthy();
     expect(requests.some((r) => r.path === "/api/templates/import-zip")).toBe(false);
@@ -82,6 +123,7 @@ describe("Templates screen", () => {
       issues: [], warnings: [], text_defaults: null, similarity: null, next_step: "Already submitted.",
     }));
     render(<TemplatesScreen me={employee} />);
+    openUpload();
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต ZIP (ZIP template name)"), { target: { value: "Harbor Funding" } });
     const id = screen.getByLabelText("รหัสเทมเพลต (Template ID)") as HTMLInputElement;
     expect(id.value).toBe("harbor-funding");
@@ -100,6 +142,7 @@ describe("Templates screen", () => {
 
   it("rejects a source project locally and disables upload", async () => {
     render(<TemplatesScreen me={employee} />);
+    openUpload();
     fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [zipFile({ "package.json": "{}", "src/main.tsx": "source" })] } });
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "อัปโหลดโฟลเดอร์ dist ที่ build แล้ว (Upload the built dist folder)");
     expect(screen.getByRole("button", { name: "นำเข้า ZIP (Import ZIP)" })).toHaveProperty("disabled", true);
@@ -112,6 +155,7 @@ describe("Templates screen", () => {
     const delayed = new File(["pending"], "old.zip");
     Object.defineProperty(delayed, "arrayBuffer", { value: () => new Promise<ArrayBuffer>((resolve) => { finish = resolve; }) });
     render(<TemplatesScreen me={employee} />);
+    openUpload();
     fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [delayed] } });
     fireEvent.change(screen.getByLabelText("ไฟล์ ZIP (ZIP file)"), { target: { files: [zipFile({ "index.html": "<h1>New</h1>", "_astro/new.css": "h1{}" })] } });
     await screen.findByText("ชนิดที่ตรวจพบ (Detected type): astro");
@@ -204,7 +248,7 @@ describe("Templates screen", () => {
     await waitFor(() => expect(approveRequests()).toHaveLength(1));
   });
 
-  it("hides the card Approve while that version's detail is open", async () => {
+  it("hides the row Approve while that version's detail is open", async () => {
     render(<TemplatesScreen me={owner} />);
     expect(await screen.findByRole("button", { name: "อนุมัติ Bolt Harbor v1" })).toBeTruthy();
     fireEvent.click(screen.getByText("Bolt Harbor"));
@@ -267,7 +311,7 @@ describe("Templates screen", () => {
     expect(requests.map((r) => `${r.method} ${r.path}`)).toEqual(["GET /api/templates?include_archived=1"]);
   });
 
-  it("reports a card click through onSelect and keeps the URL in charge of the selection", async () => {
+  it("reports a row click through onSelect and keeps the URL in charge of the selection", async () => {
     const onSelect = vi.fn();
     render(<TemplatesScreen me={owner} selectedId={null} onSelect={onSelect} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
@@ -283,6 +327,7 @@ describe("Templates screen", () => {
     }));
     render(<TemplatesScreen me={employee} />);
     await screen.findByText("Bolt Harbor");
+    openUpload();
     fireEvent.change(screen.getByLabelText("URL ของเว็บที่เผยแพร่ (Published URL)"), { target: { value: "https://harbor.example.com/" } });
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
     fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));
@@ -298,6 +343,7 @@ describe("Templates screen", () => {
     }));
     render(<TemplatesScreen me={employee} />);
     await screen.findByText("Bolt Harbor");
+    openUpload();
     fireEvent.change(screen.getByLabelText("URL ของเว็บที่เผยแพร่ (Published URL)"), { target: { value: "https://harbor.example.com/" } });
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
     fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));
@@ -312,6 +358,7 @@ describe("Templates screen", () => {
     }));
     render(<TemplatesScreen me={employee} />);
     await screen.findByText("Bolt Harbor");
+    openUpload();
     fireEvent.change(screen.getByLabelText("URL ของเว็บที่เผยแพร่ (Published URL)"), { target: { value: "https://harbor.example.com/" } });
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
     fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));
@@ -325,6 +372,7 @@ describe("Templates screen", () => {
     routes.set("POST /api/templates/import", () => json({ error: "bad_url", message: "Only public https URLs are accepted." }, 422));
     render(<TemplatesScreen me={employee} />);
     await screen.findByText("Bolt Harbor");
+    openUpload();
     fireEvent.change(screen.getByLabelText("URL ของเว็บที่เผยแพร่ (Published URL)"), { target: { value: "http://10.0.0.1/" } });
     fireEvent.change(screen.getByLabelText("ชื่อเทมเพลต (Template name)"), { target: { value: "Harbor" } });
     fireEvent.click(screen.getByRole("button", { name: "นำเข้า (Import)" }));

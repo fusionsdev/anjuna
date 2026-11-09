@@ -60,7 +60,7 @@ beforeEach(() => {
       };
       return json({ job, created: true }, 201);
     }
-    if (method === "POST" && input.startsWith("/api/ads/campaigns/")) return json({ job: {}, created: true }, 201);
+    if (method === "POST" && (input.startsWith("/api/ads/campaigns/") || input.startsWith("/api/v1/ads/campaigns/"))) return json({ job: {}, created: true }, 201);
     throw new Error(`Unexpected test HTTP request: ${method} ${input}`);
   }));
 });
@@ -114,7 +114,7 @@ describe("Campaigns screen", () => {
     expect(screen.getByText("petvet-search-2")).toBeTruthy();
     expect(screen.getByRole("form", { name: "ร่างแคมเปญใหม่" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /ตรวจและเปิดใช้งาน/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^หยุด/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^หยุด petvet/ })).toBeNull();
   });
 
   it("shows held and unknown states in Thai and offers no enable for them", async () => {
@@ -291,5 +291,48 @@ describe("Campaigns screen", () => {
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "หยุดแคมเปญ" }));
     await waitFor(() => expect(requests.some((r) => r.method === "POST" && r.path === "/api/ads/campaigns/777/pause")).toBe(true));
+  });
+  it("counts campaigns in the status chips and filters the table by chip", async () => {
+    render(<CampaignsScreen me={owner} />);
+    await screen.findByText("petvet-search-1");
+    const group = screen.getByRole("group", { name: "กรองสถานะแคมเปญ" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["ทั้งหมด2", "ร่าง1", "กำลังสร้าง0", "ทำงาน1", "หยุด0", "ล้มเหลว0"]);
+    fireEvent.click(within(group).getByRole("button", { name: /^ทำงาน/ }));
+    expect(screen.queryByText("petvet-search-1")).toBeNull();
+    expect(screen.getByText("petvet-search-2")).toBeTruthy();
+    fireEvent.click(within(group).getByRole("button", { name: /^หยุด/ }));
+    expect(await screen.findByText("ไม่มีแคมเปญในสถานะนี้")).toBeTruthy();
+  });
+
+  it("opens the detail of a selected row and lets the owner send a new budget as a budget job", async () => {
+    render(<CampaignsScreen me={owner} />);
+    expect(await screen.findByText("เลือกแคมเปญในตารางเพื่อดูงบ คีย์เวิร์ดและบันทึกงาน")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "petvet-search-2" }));
+    const detail = await screen.findByRole("complementary", { name: "รายละเอียดแคมเปญ" });
+    expect(within(detail).getByText("PetVetPay")).toBeTruthy();
+    expect(within(detail).getByText("บันทึกงาน")).toBeTruthy();
+    const input = within(detail).getByLabelText(/^งบต่อวัน/) as HTMLInputElement;
+    expect(input.value).toBe("1000");
+    const save = within(detail).getByRole("button", { name: "บันทึกงบ" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "800" } });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    expect(await screen.findByText(/ส่งคำสั่งเปลี่ยนงบแล้ว/)).toBeTruthy();
+    expect(requests.find((r) => r.path === "/api/v1/ads/campaigns/777/budget")).toMatchObject({ method: "POST", body: { daily_budget: 800 } });
+  });
+
+  it("blocks a budget above the cap left in the detail panel and keeps it read-only for an employee", async () => {
+    const view = render(<CampaignsScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: "petvet-search-2" }));
+    fireEvent.change(within(await screen.findByRole("complementary", { name: "รายละเอียดแคมเปญ" })).getByLabelText(/^งบต่อวัน/), { target: { value: "3500" } });
+    expect(screen.getByRole("note").textContent).toContain("งบต่อวันเกินเพดาน");
+    expect((screen.getByRole("button", { name: "บันทึกงบ" }) as HTMLButtonElement).disabled).toBe(true);
+    view.unmount();
+    render(<CampaignsScreen me={employee} />);
+    fireEvent.click(await screen.findByRole("button", { name: "petvet-search-2" }));
+    const detail = await screen.findByRole("complementary", { name: "รายละเอียดแคมเปญ" });
+    expect(within(detail).queryByRole("button", { name: "บันทึกงบ" })).toBeNull();
+    expect(within(detail).getByText("เฉพาะ owner แก้งบได้")).toBeTruthy();
   });
 });
