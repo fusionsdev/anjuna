@@ -37,118 +37,20 @@ import {
   parseAdkitJson,
 } from "./conversion-sync.mjs";
 
+import {
+  ALLOWED_COMMANDS, BUDGET_MAX, CommandNotAllowedError, PROJECT, PROJECT_ARG, assertAllowed, assertProject, checkTerminalArgv,
+  redactTerminalOutput, sameKeys, terminalKind, value,
+} from "./adkit-allowlist.mjs";
+
+export { ALLOWED_COMMANDS, CommandNotAllowedError, PROJECT_ARG, assertAllowed, assertProject };
+
 const exec = promisify(execFile);
 const ERROR_MAX = 500;
 /** Most time one adkit call may run (execFile timeout). */
 const ADKIT_CALL_MS = 120_000;
 const DUPLICATE = /duplicate|already[\s_-]?exist/i;
 
-/** `<resource> <verb>` after `manage google`. Nothing else may run. */
-export const ALLOWED_COMMANDS = Object.freeze([
-  "accounts list", "conversions list", "results list", "conversions create",
-  "campaigns list", "campaigns create", "campaigns update", "results campaigns",
-]);
 
-/** A value argument: never empty and never option-like, so it cannot smuggle a flag such as `--help`. */
-const value = (pattern) => (arg) => typeof arg === "string" && arg !== "" && !arg.startsWith("-") && pattern.test(arg);
-export const PROJECT_ARG = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
-const ACCOUNT = value(/^\d{10}$/);
-const PROJECT = value(PROJECT_ARG);
-const DATE = value(/^\d{4}-\d{2}-\d{2}$/);
-const BREAKDOWN = value(/^(hour|day)$/);
-const CAMPAIGN = value(/^\d{1,20}$/);
-const PAGE_TOKEN = value(/^[A-Za-z0-9_=.~+/-]{1,512}$/);
-const parseObject = (arg) => {
-  if (!value(/^\{/)(arg)) return null;
-  try {
-    const parsed = JSON.parse(arg);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-};
-const DATA = (arg) => parseObject(arg) !== null;
-
-/**
- * The exact argument vectors of each allowed command: literal strings and value checks, in order. A trailing
- * `--project <p>` is the only optional part. Any other flag, an extra argument or a missing one is rejected.
- * `campaigns update` has two shapes: a status change with --publish, a budget change without it.
- */
-const SHAPES = {
-  "accounts list": [["manage", "google", "accounts", "list", "--json"]],
-  "conversions list": [["manage", "google", "conversions", "list", "--account", ACCOUNT, "--limit", "500", "--json"]],
-  "results list": [["manage", "google", "results", "list", "--account", ACCOUNT, "--breakdown", BREAKDOWN, "--from", DATE, "--to", DATE, "--json"]],
-  "conversions create": [["manage", "google", "conversions", "create", "--account", ACCOUNT, "--data", DATA, "--publish", "--json"]],
-  "campaigns list": [
-    ["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--json"],
-    ["manage", "google", "campaigns", "list", "--account", ACCOUNT, "--limit", "500", "--page-token", PAGE_TOKEN, "--json"],
-  ],
-  "campaigns create": [["manage", "google", "campaigns", "create", "--account", ACCOUNT, "--data", DATA, "--json"]],
-  "campaigns update": [
-    ["manage", "google", "campaigns", "update", "--account", ACCOUNT, "--campaign", CAMPAIGN, "--data", DATA, "--publish", "--json"],
-    ["manage", "google", "campaigns", "update", "--account", ACCOUNT, "--campaign", CAMPAIGN, "--data", DATA, "--json"],
-  ],
-};
-
-const matches = (shape, args) => args.length === shape.length
-  && shape.every((part, i) => (typeof part === "string" ? args[i] === part : part(args[i])));
-
-/** True when the value holds a `status` or `publish` key at any depth. */
-const holdsStatus = (v) => v !== null && typeof v === "object"
-  && (Array.isArray(v) ? v.some(holdsStatus) : Object.entries(v).some(([k, x]) => k === "status" || k === "publish" || holdsStatus(x)));
-
-const sameKeys = (o, keys) => Object.keys(o).length === keys.length && keys.every((k) => Object.hasOwn(o, k));
-
-/**
- * The job-kind rule of the commands that write campaigns. The argv shape alone is not enough: the data and the
- * --publish flag must be the ones that kind is allowed to send.
- */
-function kindAllows(command, args, kind) {
-  if (command !== "campaigns create" && command !== "campaigns update") return true;
-  const data = parseObject(args[args.indexOf("--data") + 1]);
-  if (data === null) return false;
-  if (command === "campaigns create") return kind === "campaign.draft.create" && !holdsStatus(data);
-  const publish = args.includes("--publish");
-  if (kind === "campaign.enable") return publish && sameKeys(data, ["status"]) && data.status === "ENABLED";
-  if (kind === "campaign.pause") return publish && sameKeys(data, ["status"]) && data.status === "PAUSED";
-  if (kind === "campaign.update_budget") {
-    return !publish && sameKeys(data, ["dailyBudget"]) && typeof data.dailyBudget === "number"
-      && Number.isFinite(data.dailyBudget) && data.dailyBudget > 0 && data.dailyBudget <= BUDGET_MAX;
-  }
-  return false;
-}
-const BUDGET_MAX = 1_000_000;
-const campaignBase = ["manage", "google", "results", "campaigns", "--account", ACCOUNT];
-const campaignTail = ["--from", DATE, "--to", DATE, "--limit", "500", "--json"];
-const campaignShapes = [
-  [...campaignBase, ...campaignTail],
-  [...campaignBase, "--campaign", value(/^\d+$/), "--breakdown", "hour", "--fields", "cost,clicks,impressions", ...campaignTail],
-];
-
-export class CommandNotAllowedError extends Error {}
-
-/**
- * Throws unless argv is exactly one allowed command shape, with or without a trailing `--project <p>`, and the job
- * kind may send it. `kind` is the job's kind; the campaign write commands are refused without one.
- */
-export function assertAllowed(args, kind) {
-  const command = Array.isArray(args) ? `${args[2]} ${args[3]}` : "";
-  const shapes = !Array.isArray(args) ? [] : command === "results campaigns" ? campaignShapes : Object.hasOwn(SHAPES, command) ? SHAPES[command] : [];
-  const ok = shapes.length > 0 && args.every((arg) => typeof arg === "string")
-    && shapes.some((shape) => matches(shape, args) || matches([...shape, "--project", PROJECT], args))
-    && kindAllows(command, args, kind);
-  if (!ok) {
-    const shown = Array.isArray(args) ? args.slice(0, 4).map(String).join(" ") : String(args);
-    throw new CommandNotAllowedError(`adkit command not allowed: ${shown.slice(0, 80) || "(empty)"}`);
-  }
-}
-
-/** Throws when a configured fallback project is option-like or malformed, before any job runs. */
-export function assertProject(project) {
-  if (project !== undefined && project !== null && project !== "" && !PROJECT(project)) {
-    throw new CommandNotAllowedError(`invalid adkit project: ${String(project).slice(0, 64)}`);
-  }
-}
 
 /** Wrap a runner so every call passes the allowlist first; a rejected command never reaches `run`. */
 export function guardAdkit(run) {
@@ -521,6 +423,24 @@ export async function runCampaignUpdateBudget(payload, run, fallbackProject, { l
   return { campaign_id: payload.campaign_id, daily_budget: payload.daily_budget };
 }
 
+/**
+ * terminal.run (T13-6, the panel's AdKit Terminal): run the stored argv once, only when the same checker core used
+ * still accepts it for the stored mode. The output is masked and cut to 20 KB before it leaves the VPS. A failure is
+ * never retried, because a retried write could run twice.
+ */
+export async function runTerminalRun(payload, run, fallbackProject) {
+  const verdict = checkTerminalArgv(payload?.argv, payload?.mode);
+  if (!verdict.ok) throw new JobFailure(`terminal command refused: ${verdict.reason}`, false);
+  const argv = [...payload.argv];
+  if (fallbackProject && !argv.includes("--project")) argv.push("--project", fallbackProject);
+  try {
+    return { output: redactTerminalOutput(await run(argv)) };
+  } catch (e) {
+    if (e instanceof JobFailure) throw e;
+    throw new JobFailure(redactTerminalOutput(errorText(e)), false);
+  }
+}
+
 /** Jobs whose lost outcome may have changed what a live campaign spends (core marks them unknown, not failed). */
 const SPEND_KINDS = new Set(["campaign.enable", "campaign.update_budget"]);
 
@@ -531,6 +451,7 @@ const KINDS = {
   "campaign.pause": runCampaignPause,
   "campaign.update_budget": runCampaignUpdateBudget,
   "campaign.status_check": runCampaignStatusCheck,
+  "terminal.run": runTerminalRun,
 };
 
 
@@ -579,10 +500,12 @@ export async function executeJobs({
       let failure;
       // Set once a campaigns create or update is about to run: from then on the remote outcome is open.
       let wrote = false;
+      // A terminal job is judged by what its argv does (a draft create, a pause); every other job by its own kind.
       const jobRun = (args) => {
-        assertAllowed(args, job.kind);
+        const kind = job.kind === "terminal.run" ? terminalKind(args) : job.kind;
+        assertAllowed(args, kind);
         if (args[2] === "campaigns" && (args[3] === "create" || args[3] === "update")) wrote = true;
-        return run(args, job.kind);
+        return run(args, kind);
       };
       try {
         const handler = Object.hasOwn(KINDS, job.kind) ? KINDS[job.kind] : undefined;
@@ -606,7 +529,7 @@ export async function executeJobs({
           + (outcome ? ` (orphan ${job.kind} result ${JSON.stringify(outcome).slice(0, 200)})` : ""));
         failures++;
       } else if (outcome) {
-        log(`adkit-executor: ${id} ${job.kind} ${outcome.adopted === true ? "adopted" : "done"} ${outcome.conversion_action_id ?? outcome.campaign_id}`);
+        log(`adkit-executor: ${id} ${job.kind} ${outcome.adopted === true ? "adopted" : "done"} ${outcome.conversion_action_id ?? outcome.campaign_id ?? ""}`);
         done++;
       } else {
         error(`adkit-executor: ${id} failed: ${failure.message}`);
