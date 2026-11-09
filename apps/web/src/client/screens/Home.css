@@ -1,6 +1,6 @@
 /* Home screen only. The shared console classes (.panel .ledger .cell .k .v .btn .seg .row .dot .note .hint .pos .neg .amb .blue) come from styles.css. */
 .home-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
-.home-head h1 { margin: 0; font-size: 22px; line-height: 1.3; font-weight: 500; }
+.home-head h1 { margin: 0; font-size: var(--text-h1); line-height: 1.25; letter-spacing: -.01em; font-weight: 600; }
 .home-sub { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
 .home-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .home-stack { display: flex; flex-direction: column; gap: 16px; }
@@ -57,3 +57,8 @@
   .home-brand .n { grid-column: 1 / -1; }
   .home-brand button { grid-column: 1 / -1; }
 }
+
+/* v9: card titles carry the 3px brand bar; the two-column row stacks on a phone. */
+.home-ptitle h2 { display: flex; align-items: center; gap: 12px; }
+.home-ptitle h2::before { content: ""; flex: 0 0 3px; width: 3px; height: 24px; border-radius: 999px; background: var(--brand); }
+@media (max-width: 760px) { .home-grid2 { grid-template-columns: minmax(0, 1fr); } }
