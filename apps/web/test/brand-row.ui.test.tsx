@@ -15,6 +15,11 @@ const runtimeRow = (id: string, status: string, flow_gate_mode: string) => ({
   stats_7d: { leads: 0, sold: 0, pending: 0 },
 });
 const pauseName = "หยุดชั่วคราว";
+const adsData = (accountFor: string[], enabledFor: string[] = []) => ({
+  campaigns: enabledFor.map((brand_id, n) => ({ draft_job_id: `6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e${String(n).padStart(2, "0")}`, campaign_id: null, brand_id, account: "1234567890", name: "demo-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-06T00:00:00.000Z", geo: { country: "US" }, final_url: "https://x.test/" })),
+  brands: accountFor.map((brand_id) => ({ brand_id, currency: "THB", thb_per_unit: 1, committed_thb_day: 0 })),
+  caps: { total_thb_day: 1000, brand_thb_day: 500 }, enabled_total_thb_day: 0,
+});
 const resumeName = "เปิดใช้งานต่อ";
 
 type Handler = (init?: RequestInit) => Response | Promise<Response>;
@@ -41,6 +46,8 @@ beforeEach(() => {
   pauseStatus = 200;
   routes = new Map<string, Handler>([
     ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
+    // A Google Ads read that answered: no brand has an account here.
+    ["GET /api/ads/campaigns", () => json(adsData([]))],
     ["GET /api/lifecycle/brands", () => json({ brands: rows })],
     ["GET /api/brands", () => json({ brands: [runtimeRow("b-live", "live", "param"), runtimeRow("b-paused", "paused", "signed_cookie")], generated_at: "2026-10-06T00:00:00Z" })],
     ["GET /api/funnel", () => json({ from: "2026-10-01T00:00:00.000Z", to: "2026-10-07T00:00:00.000Z", rows: [] })],
@@ -72,7 +79,7 @@ describe("brand row basics", () => {
     expect(dots.querySelectorAll(".stage-dot")).toHaveLength(7);
     expect(dots.getAttribute("aria-label")).toContain("สร้าง: เสร็จ");
     // The harness has no spend rows, so no Google Ads account is connected to the live brand. The paused brand reads paused.
-    expect(live.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
+    await waitFor(() => expect(live.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม"));
     expect((await rowOf("paused.example")).querySelector('[data-col="ads"]')!.textContent).toBe("หยุดชั่วคราว");
   });
 

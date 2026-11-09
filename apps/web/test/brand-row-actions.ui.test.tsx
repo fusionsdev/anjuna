@@ -61,7 +61,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
  */
 const detailLabels = () => {
   const aside = document.querySelector(".brands-aside")!;
-  return [...aside.querySelectorAll("button, a")].filter((el) => !el.closest(".section")).map((el) => el.textContent ?? "").sort();
+  // The actions sit in the installation section, in its own action rows. Install progress, revisions and the runtime block are other parts of it.
+  return [...aside.querySelectorAll(".install-details > .side-actions button, .install-details > .side-actions a, .install-details > [aria-label=\"การตั้งค่าและสถิติรันไทม์\"] button")].map((el) => el.textContent ?? "").sort();
 };
 /** True when the install progress section offers its Retry button. */
 const detailRetry = () => [...document.querySelectorAll(".brands-aside .section button.primary")].some((el) => el.textContent?.startsWith("ลองใหม่"));

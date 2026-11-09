@@ -5,8 +5,9 @@ import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars
 import { Sparkline } from "../components/Sparkline";
 import { Chip } from "../components/Chip";
 import { isDemoBrand } from "../brand-health";
-import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals } from "../home-metrics";
+import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals, spendWindowThb } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
+import { useAdsCampaigns, useUploadFacts } from "../brand-facts";
 import { conversionsPath } from "./Conversions";
 import { BrandRows } from "./home/BrandRows";
 import { HumanTasks, type HumanTask } from "./home/HumanTasks";
@@ -75,10 +76,11 @@ function sumFunnel(report: FunnelReportResponse): FunnelTotals {
 }
 
 /** Change against the previous window, under a ledger value. Every metric using it is good when up. */
-function Delta({ now, before }: { now: Value; before: Value }) {
+function Delta({ now, before, neutral = false }: { now: Value; before: Value; neutral?: boolean }) {
   const d = delta(now, before);
   if (!d) return null;
-  return <p className={`d${d.dir === "up" ? " pos" : d.dir === "down" ? " neg" : ""}`}>{d.text}</p>;
+  // Spend going up is neither good nor bad by itself, so its change is drawn in the neutral colour.
+  return <p className={`d${neutral ? "" : d.dir === "up" ? " pos" : d.dir === "down" ? " neg" : ""}`}>{d.text}</p>;
 }
 
 interface Stage { label: string; value: Value; paid?: boolean }
@@ -134,9 +136,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [paused, setPaused] = useState<ReadonlySet<string> | null | undefined>(undefined);
   // The whole reports feed the brand rows; the totals above feed the tiles. Both come from the same answer.
   const [spendRaw, setSpendRaw] = useState<PanelSpendReportResponse | null | undefined>(undefined);
+  // For the spend change: yesterday for "today"; the 30 day report for "7 days" (its daily rows hold the 7 days before). 30 days has no earlier window.
+  const [spendBeforeRaw, setSpendBeforeRaw] = useState<PanelSpendReportResponse | null | undefined>(undefined);
   // The brand table reads 30 days for its stages and today's spend for the Google Ads chip, whatever period the page shows.
   const [stageFunnelRaw, setStageFunnelRaw] = useState<FunnelReportResponse | null | undefined>(undefined);
-  const [stageConversions, setStageConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
   const [spendTodayRaw, setSpendTodayRaw] = useState<PanelSpendReportResponse | null | undefined>(undefined);
   // An action that changed a brand raises this, so the brand list and the batch checklist are read again.
   const [reloadKey, setReloadKey] = useState(0);
@@ -148,6 +151,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     setFunnelRaw(undefined);
     setPreviousRaw(undefined);
     setSpendRaw(owner ? undefined : null);
+    setSpendBeforeRaw(owner && period !== "30d" ? undefined : null);
     setConversions(undefined);
     setDaily(undefined);
     api.conversions({ period }).then((report) => current && setConversions(report), () => current && setConversions(null));
@@ -159,6 +163,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     api.funnel(previousRange(periodRange(period))).then((report) => current && setPreviousRaw(report), () => current && setPreviousRaw(null));
     // The spend API answers 403 to an employee, so an employee never asks.
     if (owner) api.spend(period).then((report) => current && setSpendRaw(report), () => current && setSpendRaw(null));
+    if (owner && period !== "30d") api.spend(period === "today" ? "yesterday" : "30d").then((report) => current && setSpendBeforeRaw(report), () => current && setSpendBeforeRaw(null));
     return () => { current = false; };
   }, [period, owner]);
 
@@ -167,7 +172,6 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     let current = true;
     api.alerts().then((report) => current && setAlerts(report), () => current && setAlerts(null));
     api.funnel(periodRange("30d")).then((report) => current && setStageFunnelRaw(report), () => current && setStageFunnelRaw(null));
-    api.conversions({ period: "30d" }).then((report) => current && setStageConversions(report), () => current && setStageConversions(null));
     if (owner) api.spend("today").then((report) => current && setSpendTodayRaw(report), () => current && setSpendTodayRaw(null));
     else setSpendTodayRaw(null);
     api.templates().then(
@@ -194,10 +198,23 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   // The daily series has no brand, so a scope that hides brands shows no line.
   const spendDays = spendRaw && !hidesBrands ? spendSeries(spendRaw) : null;
   const scopedBrands = brands ? brands.filter((brand) => inScopeId(brand.brand_id)) : brands;
+  // Exact per brand, never read off a page of 200 rows that other brands may fill. The Google Ads chip reads the campaigns API.
+  const scopedIds = useMemo(() => (scopedBrands ?? []).map((brand) => brand.brand_id), [scopedBrands]);
+  const uploadFacts = useUploadFacts(scopedIds, reloadKey);
+  const adsData = useAdsCampaigns(reloadKey);
   const stageFunnel = useMemo(() => (stageFunnelRaw ? scopeFunnel(stageFunnelRaw, inScopeId) : stageFunnelRaw), [stageFunnelRaw, inScopeId]);
   const spendToday = useMemo(() => (spendTodayRaw ? scopeSpend(spendTodayRaw, inScopeId) : spendTodayRaw), [spendTodayRaw, inScopeId]);
   // The alert items that name a brand follow the scope. The conversion items count every brand and say so ("ทุกแบรนด์").
   const scopedAlerts = useMemo(() => (alerts ? scopeAlerts(alerts, inScopeId) : alerts), [alerts, inScopeId]);
+  // The change of spend against the window before it. Undefined while loading. Null (a dash) when the earlier window cannot be read:
+  // 30 days, a failed read, or a scope that hides brands over a report whose daily rows have no brand.
+  const spendBefore: Value = (() => {
+    if (!owner || spendBeforeRaw === undefined) return undefined;
+    if (period === "30d" || spendBeforeRaw === null) return null;
+    if (period === "today") return spendTotals(scopeSpend(spendBeforeRaw, inScopeId))?.thb ?? null;
+    return hidesBrands ? null : spendWindowThb(spendBeforeRaw, 7, 7);
+  })();
+  const spendNow7: number | null = period === "7d" && spendBeforeRaw && !hidesBrands ? spendWindowThb(spendBeforeRaw, 7, 0) : null;
   const leads = funnel === undefined ? undefined : funnel?.leads ?? null;
   // Spend and cost per lead stay in baht. Profit subtracts the server's USD spend from USD revenue, never baht.
   const spendThb: Value = spend === undefined ? undefined : spend?.thb ?? null;
@@ -260,6 +277,15 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   // The banner reads only the alert-level items, which the extras never are.
   const urgent = fixes.filter((item) => item.level === "bad");
 
+  // The line only claims what both sides agree on: one period, every brand. A scope that hides brands, a period still loading and
+  // a failed read all hide it. Waiting is pending plus processing, so nothing in flight falls out of the sum. A gap is shown, not hidden.
+  const reconciliation = !hidesBrands && funnel && conversions
+    ? (() => {
+      const { uploaded, dead, pending, processing } = conversions.totals;
+      const waiting = pending + processing;
+      return { sold: funnel.sold, uploaded, dead, waiting, gap: funnel.sold - (uploaded + dead + waiting) };
+    })()
+    : null;
   const soldNow = funnel?.sold ?? null;
   const soldShare = soldNow !== null && leads ? Math.round((soldNow / leads) * 100) : null;
 
@@ -294,7 +320,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
         <div className="ledger kpi-row" role="group" aria-label="สรุปตัวเลข">
           {owner ? (
             <>
-              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{thb(spendThb)}</p>{typeof spendUsd === "number" && <p className="hint">{`≈${usd(spendUsd)}`}</p>}{spendDays && <Sparkline values={spendDays} label="ค่าโฆษณารายวัน" />}</div>
+              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{thb(spendThb)}</p>{typeof spendUsd === "number" && <p className="hint">{`≈${usd(spendUsd)}`}</p>}<Delta now={period === "7d" ? spendNow7 : spendThb} before={spendBefore} neutral />{spendDays && <Sparkline values={spendDays} label="ค่าโฆษณารายวัน" />}</div>
               <div className="cell"><p className="k">ลีด</p><p className="v">{num(leads)}</p><Delta now={leads} before={before((f) => f.leads)} /></div>
               <div className="cell"><p className="k">ต้นทุนต่อลีด</p><p className="v">{thb(costPerLead)}</p>{typeof costPerLead === "number" && typeof spendThb === "number" && typeof spendUsd === "number" && spendThb > 0 && <p className="hint">{`≈${usd(costPerLead * (spendUsd / spendThb))}`}</p>}</div>
               <div className="cell"><p className="k">ขายได้</p><p className="v">{num(field((f) => f.sold))}</p>{soldShare !== null && <p className="hint">{`${soldShare}% ของลีด`}</p>}<Delta now={field((f) => f.sold)} before={before((f) => f.sold)} /></div>
@@ -314,7 +340,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </>
           )}
         </div>
-        <BrandRows role={me.role} brands={scopedBrands} stageFunnel={stageFunnel} stageConversions={stageConversions} spendToday={spendToday} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
+        <BrandRows role={me.role} brands={scopedBrands} stageFunnel={stageFunnel} uploadFacts={uploadFacts} adsData={adsData} spendToday={spendToday} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
         <div className="home-grid-fq">
         <section className="panel" aria-label="เงินไหลไปถึงไหน">
           <div className="home-ptitle">
@@ -324,7 +350,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
           <div className="home-flow" style={{ ["--stages" as string]: stages.length }}>
             {stages.map((stage, i) => (
               <div key={stage.label} className={`home-stage${stage.paid ? " paid" : ""}${i === leak ? " leak" : ""}${typeof stage.value === "number" ? "" : " gap"}`}>
-                <div className="home-bar" style={{ height: `${Math.max(6, Math.round(((typeof stage.value === "number" ? stage.value : 0) / biggest) * 120))}px` }} />
+                <div className="home-bar" style={{ width: `${Math.max(3, Math.round(((typeof stage.value === "number" ? stage.value : 0) / biggest) * 100))}%` }} />
                 <p className="home-n">{num(stage.value)}</p>
                 <p className="home-l">{stage.label}</p>
               </div>
@@ -352,9 +378,12 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             <div className="cell"><p className="k">{`ค้างเกิน ${CONVERSION_STALLED_HOURS} ชม.`}</p><p className="v">{num(conversion((c) => c.stalled))}</p></div>
             {typeof uploadedValue === "number" && <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v">{usdCents(uploadedValue)}</p></div>}
           </div>
-          <p className="hint" data-testid="reconciliation">
-            {`กระทบยอด: ขายได้ ${num(field((f) => f.sold))} = ส่งแล้ว ${num(conversion((c) => c.totals.uploaded))} + ส่งไม่ได้ ${num(conversion((c) => c.totals.dead))} + ค้างส่ง ${num(conversion((c) => c.totals.pending))}`}
-          </p>
+          {reconciliation && (
+            <p className="hint" data-testid="reconciliation">
+              {`กระทบยอด: ขายได้ ${num(reconciliation.sold)} = ส่งแล้ว ${num(reconciliation.uploaded)} + ส่งไม่ได้ ${num(reconciliation.dead)} + ค้างส่ง ${num(reconciliation.waiting)}`}
+              {reconciliation.gap !== 0 && <b className="neg">{` · ต่างกัน ${reconciliation.gap > 0 ? "+" : "−"}${num(Math.abs(reconciliation.gap))}`}</b>}
+            </p>
+          )}
         </section>
         </div>
         <section className="panel" aria-label="ลีดรายวัน">

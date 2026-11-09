@@ -1,4 +1,4 @@
-import type { ConversionsReportResponse, FunnelReportResponse, LifecycleBrandSummary, PanelSpendReportResponse } from "@anjuna/contracts";
+import type { FunnelReportResponse, LifecycleBrandSummary, PanelCampaignsResponse, PanelSpendReportResponse } from "@anjuna/contracts";
 import { isDemoBrand } from "../../brand-health";
 import { checklistFlags, clickLossWarning, isStale } from "../../home-metrics";
 import { nextAction, type LifecycleRow, type NextAction, type Role } from "../../lifecycle-state";
@@ -7,6 +7,7 @@ import type { ActionBrand, BrandAction } from "../../useBrandActions";
 import type { BrandChecklistEntry, BrandChecklists } from "../../api";
 import { SpendText, byCurrencyText, type ByCurrency } from "../BrandStatsRow";
 import { adsChip, stageStatuses } from "../../brand-stages";
+import type { UploadFacts } from "../../brand-facts";
 import { BrandTable, type BrandTableRow } from "../../components/BrandTable";
 import { num } from "./shared";
 
@@ -70,7 +71,7 @@ const DIALOG_ACTION: Partial<Record<NextAction["kind"], BrandAction>> = { "test-
  * One row per brand with the numbers of the period and the one button `nextAction` picks. Spend and cost per lead are owner only
  * and come from the server's baht rows. `undefined` is loading, `null` is failed.
  */
-export function BrandRows({ role, brands, checklists, paused, funnel, spend, stageFunnel, stageConversions, spendToday, onAction }: {
+export function BrandRows({ role, brands, checklists, paused, funnel, spend, stageFunnel, uploadFacts, adsData, spendToday, onAction }: {
   role: Role;
   brands: LifecycleBrandSummary[] | null | undefined;
   checklists: BrandChecklists | null | undefined;
@@ -81,7 +82,10 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, sta
   spend: PanelSpendReportResponse | null | undefined;
   /** The last 30 days of the funnel and of the conversion rows: they feed the lead, sold and upload stages. */
   stageFunnel?: FunnelReportResponse | null;
-  stageConversions?: ConversionsReportResponse | null;
+  /** Per brand: any uploaded or dead conversion in 30 days (brand-facts.ts). Undefined while loading. */
+  uploadFacts?: Map<string, UploadFacts>;
+  /** The panel campaigns, read for the Google Ads chip. Undefined loading, null failed. */
+  adsData?: PanelCampaignsResponse | null;
   /** Owner only: today's spend report, which decides the Google Ads chip. Null when it is unreadable. */
   spendToday?: PanelSpendReportResponse | null;
   /** Runs a dialog action on one brand. Without it the row button opens the brand. */
@@ -113,18 +117,17 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, sta
     const entry = checklists?.brands[brand.brand_id];
     const own = (rowsOf: { brand: string }[] | undefined) => rowsOf?.filter((row) => row.brand === brand.brand_id);
     const funnel30 = own(stageFunnel?.rows) as FunnelReportResponse["rows"] | undefined;
-    const conv30 = own(stageConversions?.rows) as ConversionsReportResponse["rows"] | undefined;
+    const upload = uploadFacts?.get(brand.brand_id);
     const stages = stageStatuses({
       brand, ...(entry ? { checklist: entry } : {}),
       leads30: funnel30 ? funnel30.reduce((sum, row) => sum + row.submits, 0) : null,
       sold30: funnel30 ? funnel30.reduce((sum, row) => sum + row.sold, 0) : null,
-      uploaded: conv30 ? conv30.filter((row) => row.status === "uploaded").length : null,
-      dead: conv30 ? conv30.filter((row) => row.status === "dead").length : null,
+      hasUploaded: upload ? upload.uploaded : null,
+      hasDead: upload ? upload.dead : null,
     });
-    const spendRows = spendToday?.brands.filter((row) => row.brand_id === brand.brand_id);
-    const ads = owner && spendToday !== undefined && spendToday !== null
-      ? adsChip({ brand, paused: paused?.has(brand.brand_id) === true, spendToday: spendRows && spendRows.length > 0 ? spendRows.reduce((sum, row) => sum + row.cost, 0) : null, clickLoss: brandClickLoss(spend, funnel, brand.brand_id) })
-      : owner ? null : adsChipWithoutSpend(brand, paused?.has(brand.brand_id) === true);
+    // Cost of today for this brand: 0 when the report answered without it, null when the report is not known (employee, failed, loading).
+    const todayCost = owner && spendToday ? spendToday.brands.filter((row) => row.brand_id === brand.brand_id).reduce((sum, row) => sum + row.cost, 0) : null;
+    const ads = adsChip({ brand, paused: paused?.has(brand.brand_id) === true, ads: adsData, spendToday: todayCost, clickLoss: brandClickLoss(spend, funnel, brand.brand_id) });
     return {
       id: brand.brand_id,
       title: brand.hostnames[0] ?? brand.name ?? brand.brand_id,
@@ -158,11 +161,4 @@ function brandClickLoss(spend: PanelSpendReportResponse | null | undefined, funn
   const paid = spend.brands.filter((row) => row.brand_id === brandId).reduce((sum, row) => sum + row.clicks, 0);
   const reached = funnel.rows.filter((row) => row.brand === brandId).reduce((sum, row) => sum + row.clicks, 0);
   return paid > 0 && clickLossWarning(paid, reached);
-}
-
-/** An employee has no spend report, so the chip can only say what the brand's own state says. */
-function adsChipWithoutSpend(brand: LifecycleBrandSummary, paused: boolean): BrandTableRow["ads"] {
-  if (isDemoBrand(brand)) return adsChip({ brand, paused, spendToday: null, clickLoss: false });
-  if (paused || brand.status === "paused") return adsChip({ brand, paused: true, spendToday: null, clickLoss: false });
-  return null;
 }

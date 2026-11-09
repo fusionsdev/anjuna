@@ -33,18 +33,18 @@ export function DuplicateDialog({ source, onClose, onDuplicated }: { source: { b
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "grid", placeItems: "center", padding: 16, overflowY: "auto", background: "color-mix(in srgb, var(--ink) 35%, transparent)" }} role="dialog" aria-modal="true" aria-label="ทำสำเนาแบรนด์ (Duplicate brand)">
+    <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "grid", placeItems: "center", padding: 16, overflowY: "auto", background: "color-mix(in srgb, var(--ink) 35%, transparent)" }} role="dialog" aria-modal="true" aria-label="ทำสำเนาแบรนด์">
       <form className="panel" style={{ width: "100%", maxWidth: 560, maxHeight: "calc(100dvh - 32px)", overflowY: "auto", display: "grid", gap: 12 }} noValidate onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-        <h2>ทำสำเนาแบรนด์ (Duplicate brand)</h2>
-        <p className="hint">คัดลอกเทมเพลต คีย์เวิร์ด ข้อมูลโปรไฟล์ และข้อความหน้าเว็บของ {source.name ?? source.brand_id} ไม่คัดลอกโดเมน รหัส เช็กลิสต์ หรือสถานะติดตั้ง (Copies the template, keyword, profile and site text. The domain, ids, checklist and install state are not copied.)</p>
-        <label>โดเมนใหม่ (New domain)<input required value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="example.com" aria-invalid={errors.domain ? true : undefined} /></label>
+        <h2>ทำสำเนาแบรนด์</h2>
+        <p className="hint">คัดลอกเทมเพลต คีย์เวิร์ด ข้อมูลโปรไฟล์ และข้อความหน้าเว็บของ {source.name ?? source.brand_id} ไม่คัดลอกโดเมน รหัส เช็กลิสต์ หรือสถานะติดตั้ง</p>
+        <label>โดเมนใหม่<input required value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="example.com" aria-invalid={errors.domain ? true : undefined} /></label>
         {errors.domain && <p className="neg" role="alert">{errors.domain}</p>}
-        <label>ชื่อแบรนด์ใหม่ (New brand name, optional)<input maxLength={60} value={name} onChange={(e) => setName(e.target.value)} aria-invalid={errors.name ? true : undefined} /></label>
+        <label>ชื่อแบรนด์ใหม่<input maxLength={60} value={name} onChange={(e) => setName(e.target.value)} aria-invalid={errors.name ? true : undefined} /></label>
         {errors.name && <p className="neg" role="alert">{errors.name}</p>}
         {notice && <p className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{notice}</p>}
         <div className="row" style={{ flexWrap: "wrap" }}>
-          <button type="submit" className="btn pri" disabled={busy}>ทำสำเนา (Duplicate)</button>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>ยกเลิก (Cancel)</button>
+          <button type="submit" className="btn pri" disabled={busy}>ทำสำเนา</button>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>ยกเลิก</button>
         </div>
       </form>
     </div>

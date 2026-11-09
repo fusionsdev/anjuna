@@ -118,6 +118,24 @@ ${read("styles.css")}`);
     expect(read("styles.css")).toContain("small { font-size: max(13px, .875em); }");
   });
 
+  it("keeps the brand pick button 44px tall in every rule that sizes it", () => {
+    for (const file of ["styles.css", "screens/Brands.css"]) {
+      for (const rule of read(file).matchAll(/\.brand-pick \{([^}]*)\}/g)) {
+        // Only the rules that size the button (they set padding). A colour or weight rule is not a size.
+        if (rule[1]!.includes("padding")) expect(rule[1], `${file}: ${rule[0]}`).toContain("min-height: 44px");
+      }
+    }
+  });
+
+  it("styles the KPI row and the queue stats with selectors that beat the shared .ledger rule", () => {
+    const home = read("screens/Home.css");
+    expect(home).toContain(".ledger.kpi-row {");
+    expect(home).toContain(".ledger.queue-stats {");
+    // A bare .kpi-row or .queue-stats rule would lose to .ledger in the built CSS and flatten the five cards into one frame.
+    const bare = home.split("\n").filter((line) => line.startsWith(".kpi-row") || line.startsWith(".queue-stats"));
+    expect(bare).toEqual([]);
+  });
+
   it("sets no font size under 13px in any stylesheet", () => {
     const files = ["styles.css", "styles/tokens.css", "screens/Home.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css"];
     for (const file of files) {

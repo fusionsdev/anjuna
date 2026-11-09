@@ -1,6 +1,6 @@
 import conversionsFixture from "@anjuna/contracts/fixtures/admin/conversions.response.json";
 import type { ConversionsReportResponse } from "@anjuna/contracts";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, type Me } from "../src/client/api";
 import { clickLossWarning, isStale } from "../src/client/home-metrics";
@@ -75,11 +75,22 @@ let runtimeReply: () => Response | Promise<Response>;
 let spend: ReturnType<typeof vi.fn>;
 const realSpend = api.spend;
 let requests: string[];
+// Answers the per-status upload reads of the brand table. Unset, they fall through to `conversions`.
+let convFacts: ((url: URL) => Response | Promise<Response>) | undefined;
+let adsReply: () => Response | Promise<Response>;
+// Google Ads state: Creditgenie has an account and an enabled campaign; Sixpack has no account.
+const ADS_BODY = {
+  campaigns: [{ draft_job_id: "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", campaign_id: null, brand_id: "cg", account: "1234567890", name: "cg-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-22T00:00:00.000Z", geo: { country: "US" }, final_url: "https://cg.test/" }],
+  brands: [{ brand_id: "cg", currency: "THB", thb_per_unit: 1, committed_thb_day: 0 }],
+  caps: { total_thb_day: 1000, brand_thb_day: 500 }, enabled_total_thb_day: 0,
+};
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));
   requests = [];
+  convFacts = undefined;
+  adsReply = () => json(ADS_BODY);
   funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
   conversions = (period) => json(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER);
   aggregates = (from, to) => json(aggregatesBody(from, to));
@@ -94,11 +105,13 @@ beforeEach(() => {
     requests.push(input);
     const url = new URL(input, "http://panel.test");
     if (url.pathname === "/api/funnel") return funnel(url.searchParams.get("from") ?? "");
+    if (url.pathname === "/api/conversions" && convFacts && /status=(uploaded|dead)/.test(input)) return convFacts(url);
     if (url.pathname === "/api/conversions") return conversions(url.searchParams.get("period") ?? "");
     if (url.pathname === "/api/leads/aggregates") return aggregates(url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? "");
     if (url.pathname === "/api/alerts") return alertsReply();
     if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
     if (url.pathname === "/api/lifecycle/brands") return brandsReply();
+    if (url.pathname === "/api/ads/campaigns") return adsReply();
     if (url.pathname === "/api/brands/checklists") return checklistsReply();
     if (url.pathname === "/api/brands") return runtimeReply();
     throw new Error(`Unexpected test HTTP request: ${input}`);
@@ -127,7 +140,8 @@ const ledgerDelta = (label: string) => {
 /** The brand table asks once for the last 30 days (its stages) on mount. The period requests are the rest, so that first one is left out. */
 const dropFirst = <T,>(list: T[], match: (item: T) => boolean): T[] => { const at = list.findIndex(match); return at < 0 ? list : [...list.slice(0, at), ...list.slice(at + 1)]; };
 const funnelQueries = () => dropFirst(requests.filter((r) => r.startsWith("/api/funnel")).map((r) => new URL(r, "http://panel.test").searchParams), (q) => q.get("from") === "2026-09-23T00:00:00.000Z" && q.get("to") === "2026-10-23T00:00:00.000Z");
-const conversionRequests = () => dropFirst(requests.filter((r) => r.startsWith("/api/conversions")), (r) => r === "/api/conversions?period=30d");
+// The brand table asks per status for its upload dots (brand-facts.ts). The period requests are the ones without a status.
+const conversionRequests = () => requests.filter((r) => r.startsWith("/api/conversions") && !/[?&]status=(uploaded|dead)/.test(r));
 /** The `[from, to]` days of every daily-bars request, in call order. */
 const aggregateQueries = () => requests.filter((r) => r.startsWith("/api/leads/aggregates")).map((r) => {
   const params = new URL(r, "http://panel.test").searchParams;
@@ -242,10 +256,10 @@ describe("Home screen, owner", () => {
     expect(funnelQuery(0).get("to")).toBe("2026-10-23T00:00:00.000Z");
     expect(funnelQuery(1).get("from")).toBe("2026-10-21T00:00:00.000Z");
     expect(funnelQuery(1).get("to")).toBe("2026-10-22T00:00:00.000Z");
-    expect(spend).toHaveBeenLastCalledWith("today");
+    expect(spend).toHaveBeenCalledWith("today");
 
     fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
-    await waitFor(() => expect(spend).toHaveBeenLastCalledWith("7d"));
+    await waitFor(() => expect(spend).toHaveBeenCalledWith("7d"));
     await waitFor(() => expect(funnelQueries()).toHaveLength(4));
     expect(funnelQuery(2).get("from")).toBe("2026-10-16T00:00:00.000Z");
     expect(funnelQuery(2).get("to")).toBe("2026-10-23T00:00:00.000Z");
@@ -258,14 +272,16 @@ describe("Home screen, owner", () => {
     expect(funnelQuery(4).get("from")).toBe("2026-09-23T00:00:00.000Z");
     expect(funnelQuery(5).get("from")).toBe("2026-08-24T00:00:00.000Z");
     expect(funnelQuery(5).get("to")).toBe("2026-09-23T00:00:00.000Z");
-    expect(spend).toHaveBeenLastCalledWith("30d");
+    expect(spend).toHaveBeenCalledWith("30d");
   });
 
-  it("shows the revenue change against the previous window and no delta on spend, cost per lead or profit", async () => {
+  it("shows the revenue change against the previous window, the spend change in the neutral colour, and none on cost per lead or profit", async () => {
     render(<HomeScreen me={owner} />);
     await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "▼ 32%", className: "d neg" }));
-    expect(ledgerDelta("ค่าโฆษณา")).toBeNull();
+    // Today against yesterday. The spend mock answers 62,300 for both, so the change is 0%, drawn without a good or bad colour.
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "0%", className: "d" }));
+    expect(spend).toHaveBeenCalledWith("yesterday");
     expect(ledgerDelta("ต้นทุนต่อลีด")).toBeNull();
     expect(ledgerDelta("กำไร/ขาดทุน")).toBeNull();
   });
@@ -1084,11 +1100,30 @@ describe("Home screen, v9 layout", () => {
     expect(brandRow("d6")!.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
   });
 
-  it("closes the queue card with the sold = sent + failed + pending line", async () => {
+  it("closes the queue card with sold = sent + failed + waiting, waiting counting the rows in flight", async () => {
+    // 12 sold = 5 sent + 4 failed + (1 pending + 2 processing): one period, every brand, nothing left over.
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { pending: 1, processing: 2, uploaded: 5, dead: 4 } });
+    funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : { ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 12, 254)] });
     render(<HomeScreen me={owner} />);
     const line = await screen.findByTestId("reconciliation");
-    await waitFor(() => expect(line.textContent).toBe("กระทบยอด: ขายได้ 4 = ส่งแล้ว 5 + ส่งไม่ได้ 4 + ค้างส่ง 3"));
+    await waitFor(() => expect(line.textContent).toBe("กระทบยอด: ขายได้ 12 = ส่งแล้ว 5 + ส่งไม่ได้ 4 + ค้างส่ง 3"));
     expect(screen.getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions?period=today");
+  });
+
+  it("shows the gap instead of hiding it when the two sides do not match", async () => {
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { pending: 1, processing: 0, uploaded: 5, dead: 4 } });
+    funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : { ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 12, 254)] });
+    render(<HomeScreen me={owner} />);
+    const line = await screen.findByTestId("reconciliation");
+    await waitFor(() => expect(line.textContent).toBe("กระทบยอด: ขายได้ 12 = ส่งแล้ว 5 + ส่งไม่ได้ 4 + ค้างส่ง 1 · ต่างกัน +2"));
+  });
+
+  it("hides the reconciliation line while a source loads or when one fails", async () => {
+    conversions = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "คอนเวอร์ชัน" })).queryByText(/กระทบยอด/)).toBeNull());
+    expect(screen.queryByTestId("reconciliation")).toBeNull();
   });
 
   it("puts two buttons on the incident banner: ดูคิว and การแจ้งเตือน", async () => {
@@ -1096,5 +1131,88 @@ describe("Home screen, v9 layout", () => {
     const banner = await screen.findByRole("alert", { name: "เหตุด่วน" });
     expect(within(banner).getByRole("button", { name: "ดูคิว" })).toBeTruthy();
     expect(within(banner).getByRole("button", { name: "การแจ้งเตือน" })).toBeTruthy();
+  });
+});
+
+describe("Home screen, facts behind the brand table", () => {
+  const convRow = (brand: string, status: string) => ({ lead_id: `${brand}-1`, brand, status, reason_code: null, last_error: null, click_type: null, attempts: 1, value: null, currency: "THB", occurred_at: "2026-10-20T00:00:00.000Z", created_at: "2026-10-20T00:00:00.000Z", updated_at: "2026-10-20T00:00:00.000Z", next_attempt_at: null });
+  const page = (rows: ReturnType<typeof convRow>[], truncated: boolean) => ({ ...CONVERSIONS_OWNER, rows, truncated });
+  const dotsOf = (id: string) => brandRow(id)!.querySelector('[role="img"]')!.getAttribute("aria-label")!;
+
+  it("reads the upload dot of a brand exactly when the page of 200 rows is full of other brands", async () => {
+    // The big page holds only Sixpack rows and is cut. Creditgenie has an uploaded row that the cut left out: its own read finds it.
+    convFacts = (url) => {
+      const brand = url.searchParams.get("brand");
+      const status = url.searchParams.get("status")!;
+      if (brand) return json(page(brand === "cg" && status === "uploaded" ? [convRow("cg", "uploaded")] : [], false));
+      return json(page(status === "uploaded" ? [convRow("d6", "uploaded")] : [], true));
+    };
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(dotsOf("cg")).toContain("อัปโหลด: เสร็จ"));
+    expect(dotsOf("d6")).toContain("อัปโหลด: เสร็จ");
+    expect(requests.filter((r) => /status=uploaded&brand=cg&limit=1/.test(r))).toHaveLength(1);
+  });
+
+  it("shows a dead conversion as a failed upload dot", async () => {
+    convFacts = (url) => json(page(url.searchParams.get("status") === "dead" ? [convRow("cg", "dead")] : [], false));
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(dotsOf("cg")).toContain("อัปโหลด: ล้มเหลว"));
+  });
+
+  it("leaves the upload dot unstarted, never done, when the read fails", async () => {
+    convFacts = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(dotsOf("cg")).toContain("อัปโหลด: ยังไม่เริ่ม");
+  });
+
+  it("shows a dash in the Google Ads cell while the campaigns read fails, never not connected", async () => {
+    adsReply = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("—");
+  });
+
+  it("gives an employee the chip the campaigns show, without spend: เปิดแล้ว for an enabled campaign", async () => {
+    render(<HomeScreen me={employee} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("เปิดแล้ว"));
+    expect(brandRow("d6")!.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
+  });
+});
+
+describe("Home screen, spend change and funnel strip", () => {
+  const thirtyDays = (recent: number, older: number) => {
+    const daily = Array.from({ length: 30 }, (_, i) => ({ date: new Date(Date.UTC(2026, 8, 23 + i)).toISOString().slice(0, 10), cost: i >= 23 ? recent : i >= 16 ? older : 100, currency: "THB" as const }));
+    return { ...spendReport(84000, 1200), period: "30d", from: "2026-09-23", to: "2026-10-22", daily };
+  };
+
+  it("compares 7 days with the 7 days before from the daily rows, and says so in the neutral colour", async () => {
+    spend = vi.fn(async (period: string) => (period === "30d" ? thirtyDays(2000, 1000) : spendReport(14000, 400)));
+    (api as unknown as { spend: unknown }).spend = spend;
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿14,000 ได้ 17 ลีด ต้นทุนลีดละ ฿824");
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "▲ 100%", className: "d" }));
+  });
+
+  it("shows a dash for the spend change over 30 days and when the earlier window cannot be read", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "–", className: "d" }));
+    // 7 days with only two daily rows: the earlier week is not in the report, so it is a dash too.
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "–", className: "d" }));
+  });
+
+  it("draws each stage of the funnel with a horizontal bar sized against the largest stage", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    const bars = [...document.querySelectorAll<HTMLElement>(".home-stage .home-bar")];
+    expect(bars.length).toBeGreaterThan(3);
+    expect(bars.every((bar) => bar.style.width.endsWith("%") && bar.style.height === "")).toBe(true);
+    expect(Math.max(...bars.map((bar) => parseInt(bar.style.width, 10)))).toBe(100);
   });
 });

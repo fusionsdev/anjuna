@@ -116,7 +116,7 @@ describe("a resumed draft wizard", () => {
     await forward();
     expect(window.location.pathname).toBe("/brands/new");
     expect(await screen.findByRole("heading", { level: 2, name: "ข้อมูลแบรนด์" })).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: "ชื่อแบรนด์ (Brand name)" }) as HTMLInputElement).value).toBe("");
+    expect((screen.getByRole("textbox", { name: "ชื่อแบรนด์" }) as HTMLInputElement).value).toBe("");
     await back();
     expect(window.location.pathname).toBe("/brands");
     await waitFor(() => expect(wizard()).toBeNull());

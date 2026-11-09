@@ -116,6 +116,6 @@ describe("BrandLifecycle detail", () => {
     fireEvent.click(screen.getByRole("button", { name: "ยืนยัน Test sold" }));
     expect(onFix).toHaveBeenCalledWith("test_sold");
     expect(screen.queryByLabelText("lead_id")).toBeNull();
-    expect(screen.getByText(/Automatic when the install smoke test passes/)).toBeDefined();
+    expect(screen.getByText(/อัตโนมัติเมื่อ smoke test ของการติดตั้งผ่าน/)).toBeDefined();
   });
 });

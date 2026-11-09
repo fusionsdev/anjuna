@@ -88,23 +88,23 @@ function setup(me: Me = employee, props: { brandId?: string; initialStep?: numbe
   return { onClose, onGenerated };
 }
 async function fillBrand() {
-  await screen.findByRole("textbox", { name: "ชื่อแบรนด์ (Brand name)" });
-  fill("ชื่อแบรนด์ (Brand name)", "Maple Cash");
-  fill("โดเมน (Domain)", "Maple.Test");
-  fill("คีย์เวิร์ด (Keyword)", "quick loan");
-  fill("โทรศัพท์ (Phone)", CONTACT.phone);
-  fill("ที่อยู่ (Address)", CONTACT.address);
-  fill("อีเมล (Email)", CONTACT.email);
+  await screen.findByRole("textbox", { name: "ชื่อแบรนด์" });
+  fill("ชื่อแบรนด์", "Maple Cash");
+  fill("โดเมน", "Maple.Test");
+  fill("คีย์เวิร์ด", "quick loan");
+  fill("โทรศัพท์", CONTACT.phone);
+  fill("ที่อยู่", CONTACT.address);
+  fill("อีเมล", CONTACT.email);
 }
 
 describe("per-step validation", () => {
   it("blocks Next on an empty Brand step with a Thai and English error per field and sends nothing", async () => {
     setup();
-    await screen.findByRole("textbox", { name: "ชื่อแบรนด์ (Brand name)" });
+    await screen.findByRole("textbox", { name: "ชื่อแบรนด์" });
     next();
     const alerts = await screen.findAllByRole("alert");
     expect(alerts.map((a) => a.textContent)).toEqual(expect.arrayContaining([
-      "ชื่อแบรนด์ (Brand name): จำเป็นต้องกรอก (Required)", "โดเมน (Domain): จำเป็นต้องกรอก (Required)", "อีเมล (Email): จำเป็นต้องกรอก (Required)",
+      "ชื่อแบรนด์: จำเป็นต้องกรอก", "โดเมน: จำเป็นต้องกรอก", "อีเมล: จำเป็นต้องกรอก",
     ]));
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 2, name: "ข้อมูลแบรนด์" })).toBeTruthy();
@@ -113,10 +113,10 @@ describe("per-step validation", () => {
   it("clears a field's error when it is edited and refuses a www domain with a short message", async () => {
     setup();
     await fillBrand();
-    fill("โดเมน (Domain)", "www.maple.test");
+    fill("โดเมน", "www.maple.test");
     next();
-    expect((await screen.findByRole("alert")).textContent).toBe("โดเมน (Domain): ใช้โดเมนหลัก ไม่ใช่ www (Use the apex domain, not www)");
-    fill("โดเมน (Domain)", "maple.test");
+    expect((await screen.findByRole("alert")).textContent).toBe("โดเมน: ใช้โดเมนหลัก ไม่ใช่ www");
+    fill("โดเมน", "maple.test");
     expect(screen.queryByRole("alert")).toBeNull();
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(0);
   });
@@ -130,9 +130,9 @@ describe("per-step validation", () => {
     next();
     await heading("เทมเพลต");
     // Only the two brand color hex fields are text inputs on this step.
-    expect(screen.getAllByRole("textbox").map((box) => box.getAttribute("aria-label"))).toEqual(["รหัสสีหลัก (Primary hex)", "รหัสสีรอง (Secondary hex)"]);
+    expect(screen.getAllByRole("textbox").map((box) => box.getAttribute("aria-label"))).toEqual(["รหัสสีหลัก", "รหัสสีรอง"]);
     expect(screen.queryByText(/APR|Representative example|Unsupported states|Min term|Max term/)).toBeNull();
-    expect(screen.queryByRole("heading", { name: "ผลิตภัณฑ์ (Product)" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "ผลิตภัณฑ์" })).toBeNull();
   });
 });
 
@@ -155,8 +155,8 @@ describe("five-step flow to Generate", () => {
     expect(cards).toHaveLength(2);
     expect(cards.map((c) => c.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
     expect(screen.queryByText(/Unapproved/)).toBeNull();
-    expect(screen.getByRole("img", { name: "ตัวอย่าง Harbor (Template preview)" }).getAttribute("src")).toBe("/api/templates/tv-1/screenshots/desktop");
-    expect(screen.getByText("แบรนด์ที่ใช้ (Brands using): 3")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "ตัวอย่าง Harbor" }).getAttribute("src")).toBe("/api/templates/tv-1/screenshots/desktop");
+    expect(screen.getByText("แบรนด์ที่ใช้: 3")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Copperline/ }));
     next();
 
@@ -165,11 +165,11 @@ describe("five-step flow to Generate", () => {
     expect(patches()).toHaveLength(1);
     expect(patches()[0]!.body).toEqual({ template_version_id: "tv-2" });
     // Template text is the placeholder of each field.
-    await waitFor(() => expect(text("ชื่อหน้า (Page title)").placeholder).toBe("Harbor | Funding Options"));
-    expect(text("ชื่อแบรนด์บนเว็บ (Site brand name)").placeholder).toBe("Maple Cash");
-    fill("ชื่อหน้า (Page title)", "Maple Cash | Quick Funding");
-    fill("หัวข้อหลัก H1 (Headline)", "{{keyword}} in minutes");
-    fill("ปุ่ม CTA (Button text)", "Check my rate");
+    await waitFor(() => expect(text("ชื่อหน้า").placeholder).toBe("Harbor | Funding Options"));
+    expect(text("ชื่อแบรนด์บนเว็บ").placeholder).toBe("Maple Cash");
+    fill("ชื่อหน้า", "Maple Cash | Quick Funding");
+    fill("หัวข้อหลัก H1", "{{keyword}} in minutes");
+    fill("ปุ่ม CTA", "Check my rate");
     next();
 
     // Step 3 -> 4: the profile holds the contact and the copy, and no disclosures.
@@ -195,8 +195,8 @@ describe("five-step flow to Generate", () => {
     expect(screen.queryByText(/Max APR|Term, months|Unsupported states/)).toBeNull();
     await waitFor(() => expect(sent("POST", "/api/wizard/zone-check")).toHaveLength(1));
     expect(sent("POST", "/api/wizard/zone-check")[0]!.body).toEqual({ domain: "maple.test", brand_id: "brand_new" });
-    expect(await screen.findByText(/Zone maple.test is active/)).toBeTruthy();
-    const frame = screen.getByTitle("ตัวอย่างหน้าเว็บ (Site preview)") as HTMLIFrameElement;
+    expect(await screen.findByText(/โซน maple.test active และไม่มี record ที่ขวาง/)).toBeTruthy();
+    const frame = screen.getByTitle("ตัวอย่างหน้าเว็บ") as HTMLIFrameElement;
     expect(frame.getAttribute("src")).toMatch(/^\/api\/wizard\/preview\/brand_new\?r=\d+$/);
     expect(frame.getAttribute("sandbox")).toBe("");
 
@@ -216,10 +216,10 @@ describe("five-step flow to Generate", () => {
     await heading("เทมเพลต");
     back();
     await heading("ข้อมูลแบรนด์");
-    expect(text("ชื่อแบรนด์ (Brand name)").value).toBe("Maple Cash");
+    expect(text("ชื่อแบรนด์").value).toBe("Maple Cash");
     // The domain is fixed once the draft exists.
-    expect(text("โดเมน (Domain)").disabled).toBe(true);
-    expect(text("โดเมน (Domain)").value).toBe("maple.test");
+    expect(text("โดเมน").disabled).toBe(true);
+    expect(text("โดเมน").value).toBe("maple.test");
     expect((screen.getByRole("button", { name: "ย้อนกลับ" }) as HTMLButtonElement).disabled).toBe(true);
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(1);
     expect(patches()).toHaveLength(0);
@@ -231,7 +231,7 @@ describe("five-step flow to Generate", () => {
     next();
     await heading("เทมเพลต");
     back();
-    fill("ชื่อแบรนด์ (Brand name)", "Maple Cash Co");
+    fill("ชื่อแบรนด์", "Maple Cash Co");
     next();
     await heading("เทมเพลต");
     expect(sent("POST", "/api/brands/drafts")).toHaveLength(1);
@@ -244,7 +244,7 @@ describe("five-step flow to Generate", () => {
     setup();
     await fillBrand();
     next();
-    expect((await screen.findByRole("alert")).textContent).toBe("โดเมนนี้ถูกใช้แล้ว (Domain is already registered)");
+    expect((await screen.findByRole("alert")).textContent).toBe("โดเมนนี้ถูกใช้แล้ว");
     expect(screen.getByRole("heading", { level: 2, name: "ข้อมูลแบรนด์" })).toBeTruthy();
     // Retry works: the button is not stuck busy.
     routes.set("POST /api/brands/drafts", () => json(heldBody(), 201));
@@ -253,13 +253,13 @@ describe("five-step flow to Generate", () => {
   });
 
   it("shows the first Generate issue when the server finds the draft incomplete", async () => {
-    routes.set("POST /api/brands/brand_new/generate", () => json({ error: "draft_incomplete", issues: [{ field: "profile.contact.email", message: "ต้องระบุอีเมล (Email is required)" }] }, 422));
+    routes.set("POST /api/brands/brand_new/generate", () => json({ error: "draft_incomplete", issues: [{ field: "profile.contact.email", message: "ต้องระบุอีเมล" }] }, 422));
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const { onGenerated } = setup(owner, { brandId: "brand_new" });
     await heading("ตรวจและสร้าง");
-    await screen.findByText(/Zone maple.test is active/);
+    await screen.findByText(/โซน maple.test active และไม่มี record ที่ขวาง/);
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์" }));
-    expect(await screen.findByText("ต้องระบุอีเมล (Email is required)")).toBeTruthy();
+    expect(await screen.findByText("ต้องระบุอีเมล")).toBeTruthy();
     expect(onGenerated).not.toHaveBeenCalled();
   });
 
@@ -267,7 +267,7 @@ describe("five-step flow to Generate", () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const { onGenerated } = setup(employee, { brandId: "brand_new" });
     await heading("ตรวจและสร้าง");
-    await screen.findByText(/Zone maple.test is active/);
+    await screen.findByText(/โซน maple.test active และไม่มี record ที่ขวาง/);
     const button = screen.getByRole("button", { name: "สร้างเว็บไซต์" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     const reason = document.getElementById(button.getAttribute("aria-describedby")!)!;
@@ -282,9 +282,9 @@ describe("five-step flow to Generate", () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const { onGenerated } = setup(owner, { brandId: "brand_new" });
     await heading("ตรวจและสร้าง");
-    await screen.findByText(/Zone maple.test is active/);
+    await screen.findByText(/โซน maple.test active และไม่มี record ที่ขวาง/);
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์" }));
-    expect(await screen.findByText("กำลังติดตั้งแบรนด์นี้อยู่ แก้ไขไม่ได้ (An install is running for this brand)")).toBeTruthy();
+    expect(await screen.findByText("กำลังติดตั้งแบรนด์นี้อยู่ แก้ไขไม่ได้")).toBeTruthy();
     expect(onGenerated).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "สร้างเว็บไซต์" }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -299,9 +299,9 @@ describe("resume", () => {
   it("opens a draft with no saved profile at the Brand step, filled from the draft, with no new POST", async () => {
     resume(undefined);
     await heading("ข้อมูลแบรนด์");
-    expect(text("ชื่อแบรนด์ (Brand name)").value).toBe("Maple Cash");
-    expect(text("โดเมน (Domain)").value).toBe("maple.test");
-    expect(text("คีย์เวิร์ด (Keyword)").value).toBe("Quick Loan");
+    expect(text("ชื่อแบรนด์").value).toBe("Maple Cash");
+    expect(text("โดเมน").value).toBe("maple.test");
+    expect(text("คีย์เวิร์ด").value).toBe("Quick Loan");
     next();
     await screen.findAllByRole("alert");
     expect(requests.some((r) => r.method === "POST")).toBe(false);
@@ -324,17 +324,17 @@ describe("resume", () => {
     next();
     await heading("ข้อความ");
     expect(screen.queryByRole("alert")).toBeNull();
-    fill("หัวข้อหลัก H1 (Headline)", "Fast cash for you");
-    expect((await screen.findByRole("alert")).textContent).toMatch(/exactly once/);
-    fill("ปุ่ม CTA (Button text)", 'Say "hi"');
+    fill("หัวข้อหลัก H1", "Fast cash for you");
+    expect((await screen.findByRole("alert")).textContent).toMatch(/หนึ่งครั้งพอดี/);
+    fill("ปุ่ม CTA", 'Say "hi"');
     expect(screen.getAllByRole("alert")).toHaveLength(2);
-    expect(screen.getByText(/One line of plain text/)).toBeTruthy();
+    expect(screen.getByText(/ใช้ข้อความบรรทัดเดียว/)).toBeTruthy();
     const saved = patches().length;
     next();
     expect(screen.getByRole("heading", { level: 2, name: "ข้อความ" })).toBeTruthy();
     expect(patches()).toHaveLength(saved);
-    fill("หัวข้อหลัก H1 (Headline)", "{{keyword}} in minutes");
-    fill("ปุ่ม CTA (Button text)", "Check my rate");
+    fill("หัวข้อหลัก H1", "{{keyword}} in minutes");
+    fill("ปุ่ม CTA", "Check my rate");
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText(/^21\/140/)).toBeTruthy();
     next();
@@ -375,7 +375,7 @@ describe("resume", () => {
     setup(employee, { brandId: "brand_new" });
     expect((await screen.findByRole("alert")).textContent).toContain("ฉบับร่างถูกแก้ไขหรือติดตั้งแล้ว");
     routes.set("GET /api/wizard/drafts/brand_new", () => json(heldBody()));
-    fireEvent.click(screen.getByRole("button", { name: "ลองใหม่ (Retry)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ลองใหม่" }));
     await heading("ข้อมูลแบรนด์");
   });
 });
@@ -445,10 +445,10 @@ describe("zone pre-check", () => {
   it("keeps Generate on when the check itself fails, and Check again recovers", async () => {
     routes.set("POST /api/wizard/zone-check", () => json({ error: "zone_check_unavailable" }, 502));
     await atReview();
-    expect(await screen.findByText("ตรวจโซน Cloudflare ไม่สำเร็จ ลองใหม่ภายหลัง (Zone check failed, try again later)")).toBeTruthy();
+    expect(await screen.findByText("ตรวจโซน Cloudflare ไม่สำเร็จ ลองใหม่ภายหลัง")).toBeTruthy();
     expect(generate().disabled).toBe(false);
     routes.set("POST /api/wizard/zone-check", () => json({ ...ACTIVE_ZONE, zone_active: false }));
-    fireEvent.click(screen.getByRole("button", { name: "ตรวจอีกครั้ง (Check again)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ตรวจอีกครั้ง" }));
     await waitFor(() => expect(generate().disabled).toBe(true));
   });
 
@@ -456,7 +456,7 @@ describe("zone pre-check", () => {
     routes.set("POST /api/wizard/zone-check", () => json({ ...ACTIVE_ZONE, zone_active: false }));
     setup();
     await fillBrand();
-    fireEvent.click(screen.getByRole("button", { name: "ตรวจโซน Cloudflare (Check Cloudflare zone)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ตรวจโซน Cloudflare" }));
     expect(await screen.findByText(/ยังไม่ active/)).toBeTruthy();
     expect(sent("POST", "/api/wizard/zone-check")[0]!.body).toEqual({ domain: "Maple.Test" });
     next();
@@ -477,8 +477,8 @@ describe("template step without approved templates", () => {
 
 describe("template step brand colors", () => {
   const THEME = { primary: "#112233", secondary: "#445566" };
-  const PRIMARY_HEX = "รหัสสีหลัก (Primary hex)";
-  const RESET = "ใช้สีของเทมเพลต (Use template colors)";
+  const PRIMARY_HEX = "รหัสสีหลัก";
+  const RESET = "ใช้สีของเทมเพลต";
 
   const mapDetail = () => {
     const mapped = detail("tv-1");
@@ -490,9 +490,9 @@ describe("template step brand colors", () => {
     hold({ contact: CONTACT, copy: {} });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต");
-    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(false));
-    fireEvent.change(screen.getByLabelText("สีหลัก (Primary)"), { target: { value: "#112233" } });
-    fireEvent.change(screen.getByLabelText("สีรอง (Secondary)"), { target: { value: "#445566" } });
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText("สีหลัก"), { target: { value: "#112233" } });
+    fireEvent.change(screen.getByLabelText("สีรอง"), { target: { value: "#445566" } });
     next();
     await heading("ข้อความ");
     expect(patches()).toHaveLength(1);
@@ -519,7 +519,7 @@ describe("template step brand colors", () => {
     hold({ contact: CONTACT, theme: THEME });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต");
-    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).disabled).toBe(false));
     next();
     await heading("ข้อความ");
     expect(patches()).toHaveLength(0);
@@ -531,7 +531,7 @@ describe("template step brand colors", () => {
     hold({ contact: CONTACT, theme: THEME });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต");
-    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true));
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).disabled).toBe(true));
     next();
     await heading("ข้อความ");
     expect(patches()).toHaveLength(1);
@@ -546,9 +546,9 @@ describe("template step brand colors", () => {
     hold({ contact: CONTACT, copy: {} });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต");
-    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true));
-    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).disabled).toBe(true));
+    expect((screen.getByLabelText("สีรอง") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี");
   });
 
   it("template step disables colors when the template has no stored color map", async () => {
@@ -556,16 +556,16 @@ describe("template step brand colors", () => {
     hold({ contact: CONTACT, copy: {} });
     setup(employee, { brandId: "brand_new", initialStep: 1 });
     await heading("เทมเพลต");
-    await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true));
-    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).disabled).toBe(true));
+    expect((screen.getByLabelText("สีรอง") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี");
   });
 
   it("pickers are disabled with the no-variables note when the template maps none", () => {
     render(<TemplatePanel templates={[]} selected="" theme={null} onTheme={vi.fn()} themeVars={{ primary: [], primary_dark: [], secondary: [] }} onSelect={vi.fn()} />);
-    expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)");
+    expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("สีรอง") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("note").textContent).toContain("เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี");
   });
 });
 
@@ -611,7 +611,7 @@ describe("entry points on the Lifecycle screen", () => {
     await screen.findByRole("heading", { name: "maple.test" });
     fireEvent.click(screen.getByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     await heading("ตรวจและสร้าง");
-    await screen.findByText(/Zone maple.test is active/);
+    await screen.findByText(/โซน maple.test active และไม่มี record ที่ขวาง/);
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeNull());
     expect(await screen.findByRole("heading", { name: "maple.test" })).toBeTruthy();
@@ -648,7 +648,7 @@ describe("entry points on the Lifecycle screen", () => {
     await heading("ตรวจและสร้าง");
     view.rerender(<BrandLifecycle me={employee} wizardRoute />);
     await heading("ข้อมูลแบรนด์");
-    expect((text("ชื่อแบรนด์ (Brand name)")).value).toBe("");
+    expect((text("ชื่อแบรนด์")).value).toBe("");
     view.rerender(<BrandLifecycle me={employee} wizardRoute={false} />);
     await waitFor(() => expect(screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeNull());
   });
@@ -710,22 +710,22 @@ describe("entry points on the Lifecycle screen", () => {
     fireEvent.click(screen.getByRole("button", { name: /live.test/ }));
     await screen.findByRole("heading", { name: "live.test" });
     fireEvent.click(screen.getByRole("button", { name: "ทำสำเนา" }));
-    const dialog = await screen.findByRole("dialog", { name: "ทำสำเนาแบรนด์ (Duplicate brand)" });
+    const dialog = await screen.findByRole("dialog", { name: "ทำสำเนาแบรนด์" });
 
     // A new domain is required and checked before anything is sent.
-    fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา (Duplicate)" }));
-    expect((await within(dialog).findByRole("alert")).textContent).toBe("โดเมน (Domain): จำเป็นต้องกรอก (Required)");
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "โดเมนใหม่ (New domain)" }), { target: { value: "www.copy.test" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา (Duplicate)" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toBe("โดเมน: จำเป็นต้องกรอก");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "โดเมนใหม่" }), { target: { value: "www.copy.test" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา" }));
     expect((await within(dialog).findByRole("alert")).textContent).toContain("ใช้โดเมนหลัก ไม่ใช่ www");
     expect(sent("POST", "/api/brands/brand_live/duplicate")).toHaveLength(0);
 
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "โดเมนใหม่ (New domain)" }), { target: { value: "copy.test" } });
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "ชื่อแบรนด์ใหม่ (New brand name, optional)" }), { target: { value: "Copy Cash" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา (Duplicate)" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "โดเมนใหม่" }), { target: { value: "copy.test" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ชื่อแบรนด์ใหม่" }), { target: { value: "Copy Cash" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา" }));
     await heading("ข้อมูลแบรนด์");
     expect(sent("POST", "/api/brands/brand_live/duplicate")[0]!.body).toEqual({ domain: "copy.test", name: "Copy Cash" });
-    expect(text("ชื่อแบรนด์ (Brand name)").value).toBe("Copy Cash");
+    expect(text("ชื่อแบรนด์").value).toBe("Copy Cash");
     // The URL follows the copy, not the brand it was copied from.
     expect(onSelectBrand).toHaveBeenCalledWith("brand_new");
   });
@@ -737,9 +737,9 @@ describe("entry points on the Lifecycle screen", () => {
     await screen.findByRole("heading", { name: "live.test" });
     fireEvent.click(screen.getByRole("button", { name: "ทำสำเนา" }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "โดเมนใหม่ (New domain)" }), { target: { value: "live.test" } });
-    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา (Duplicate)" })); });
-    expect((await within(dialog).findByRole("alert")).textContent).toBe("โดเมนนี้ถูกใช้แล้ว (Domain is already registered)");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "โดเมนใหม่" }), { target: { value: "live.test" } });
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "ทำสำเนา" })); });
+    expect((await within(dialog).findByRole("alert")).textContent).toBe("โดเมนนี้ถูกใช้แล้ว");
   });
 });
 
@@ -749,7 +749,7 @@ describe("wizard page layout", () => {
 
   it("heads the page with a back link, สร้างแบรนด์ใหม่ and ขั้นที่ n จาก 5, and the back link closes it", async () => {
     const { onClose } = setup();
-    await screen.findByRole("textbox", { name: "ชื่อแบรนด์ (Brand name)" });
+    await screen.findByRole("textbox", { name: "ชื่อแบรนด์" });
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("สร้างแบรนด์ใหม่");
     expect(document.querySelector(".wizard-sub")!.textContent).toBe("ขั้นที่ 1 จาก 5");
     fireEvent.click(screen.getByRole("button", { name: "← กลับไปแบรนด์" }));
@@ -767,15 +767,15 @@ describe("wizard page layout", () => {
     expect(document.querySelector(".wizard-sub")!.textContent).toBe("ขั้นที่ 2 จาก 5");
     fireEvent.click(within(pills()[0] as HTMLElement).getByRole("button", { name: /ข้อมูลแบรนด์/ }));
     await heading("ข้อมูลแบรนด์");
-    expect(text("ชื่อแบรนด์ (Brand name)").value).toBe("Maple Cash");
+    expect(text("ชื่อแบรนด์").value).toBe("Maple Cash");
   });
 
   it("fills the summary from the form as it is typed, with no list of API calls", async () => {
     setup();
-    await screen.findByRole("textbox", { name: "ชื่อแบรนด์ (Brand name)" });
+    await screen.findByRole("textbox", { name: "ชื่อแบรนด์" });
     expect(row("ชื่อแบรนด์").getAttribute("data-filled")).toBe("false");
-    fill("ชื่อแบรนด์ (Brand name)", "Maple Cash");
-    fill("โดเมน (Domain)", "Maple.Test");
+    fill("ชื่อแบรนด์", "Maple Cash");
+    fill("โดเมน", "Maple.Test");
     expect(row("ชื่อแบรนด์").textContent).toContain("Maple Cash");
     expect(row("ชื่อแบรนด์").getAttribute("data-filled")).toBe("true");
     expect(row("โดเมน").textContent).toContain("Maple.Test");
@@ -792,7 +792,54 @@ describe("wizard page layout", () => {
     expect(screen.getByRole("status").textContent).toContain("บันทึกร่างแล้ว");
     fireEvent.click(screen.getByRole("button", { name: "ย้อนกลับ" }));
     await heading("ข้อมูลแบรนด์");
-    fill("ชื่อแบรนด์ (Brand name)", "Maple Cash Co");
+    fill("ชื่อแบรนด์", "Maple Cash Co");
     expect(screen.queryByText("บันทึกร่างแล้ว")).toBeNull();
+  });
+});
+
+describe("wizard saved status and stepper while saving", () => {
+  it("clears บันทึกร่างแล้ว when a brand colour is chosen or reset, because that change is not saved yet", async () => {
+    const mapped = detail("tv-1");
+    routes.set("GET /api/templates/tv-1", () => json({ ...mapped, template: { ...mapped.template, theme_vars: { primary: ["--color-royal"], primary_dark: ["--color-royal-dark"], secondary: [] } } }));
+    setup();
+    await fillBrand();
+    next();
+    await heading("เทมเพลต");
+    expect(screen.getByRole("status").textContent).toContain("บันทึกร่างแล้ว");
+    await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText("สีหลัก"), { target: { value: "#112233" } });
+    expect(screen.queryByText("บันทึกร่างแล้ว")).toBeNull();
+    // Saving again shows it once more; going back to the template colours is an edit too.
+    next();
+    await heading("ข้อความ");
+    expect(screen.getByRole("status").textContent).toContain("บันทึกร่างแล้ว");
+    back();
+    await heading("เทมเพลต");
+    fireEvent.click(screen.getByRole("button", { name: "ใช้สีของเทมเพลต" }));
+    expect(screen.queryByText("บันทึกร่างแล้ว")).toBeNull();
+  });
+
+  it("turns the finished-step buttons off while a save runs, and a late answer moves on from the step it started on", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setup();
+    await fillBrand();
+    next();
+    await heading("เทมเพลต");
+    // A changed template is its own PATCH. Hold it.
+    routes.set("PATCH /api/brands/brand_new/draft", async (init) => {
+      await gate;
+      const body = JSON.parse(String(init?.body)) as { template_version_id?: string };
+      held = { ...held, ...(body.template_version_id ? { template: body.template_version_id } : {}) };
+      return json({ ...heldBody(), changed: [] });
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Copperline/ }));
+    next();
+    const earlier = within(document.querySelector(".wizard-stepper")!).getByRole("button", { name: /ข้อมูลแบรนด์/ }) as HTMLButtonElement;
+    await waitFor(() => expect(earlier.disabled).toBe(true));
+    release();
+    await heading("ข้อความ");
+    expect(document.querySelector(".wizard-sub")!.textContent).toBe("ขั้นที่ 3 จาก 5");
+    expect((within(document.querySelector(".wizard-stepper")!).getByRole("button", { name: /ข้อมูลแบรนด์/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ const done = (...items: ChecklistStep["item"][]): ChecklistStep[] => items.map((
 function detail(over: Partial<Parameters<typeof LifecycleDetail>[0]> = {}) {
   return <LifecycleDetail me={owner} brand={brand} onInstall={() => {}} onRollback={() => {}} onRedeploy={() => {}} onRetry={() => {}} onRecover={() => {}} {...over} />;
 }
+const ADKIT = { periodLabel: "7 วัน", spendText: "฿3,500", profitText: "$120", leadsText: "40", failedText: "2", updatedText: "10 พ.ย. 09:00" };
 const step = (item: string) => screen.getByText(new RegExp(`\(${item}\)`)).closest(".check-row") as HTMLElement;
 
 describe("brand checklist fix buttons", () => {
@@ -65,14 +66,14 @@ describe("brand checklist fix buttons", () => {
 
 describe("AdKit block on the brand", () => {
   it("shows baht spend and USD profit", () => {
-    render(detail({ adkit: { periodLabel: "7 วัน", spendText: "฿3,500", profitText: "$120" } }));
+    render(detail({ adkit: ADKIT }));
     const block = screen.getByRole("region", { name: "ตัวเลขโฆษณา" });
     expect(block.textContent).toContain("฿3,500");
     expect(block.textContent).toContain("$120");
   });
 
   it("shows no block for an employee even when the numbers are passed in", () => {
-    render(detail({ me: employee, adkit: { periodLabel: "7 วัน", spendText: "฿3,500", profitText: "$120" } }));
+    render(detail({ me: employee, adkit: ADKIT }));
     expect(screen.queryByRole("region", { name: "ตัวเลขโฆษณา" })).toBeNull();
   });
 });

@@ -1,6 +1,8 @@
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "../src/client/api";
+import { loadUploadFacts } from "../src/client/brand-facts";
 import { adsChip, stageStatuses, STAGE_LABELS, type StageInput, type StageStatus } from "../src/client/brand-stages";
 import { StageDots } from "../src/client/components/StageDots";
 
@@ -47,9 +49,11 @@ describe("stage mapping", () => {
     ["ขายได้: test sold row", "ขายได้", { checklist: entry({ items: ["test_sold"] }) }, "done"],
     ["ขายได้: sold in 30 days", "ขายได้", { sold30: 2 }, "done"],
     ["ขายได้: neither", "ขายได้", { checklist: entry(), sold30: 0 }, "pending"],
-    ["อัปโหลด: uploaded and none dead", "อัปโหลด", { uploaded: 4, dead: 0 }, "done"],
-    ["อัปโหลด: any dead", "อัปโหลด", { uploaded: 4, dead: 1 }, "fail"],
-    ["อัปโหลด: nothing uploaded", "อัปโหลด", { uploaded: 0, dead: 0 }, "pending"],
+    ["อัปโหลด: uploaded and none dead", "อัปโหลด", { hasUploaded: true, hasDead: false }, "done"],
+    ["อัปโหลด: any dead", "อัปโหลด", { hasUploaded: true, hasDead: true }, "fail"],
+    ["อัปโหลด: nothing uploaded", "อัปโหลด", { hasUploaded: false, hasDead: false }, "pending"],
+    ["อัปโหลด: not known reads pending, never done or fail", "อัปโหลด", { hasUploaded: null, hasDead: null }, "pending"],
+    ["อัปโหลด: dead unknown but uploaded known", "อัปโหลด", { hasUploaded: true, hasDead: null }, "done"],
   ];
   it.each(cases)("%s", (_name, label, input, expected) => {
     expect(at(label, input)).toBe(expected);
@@ -61,16 +65,68 @@ function installOf(status: string) {
 }
 
 describe("Google Ads chip", () => {
-  const chip = (over: Partial<Parameters<typeof adsChip>[0]> = {}) => adsChip({ brand: brand(), paused: false, spendToday: 120, clickLoss: false, ...over });
+  const camp = (state: string, brand_id = "b1") => ({ draft_job_id: "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", campaign_id: null, brand_id, account: "1234567890", name: "demo-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state, updated_at: "2026-11-10T00:00:00.000Z", geo: { country: "US" }, final_url: "https://x.test/" });
+  const ads = (campaigns: ReturnType<typeof camp>[], withAccount = true) => ({ campaigns, brands: withAccount ? [{ brand_id: "b1", currency: "THB", thb_per_unit: 1, committed_thb_day: 0 }] : [], caps: { total_thb_day: 1, brand_thb_day: 1 }, enabled_total_thb_day: 0 }) as never;
+  const chip = (over: Partial<Parameters<typeof adsChip>[0]> = {}) => adsChip({ brand: brand({ brand_id: "b1" }), paused: false, ads: ads([camp("enabled")]), spendToday: null, clickLoss: false, ...over });
   it.each([
-    ["spend today", {}, "ใช้งาน", "success"],
-    ["spend today and clicks lost before the site", { clickLoss: true }, "ไม่มี gclid", "warning"],
-    ["no spend rows", { spendToday: null }, "ยังไม่เชื่อม", "neutral"],
-    ["spend rows with no cost yet", { spendToday: 0 }, "กำลังเรียนรู้", "info"],
-    ["paused in core", { paused: true }, "หยุดชั่วคราว", "neutral"],
-    ["demo brand", { brand: brand({ name: "demo1", brand_id: "demo1" }) }, "ทดลอง", "info"],
-  ])("%s", (_name, over, label, tone) => {
-    expect(chip(over as never)).toEqual({ label, tone });
+    ["spend today on an enabled campaign", { spendToday: 120 }, { label: "ใช้งาน", tone: "success" }],
+    ["spend today and clicks lost before the site", { spendToday: 120, clickLoss: true }, { label: "ไม่มี gclid", tone: "warning" }],
+    ["no Google Ads account for the brand", { ads: ads([], false) }, { label: "ยังไม่เชื่อม", tone: "neutral" }],
+    ["an account with no campaign", { ads: ads([]) }, { label: "ยังไม่มีแคมเปญ", tone: "neutral" }],
+    ["only a removed campaign counts as none", { ads: ads([camp("removed")]) }, { label: "ยังไม่มีแคมเปญ", tone: "neutral" }],
+    ["a campaign being drafted", { ads: ads([camp("draft")]) }, { label: "กำลังสร้าง", tone: "info" }],
+    ["a campaign being enabled", { ads: ads([camp("enabling")]) }, { label: "กำลังสร้าง", tone: "info" }],
+    ["an enabled campaign with no spend yet or unknown", { spendToday: 0 }, { label: "เปิดแล้ว", tone: "neutral" }],
+    ["only paused campaigns", { ads: ads([camp("paused")]) }, { label: "หยุดชั่วคราว", tone: "neutral" }],
+    ["only failed campaigns", { ads: ads([camp("failed")]) }, { label: "สร้างไม่สำเร็จ", tone: "danger" }],
+    ["paused in core", { paused: true }, { label: "หยุดชั่วคราว", tone: "neutral" }],
+    ["demo brand", { brand: brand({ name: "demo1", brand_id: "demo1" }) }, { label: "ทดลอง", tone: "info" }],
+  ])("%s", (_name, over, expected) => {
+    expect(chip(over as never)).toEqual(expected);
+  });
+  it("is unknown, not 'not connected', while the campaigns load or when they fail", () => {
+    expect(chip({ ads: undefined })).toBeNull();
+    expect(chip({ ads: null })).toBeNull();
+  });
+  it("never reads a zero spend as learning", () => {
+    for (const spendToday of [0, null]) for (const campaigns of [[camp("enabled")], [camp("draft")], []]) {
+      expect(chip({ spendToday, ads: ads(campaigns) })?.label).not.toBe("กำลังเรียนรู้");
+    }
+  });
+});
+
+describe("upload facts per brand", () => {
+  const row = (brand: string) => ({ lead_id: `${brand}-1`, brand, status: "uploaded", reason_code: null, last_error: null, click_type: null, attempts: 1, value: null, currency: "THB", occurred_at: "2026-11-01T00:00:00.000Z", created_at: "2026-11-01T00:00:00.000Z", updated_at: "2026-11-01T00:00:00.000Z", next_attempt_at: null });
+  const report = (rows: ReturnType<typeof row>[], truncated: boolean) => ({ period: "30d", from: "2026-10-12T00:00:00.000Z", to: "2026-11-11T00:00:00.000Z", totals: { pending: 0, processing: 0, uploaded: 0, dead: 0 }, value_totals: null, stalled: 0, rows, truncated }) as never;
+  afterEach(() => vi.restoreAllMocks());
+
+  it("takes a brand absent from a complete page as having none", async () => {
+    vi.spyOn(api, "conversions").mockImplementation(async (query) => report(query.status === "uploaded" ? [row("b1")] : [], false));
+    const facts = await loadUploadFacts(["b1", "b2"]);
+    expect(facts.get("b1")).toEqual({ uploaded: true, dead: false });
+    expect(facts.get("b2")).toEqual({ uploaded: false, dead: false });
+  });
+
+  it("asks for a brand on its own when the page is cut and other brands filled it", async () => {
+    const calls: Array<{ status?: string; brand?: string; limit?: number }> = [];
+    vi.spyOn(api, "conversions").mockImplementation(async (query) => {
+      calls.push({ status: query.status, brand: query.brand, limit: query.limit });
+      // The big page holds only brand b9; b2 has one uploaded row that the cut left out.
+      if (query.brand === "b2" && query.status === "uploaded") return report([row("b2")], false);
+      if (query.brand) return report([], false);
+      return report(query.status === "uploaded" ? [row("b9")] : [], true);
+    });
+    const facts = await loadUploadFacts(["b2", "b3"]);
+    expect(facts.get("b2")).toEqual({ uploaded: true, dead: false });
+    expect(facts.get("b3")).toEqual({ uploaded: false, dead: false });
+    expect(calls.filter((c) => c.brand).every((c) => c.limit === 1)).toBe(true);
+    expect(calls.filter((c) => c.brand && c.brand === "b2" && c.status === "uploaded")).toHaveLength(1);
+  });
+
+  it("leaves the answers unknown when the request fails", async () => {
+    vi.spyOn(api, "conversions").mockRejectedValue(new Error("down"));
+    const facts = await loadUploadFacts(["b1"]);
+    expect(facts.get("b1")).toEqual({ uploaded: null, dead: null });
   });
 });
 

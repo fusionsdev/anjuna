@@ -167,6 +167,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
   }
 
   async function next() {
+    const from = step;
     const found = validateStep(stepId, form, ctx);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
@@ -175,7 +176,7 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
     try {
       await save();
       setSaved(true);
-      setStep((current) => current + 1);
+      setStep((current) => (current === from ? from + 1 : current));
     } catch (e) {
       setNotice(wizardErrorText(e));
     } finally {
@@ -224,19 +225,19 @@ export function BrandWizard({ me, brandId, initialStep, onClose, onGenerated }: 
           return (
             <li key={id} aria-current={index === step ? "step" : undefined} className={`wizard-step ${state}`}>
               {index < step
-                ? <button type="button" onClick={() => { setErrors({}); setNotice(null); setStep(index); }}>{label}</button>
+                ? <button type="button" disabled={busy} onClick={() => { setErrors({}); setNotice(null); setStep(index); }}>{label}</button>
                 : <span>{label}</span>}
             </li>
           );
         })}
       </ol>
-      {loading && <p className="hint" role="status">กำลังโหลด… (Loading)</p>}
-      {loadError && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert"><p>{loadError}</p><button type="button" className="btn" onClick={() => setReload((n) => n + 1)}>ลองใหม่ (Retry)</button></div>}
+      {loading && <p className="hint" role="status">กำลังโหลด…</p>}
+      {loadError && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert"><p>{loadError}</p><button type="button" className="btn" onClick={() => setReload((n) => n + 1)}>ลองใหม่</button></div>}
       {!loading && !loadError && <div className="wizard-grid">
         <div className="wizard-main panel">
           <h2>{STEP_LABEL[stepId]}</h2>
           {stepId === "brand" && <BrandPanel form={form} errors={errors} set={set} hasDraft={draft !== null} zone={zone} onCheckZone={() => void checkZone()} />}
-          {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} theme={theme} onTheme={setTheme} themeVars={themeVars} />}
+          {stepId === "template" && <TemplatePanel templates={templates} selected={templateId} error={errors.template_version_id} onSelect={(id) => set("template_version_id", id)} theme={theme} onTheme={(next) => { setTheme(next); setNotice(null); setSaved(false); }} themeVars={themeVars} />}
           {stepId === "copy" && <CopyPanel form={form} errors={errors} set={set} templateText={templateText} />}
           {stepId === "tracking" && <TrackingPanel form={form} errors={errors} set={set} canEdit={canEditTracking} draftId={draft?.brand.brand_id ?? null} saveAds={() => patch({ profile: { ...(draft?.profile ?? {}), ads: adsOf(form) } })} />}
           {stepId === "review" && <ReviewPanel form={form} templateName={chosen ? `${chosen.name} v${chosen.version}` : templateId} defaults={defaults} zone={zone} onCheckZone={() => void checkZone()} previewSrc={draft ? `/api/wizard/preview/${encodeURIComponent(draft.brand.brand_id)}?r=${previewNonce}` : null} canEditTracking={canEditTracking} />}
@@ -260,36 +261,36 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function ReviewPanel({ form, templateName, defaults, zone, onCheckZone, previewSrc, canEditTracking }: { form: WizardForm; templateName: string; defaults: WizardDefaultsResponse | null; zone: ZoneState; onCheckZone: () => void; previewSrc: string | null; canEditTracking: boolean }) {
-  const fromTemplate = "ใช้ค่าจากเทมเพลต (Template default)";
+  const fromTemplate = "ใช้ค่าจากเทมเพลต";
   return (
     <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-      <h3>สรุป (Summary)</h3>
+      <h3>สรุป</h3>
       <div className="ledger" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))" }}>
-        <Row label="ชื่อแบรนด์ (Brand name)" value={form.name} />
-        <Row label="โดเมน (Domain)" value={form.domain} />
-        <Row label="คีย์เวิร์ด (Keyword)" value={form.keyword} />
-        <Row label="เทมเพลต (Template)" value={templateName} />
-        <Row label="โทรศัพท์ (Phone)" value={form.phone} />
-        <Row label="อีเมล (Email)" value={form.email} />
-        <Row label="ที่อยู่ (Address)" value={form.address} />
-        <Row label="ช่วงยอดเงิน (Amount buckets)" value={defaults ? defaults.amount_buckets.join(", ") : ""} />
-        <Row label="เส้นทางฟอร์ม (Form route)" value={defaults?.form_route ?? ""} />
-        <Row label="ชื่อแบรนด์บนเว็บ (Site brand name)" value={form.brand_name || fromTemplate} />
-        <Row label="ชื่อหน้า (Page title)" value={form.site_title || fromTemplate} />
-        <Row label="คำอธิบาย (Meta description)" value={form.site_description || fromTemplate} />
+        <Row label="ชื่อแบรนด์" value={form.name} />
+        <Row label="โดเมน" value={form.domain} />
+        <Row label="คีย์เวิร์ด" value={form.keyword} />
+        <Row label="เทมเพลต" value={templateName} />
+        <Row label="โทรศัพท์" value={form.phone} />
+        <Row label="อีเมล" value={form.email} />
+        <Row label="ที่อยู่" value={form.address} />
+        <Row label="ช่วงยอดเงิน" value={defaults ? defaults.amount_buckets.join(", ") : ""} />
+        <Row label="เส้นทางฟอร์ม" value={defaults?.form_route ?? ""} />
+        <Row label="ชื่อแบรนด์บนเว็บ" value={form.brand_name || fromTemplate} />
+        <Row label="ชื่อหน้า" value={form.site_title || fromTemplate} />
+        <Row label="คำอธิบาย" value={form.site_description || fromTemplate} />
         <Row label="H1" value={form.h1} />
         <Row label="CTA" value={form.cta} />
-        <Row label="บัญชี Google Ads (Google Ads account)" value={form.google_ads_account} />
+        <Row label="บัญชี Google Ads" value={form.google_ads_account} />
         <Row label="conversion action" value={form.google_conversion_action} />
-        <Row label="โปรเจกต์ AdKit (AdKit project)" value={form.adkit_project} />
+        <Row label="โปรเจกต์ AdKit" value={form.adkit_project} />
       </div>
-      {!canEditTracking && <p className="hint">Owner กำหนดค่าติดตามผล (The Owner sets the tracking ids)</p>}
-      <h3>โซน Cloudflare (Cloudflare zone)</h3>
+      {!canEditTracking && <p className="hint">Owner กำหนดค่าติดตามผล</p>}
+      <h3>โซน Cloudflare</h3>
       <ZoneStatus zone={zone} />
-      <div className="row"><button type="button" className="btn" onClick={onCheckZone} disabled={zone.state === "checking"}>ตรวจอีกครั้ง (Check again)</button></div>
-      {zoneBlocks(zone) && <p className="hint">สร้างไม่ได้จนกว่าโซนจะพร้อม (Generate is off until the zone is ready)</p>}
-      <h3>ตัวอย่างก่อนติดตั้ง (Preview before install)</h3>
-      {previewSrc && <iframe key={previewSrc} style={{ width: "100%", height: 520, border: "1px solid var(--line)", borderRadius: 10, background: "var(--raised)" }} title="ตัวอย่างหน้าเว็บ (Site preview)" sandbox="" src={previewSrc} />}
+      <div className="row"><button type="button" className="btn" onClick={onCheckZone} disabled={zone.state === "checking"}>ตรวจอีกครั้ง</button></div>
+      {zoneBlocks(zone) && <p className="hint">สร้างไม่ได้จนกว่าโซนจะพร้อม</p>}
+      <h3>ตัวอย่างก่อนติดตั้ง</h3>
+      {previewSrc && <iframe key={previewSrc} style={{ width: "100%", height: 520, border: "1px solid var(--line)", borderRadius: 10, background: "var(--raised)" }} title="ตัวอย่างหน้าเว็บ" sandbox="" src={previewSrc} />}
     </div>
   );
 }

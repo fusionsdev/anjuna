@@ -68,18 +68,18 @@
 .home-grid2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .home-grid-fq { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; }
 .home-conv { grid-column: auto; }
-.kpi-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; background: none; border: 0; border-radius: 0; overflow: visible; }
-.kpi-row > .cell, .kpi-row > .kpi-pair { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-1); padding: 20px; min-width: 0; position: relative; }
-.kpi-row .k { font-size: 13px; font-weight: 500; color: var(--sub); }
-.kpi-row .v { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; margin: 8px 0 0; }
-.kpi-row .hint, .kpi-row .d { font-size: 13px; margin: 8px 0 0; }
+.ledger.kpi-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; background: none; border: 0; border-radius: 0; overflow: visible; }
+.ledger.kpi-row > .cell, .ledger.kpi-row > .kpi-pair { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-1); padding: 20px; min-width: 0; position: relative; }
+.ledger.kpi-row .k { font-size: 13px; font-weight: 500; color: var(--sub); }
+.ledger.kpi-row .v { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; margin: 8px 0 0; }
+.ledger.kpi-row .hint, .ledger.kpi-row .d { font-size: 13px; margin: 8px 0 0; }
 .kpi-pair { display: grid; gap: 12px; }
-.kpi-pair .cell { background: none; padding: 0; border: 0; }
-.kpi-pair .v { font-size: 22px; margin-top: 4px; }
+.ledger.kpi-row .kpi-pair .cell { background: none; padding: 0; border: 0; }
+.ledger.kpi-row .kpi-pair .v { font-size: 22px; margin-top: 4px; }
 .kpi-owner { position: absolute; top: 12px; right: 12px; }
-.queue-stats { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; background: none; border: 0; overflow: visible; }
-.queue-stats .cell { background: var(--canvas); border-radius: 12px; padding: 12px; text-decoration: none; color: inherit; }
-.queue-stats .v { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; }
+.ledger.queue-stats { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; background: none; border: 0; overflow: visible; }
+.ledger.queue-stats .cell { background: var(--canvas); border-radius: 12px; padding: 12px; text-decoration: none; color: inherit; }
+.ledger.queue-stats .v { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; }
 .home-n { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; }
 .home-l { font-size: 13px; color: var(--sub); }
 .home-banner { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; border: 1px solid #F2D49A; border-radius: var(--radius-card); background: var(--warn-bg); color: var(--warn); }
@@ -88,6 +88,21 @@
 .home-banner ul { margin: 4px 0 0; padding-left: 18px; }
 .home-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .home-item { gap: 12px; }
-@media (max-width: 1100px) { .kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } .home-grid-fq { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 760px) { .home-grid2 { grid-template-columns: minmax(0, 1fr); } .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpi-row > .kpi-pair { grid-column: 1 / -1; } .home-banner { flex-direction: column; } }
+@media (max-width: 1100px) { .ledger.kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } .home-grid-fq { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .home-grid2 { grid-template-columns: minmax(0, 1fr); } .ledger.kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ledger.kpi-row > .kpi-pair { grid-column: 1 / -1; } .home-banner { flex-direction: column; } }
 .home-summary { margin: 2px 0 0; color: var(--ink); font-size: var(--text-body); font-weight: 500; }
+
+/* v9 FunnelStrip: a label, a 28px value and a horizontal bar per stage; the drop under each stage stays. */
+.home-flow { align-items: start; }
+.home-stage { gap: 6px; }
+.home-stage .home-l { order: 1; }
+.home-stage .home-n { order: 2; line-height: 1; }
+.home-stage .home-bar { order: 3; height: 6px; border-radius: 999px; }
+.home-flow, .home-drops { gap: 12px; }
+/* The to-do rows end in a link, not a boxed button. */
+.home-item .btn.home-task-link { min-height: 44px; border: 0; background: none; color: var(--brand-ink); font-weight: 500; padding: 0 4px; }
+.home-item .btn.home-task-link:hover { text-decoration: underline; background: none; }
+
+/* The funnel and the queue share a row, so their columns are narrow: the stage values are 22px and the money box takes a full row. */
+.home-stage .home-n { font-size: 22px; overflow-wrap: anywhere; }
+.ledger.queue-stats .cell:nth-child(5) { grid-column: 1 / -1; }

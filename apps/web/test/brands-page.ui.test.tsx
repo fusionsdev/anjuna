@@ -42,6 +42,11 @@ const DATA: Record<string, { funnel: ReturnType<typeof funnelRow>[]; spend: Retu
   },
 };
 
+const adsData = (accountFor: string[], enabledFor: string[] = []) => ({
+  campaigns: enabledFor.map((brand_id, n) => ({ draft_job_id: `6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e${String(n).padStart(2, "0")}`, campaign_id: null, brand_id, account: "1234567890", name: "demo-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-06T00:00:00.000Z", geo: { country: "US" }, final_url: "https://x.test/" })),
+  brands: accountFor.map((brand_id) => ({ brand_id, currency: "THB", thb_per_unit: 1, committed_thb_day: 0 })),
+  caps: { total_thb_day: 1000, brand_thb_day: 500 }, enabled_total_thb_day: 0,
+});
 type Handler = (init?: RequestInit) => Response | Promise<Response>;
 type SpendFn = (period: string) => Promise<unknown>;
 const apiWithSpend = api as unknown as { spend?: SpendFn };
@@ -62,6 +67,8 @@ beforeEach(() => {
   requests = [];
   routes = new Map<string, Handler>([
     ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
+    // Credit Genie has an account and an enabled campaign. The other brands have no account.
+    ["GET /api/ads/campaigns", () => json(adsData(["brand-cg"], ["brand-cg"]))],
     ["GET /api/lifecycle/brands", () => json({ brands: lifecycleRows })],
     ["GET /api/brands", () => json({ brands: lifecycleRows.map((row) => runtimeRow(row.brand_id)), generated_at: "2026-10-06T00:00:00Z" })],
     ["GET /api/funnel", () => json({ from: "2026-10-01T00:00:00.000Z", to: "2026-10-07T00:00:00.000Z", rows: DATA["7d"]!.funnel })],
@@ -120,7 +127,8 @@ describe("brands table for the Owner", () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]));
     expect(cells("floatsme.test")).toMatchObject({ spend: "฿21,700", leads: "0" });
-    expect(cells("creditsgene.test")).toMatchObject({ spend: "฿28,000", leads: "10", ads: "ใช้งาน" });
+    await waitFor(() => expect(cells("creditsgene.test").ads).toBe("ใช้งาน"));
+    expect(cells("creditsgene.test")).toMatchObject({ spend: "฿28,000", leads: "10" });
     expect(cells("alpha.test")).toMatchObject({ spend: "฿3,500", leads: "5" });
     // No spend row: the spend is unknown, never 0, and no Google Ads account reads as connected.
     expect(cells("wizard.test")).toEqual({ spend: "—", leads: "4", ads: "ยังไม่เชื่อม" });
@@ -188,7 +196,8 @@ describe("brands table for the Owner", () => {
 describe("brands table for an Employee", () => {
   it("has no money column, never asks for spend and shows no dollar amount", async () => {
     render(<BrandLifecycle me={employee} />);
-    await waitFor(() => expect(cells("creditsgene.test")).toEqual({ spend: null, leads: "10", ads: "—" }));
+    // The chip reads the campaigns, which an employee may read. With no spend report it says เปิดแล้ว, never ใช้งาน.
+    await waitFor(() => expect(cells("creditsgene.test")).toEqual({ spend: null, leads: "10", ads: "เปิดแล้ว" }));
     expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]);
     expect(screen.queryByRole("columnheader", { name: /ค่าโฆษณา/ })).toBeNull();
     expect(screen.queryByRole("columnheader", { name: /ต้นทุน/ })).toBeNull();

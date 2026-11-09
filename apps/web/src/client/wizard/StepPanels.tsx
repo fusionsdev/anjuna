@@ -43,25 +43,25 @@ export const zoneBlocks = (zone: ZoneState): boolean =>
 
 export function ZoneStatus({ zone }: { zone: ZoneState }) {
   if (zone.state === "idle") return null;
-  if (zone.state === "checking") return <p role="status" className="hint">กำลังตรวจโซน Cloudflare… (Checking the Cloudflare zone)</p>;
+  if (zone.state === "checking") return <p role="status" className="hint">กำลังตรวจโซน Cloudflare…</p>;
   if (zone.state === "error") return <p role="status" className="note">{zone.text}</p>;
   const { result } = zone;
   if (result.zone_name === null) {
-    return <p role="alert" className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>ไม่พบโซนของโดเมนนี้ในบัญชี Cloudflare ของ tenant ให้ Owner เพิ่มโซนก่อน (No zone for this domain in the tenant Cloudflare account, ask the Owner to add it)</p>;
+    return <p role="alert" className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>ไม่พบโซนของโดเมนนี้ในบัญชี Cloudflare ของ tenant ให้ Owner เพิ่มโซนก่อน</p>;
   }
   if (!result.zone_active) {
     return <div role="alert" className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>
-      <p>โซน {result.zone_name} ยังไม่ active ตั้ง name server ที่ registrar เป็น: (Zone {result.zone_name} is not active, set these name servers at the registrar)</p>
+      <p>โซน {result.zone_name} ยังไม่ active ตั้ง name server ที่ registrar เป็น:</p>
       <ul>{result.nameservers.map((ns) => <li key={ns}><code>{ns}</code></li>)}</ul>
     </div>;
   }
   if (result.conflicting_records.length > 0) {
     return <div role="alert" className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>
-      <p>มี DNS record ที่ขวางการผูกโดเมน ต้องลบก่อนติดตั้ง (These DNS records block the Custom Domain, remove them before install)</p>
+      <p>มี DNS record ที่ขวางการผูกโดเมน ต้องลบก่อนติดตั้ง</p>
       <ul>{result.conflicting_records.map((r) => <li key={`${r.type}${r.name}`}><code>{r.type} {r.name}</code></li>)}</ul>
     </div>;
   }
-  return <p role="status" className="note pos" style={{ background: "var(--moneybg)", color: "var(--money)" }}>โซน {result.zone_name} active และไม่มี record ที่ขวาง (Zone {result.zone_name} is active, no blocking records)</p>;
+  return <p role="status" className="note pos" style={{ background: "var(--moneybg)", color: "var(--money)" }}>โซน {result.zone_name} active และไม่มี record ที่ขวาง</p>;
 }
 
 export function BrandPanel({ form, errors, set, hasDraft, zone, onCheckZone }: FieldsProps & { hasDraft: boolean; zone: ZoneState; onCheckZone: () => void }) {
@@ -69,12 +69,12 @@ export function BrandPanel({ form, errors, set, hasDraft, zone, onCheckZone }: F
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12, marginTop: 12 }}>
       <Field field="name" {...common} required maxLength={60} placeholder="Level Lending" />
-      <Field field="domain" {...common} required disabled={hasDraft} placeholder="example.com" hint={hasDraft ? "เปลี่ยนโดเมนไม่ได้หลังสร้างฉบับร่าง (The domain is fixed once the draft exists)" : "โดเมนหลัก ไม่ใช่ www (Apex domain, not www)"} />
+      <Field field="domain" {...common} required disabled={hasDraft} placeholder="example.com" hint={hasDraft ? "เปลี่ยนโดเมนไม่ได้หลังสร้างฉบับร่าง" : "โดเมนหลัก ไม่ใช่ www"} />
       <div style={{ gridColumn: "1 / -1" }}>
-        <button type="button" className="btn" onClick={onCheckZone} disabled={zone.state === "checking" || !form.domain.trim()} aria-label="ตรวจโซน Cloudflare (Check Cloudflare zone)">ตรวจโซน Cloudflare</button>
+        <button type="button" className="btn" onClick={onCheckZone} disabled={zone.state === "checking" || !form.domain.trim()} aria-label="ตรวจโซน Cloudflare">ตรวจโซน Cloudflare</button>
       </div>
       <div style={{ gridColumn: "1 / -1" }}><ZoneStatus zone={zone} /></div>
-      <Field field="keyword" {...common} required placeholder="Fast cash" hint="คีย์เวิร์ดเริ่มต้นของโฆษณา (Default ad keyword)" />
+      <Field field="keyword" {...common} required placeholder="Fast cash" hint="คีย์เวิร์ดเริ่มต้นของโฆษณา" />
       <Field field="phone" {...common} required type="tel" placeholder="+1 (555) 010-0199" />
       <Field field="address" {...common} required placeholder="12 Main St, Austin, TX 78701" />
       <Field field="email" {...common} required type="email" placeholder="help@example.com" />
@@ -87,20 +87,20 @@ export function TemplatePanel({ templates, selected, error, onSelect, theme, onT
   const noVars = !!themeVars && themeVars.primary.length === 0 && themeVars.primary_dark.length === 0 && themeVars.secondary.length === 0;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12, marginTop: 12 }}>
-      {templates.length === 0 && <p role="status">ยังไม่มีเทมเพลตที่อนุมัติ ให้ Owner อนุมัติเทมเพลตก่อน (No approved template yet, ask the Owner to approve one)</p>}
+      {templates.length === 0 && <p role="status">ยังไม่มีเทมเพลตที่อนุมัติ ให้ Owner อนุมัติเทมเพลตก่อน</p>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 14, gridColumn: "1 / -1" }}>
         {templates.map((t) => (
           <button type="button" key={t.template_version_id} className="panel" style={{ display: "grid", gap: 8, padding: 12, textAlign: "left", color: "var(--ink)", borderColor: t.template_version_id === selected ? "var(--money)" : "var(--line)", boxShadow: t.template_version_id === selected ? "inset 0 0 0 1px var(--money)" : undefined }} aria-pressed={t.template_version_id === selected} onClick={() => onSelect(t.template_version_id)}>
-            {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name} (Template preview)`} loading="lazy" style={{ width: "100%", aspectRatio: "16 / 10", objectFit: "cover", borderRadius: 6 }} /> : <span className="hint" style={{ display: "grid", placeItems: "center", aspectRatio: "16 / 10", background: "var(--paper)", borderRadius: 6 }}>ไม่มีภาพตัวอย่าง (No preview)</span>}
+            {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name}`} loading="lazy" style={{ width: "100%", aspectRatio: "16 / 10", objectFit: "cover", borderRadius: 6 }} /> : <span className="hint" style={{ display: "grid", placeItems: "center", aspectRatio: "16 / 10", background: "var(--paper)", borderRadius: 6 }}>ไม่มีภาพตัวอย่าง</span>}
             <span style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}><strong>{t.name}</strong><span>v{t.version}</span></span>
-            <span className="hint">แบรนด์ที่ใช้ (Brands using): {t.brands_using}</span>
+            <span className="hint">แบรนด์ที่ใช้: {t.brands_using}</span>
           </button>
         ))}
       </div>
       {error && <p className="neg" role="alert">{error}</p>}
       <div style={{ display: "grid", gap: 8, gridColumn: "1 / -1" }}>
-        <h3>สีแบรนด์ (Brand colors)</h3>
-        {noVars && <p role="note" className="hint">เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี (This template has no color variables)</p>}
+        <h3>สีแบรนด์</h3>
+        {noVars && <p role="note" className="hint">เทมเพลตนี้ยังไม่รองรับการเปลี่ยนสี</p>}
         <ColorPair value={theme} onChange={onTheme} disabled={noVars} />
       </div>
     </div>
@@ -124,12 +124,12 @@ export function CopyPanel({ form, errors, set, templateText }: FieldsProps & { t
   const shown = { ...copyFieldErrors(form), ...errors };
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12, marginTop: 12 }}>
-      <p className="hint" style={{ gridColumn: "1 / -1" }}>เว้นว่าง = ใช้ข้อความจากเทมเพลต (Leave blank to use the template text) · H1, CTA และข้อความรองที่เว้นว่างจะถูกเติมตอนสร้างเว็บไซต์ (Empty H1, CTA and sub are filled at Generate)</p>
+      <p className="hint" style={{ gridColumn: "1 / -1" }}>เว้นว่าง = ใช้ข้อความจากเทมเพลต · H1, CTA และข้อความรองที่เว้นว่างจะถูกเติมตอนสร้างเว็บไซต์</p>
       {COPY_FIELDS.map(({ field, max, source }) => {
         const fallback = field === "brand_name" ? form.name.trim() || templateText?.brand_name : source ? templateText?.[source] : null;
         const count = isPageCopy(field) ? `${visibleCopyLength(form, field)}/${COPY_LIMITS[field]}` : `${form[field].trim().length}/${max}`;
-        const slot = field === "h1" ? ` · ใส่ ${COPY_KEYWORD_MARKER} หนึ่งครั้ง (Put ${COPY_KEYWORD_MARKER} once)` : "";
-        return <Field key={field} field={field} form={form} errors={shown} set={set} maxLength={max} placeholder={fallback ?? undefined} hint={`${count}${slot}${fallback ? ` · ค่าเริ่มต้น (Default): ${fallback}` : ""}`} />;
+        const slot = field === "h1" ? ` · ใส่ ${COPY_KEYWORD_MARKER} หนึ่งครั้ง` : "";
+        return <Field key={field} field={field} form={form} errors={shown} set={set} maxLength={max} placeholder={fallback ?? undefined} hint={`${count}${slot}${fallback ? ` · ค่าเริ่มต้น: ${fallback}` : ""}`} />;
       })}
     </div>
   );

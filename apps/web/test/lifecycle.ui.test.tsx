@@ -242,7 +242,7 @@ describe("mounted lifecycle UI with API responses", () => {
     await waitFor(() => expect(lastBody("/api/brands/brand-a")).toMatchObject({ flow_gate_mode: "signed_cookie" }));
     fireEvent.click(within(panel).getByRole("button", { name: closeName }));
     expect(screen.queryByRole("complementary", { name: configLabel })).toBeNull();
-    expect(screen.getByText(/สถิติ 7 วัน · ลีด \(Leads\): 9 · ขายได้ \(Sold\): 3 · รอผล \(Pending\): 2/)).toBeDefined();
+    expect(screen.getByText(/สถิติ 7 วัน · ลีด: 9 · ขายได้: 3 · รอผล: 2/)).toBeDefined();
   });
 
   it("sends no pause request when the Owner cancels Pause in the Runtime config drawer", async () => {
@@ -779,7 +779,8 @@ describe("AdKit numbers on the brand detail", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
     expect(adkit.textContent).not.toContain("฿");
     expect(adkit.textContent).not.toContain("$");
-    expect(adkit.textContent?.match(/—/g)).toHaveLength(2);
+    // Spend, profit and the failed uploads (no conversions route in this harness, so that read fails) are all "—".
+    expect(adkit.textContent?.match(/—/g)).toHaveLength(3);
   });
 
   it("turns a shown number into — once the clock passes 2 hours, with no other change on the screen", async () => {
@@ -796,8 +797,66 @@ describe("AdKit numbers on the brand detail", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(3 * 3_600_000); });
       expect(adkit.textContent).not.toContain("฿");
       expect(adkit.textContent).not.toContain("$");
-      expect(adkit.textContent?.match(/—/g)).toHaveLength(2);
+      expect(adkit.textContent?.match(/—/g)).toHaveLength(3);
     } finally { vi.useRealTimers(); }
+  });
+
+  it("adds the leads, the failed uploads and when the numbers were updated", async () => {
+    routes.set("GET /api/spend?period=7d", () => json({ ...spendBody("2026-11-07T04:30:00.000Z") }));
+    routes.set("GET /api/conversions?period=7d&status=dead&brand=brand-a&limit=1000", () => json({ period: "7d", from: "2026-10-01T00:00:00.000Z", to: "2026-10-08T00:00:00.000Z", totals: { pending: 0, processing: 0, uploaded: 0, dead: 2 }, value_totals: null, stalled: 0, truncated: false, rows: [1, 2].map((n) => ({ lead_id: `lead-${n}`, brand: "brand-a", status: "dead", reason_code: null, last_error: null, click_type: null, attempts: 3, value: null, currency: "THB", occurred_at: "2026-10-02T00:00:00.000Z", created_at: "2026-10-02T00:00:00.000Z", updated_at: "2026-10-02T00:00:00.000Z", next_attempt_at: null })) }));
+    render(<BrandLifecycle me={owner} />);
+    const adkit = await block();
+    const cell = (label: string) => within(adkit).getByText(label).nextElementSibling!.textContent;
+    await waitFor(() => expect(cell("อัปโหลดไม่สำเร็จ")).toBe("2"));
+    expect(cell("ลีด")).toMatch(/^\d+$/);
+    expect(adkit.textContent).toContain("อัปเดตล่าสุด");
+    // 04:30 UTC is 11:30 in Bangkok.
+    expect(adkit.textContent).toContain("11:30");
+  });
+
+  it("shows … while a number loads and — when its source fails, never a 0", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    routes.set("GET /api/spend?period=7d", async () => { await gate; return json(spendBody(new Date().toISOString())); });
+    render(<BrandLifecycle me={owner} />);
+    const adkit = await block();
+    const cell = (label: string) => within(adkit).getByText(label).nextElementSibling!.textContent;
+    expect(cell("ค่าโฆษณา")).toBe("…");
+    expect(cell("อัปโหลดไม่สำเร็จ")).not.toBe("0");
+    release();
+    await waitFor(() => expect(cell("ค่าโฆษณา")).toBe("฿3,500"));
+    // The harness has no conversions route: that read failed, so the cell says "—".
+    await waitFor(() => expect(cell("อัปโหลดไม่สำเร็จ")).toBe("—"));
+  });
+
+  it("shows the สถิติ section with the flow gate, clicks, cost per lead and the 7-day stats, and keeps cost per lead for the owner", async () => {
+    routes.set("GET /api/spend?period=7d", () => json(spendBody(new Date().toISOString())));
+    render(<BrandLifecycle me={owner} />);
+    const stats = await screen.findByRole("region", { name: "สถิติ" });
+    const cell = (label: string) => within(stats).getByText(label, { selector: "span.muted" }).nextElementSibling!.textContent;
+    await waitFor(() => expect(cell("ต้นทุนต่อลีด")).not.toBe("…"));
+    await waitFor(() => expect(cell("โฟลว์")).not.toBe("—"));
+    expect(cell("คลิก")).toMatch(/^\d+$/);
+    expect(within(stats).getByRole("group", { name: /สถิติ 7 วัน/ }).textContent).toMatch(/คลิก.*ลีด.*ขายได้.*รอผล/);
+    cleanup();
+    render(<BrandLifecycle me={employee} />);
+    const mine = await screen.findByRole("region", { name: "สถิติ" });
+    expect(within(mine).queryByText("ต้นทุนต่อลีด")).toBeNull();
+    expect(within(mine).getByText("คลิก", { selector: "span.muted" })).toBeTruthy();
+  });
+
+  it("keeps the install, rollback, redeploy, recover, timeline, Final URL and runtime config actions inside the collapsed installation section", async () => {
+    render(<BrandLifecycle me={owner} />);
+    const details = await waitFor(() => { const el = document.querySelector<HTMLDetailsElement>(".brands-aside details.install-details"); if (!el) throw new Error("no section"); return el; });
+    expect(details.open).toBe(false);
+    const inside = within(details);
+    for (const name of ["ติดตั้งใหม่", "ไทม์ไลน์", "เปิดเว็บไซต์", "คัดลอก Final URL", "ตั้งค่าแบรนด์"]) await waitFor(() => expect(inside.getAllByText(name, { selector: "button, a" }).length, name).toBeGreaterThan(0));
+    // None of them is outside the section.
+    const aside = document.querySelector(".brands-aside")!;
+    for (const name of ["ย้อนกลับ", "ติดตั้งใหม่", "ไทม์ไลน์", "คัดลอก Final URL", "ตั้งค่าแบรนด์", "กู้คืน"]) {
+      const outside = [...aside.querySelectorAll("button, a")].filter((el) => el.textContent === name && !details.contains(el));
+      expect(outside, name).toHaveLength(0);
+    }
   });
 
   it("has no block and no spend request for an employee", async () => {

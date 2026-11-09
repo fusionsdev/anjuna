@@ -256,9 +256,9 @@ function Warnings({ issues }: { issues: TemplateSubmitIssue[] }) {
 }
 
 const THEME_ROLES = [
-  ["primary", "สีหลัก (Primary)"],
-  ["primary_dark", "สีหลักเข้ม (Primary dark)"],
-  ["secondary", "สีรอง (Secondary)"],
+  ["primary", "สีหลัก"],
+  ["primary_dark", "สีหลักเข้ม"],
+  ["secondary", "สีรอง"],
 ] as const;
 const joinNames = (names: readonly string[] | undefined) => (names ?? []).join(", ");
 

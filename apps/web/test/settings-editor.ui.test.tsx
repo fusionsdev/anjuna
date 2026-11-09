@@ -38,16 +38,16 @@ describe("SettingsEditor", () => {
 
   it("settings shows the stored theme", () => {
     render(<Harness b={brand({ theme: { primary: "#0f766e", secondary: "#1e293b" } })} />);
-    expect(valueOf("รหัสสีหลัก (Primary hex)")).toBe("#0f766e");
-    expect(valueOf("รหัสสีรอง (Secondary hex)")).toBe("#1e293b");
-    expect(valueOf("สีหลัก (Primary)")).toBe("#0f766e");
-    expect(valueOf("สีรอง (Secondary)")).toBe("#1e293b");
+    expect(valueOf("รหัสสีหลัก")).toBe("#0f766e");
+    expect(valueOf("รหัสสีรอง")).toBe("#1e293b");
+    expect(valueOf("สีหลัก")).toBe("#0f766e");
+    expect(valueOf("สีรอง")).toBe("#1e293b");
   });
 
   it("settings shows template defaults for a null theme", () => {
     render(<Harness b={brand({ theme: null })} />);
-    expect(valueOf("สีหลัก (Primary)")).toBe("#2563eb");
-    expect(valueOf("สีรอง (Secondary)")).toBe("#1e293b");
+    expect(valueOf("สีหลัก")).toBe("#2563eb");
+    expect(valueOf("สีรอง")).toBe("#1e293b");
   });
 
   it("an invalid drain key shows its error, sets aria-invalid and disables Review and save", () => {
@@ -250,14 +250,14 @@ describe("SettingsEditor", () => {
       expect(await screen.findByText(/เทมเพลตของแบรนด์นี้ยังไม่มีแผนที่สี/)).toBeTruthy();
       expect(screen.getByText("Owner: ตรวจหาสีในหน้าเทมเพลต แล้ว Redeploy (Detect colors on the Templates page, then redeploy)")).toBeTruthy();
       expect(screen.getByText("#0f766e / #1e293b (ยังไม่มีผล / not applied)")).toBeTruthy();
-      expect(screen.queryByLabelText("รหัสสีหลัก (Primary hex)")).toBeNull();
+      expect(screen.queryByLabelText("รหัสสีหลัก")).toBeNull();
     });
 
     it("shows the redeploy note when the deployed map differs", async () => {
       stubThemeVars(null, vars("--color-royal"));
       render(<Harness b={brand()} />);
       expect(await screen.findByText("สีจะแสดงบนเว็บหลัง Redeploy (Colors show on the site after a redeploy)")).toBeTruthy();
-      expect(screen.getByLabelText("รหัสสีหลัก (Primary hex)")).toBeTruthy();
+      expect(screen.getByLabelText("รหัสสีหลัก")).toBeTruthy();
     });
 
     it("shows the color pickers alone when maps match", async () => {
@@ -266,7 +266,7 @@ describe("SettingsEditor", () => {
       render(<Harness b={brand()} />);
       await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
       await new Promise((r) => setTimeout(r, 0));
-      expect(screen.getByLabelText("รหัสสีหลัก (Primary hex)")).toBeTruthy();
+      expect(screen.getByLabelText("รหัสสีหลัก")).toBeTruthy();
       expect(screen.queryByText(/Redeploy/)).toBeNull();
       expect(screen.queryByText(/เทมเพลตของแบรนด์นี้ยังไม่มีแผนที่สี/)).toBeNull();
     });

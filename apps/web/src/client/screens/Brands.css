@@ -8,7 +8,7 @@
 .brands-aside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 /* Brand table: one main row per brand and a quiet row under it for the 7-day stats. */
-.brand-table .brand-pick { display: block; border: 0; background: transparent; padding: 0; text-align: left; font: inherit; color: inherit; }
+.brand-table .brand-pick { display: inline-flex; align-items: center; min-height: 44px; border: 0; background: transparent; padding: 0 4px; text-align: left; font: inherit; color: inherit; }
 .brand-table .brand-pick b { font-weight: 500; }
 .brand-table .brand-pick:focus-visible { outline: 2px solid var(--leak); outline-offset: 2px; }
 .brand-table tr.sel td { background: var(--paper); }
@@ -156,3 +156,15 @@
 .check-grid .check-row input[type="checkbox"] { position: absolute; opacity: 0; pointer-events: none; }
 .check-grid .check-row label { flex-direction: row; flex-wrap: wrap; gap: 4px; }
 .check-grid .check-row .muted { font-size: 13px; }
+
+/* The compact table has about 600px beside the panel: no avatar, tighter cells. */
+.brand-table .brand-avatar { display: none; }
+.brand-table th, .brand-table td { padding-inline: 6px; }
+.brand-table .brand-name-text { gap: 0; }
+.brand-table .row-actions { flex-direction: column; align-items: flex-end; gap: 4px; }
+.brand-table .row-actions .btn.row-action { white-space: normal; text-align: center; line-height: 1.3; padding-block: 6px; }
+@media (max-width: 767px) { .brand-table .row-actions { flex-direction: row; align-items: center; } }
+.brand-table th, .brand-table td { padding-inline: 4px; }
+.lifecycle-list { padding-inline: 12px; }
+.brand-table .chip { padding-inline: 8px; }
+.brand-table .stage-dots { gap: 3px; }
