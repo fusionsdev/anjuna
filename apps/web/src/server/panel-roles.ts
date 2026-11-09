@@ -77,6 +77,16 @@ export const PANEL_ROLE_TABLE = {
   deleteAdsEvent: "owner",
   /** T13 A3: the allocation tab (shared accounts, campaign owners, unallocated cost). Owner only; an employee never sees it. */
   adAllocation: "owner",
+  /**
+   * Campaigns screen (T13 Part B). The action names match CAMPAIGN_JOB_ROLES in @anjuna/contracts; core enforces the
+   * same roles again. Enable is the only job that spends money.
+   */
+  viewCampaigns: "employee",
+  createCampaignDraft: "employee",
+  enableCampaign: "owner",
+  pauseCampaign: "owner",
+  updateCampaignBudget: "owner",
+  checkCampaignStatus: "employee",
 } as const satisfies Record<string, AdminRole>;
 export type PanelAction = keyof typeof PANEL_ROLE_TABLE;
 

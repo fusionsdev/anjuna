@@ -450,8 +450,9 @@ export async function mockCoreFetch(request: Request): Promise<Response> {
     case "adkitAccounts":
     case "adkitConversionActions":
       return json(200, { items: [], synced_at: null });
-    case "createCampaignJob":
     case "listCampaigns":
+      return json(200, { campaigns: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
+    case "createCampaignJob":
     case "createAdkitJob":
       return err({ error: "invalid", request_id: rid, issues: [{ path: "body", message: "Mock core has no AdKit job queue" }] });
     case "conversionsReport": {

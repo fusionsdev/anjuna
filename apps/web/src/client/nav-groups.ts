@@ -17,7 +17,12 @@ export const NAV_GROUPS: Record<NavGroupId, NavGroup> = {
     id: "brands",
     label: "แบรนด์",
     // New brand is a button on the Brands screen, so /brands/new and the brand timeline select the Brands tab.
-    tabs: [{ id: "brands", label: "แบรนด์", alsoFor: ["new-brand", "brand-timeline"] }, { id: "deploys", label: "ประวัติการติดตั้ง" }],
+    // Campaigns (T13 Part B) is a tab here, so the sidebar keeps the redesign's 7 items.
+    tabs: [
+      { id: "brands", label: "แบรนด์", alsoFor: ["new-brand", "brand-timeline"] },
+      { id: "campaigns", label: "แคมเปญ" },
+      { id: "deploys", label: "ประวัติการติดตั้ง" },
+    ],
   },
   traffic: {
     id: "traffic",

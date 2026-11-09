@@ -3,7 +3,7 @@ import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contr
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
-import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse } from "@anjuna/contracts";
+import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, type CampaignJobCreateRequest } from "@anjuna/contracts";
 import { AdAllocationAssignResponse, AdAllocationResponse, type AdAllocationAssignRequest } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
@@ -205,6 +205,13 @@ export const api = {
   },
   sealedTemplates: () => request<unknown>("GET", "/api/templates/sealed").then((body) => SealedTemplatesResponse.parse(body)),
   me: () => request<{ user: Me }>("GET", "/api/me").then((r) => r.user),
+  // Campaigns screen (T13 Part B). Enable and pause are owner only on the server; status check and draft are employee.
+  adsCampaigns: () => request<unknown>("GET", "/api/ads/campaigns").then((body) => PanelCampaignsResponse.parse(body)),
+  draftAdsCampaign: (body: Omit<Extract<CampaignJobCreateRequest, { kind: "campaign.draft.create" }>, "kind">) =>
+    request<unknown>("POST", "/api/ads/campaigns/draft", body).then((result) => AdkitJobCreateResponse.parse(result)),
+  enableAdsCampaign: (campaignId: string) => request<unknown>("POST", `/api/ads/campaigns/${encodeURIComponent(campaignId)}/enable`, {}),
+  pauseAdsCampaign: (campaignId: string) => request<unknown>("POST", `/api/ads/campaigns/${encodeURIComponent(campaignId)}/pause`, {}),
+  checkAdsCampaignStatus: (campaignId: string) => request<unknown>("POST", `/api/ads/campaigns/${encodeURIComponent(campaignId)}/status-check`, {}),
   signIn: (email: string, password: string) => request<unknown>("POST", "/api/auth/sign-in/email", { email, password }),
   signOut: () => request<unknown>("POST", "/api/auth/sign-out", {}),
   brands: () => request<{ brands: BrandSummary[]; generated_at: string }>("GET", "/api/brands"),

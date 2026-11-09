@@ -44,6 +44,7 @@ import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleTrafficLogRoute } from "./traffic-log.js"; // spec traffic
 import { handleWizardRoute } from "./wizard.js";
 import { handleUsersAdminRoute } from "./users-admin.js"; // spec polish
+import { handleCampaignsRoute } from "./campaigns.js";
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -143,6 +144,10 @@ async function route(
   // Baht caps for panel campaigns (T13 Part B): owner read and write.
   const adsCaps = await handleAdsCapsSettingRoute(request, env, path, ctx);
   if (adsCaps) return adsCaps;
+
+  // Campaigns screen (T13 Part B): list and draft for an employee; enable and pause owner only.
+  const campaigns = await handleCampaignsRoute(request, env, path, ctx);
+  if (campaigns) return campaigns;
 
   const wizard = await handleWizardRoute(request, env, path, ctx);
   if (wizard) return wizard;
