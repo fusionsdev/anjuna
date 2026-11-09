@@ -3,7 +3,7 @@ import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contr
 import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
-import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, type CampaignJobCreateRequest } from "@anjuna/contracts";
+import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, TerminalJobResponse, TerminalRunResponse, type CampaignJobCreateRequest, type TerminalRunRequest } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
@@ -205,6 +205,9 @@ export const api = {
   sealedTemplates: () => request<unknown>("GET", "/api/templates/sealed").then((body) => SealedTemplatesResponse.parse(body)),
   me: () => request<{ user: Me }>("GET", "/api/me").then((r) => r.user),
   // Campaigns screen (T13 Part B). Enable and pause are owner only on the server; status check and draft are employee.
+  // AdKit Terminal (T13-6), owner only on the server.
+  adkitTerminal: (body: TerminalRunRequest) => request<unknown>("POST", "/api/adkit/terminal", body).then((result) => TerminalRunResponse.parse(result)),
+  adkitTerminalJob: (id: string) => request<unknown>("GET", `/api/adkit/jobs/${encodeURIComponent(id)}`).then((result) => TerminalJobResponse.parse(result).job),
   adsCampaigns: () => request<unknown>("GET", "/api/ads/campaigns").then((body) => PanelCampaignsResponse.parse(body)),
   draftAdsCampaign: (body: Omit<Extract<CampaignJobCreateRequest, { kind: "campaign.draft.create" }>, "kind">) =>
     request<unknown>("POST", "/api/ads/campaigns/draft", body).then((result) => AdkitJobCreateResponse.parse(result)),

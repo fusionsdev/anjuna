@@ -56,7 +56,7 @@ describe("nav groups", () => {
     expect(labels("brands", "owner")).toEqual(["แบรนด์", "แคมเปญ", "ประวัติการติดตั้ง"]);
     expect(labels("traffic", "owner")).toEqual(["ทราฟฟิก", "ฟันเนล", "ข้อผิดพลาดฝั่งเว็บ"]);
     expect(labels("leads", "owner")).toEqual(["ลีด", "คอนเวอร์ชัน"]);
-    expect(labels("settings", "owner")).toEqual(["ตั้งค่า", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
+    expect(labels("settings", "owner")).toEqual(["ตั้งค่า", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder", "AdKit Terminal"]);
   });
 
   it("leaves the owner-only tabs out for an employee", () => {
@@ -72,8 +72,14 @@ describe("nav groups", () => {
       traffic: "traffic", funnel: "traffic", errors: "traffic",
       leads: "leads", conversions: "leads",
       settings: "settings", users: "settings", mailing: "settings", suppressions: "settings", audit: "settings", "builder-keys": "settings",
+      "adkit-terminal": "settings",
     };
     for (const [view, group] of Object.entries(grouped)) expect(groupOfView(view as View)?.id ?? null, view).toBe(group);
+  });
+
+  it("shows the AdKit Terminal tab to the owner only (T13-6)", () => {
+    expect(labels("settings", "owner")).toContain("AdKit Terminal");
+    expect(labels("settings", "employee")).not.toContain("AdKit Terminal");
   });
 
   it("selects the Brands tab on the wizard and the brand timeline, which have no tab of their own", () => {
@@ -87,6 +93,6 @@ describe("nav groups", () => {
     expect(groupViews(NAV_GROUPS.traffic)).toEqual(["traffic", "funnel", "errors"]);
     expect(groupViews(NAV_GROUPS.leads)).toEqual(["leads", "conversions"]);
     expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "campaigns", "deploys", "new-brand"]);
-    expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["audit", "builder-keys", "mailing", "settings", "suppressions", "users"]);
+    expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["adkit-terminal", "audit", "builder-keys", "mailing", "settings", "suppressions", "users"]);
   });
 });

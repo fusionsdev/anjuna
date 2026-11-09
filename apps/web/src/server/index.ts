@@ -44,6 +44,7 @@ import { handleTrafficLogRoute } from "./traffic-log.js"; // spec traffic
 import { handleWizardRoute } from "./wizard.js";
 import { handleUsersAdminRoute } from "./users-admin.js"; // spec polish
 import { handleCampaignsRoute } from "./campaigns.js";
+import { handleAdkitTerminalRoute } from "./adkit-terminal.js";
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -147,6 +148,10 @@ async function route(
   // Campaigns screen (T13 Part B): list and draft for an employee; enable and pause owner only.
   const campaigns = await handleCampaignsRoute(request, env, path, ctx);
   if (campaigns) return campaigns;
+
+  // AdKit Terminal (T13-6): owner only.
+  const terminal = await handleAdkitTerminalRoute(request, env, path, ctx);
+  if (terminal) return terminal;
 
   const wizard = await handleWizardRoute(request, env, path, ctx);
   if (wizard) return wizard;

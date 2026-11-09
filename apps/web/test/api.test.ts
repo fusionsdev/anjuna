@@ -318,6 +318,7 @@ describe("role table coverage", () => {
       pauseCampaign: "owner",
       updateCampaignBudget: "owner",
       checkCampaignStatus: "employee",
+      useTerminal: "owner",
     });
   });
 });

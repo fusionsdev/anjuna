@@ -10,6 +10,7 @@ export const pageTitle: Record<View, string> = {
   "brand-timeline": "ไทม์ไลน์แบรนด์ (Brand timeline)", // spec timeline
   traffic: "ทราฟฟิก (Traffic)", errors: "ข้อผิดพลาดฝั่งเว็บ (Client errors)", // spec traffic
   campaigns: "แคมเปญ", // T13 Part B
+  "adkit-terminal": "AdKit Terminal", // T13-6
   "not-found": "ไม่พบหน้านี้",
 };
 
