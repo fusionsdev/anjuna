@@ -298,3 +298,11 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .table tbody tr:nth-child(even), .data-table tbody tr:nth-child(even) { background: rgba(246, 246, 244, .5); }
 .table tbody tr:hover, .data-table tbody tr:hover { background: rgba(255, 233, 226, .3); }
 .table td, .data-table td { font-size: var(--text-body); }
+
+/* StageDots: seven 10px dots, one per brand stage. */
+.stage-dots { display: inline-flex; align-items: center; gap: 4px; }
+.stage-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.stage-done { background: var(--ok); }
+.stage-warn { background: #E0A030; }
+.stage-fail { background: var(--bad); }
+.stage-pending { background: var(--card); border: 1px solid #C9C9C4; }
