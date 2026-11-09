@@ -188,7 +188,7 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
     view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
     await waitFor(() => expect(wizard()).toBeNull());
-    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "แบรนด์" })).toBeTruthy();
   });
 
   it("no longer shows the upgrade-all card on Brands", async () => {
@@ -332,9 +332,10 @@ describe("mounted lifecycle UI with API responses", () => {
     lifecycleRows = [{ ...brand, name: "Level Lending" }];
     render(<BrandLifecycle me={employee} />);
     const item = await screen.findByRole("button", { name: /renderable\.test/ });
-    expect(item.textContent).toContain("Level Lending");
     expect(within(item).getByText("renderable.test").tagName).toBe("B");
-    expect(within(item).getByText("Level Lending").tagName).not.toBe("B");
+    // The name sits under the domain in the same cell, in small type.
+    const row = item.closest("tr")!;
+    expect(within(row).getByText("Level Lending").tagName).toBe("SMALL");
   });
 
   it("the detail header shows the domain and no raw brand id", async () => {
@@ -583,7 +584,7 @@ describe("a confirm left open when the operator leaves the brand", () => {
     view.rerender(<BrandLifecycle me={owner} wizardRoute />);
     expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeDefined();
     view.rerender(<BrandLifecycle me={owner} wizardRoute={false} />);
-    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeDefined();
+    expect(await screen.findByRole("heading", { name: "แบรนด์" })).toBeDefined();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(posts()).toHaveLength(0);
@@ -631,54 +632,27 @@ it("Owner recovers a retained lock from the panel and sees completion receipts",
   expect(inAside().queryByRole("button", { name: recoverName })).toBeNull();
 });
 
-describe("7-day stats row in the brands list", () => {
-  const cells = (group: HTMLElement) => [...group.querySelectorAll("span")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim());
-  /** The two sources load apart, so wait for the row to settle on the expected numbers. */
-  const expectStats = async (name: RegExp | string, expected: string[]) => {
-    const group = await screen.findByRole("group", { name });
-    await waitFor(() => expect(cells(group)).toEqual(expected));
-  };
-  
-  const draft = () => LifecycleBrandSummary.parse({
-    brand_id: "brand-draft", name: "Draft Co", account: "test-account", hostnames: ["draft.test"], status: "draft", current_revision_id: null,
-    runtime_sync_status: "queued", bundle_form_version: null, payload_version: null,
-  });
-
-  it("shows clicks from the funnel report and leads, sold and pending from the brand list, for that brand only", async () => {
+describe("funnel requests behind the brand table", () => {
+  it("asks the funnel for 7 days and for 30 days, each for every brand", async () => {
     render(<BrandLifecycle me={employee} />);
-    await expectStats(/สถิติ 7 วัน \(7-day stats\) renderable.test/, ["คลิก (Clicks) 25", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
-    const query = requests.find((r) => r.path.startsWith("/api/funnel?"))!.path;
-    const params = new URLSearchParams(query.split("?")[1]);
-    expect(Date.parse(params.get("to")!) - Date.parse(params.get("from")!)).toBeGreaterThanOrEqual(7 * 24 * 60 * 60 * 1000);
-    expect(params.has("brand")).toBe(false);
+    await screen.findByRole("button", { name: /renderable\.test/ });
+    await waitFor(() => expect(requests.filter((r) => r.path.startsWith("/api/funnel?"))).toHaveLength(2));
+    const days = requests.filter((r) => r.path.startsWith("/api/funnel?")).map((r) => {
+      const params = new URLSearchParams(r.path.split("?")[1]);
+      expect(params.has("brand")).toBe(false);
+      return Math.round((Date.parse(params.get("to")!) - Date.parse(params.get("from")!)) / 86_400_000);
+    }).sort((a, b) => a - b);
+    // The 7-day window may end a day after today, so it is at least 7 days. The stage dots read 30.
+    expect(days[0]).toBeGreaterThanOrEqual(7);
+    expect(days[1]).toBeGreaterThanOrEqual(30);
   });
 
-  it("shows a listed brand with no click rows as 0 clicks, and a brand core does not list as unknown, never 0", async () => {
-    lifecycleRows = [structuredClone(brand), draft()];
-    routes.set("GET /api/funnel", () => json({ from: "2026-09-29T00:00:00.000Z", to: "2026-10-06T00:00:00.000Z", rows: [] }));
-    render(<BrandLifecycle me={employee} />);
-    await expectStats(/renderable.test/, ["คลิก (Clicks) 0", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
-    await expectStats(/draft\.test/, ["คลิก (Clicks) —", "ลีด (Leads) —", "ขายได้ (Sold) —", "รอผล (Pending) —"]);
-  });
-
-  it("shows every number as unknown when both sources fail, and clicks alone when only the funnel fails", async () => {
+  it("keeps the table and its stage dots when the funnel fails", async () => {
     routes.set("GET /api/funnel", () => json({ error: "bad_gateway" }, 502));
     render(<BrandLifecycle me={employee} />);
-    await expectStats(/renderable.test/, ["คลิก (Clicks) —", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
-    expect(requests.filter((r) => r.path.startsWith("/api/funnel?"))).toHaveLength(1);
-    cleanup();
-    runtimeAvailable = false;
-    routes.set("GET /api/brands", () => json({ error: "bad_gateway" }, 502));
-    render(<BrandLifecycle me={employee} />);
-    await expectStats(/renderable.test/, ["คลิก (Clicks) —", "ลีด (Leads) —", "ขายได้ (Sold) —", "รอผล (Pending) —"]);
-    expect(requests.filter((r) => r.path === "/api/brands")).not.toHaveLength(0);
-  });
-
-  it("marks an unknown number with a No data title", async () => {
-    routes.set("GET /api/funnel", () => json({ error: "forbidden_role", required_role: "owner" }, 403));
-    render(<BrandLifecycle me={employee} />);
-    await expectStats(/renderable.test/, ["คลิก (Clicks) —", "ลีด (Leads) 9", "ขายได้ (Sold) 3", "รอผล (Pending) 2"]);
-    expect(screen.getByTitle("ไม่มีข้อมูล (No data)").textContent).toContain("—");
+    const row = (await screen.findByRole("button", { name: /renderable\.test/ })).closest("tr")!;
+    await waitFor(() => expect(row.querySelector('[data-col="leads"]')!.textContent).toBe("—"));
+    expect(row.querySelectorAll(".stage-dot")).toHaveLength(7);
   });
 });
 

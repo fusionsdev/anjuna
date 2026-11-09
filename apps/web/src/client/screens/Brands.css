@@ -104,3 +104,16 @@
 .brand-sort { flex-direction: row; align-items: center; gap: 8px; color: var(--sub); }
 .brand-demo-toggle { flex-direction: row; align-items: center; min-height: 44px; font-size: var(--text-body); color: var(--sub); }
 @media (max-width: 1100px) { .brands-grid { grid-template-columns: minmax(0, 1fr); } .brands-aside { position: static; max-height: none; } }
+
+/* Detail panel (design BrandDetailPanel): four checklist cards, then the collapsed installation section. */
+.brand-side { border-left: 0; border-radius: var(--radius-card); padding: 20px; box-shadow: var(--shadow-1); }
+.brand-side .side-head h2 { font-size: var(--text-card-title); font-weight: 600; }
+.check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.check-grid .check-row { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.check-grid .check-row.done { background: var(--ok-bg); border-color: transparent; }
+.check-grid .check-row .check-icon { color: var(--sub); flex-shrink: 0; }
+.check-grid .check-row.done .check-icon { color: var(--ok); }
+.check-grid .check-row label { flex: 1 1 100px; margin: 0; font-size: 13px; font-weight: 500; }
+.check-grid .check-row .btn { min-height: 44px; flex: 1 1 100%; }
+.install-details > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; font-size: var(--text-body); }
+@media (max-width: 1100px) { .check-grid { grid-template-columns: minmax(0, 1fr); } }

@@ -91,7 +91,7 @@ describe("a resumed draft wizard", () => {
   it("closes when Back returns to /brands, and the draft stays selected", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "live.test" });
-    fireEvent.click(screen.getByRole("button", { name: /Maple Cash/ }));
+    fireEvent.click(screen.getByRole("button", { name: /maple.test/ }));
     expect(window.location.pathname).toBe("/brands/brand_new");
     fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด" }));
     expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();

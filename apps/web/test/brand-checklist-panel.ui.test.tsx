@@ -97,3 +97,31 @@ describe("brandSpendFresh", () => {
     expect(brandSpendFresh(report([{ currency: "THB", updated_at: "2026-11-07T11:30:00.000Z" }, { currency: "USD", updated_at: "2026-11-07T08:00:00.000Z" }]), "brand-a", now)).toBe(false);
   });
 });
+
+describe("brand detail panel layout", () => {
+  it("draws the four checklist steps as cards with an icon each, finished ones marked", () => {
+    render(detail({ steps: done("drain_route") }));
+    const cards = [...document.querySelectorAll(".check-grid .check-row")];
+    expect(cards).toHaveLength(4);
+    expect(cards.every((card) => card.querySelector("svg.check-icon"))).toBe(true);
+    expect(step("drain_route").className).toContain("done");
+    expect(step("test_sold").className).not.toContain("done");
+  });
+
+  it("puts the checklist cards above the action buttons", () => {
+    render(detail());
+    const cards = document.querySelector(".check-grid")!;
+    const actions = document.querySelector(".side-actions")!;
+    expect(Boolean(cards.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
+  it("keeps the installation section collapsed for a finished install and open for a failed one", () => {
+    const install = { install_id: "i-1", brand_id: "brand-a", operation: "install", status: "ready", runtime_sync_status: "ready", revision_id: "rev-1", started_at: "2026-11-01T00:00:00.000Z", finished_at: "2026-11-01T00:01:00.000Z", started_by: "owner", error: null, recovery_required: false, steps: [], receipts: [] } as never;
+    const view = render(detail({ install }));
+    expect(document.querySelector<HTMLDetailsElement>("details.install-details")!.open).toBe(false);
+    expect(within(document.querySelector("details.install-details")!).getByText("การติดตั้ง")).toBeTruthy();
+    view.unmount();
+    render(detail({ install: { ...(install as object), status: "failed" } as never }));
+    expect(document.querySelector<HTMLDetailsElement>("details.install-details")!.open).toBe(true);
+  });
+});

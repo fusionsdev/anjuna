@@ -62,7 +62,7 @@ export function BrandTable({ rows, showMoney, compact = false, selectedId, onSel
                     <span className="brand-avatar" aria-hidden="true">{(row.title || "?").charAt(0).toUpperCase()}</span>
                     <span className="brand-name-text">
                       {onSelect
-                        ? <button type="button" className="brand-pick" aria-current={selected || undefined}>{row.title}</button>
+                        ? <button type="button" className="brand-pick" aria-current={selected || undefined}><b>{row.title}</b></button>
                         : <b>{row.title}</b>}
                       {row.demo && <Chip tone="info"><FlaskConical aria-hidden="true" />ทดลอง</Chip>}
                       {row.subtitle && <small className="muted">{row.subtitle}</small>}
@@ -76,7 +76,7 @@ export function BrandTable({ rows, showMoney, compact = false, selectedId, onSel
                 <td data-label="Google Ads" data-col="ads">{row.ads ? <Chip tone={row.ads.tone} dot>{row.ads.label}</Chip> : "—"}</td>
                 <td data-label="" data-col="action">
                   <span className="row-actions" onClick={(event) => event.stopPropagation()}>
-                    <button type="button" className={`btn${row.action.primary ? " pri" : ""}`} data-next-action={row.action.kind} disabled={row.action.disabled} title={row.action.reason} onClick={row.action.onClick}>{row.action.label}</button>
+                    <button type="button" className={`btn${row.action.primary ? " pri" : ""} row-action row-primary`} data-next-action={row.action.kind} disabled={row.action.disabled} title={row.action.reason} onClick={row.action.onClick}>{row.action.label}</button>
                     {row.menu}
                     {row.action.reason && <span className="row-reason muted small">{row.action.reason}</span>}
                   </span>

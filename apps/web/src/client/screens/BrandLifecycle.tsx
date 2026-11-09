@@ -1,4 +1,5 @@
 import { type BrandRevisionsResponse, type BrandSummary, type ChecklistItemName, type ConversionsReportResponse, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
+import { BadgeCheck, Globe, Route, Webhook } from "lucide-react";
 import { Fragment, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, stepsFromChecklist, type BrandChecklists, type ChecklistStep, type Me } from "../api";
 import { brandSpendFresh, checklistFlags, clickLossWarning } from "../home-metrics";
@@ -38,6 +39,8 @@ async function installHistory(brandId: string): Promise<InstallHistoryRow[]> {
 // drain_route from the Core route, leadsgate_postbacks from the tenant token, final_url from the install smoke step.
 const computedChecklistItems: ChecklistItemName[] = ["drain_route", "leadsgate_postbacks", "final_url"];
 const checklistRefreshMs = 60_000;
+/** The step icons of the checklist cards (design BrandDetailPanel). */
+const CHECKLIST_ICON = { drain_route: Route, leadsgate_postbacks: Webhook, test_sold: BadgeCheck, final_url: Globe } as const;
 const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: string }> = [
   { item: "drain_route", label: "Drain route", pending: "อัตโนมัติเมื่อ Owner ตั้ง Google Ads account และ conversion action (Automatic once the Owner sets the Google Ads account and conversion action)" },
   { item: "leadsgate_postbacks", label: "LeadsGate postbacks", pending: "อัตโนมัติเมื่อ Core ใช้ postback token ของ tenant (Automatic when Core uses the tenant postback token)" },
@@ -950,6 +953,14 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</h2><p className="muted">{brand.name && brand.name !== (brand.hostnames[0] ?? brand.name ?? brand.brand_id) && `${brand.name} · `}form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
     {adkit && me.role === "owner" && <section className="section" aria-label="ตัวเลขโฆษณา"><h3>ตัวเลขโฆษณา · {adkit.periodLabel}</h3><div className="status-grid"><div><span className="muted">ค่าโฆษณา</span><strong><SpendText text={adkit.spendText} estimated={adkit.spendEstimated === true} /></strong></div><div><span className="muted">กำไร</span><strong><SpendText text={adkit.profitText} estimated={adkit.spendEstimated === true} /></strong></div></div></section>}
+    <div className="section"><h3>รายการตรวจ</h3><div className="check-grid">{checklistItems.map(({ item, label, pending }) => {
+      const step = steps.find((candidate) => candidate.item === item);
+      const done = step?.done === true;
+      // A failing step carries its own button. It asks in a dialog that names the brand, and is off while an install runs, like the side actions.
+      const fix = onFix && !done ? checklistFix(item, { owner: me.role === "owner", installFailed: (install?.status ?? brand.latest_install?.status) === "failed" }) : null;
+      const StepIcon = CHECKLIST_ICON[item as keyof typeof CHECKLIST_ICON];
+      return <div className={`check-row${done ? " done" : ""}`} key={item}>{StepIcon && <StepIcon size={20} aria-hidden="true" className="check-icon" />}<label><input type="checkbox" checked={done} disabled readOnly />{label} <span className="muted">({item})</span></label>{fix && onFix && <button type="button" className="btn" disabled={fix.reason !== undefined || pendingOperation} title={fix.reason} onClick={() => onFix(item)}>{fix.label}</button>}{item !== "test_sold" && !done && pending && <span className="muted small">{pending}</span>}{step?.evidence && <span className="muted small">หลักฐาน: {step.evidence}</span>}</div>;
+    })}</div></div>
     {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง</button>}{showAction("rollback") && <button className="btn" {...gate("rollback")} onClick={onRollback}>ย้อนกลับ</button>}{showAction("redeploy") && <button className="btn" {...gate("redeploy")} onClick={onRedeploy}>ติดตั้งใหม่</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" {...gate("redeployLatest")} onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด</button>}{showAction("recover") && <button className="btn danger" {...gate("recover")} onClick={onRecover}>กู้คืน</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}{ownerOnlyShown && <p className="muted small" role="note">ปุ่มที่กดไม่ได้ใช้ได้เฉพาะเจ้าของ</p>}</div>}
     {/* spec timeline: the managed-only row above would hide it for an unmanaged brand */}
     <div className="side-actions"><a className="btn" href={routePath({ view: "brand-timeline", brandId: brand.brand_id })} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); }}>ไทม์ไลน์</a></div>
@@ -961,6 +972,8 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
         <input id={finalUrlFieldId} className="final-url-field" readOnly autoFocus value={manualCopyUrl} onFocus={(e) => e.currentTarget.select()} />
       </div>}
     </div>}
+    {(install || revisions !== undefined) && <details className="section install-details" open={Boolean(install && install.status !== "ready") || revisions === null}>
+      <summary>การติดตั้ง</summary>
     {install && <div className="section"><h3>ความคืบหน้าการติดตั้ง</h3><p>รหัสติดตั้ง (Install ID): <code>{install.install_id}</code>{install.operation && ` · ${operationLabel[install.operation]}`}</p><p>สถานะ: <code>{install.status}</code> · runtime: <code>{install.runtime_sync_status}</code></p><InstallProgress install={install} canRetry={showAction("retry")} onRetry={onRetry} /></div>}
     {revisions !== undefined && <section className="section"><h3>ประวัติเวอร์ชัน</h3>
       {revisions === null
@@ -980,12 +993,6 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
           <div className="muted small">template <code>{r.template_version_id}</code> · form <code>{r.bundle_form_version ?? "—"}</code> · worker <code>{r.worker_version_id ?? "—"}</code></div>
         </li>)}</ul>}
     </section>}
-    <div className="section"><h3>รายการตรวจ</h3>{checklistItems.map(({ item, label, pending }) => {
-      const step = steps.find((candidate) => candidate.item === item);
-      const done = step?.done === true;
-      // A failing step carries its own button. It asks in a dialog that names the brand, and is off while an install runs, like the side actions.
-      const fix = onFix && !done ? checklistFix(item, { owner: me.role === "owner", installFailed: (install?.status ?? brand.latest_install?.status) === "failed" }) : null;
-      return <div className="check-row" key={item}><label><input type="checkbox" checked={done} disabled readOnly />{label} <span className="muted">({item})</span></label>{fix && onFix && <button type="button" className="btn" disabled={fix.reason !== undefined || pendingOperation} title={fix.reason} onClick={() => onFix(item)}>{fix.label}</button>}{item !== "test_sold" && !done && pending && <span className="muted small">{pending}</span>}{step?.evidence && <span className="muted small">หลักฐาน: {step.evidence}</span>}</div>;
-    })}</div>
+    </details>}
   </section>;
 }
