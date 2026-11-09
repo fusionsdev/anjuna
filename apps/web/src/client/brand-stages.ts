@@ -83,14 +83,18 @@ export function stageUnknowns(input: StageInput): boolean[] {
 
 export const STAGE_STATUS_TEXT: Record<StageStatus, string> = { done: "เสร็จ", warn: "มีปัญหา", fail: "ล้มเหลว", pending: "ยังไม่เริ่ม" };
 
-export type AdsChipLabel = "ใช้งาน" | "ไม่มี gclid" | "ยังไม่เชื่อม" | "ยังไม่มีแคมเปญ" | "กำลังสร้าง" | "เปิดแล้ว" | "สร้างไม่สำเร็จ" | "หยุดชั่วคราว" | "ทดลอง";
-export interface AdsChip { label: AdsChipLabel; tone: ChipTone }
+export type AdsChipLabel = "ใช้งาน" | "ไม่มี gclid (24 ชม.)" | "ยังไม่เชื่อม" | "ยังไม่มีแคมเปญ" | "กำลังสร้าง" | "เปิดแล้ว" | "สร้างไม่สำเร็จ" | "หยุดชั่วคราว" | "ทดลอง";
+/** title: the hover text of the chip, set where the label alone does not say which window the signal covers. */
+export interface AdsChip { label: AdsChipLabel; tone: ChipTone; title?: string }
+
+/** The gclid chip counts landings of the rolling last 24 hours, while the spend that gates it is today. The label and title say so. */
+export const NO_GCLID_CHIP_TITLE = "นับหน้าแรกที่เข้ามาโดยไม่มี gclid ในช่วง 24 ชั่วโมงล่าสุดแบบต่อเนื่อง ไม่ใช่เฉพาะวันนี้ ส่วนค่าโฆษณาที่ใช้เลือกแบรนด์นับเฉพาะวันนี้"
 
 /**
  * The Google Ads chip of a brand row, from what the panel really knows. First match wins:
  * demo brand (ทดลอง), paused in core (หยุดชั่วคราว); then the campaigns read:
  * not read yet or failed gives null (the cell shows a dash, never "not connected"); a brand absent from `brands` has no Google Ads
- * account (ยังไม่เชื่อม); an account with no campaign (ยังไม่มีแคมเปญ); the gclid warning, landings without a gclid above the threshold (ไม่มี gclid);
+ * account (ยังไม่เชื่อม); an account with no campaign (ยังไม่มีแคมเปญ); the gclid warning, landings without a gclid above the threshold (ไม่มี gclid (24 ชม.), the window is the rolling last 24 hours while spend is today);
  * a campaign being drafted or enabled (กำลังสร้าง); cost today above 0 (ใช้งาน);
  * an enabled campaign (เปิดแล้ว); only paused ones (หยุดชั่วคราว); only failed ones (สร้างไม่สำเร็จ).
  * A zero or a missing spend report never reads as a state: nothing here says "learning".
@@ -106,7 +110,7 @@ export function adsChip(input: { brand: LifecycleBrandSummary; paused: boolean; 
   const campaigns = ads.campaigns.filter((row) => row.brand_id === id && row.state !== "removed");
   if (campaigns.length === 0) return { label: "ยังไม่มีแคมเปญ", tone: "neutral" };
   // The gclid warning comes from the realtime report of the last 24 hours (brand-facts.ts), asked only for brands that spend today.
-  if (input.noGclid === true) return { label: "ไม่มี gclid", tone: "warning" };
+  if (input.noGclid === true) return { label: "ไม่มี gclid (24 ชม.)", tone: "warning", title: NO_GCLID_CHIP_TITLE };
   if (campaigns.some((row) => row.state === "drafting" || row.state === "draft" || row.state === "enabling")) return { label: "กำลังสร้าง", tone: "info" };
   if (input.spendToday !== null && input.spendToday > 0) return { label: "ใช้งาน", tone: "success" };
   if (campaigns.some((row) => row.state === "enabled")) return { label: "เปิดแล้ว", tone: "neutral" };

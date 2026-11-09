@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/client/api";
 import { NO_GCLID_MIN_LANDINGS, NO_GCLID_MIN_PCT, loadUploadFacts, noGclidWarning } from "../src/client/brand-facts";
-import { adsChip, stageStatuses, stageUnknowns, STAGE_LABELS, type StageInput, type StageStatus } from "../src/client/brand-stages";
+import { NO_GCLID_CHIP_TITLE, adsChip, stageStatuses, stageUnknowns, STAGE_LABELS, type StageInput, type StageStatus } from "../src/client/brand-stages";
 import { StageDots } from "../src/client/components/StageDots";
 
 afterEach(cleanup);
@@ -73,8 +73,8 @@ describe("Google Ads chip", () => {
   const chip = (over: Partial<Parameters<typeof adsChip>[0]> = {}) => adsChip({ brand: brand({ brand_id: "b1" }), paused: false, ads: ads([camp("enabled")]), spendToday: null, ...over });
   it.each([
     ["spend today on an enabled campaign", { spendToday: 120 }, { label: "ใช้งาน", tone: "success" }],
-    ["spend today and landings without a gclid above the threshold", { spendToday: 120, noGclid: true }, { label: "ไม่มี gclid", tone: "warning" }],
-    ["the warning outranks a campaign still being drafted", { noGclid: true, ads: ads([camp("draft")]) }, { label: "ไม่มี gclid", tone: "warning" }],
+    ["spend today and landings without a gclid above the threshold", { spendToday: 120, noGclid: true }, { label: "ไม่มี gclid (24 ชม.)", tone: "warning", title: NO_GCLID_CHIP_TITLE }],
+    ["the warning outranks a campaign still being drafted", { noGclid: true, ads: ads([camp("draft")]) }, { label: "ไม่มี gclid (24 ชม.)", tone: "warning", title: NO_GCLID_CHIP_TITLE }],
     ["a campaign being drafted outranks spend today", { spendToday: 120, ads: ads([camp("draft")]) }, { label: "กำลังสร้าง", tone: "info" }],
     ["no warning keeps ใช้งาน", { spendToday: 120, noGclid: false }, { label: "ใช้งาน", tone: "success" }],
     ["no account outranks the warning", { noGclid: true, ads: ads([], false) }, { label: "ยังไม่เชื่อม", tone: "neutral" }],

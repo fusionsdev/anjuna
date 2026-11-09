@@ -75,7 +75,7 @@ export function BrandTable({ rows, showMoney, compact = false, selectedId, onSel
                 {showMoney && <td data-label="ค่าโฆษณา" data-col="spend" className="num blue">{row.spend}</td>}
                 <td data-label="ลีด" data-col="leads" className="num">{row.leads}</td>
                 {costColumn && <td data-label="ต้นทุน/ลีด" data-col="cpl" className="num">{row.costPerLead}</td>}
-                <td data-label="Google Ads" data-col="ads">{row.ads ? <Chip tone={row.ads.tone} dot>{row.ads.label}</Chip> : "—"}</td>
+                <td data-label="Google Ads" data-col="ads">{row.ads ? <Chip tone={row.ads.tone} dot title={row.ads.title}>{row.ads.label}</Chip> : "—"}</td>
                 <td data-label="" data-col="action">
                   <span className="row-actions" onClick={(event) => event.stopPropagation()}>
                     <button type="button" className={`btn${row.action.primary ? " pri" : ""} row-action row-primary`} data-next-action={row.action.kind} disabled={row.action.disabled} title={row.action.reason} onClick={row.action.onClick}>{row.action.label}</button>

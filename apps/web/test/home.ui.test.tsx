@@ -1198,11 +1198,11 @@ describe("Home screen, facts behind the brand table", () => {
     realtimeReply = (brand) => json({ kpis: { landing_views: 300, no_gclid_landings: { count: brand === "cg" ? 120 : 3, pct: brand === "cg" ? 40 : 1 } } });
     render(<HomeScreen me={owner} />);
     const chip = () => brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent;
-    await waitFor(() => expect(chip()).toBe("ไม่มี gclid"));
+    await waitFor(() => expect(chip()).toBe("ไม่มี gclid (24 ชม.)"));
     for (const label of ["7 วัน", "30 วัน", "วันนี้"]) {
       fireEvent.click(screen.getByRole("button", { name: label }));
       await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
-      expect(chip()).toBe("ไม่มี gclid");
+      expect(chip()).toBe("ไม่มี gclid (24 ชม.)");
     }
     // Asked for 24 hours and for the brand that spends today only (Sixpack has no spend row).
     const asked = requests.filter((r) => r.startsWith("/api/traffic/realtime"));

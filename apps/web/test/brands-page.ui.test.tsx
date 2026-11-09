@@ -201,11 +201,16 @@ describe("brands table for an Employee", () => {
   it("shows ไม่มี gclid for a brand whose landings of the last 24 hours had too few gclids, and keeps it when the period changes", async () => {
     routes.set("GET /api/traffic/realtime?period=24h&brand=brand-cg", () => json({ kpis: { landing_views: 300, no_gclid_landings: { count: 120, pct: 40 } } }));
     render(<BrandLifecycle me={owner} />);
-    await waitFor(() => expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid"));
+    await waitFor(() => expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid (24 ชม.)"));
     expect(cells("alpha.test").ads).toBe("ยังไม่เชื่อม");
+    // The hover text says the window is the rolling 24 hours while spend is today.
+    const warnChip = document.querySelector('[data-col="ads"] .chip[title]')!;
+    expect(warnChip.textContent).toBe("ไม่มี gclid (24 ชม.)");
+    expect(warnChip.getAttribute("title")).toContain("24 ชั่วโมงล่าสุด");
+    expect(warnChip.getAttribute("title")).toContain("เฉพาะวันนี้");
     fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith("30d"));
-    expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid");
+    expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid (24 ชม.)");
     // Only the brands that spend today were asked, each for 24 hours.
     const asked = requests.filter((r) => r.path.startsWith("/api/traffic/realtime")).map((r) => r.path).sort();
     expect([...new Set(asked)]).toEqual(["/api/traffic/realtime?period=24h&brand=brand-al", "/api/traffic/realtime?period=24h&brand=brand-cg", "/api/traffic/realtime?period=24h&brand=brand-fm"]);
