@@ -1,0 +1,10 @@
+{
+  "alert_key": "submit_error_rate",
+  "state": "alert",
+  "first_seen": "2026-11-10T12:00:00.000Z",
+  "last_sent": "2026-11-10T12:15:00.000Z",
+  "acknowledged_by": "fixture-owner",
+  "acknowledged_at": "2026-11-10T12:20:00.000Z",
+  "closed_at": null,
+  "updated_at": "2026-11-10T12:20:00.000Z"
+}

@@ -1,0 +1,405 @@
+{
+  "now": "2026-11-10T12:30:00.000Z",
+  "events": {
+    "fixture-01": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-02": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "CA",
+      "risk_score": 50,
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-03": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-04": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "form_step": 2,
+      "error_code": null
+    },
+    "fixture-05": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-04",
+      "campaign": "fixture-campaign",
+      "form_step": 2,
+      "error_code": null
+    },
+    "fixture-06": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-05",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": "field_validation"
+    },
+    "fixture-07": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-06",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-08": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-07",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-09": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-08",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-10": {
+      "session_id": "fixture-0-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 50,
+      "source": "source-09",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-11": {
+      "session_id": "fixture-1-drop",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-10",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-12": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "GB",
+      "risk_score": 0,
+      "source": "source-11",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-13": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-14": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-15": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-16": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": "field_validation"
+    },
+    "fixture-17": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-04",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-18": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-05",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-19": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-06",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-20": {
+      "session_id": "fixture-1-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-07",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-21": {
+      "session_id": "fixture-2-drop",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-08",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-22": {
+      "session_id": "fixture-2-flow",
+      "gclid": null,
+      "country": "DE",
+      "risk_score": 0,
+      "source": "source-09",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-23": {
+      "session_id": "fixture-2-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-10",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-24": {
+      "session_id": "fixture-2-flow",
+      "gclid": "fixture-click",
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-11",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-25": {
+      "session_id": "fixture-2-flow",
+      "gclid": "fixture-click",
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-26": {
+      "session_id": "fixture-2-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": "field_validation"
+    },
+    "fixture-27": {
+      "session_id": "fixture-2-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-28": {
+      "session_id": "fixture-2-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-29": {
+      "session_id": "fixture-2-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-04",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-30": {
+      "session_id": "fixture-2-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-05",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-31": {
+      "session_id": "fixture-3-drop",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-06",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-32": {
+      "session_id": "fixture-3-flow",
+      "gclid": "fixture-click",
+      "country": "TH",
+      "risk_score": 0,
+      "source": "source-07",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-33": {
+      "session_id": "fixture-3-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-08",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-34": {
+      "session_id": "fixture-3-flow",
+      "gclid": "fixture-click",
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-09",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-35": {
+      "session_id": "fixture-3-flow",
+      "gclid": "fixture-click",
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-10",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-36": {
+      "session_id": "fixture-3-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-11",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": "field_validation"
+    },
+    "fixture-37": {
+      "session_id": "fixture-3-flow",
+      "gclid": "fixture-click",
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-00",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-38": {
+      "session_id": "fixture-3-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-01",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-39": {
+      "session_id": "fixture-3-flow",
+      "gclid": "fixture-click",
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-02",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    },
+    "fixture-40": {
+      "session_id": "fixture-3-flow",
+      "gclid": null,
+      "country": "US",
+      "risk_score": 0,
+      "source": "source-03",
+      "campaign": "fixture-campaign",
+      "form_step": null,
+      "error_code": null
+    }
+  }
+}
