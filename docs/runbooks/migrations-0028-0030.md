@@ -116,13 +116,18 @@ refers to.
 CF=workers/core/wrangler.deploy.aduplift.jsonc
 CA=apps/web/wrangler.deploy.aduplift.jsonc
 
-# V1 applied-migration ledger: 0028, 0029, 0030 must be listed
-# (wrangler "d1 migrations list" shows only *pending* migrations,
+# V1 applied-migration ledger: exactly the Wave 5 names must be listed.
+# The query filters by name because a healthy leads DB already holds
+# 30 rows (0001-0030) and auth 2 - an unfiltered SELECT returns all of
+# them. (wrangler "d1 migrations list" shows only *pending* migrations,
 #  so "no migrations to apply" is the correct *list* outcome)
 bunx wrangler d1 execute aduplift-leads --remote --config "$CF" \
-  --command "SELECT name FROM d1_migrations ORDER BY name"
+  --command "SELECT name FROM d1_migrations WHERE name IN \
+('0028_traffic_ua_country.sql','0029_alert_state.sql',\
+'0030_notification_log.sql') ORDER BY name"
 bunx wrangler d1 execute aduplift-auth --remote --config "$CA" \
-  --command "SELECT name FROM d1_migrations ORDER BY name"
+  --command "SELECT name FROM d1_migrations WHERE name IN \
+('0002_user_prefs.sql') ORDER BY name"
 
 # V2 the three columns exist, nullable, no default
 bunx wrangler d1 execute aduplift-leads --remote --config "$CF" \
@@ -142,8 +147,8 @@ Expected row counts and values:
 
 | Query | Expected |
 | --- | --- |
-| V1 (leads) | three rows, full names in the list below |
-| V1 (auth) | including `0001_better_auth.sql`, `0002_user_prefs.sql` |
+| V1 (leads) | 3 rows, the three names in the list below |
+| V1 (auth) | 1 row, `0002_user_prefs.sql` |
 | V2 | 3 rows, all `notnull = 0`, `dflt_value = NULL` |
 | V3 | `alert_state` = 0, `notification_log` = 0, `user_prefs` = 0 |
 
@@ -152,6 +157,12 @@ V1 (leads) must list exactly these three ledger names:
 - `0028_traffic_ua_country.sql`
 - `0029_alert_state.sql`
 - `0030_notification_log.sql`
+
+The filtered query is what makes "3 rows" exact. An unfiltered
+`SELECT name FROM d1_migrations` is not a 3-row check: a correctly
+migrated leads database already holds **30** ledger rows (0001–0030) and
+auth holds **2** (0001–0002). Compare the returned set, not the row count
+of the whole table.
 
 The ledger stores the **full filename, `.sql` included** — Wrangler inserts
 the relative filename it read from `migrations_dir` and matches it exactly
