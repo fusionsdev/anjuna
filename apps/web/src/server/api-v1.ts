@@ -228,7 +228,7 @@ export async function handleApiV1(request: Request, env: Env, url: URL, path: st
     if ((denied = need("ads:draft"))) return denied;
     const parsed = CampaignDraftRequest.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return invalid(parsed.error);
-    const r = await callCore(env, ctx, { endpoint: "createCampaignJob", body: { kind: "campaign.draft.create", ...parsed.data } });
+    const r = await callCore(env, ctx, { endpoint: "createCampaignJob", body: { ...parsed.data, kind: "campaign.draft.create" } });
     return json(r.status, r.body);
   }
   if ((m = path.match(/^\/api\/v1\/ads\/campaigns\/([^/]+)\/(budget|enable)$/)) && method === "POST") {
@@ -243,7 +243,7 @@ export async function handleApiV1(request: Request, env: Env, url: URL, path: st
     }
     const parsed = CampaignBudgetRequest.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return invalid(parsed.error);
-    const r = await callCore(env, ctx, { endpoint: "createCampaignJob", body: { kind: "campaign.update_budget", campaign_id: campaignId.data, ...parsed.data } });
+    const r = await callCore(env, ctx, { endpoint: "createCampaignJob", body: { ...parsed.data, kind: "campaign.update_budget", campaign_id: campaignId.data } });
     return json(r.status, r.body);
   }
   if (path === "/api/v1/ads/spend" && method === "GET") {

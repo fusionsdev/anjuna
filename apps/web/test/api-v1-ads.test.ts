@@ -1,3 +1,4 @@
+import { SpendRowsResponse } from "@anjuna/contracts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { call, makeEnv, resetState, sessions, setupDatabases } from "./helpers";
 
@@ -26,7 +27,7 @@ const DRAFT = {
 const CAMPAIGN_ID = "22334455667";
 
 /** A core stand-in for the ads admin routes: records each request and answers contract-valid bodies. */
-function adsCore() {
+function adsCore(override?: (url: URL, body: unknown) => Response | undefined) {
   const seen: Array<{ method: string; path: string; search: string; role: string | null; actor: string | null; body: unknown }> = [];
   const now = "2026-11-09T08:00:00.000Z";
   const core = {
@@ -34,6 +35,8 @@ function adsCore() {
       const url = new URL(request.url);
       const body = request.method === "GET" ? null : await request.json();
       seen.push({ method: request.method, path: url.pathname, search: url.search, role: request.headers.get("x-actor-role"), actor: request.headers.get("x-actor-id"), body });
+      const forced = override?.(url, body);
+      if (forced) return forced;
       if (url.pathname === "/admin/adkit/campaigns") {
         return Response.json({ campaigns: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
       }
@@ -161,6 +164,29 @@ describe("/api/v1/ads campaigns", () => {
   });
 });
 
+describe("/api/v1/ads core outcomes", () => {
+  it("passes a core cap refusal (422) through to the client", async () => {
+    const key = await mintKey(["ads:draft"]);
+    const refusal = adsCore((url) => url.pathname === "/admin/adkit/campaign-jobs"
+      ? Response.json({ error: "invalid", request_id: "req_6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", issues: [{ path: "daily_budget", message: "Budget is above the daily cap" }] }, { status: 422 })
+      : undefined);
+    const response = await call("/api/v1/ads/campaigns", { headers: bearer(key.secret), method: "POST", body: DRAFT, env: refusal.env });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "invalid", issues: [{ path: "daily_budget" }] });
+  });
+
+  it("passes an idempotent retry (200, created:false) through to the client", async () => {
+    const key = await mintKey(["ads:draft"]);
+    const first = adsCore();
+    const created = await call("/api/v1/ads/campaigns", { headers: bearer(key.secret), method: "POST", body: DRAFT, env: first.env });
+    const job = ((await created.json()) as { job: unknown }).job;
+    const retry = adsCore((url) => url.pathname === "/admin/adkit/campaign-jobs" ? Response.json({ created: false, job }, { status: 200 }) : undefined);
+    const response = await call("/api/v1/ads/campaigns", { headers: bearer(key.secret), method: "POST", body: DRAFT, env: retry.env });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ created: false });
+  });
+});
+
 describe("/api/v1/ads/spend", () => {
   it("returns allocation on every row, keeps currencies apart and carries no USD or profit figure", async () => {
     const key = await mintKey(["ads:read"]);
@@ -184,6 +210,19 @@ describe("/api/v1/ads/spend", () => {
     }
     expect((await call(`/api/v1/ads/spend?key=${key.secret}`, { headers: bearer(key.secret), env: core.env })).status).toBe(400);
     expect(core.seen).toHaveLength(0);
+  });
+
+  it("fails closed when core adds a profit or USD field: the strict contract turns it into 502 and nothing is passed through", async () => {
+    const key = await mintKey(["ads:read"]);
+    const leaky = adsCore((url) => url.pathname === "/admin/spend/rows"
+      ? Response.json({ from: "2026-11-03", to: "2026-11-09", rows: [{ brand_id: "maple-v1", currency: "THB", allocation: "exact", cost: 1, clicks: 1, impressions: 1, updated_at: "2026-11-09T08:00:00.000Z", profit_usd: 99 }] })
+      : undefined);
+    const response = await call("/api/v1/ads/spend", { headers: bearer(key.secret), env: leaky.env });
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toMatch(/profit|usd/i);
+    const ok = adsCore();
+    const good = await call("/api/v1/ads/spend", { headers: bearer(key.secret), env: ok.env });
+    expect(SpendRowsResponse.safeParse(await good.json()).success).toBe(true);
   });
 
   it("an owner session reads spend without a key", async () => {
