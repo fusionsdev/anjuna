@@ -27,7 +27,7 @@ function addedByCell(row: SuppressionRow, usersById: Map<string, PanelUser>) {
   if (row.added_by === null) return <span>ระบบ (sync)</span>;
   const user = usersById.get(row.added_by);
   if (user) return <span>{user.name}</span>;
-  return <code title="ผู้ใช้ที่ถูกลบ (Deleted user)" style={{ fontSize: "0.85em", overflowWrap: "anywhere" }}>{row.added_by}</code>;
+  return <code title="ผู้ใช้ที่ถูกลบ (Deleted user)" style={{ fontSize: "0.875em", overflowWrap: "anywhere" }}>{row.added_by}</code>;
 }
 // Keyed on the HTTP status only: ApiError.thai and the body can echo the searched email, so this screen never renders them.
 // The add and remove toasts use their own fixed messages for the same reason.

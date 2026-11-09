@@ -20,7 +20,7 @@
 .trend-hit { fill: transparent; }
 .trend-hit:hover { fill: color-mix(in srgb, var(--muted) 12%, transparent); }
 .trend-axis { margin: 4px 0 0; text-align: right; }
-.trend-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 11px; color: var(--muted); }
+.trend-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
 .trend-legend li { display: flex; align-items: center; gap: 6px; }
 .trend-swatch { width: 10px; height: 10px; border-radius: 2px; }
 .trend-swatch.landing { background: var(--spend); }

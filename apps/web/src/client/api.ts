@@ -6,6 +6,7 @@ import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } fr
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, TerminalJobResponse, TerminalRunResponse, type CampaignJobCreateRequest, type TerminalRunRequest } from "@anjuna/contracts";
 import { AdAllocationAssignResponse, AdAllocationResponse, type AdAllocationAssignRequest } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
+import type { BrandScopePrefs } from "./brand-scope";
 import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
 import type { TimelineRequestQuery } from "./timeline";
@@ -66,6 +67,20 @@ export function stepsFromChecklist(result: { checklist: Array<{ item: ChecklistI
 /** GET /api/brands/checklists, keyed by brand id. */
 export interface BrandChecklists {
   brands: Record<string, BrandChecklistEntry>;
+}
+
+/** GET /api/nav/counts: what the sidebar badges show. */
+export interface NavCounts { brands_need_fix: number; templates_awaiting: number; alerts_open: number }
+
+/** GET/PUT /api/me/prefs. Saved views are kept as the server sent them and written back unchanged. */
+export interface UserPrefsBody { brand_scope: BrandScopePrefs; saved_views: Record<string, unknown> }
+
+/** The server may answer with the prefs themselves or wrapped as `{ prefs }`. */
+function unwrapPrefs(body: unknown): UserPrefsBody {
+  const raw = (body && typeof body === "object" && "prefs" in body ? (body as { prefs: unknown }).prefs : body) as Partial<UserPrefsBody> | null;
+  const scope = raw?.brand_scope;
+  if (!scope || typeof scope.hide_inactive !== "boolean" || typeof scope.show_demo !== "boolean") throw new Error("prefs response is not valid");
+  return { brand_scope: { hide_inactive: scope.hide_inactive, show_demo: scope.show_demo, brand_ids: Array.isArray(scope.brand_ids) ? scope.brand_ids : null }, saved_views: raw?.saved_views ?? {} };
 }
 
 export interface Me {
@@ -205,6 +220,11 @@ export const api = {
   },
   sealedTemplates: () => request<unknown>("GET", "/api/templates/sealed").then((body) => SealedTemplatesResponse.parse(body)),
   me: () => request<{ user: Me }>("GET", "/api/me").then((r) => r.user),
+  /** Sidebar badges. Lane W01 (W01-5) serves it; until then the call fails and the sidebar falls back to the alerts report. */
+  navCounts: () => request<NavCounts>("GET", "/api/nav/counts"),
+  /** Per-user preferences (brand scope, saved views). Lane W01 (W01-5) serves them; the shape is `UserPrefs` in packages/contracts. */
+  mePrefs: () => request<unknown>("GET", "/api/me/prefs").then(unwrapPrefs),
+  saveMePrefs: (prefs: UserPrefsBody) => request<unknown>("PUT", "/api/me/prefs", prefs).then(unwrapPrefs),
   // Campaigns screen (T13 Part B). Enable and pause are owner only on the server; status check and draft are employee.
   // AdKit Terminal (T13-6), owner only on the server.
   adkitTerminal: (body: TerminalRunRequest) => request<unknown>("POST", "/api/adkit/terminal", body).then((result) => TerminalRunResponse.parse(result)),

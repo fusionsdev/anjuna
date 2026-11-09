@@ -13,7 +13,7 @@ const items: NavItem[] = [
 
 function renderShell(onSignOut = vi.fn(), onOpen = vi.fn()) {
   render(
-    <AppShell me={me} title="หน้าแรก" onSignOut={onSignOut} nav={<SidebarNav items={items} current="home" onOpen={onOpen} />}>
+    <AppShell me={me} onSignOut={onSignOut} nav={<SidebarNav items={items} current="home" onOpen={onOpen} />}>
       <p>body</p>
     </AppShell>,
   );
@@ -21,20 +21,28 @@ function renderShell(onSignOut = vi.fn(), onOpen = vi.fn()) {
 }
 
 describe("AppShell", () => {
-  it("shows the page title, tenant badge and user menu in the header", () => {
+  it("shows the logo link, the signed-in user with role and tenant, and signs out from the user block", () => {
     const { onSignOut } = renderShell();
-    const header = screen.getByRole("banner");
-    expect(within(header).getByText("หน้าแรก")).toBeTruthy();
-    expect(within(header).getByText("aduplift")).toBeTruthy();
-    fireEvent.click(within(header).getByRole("button", { name: /owner@example.test/ }));
-    expect(screen.getByText("Owner")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" }));
+    const side = within(document.querySelector<HTMLElement>("aside.sidebar")!);
+    const logo = side.getByRole("link", { name: "Anjuna" });
+    expect(logo.getAttribute("href")).toBe("/");
+    expect(side.getByText("owner@example.test")).toBeTruthy();
+    expect(side.getByText("Owner · aduplift")).toBeTruthy();
+    fireEvent.click(side.getByRole("button", { name: "ออกจากระบบ" }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no desktop top bar: the 56px bar under 1024px holds the menu button and the logo", () => {
+    renderShell();
+    const bar = document.querySelector<HTMLElement>("header.mobile-bar")!;
+    expect(within(bar).getByRole("button", { name: "เปิดเมนู" })).toBeTruthy();
+    expect(within(bar).getByRole("link", { name: "Anjuna" })).toBeTruthy();
+    expect(document.querySelector(".topbar")).toBeNull();
   });
 
   it("opens and closes the mobile drawer with the menu button and Escape", () => {
     renderShell();
-    const toggle = screen.getByRole("button", { name: "เมนู (Menu)" });
+    const toggle = screen.getByRole("button", { name: "เปิดเมนู" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -45,7 +53,7 @@ describe("AppShell", () => {
 
   it("returns focus to the menu button when Escape closes the drawer", () => {
     renderShell();
-    const toggle = screen.getByRole("button", { name: "เมนู (Menu)" });
+    const toggle = screen.getByRole("button", { name: "เปิดเมนู" });
     fireEvent.click(toggle);
     screen.getByRole("link", { name: "หน้าแรก" }).focus();
     fireEvent.keyDown(document, { key: "Escape" });
@@ -64,7 +72,7 @@ describe("AppShell", () => {
       renderShell();
       const sidebar = () => document.querySelector("aside.sidebar")!;
       expect(sidebar().hasAttribute("inert")).toBe(true);
-      fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
+      fireEvent.click(screen.getByRole("button", { name: "เปิดเมนู" }));
       expect(sidebar().hasAttribute("inert")).toBe(false);
       cleanup();
       stub(false);
@@ -82,7 +90,7 @@ describe("AppShell", () => {
     })) as unknown as typeof window.matchMedia;
     try {
       renderShell();
-      fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
+      fireEvent.click(screen.getByRole("button", { name: "เปิดเมนู" }));
       const link = screen.getByRole("link", { name: /การแจ้งเตือน/ });
       link.focus();
       fireEvent.click(link);
@@ -104,7 +112,7 @@ describe("AppShell", () => {
 
     it("moves focus to the first nav link and makes the page behind inert while the drawer is open", () => {
       renderShell();
-      const toggle = screen.getByRole("button", { name: "เมนู (Menu)" });
+      const toggle = screen.getByRole("button", { name: "เปิดเมนู" });
       expect(mainCol().hasAttribute("inert")).toBe(false);
       fireEvent.click(toggle);
       expect(document.activeElement).toBe(screen.getByRole("link", { name: "หน้าแรก" }));
@@ -116,7 +124,7 @@ describe("AppShell", () => {
 
     it("returns focus to the menu button when the scrim closes the drawer", () => {
       renderShell();
-      const toggle = screen.getByRole("button", { name: "เมนู (Menu)" });
+      const toggle = screen.getByRole("button", { name: "เปิดเมนู" });
       fireEvent.click(toggle);
       fireEvent.click(document.querySelector(".shell-scrim")!);
       expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -127,36 +135,23 @@ describe("AppShell", () => {
 
   it("does not mark the page behind inert on a desktop viewport", () => {
     renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
+    fireEvent.click(screen.getByRole("button", { name: "เปิดเมนู" }));
     expect(document.querySelector(".main-col")!.hasAttribute("inert")).toBe(false);
   });
 
-  it("returns focus to the user menu button when Escape closes the user menu", () => {
+  it("closes the drawer with the close button inside it", () => {
     renderShell();
-    const userButton = screen.getByRole("button", { name: /owner@example.test/ });
-    fireEvent.click(userButton);
-    screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" }).focus();
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeNull();
-    expect(document.activeElement).toBe(userButton);
-  });
-
-  it("closes the user menu on a pointerdown outside it", () => {
-    renderShell();
-    fireEvent.click(screen.getByRole("button", { name: /owner@example.test/ }));
-    expect(screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeTruthy();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "ออกจากระบบ (Sign out)" }));
-    expect(screen.queryByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeTruthy();
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole("button", { name: "ออกจากระบบ (Sign out)" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "เปิดเมนู" }));
+    fireEvent.click(screen.getByRole("button", { name: "ปิดเมนู" }));
+    expect(screen.getByRole("button", { name: "เปิดเมนู" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("closes the drawer when a nav link is used", () => {
     const { onOpen } = renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "เมนู (Menu)" }));
+    fireEvent.click(screen.getByRole("button", { name: "เปิดเมนู" }));
     fireEvent.click(screen.getByRole("link", { name: /การแจ้งเตือน/ }));
     expect(onOpen).toHaveBeenCalledWith("alerts");
-    expect(screen.getByRole("button", { name: "เมนู (Menu)" }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByRole("button", { name: "เปิดเมนู" }).getAttribute("aria-expanded")).toBe("false");
   });
 });
 

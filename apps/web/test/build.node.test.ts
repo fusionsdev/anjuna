@@ -95,11 +95,15 @@ describe("SPA build", () => {
     expect(existsSync(path.join(out, "assets"))).toBe(true);
   });
 
-  it("loads no external font and uses absolute asset paths for deep links", async () => {
+  it("loads fonts only from the three Google Fonts families and uses absolute asset paths for deep links", async () => {
     await build({ configFile: path.join(root, "vite.config.ts"), logLevel: "silent" });
     const out = path.join(root, "dist/client");
     const html = readFileSync(path.join(out, "index.html"), "utf8");
-    expect(html).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
+    // W02-1 loads Inter, IBM Plex Mono and IBM Plex Sans Thai from Google Fonts. No other external host serves a font.
+    const stylesheets = [...html.matchAll(/href="(https:\/\/fonts\.googleapis\.com\/[^"]+)"/g)].map((m) => decodeURIComponent(m[1]!));
+    expect(stylesheets.length).toBe(1);
+    expect([...stylesheets[0]!.matchAll(/family=([^:&]+)/g)].map((m) => m[1]!.replace(/\+/g, " ")).sort()).toEqual(["IBM Plex Mono", "IBM Plex Sans Thai", "Inter"]);
+    expect(html.match(/https:\/\/[^"\s]+/g)?.filter((url) => !/^https:\/\/fonts\.(googleapis|gstatic)\.com/.test(url)) ?? []).toEqual([]);
     expect(html).toMatch(/src="\/assets\/[^"]+\.js"/);
     const fonts = readdirSync(path.join(out, "assets")).filter((f) => f.endsWith(".woff2"));
     expect(fonts.length).toBeGreaterThan(0);
