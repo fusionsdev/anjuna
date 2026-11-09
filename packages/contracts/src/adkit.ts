@@ -254,9 +254,23 @@ export const PanelCampaign = z.strictObject({
 });
 export type PanelCampaign = z.infer<typeof PanelCampaign>;
 
+/**
+ * Per brand with a Google Ads account: the account currency, the baht per one unit of it, and the baht per day core
+ * counts against the caps (committed: spending campaigns plus pending budget jobs). `thb_per_unit` and
+ * `committed_thb_day` are null when core cannot convert a currency; the client then skips its cap pre-check.
+ */
+export const PanelCampaignBrand = z.strictObject({
+  brand_id: BrandId,
+  currency: CurrencyCode.nullable(),
+  thb_per_unit: z.number().positive().nullable(),
+  committed_thb_day: z.number().min(0).nullable(),
+});
+export type PanelCampaignBrand = z.infer<typeof PanelCampaignBrand>;
+
 /** GET /admin/adkit/campaigns: panel campaigns, the caps and what is already enabled, in baht per day. */
 export const PanelCampaignsResponse = z.strictObject({
   campaigns: z.array(PanelCampaign),
+  brands: z.array(PanelCampaignBrand),
   caps: z.strictObject({ total_thb_day: ThbPerDay, brand_thb_day: ThbPerDay }),
   enabled_total_thb_day: z.number().min(0),
 });

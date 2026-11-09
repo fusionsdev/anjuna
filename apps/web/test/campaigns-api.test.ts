@@ -28,6 +28,7 @@ const listBody = {
     daily_budget: 500, currency: "THB", daily_budget_thb: 500, state: "draft", updated_at: AT,
     geo: { country: "US" }, final_url: "https://petvetpay.com/",
   }],
+  brands: [{ brand_id: "petvet", currency: "THB", thb_per_unit: 1, committed_thb_day: 0 }],
   caps: { total_thb_day: 3000, brand_thb_day: 3000 },
   enabled_total_thb_day: 0,
 };

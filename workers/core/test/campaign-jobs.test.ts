@@ -295,6 +295,10 @@ describe("GET /admin/adkit/campaigns", () => {
       ["bison-search-1", "draft", 300],
       ["usdbrand-search-1", "drafting", 350],
     ]);
+    // Per brand: the account currency, the baht rate and the committed baht per day core checks the caps with.
+    const brand = (id: string) => body.brands.find((b) => b.brand_id === id);
+    expect(brand("petvet")).toEqual({ brand_id: "petvet", currency: "THB", thb_per_unit: 1, committed_thb_day: 1200 });
+    expect(brand("usdbrand")).toEqual({ brand_id: "usdbrand", currency: "USD", thb_per_unit: 35, committed_thb_day: 0 });
   });
 });
 
