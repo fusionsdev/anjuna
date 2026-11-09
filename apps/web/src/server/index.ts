@@ -44,6 +44,10 @@ import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleTrafficLogRoute } from "./traffic-log.js"; // spec traffic
 import { handleTrafficTailRoute } from "./traffic-tail.js";
 import { handleTrafficRealtimeRoute } from "./traffic-realtime.js";
+import { handleNotifySettingsRoute } from "./notify-settings.js";
+import { handleAlertStateRoute } from "./alerts-state.js";
+import { handleUserPrefsRoute } from "./user-prefs.js";
+import { handleNavCountsRoute } from "./nav-counts.js";
 import { handleWizardRoute } from "./wizard.js";
 import { handleUsersAdminRoute } from "./users-admin.js"; // spec polish
 import { handleCampaignsRoute } from "./campaigns.js";
@@ -119,6 +123,14 @@ async function route(
   email: string,
 ): Promise<Response> {
   const { method } = request;
+  const notify = await handleNotifySettingsRoute(request, env, path, ctx);
+  if (notify) return notify;
+  const alerts = await handleAlertStateRoute(request, env, url, path, ctx);
+  if (alerts) return alerts;
+  const prefs = await handleUserPrefsRoute(request, env, path, ctx);
+  if (prefs) return prefs;
+  const counts = await handleNavCountsRoute(request, env, path, ctx);
+  if (counts) return counts;
   const tail = await handleTrafficTailRoute(request, env, url, path, ctx);
   if (tail) return tail;
   const realtime = await handleTrafficRealtimeRoute(request, env, url, path, ctx);
