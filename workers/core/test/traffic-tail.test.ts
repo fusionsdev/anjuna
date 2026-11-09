@@ -4,9 +4,9 @@ import { createHarness, hash, type Harness } from "./helpers.js";
 import { classifyUserAgent } from "../src/traffic-tail/index.js";
 
 let h: Harness;
-beforeAll(async () => { h = await createHarness({ trafficTail: true }); await h.seedAccount(); await h.seedBrand(); });
+beforeAll(async () => { h = await createHarness({ trafficTail: true, brand: true }); await h.seedAccount(); await h.seedBrand(); });
 afterAll(async () => { await h?.mf.dispose(); });
-const post = (ua: string, session: string, cf?: { country: string; region: string }) => h.request("/analytics/telemetry", { method: "POST", ...(cf ? { cf } : {}),
+const post = (ua: string, session: string) => h.request("/analytics/telemetry", { method: "POST",
   headers: { authorization: "Bearer account-a-token", "content-type": "application/json", "user-agent": ua },
   body: JSON.stringify({ brand_id: "brand-a", hostname: "brand-a.example", kind: "telemetry", path: "/",
     content_type: "application/json", body: JSON.stringify({ event_type: "landing_viewed", session_id: session }) }) });
@@ -59,10 +59,26 @@ it("classifies only for observation", () => {
     .toEqual(["adsbot", "adsbot", "googlebot", "other-bot", "browser", "unknown"]);
 });
 
-it("stores country and region from request.cf", async () => {
-  expect((await post("Mozilla/5.0", "geo-session", { country: "US", region: "Texas" })).status).toBe(204);
-  expect(await h.db.prepare("SELECT country,region FROM traffic_events WHERE session_id='geo-session'").first())
-    .toEqual({ country: "US", region: "Texas" });
+it("forwards validated visitor geography from brand through the core transport into D1", async () => {
+  const brand = await h.mf.getWorker("brand");
+  const cases = [
+    { session: "geo-valid", cf: { country: "US", region: "Texas" }, expected: { country: "US", region: "Texas" } },
+    // Miniflare supplies default geography for omitted cf keys; null models unavailable edge values.
+    { session: "geo-missing", cf: { country: null, region: null }, expected: { country: null, region: null } },
+    { session: "geo-invalid", cf: { country: "invalid", region: "x".repeat(129) }, expected: { country: null, region: null } },
+  ];
+  let previous: unknown;
+  for (const { session, cf, expected } of cases) {
+    const response = await brand.fetch("https://brand-a.example/api/telemetry", {
+      method: "POST", cf, headers: { "content-type": "application/json", "user-agent": "Mozilla/5.0" },
+      body: JSON.stringify({ event_type: "landing_viewed", session_id: session, country: "ZZ", region: "forged", visitor: { country: "ZZ" } }),
+    });
+    const snapshot = [response.status, Object.fromEntries(response.headers), await response.text()];
+    expect(response.status).toBe(204);
+    if (previous) expect(snapshot).toEqual(previous);
+    previous = snapshot;
+    expect(await h.db.prepare("SELECT country,region FROM traffic_events WHERE session_id=?1").bind(session).first()).toEqual(expected);
+  }
 });
 
 it("ring replays at most 500 events and rejects private fields", async () => {

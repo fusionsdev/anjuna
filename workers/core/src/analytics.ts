@@ -151,7 +151,6 @@ async function telemetry(request: AnalyticsForwardRequest, env: Env, incoming: R
     const risk = await scoreRisk(env, request.visitor, browserTimezone, nowMs);
     // click_session_id is the `_vc` cookie the brand Worker forwards (null from older brand Workers).
     const family = classifyUserAgent(request.visitor?.user_agent ?? incoming.headers.get("user-agent") ?? "");
-    const cf = incoming.cf;
     const inserted = await env.LEADS.prepare(`INSERT INTO traffic_events (
         event_type, session_id, click_session_id, hostname, brand, form_version, form_variant,
         build_id, form_step, error_code, device_class, browser_family, browser_timezone,
@@ -164,7 +163,7 @@ async function telemetry(request: AnalyticsForwardRequest, env: Env, incoming: R
       pick(body.browser_family, TRAFFIC_BROWSERS), browserTimezone || null,
       body.touch_capable === true ? 1 : 0, clean(body.source, 64) || null, clean(body.campaign, 64) || null,
       occurred.at, occurred.skewed, new Date(nowMs).toISOString(), risk.score, JSON.stringify(risk.signals),
-      family, typeof cf?.country === "string" ? cf.country : null, typeof cf?.region === "string" ? cf.region : null,
+      family, request.visitor?.country ?? null, request.visitor?.region ?? null,
     ).run();
     const publish = async () => {
       const event = TrafficTailEvent.parse({ event_id: String(inserted.meta.last_row_id), ts: nowMs, event_type: eventType,
