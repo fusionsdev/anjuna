@@ -36,7 +36,7 @@ const isLive = (status: string) => status === "live" || status === "ready";
  * - โดเมน: the hostname is live, meaning the runtime sync is ready (done). A failed sync is fail, a running one warn. A brand that is not live is pending.
  * - ลีด: any lead in 30 days.
  * - ขายได้: the test sold row exists, or sold in 30 days is above 0.
- * - อัปโหลด: any dead conversion (fail), else any uploaded (done), else pending. Pending also covers "not known".
+ * - อัปโหลด: any dead conversion (fail); uploaded and none dead (done); else pending. Pending also covers "not known" (see stageUnknowns).
  */
 export function stageStatuses(input: StageInput): StageStatus[] {
   const { brand, checklist } = input;
@@ -57,27 +57,45 @@ export function stageStatuses(input: StageInput): StageStatus[] {
 
   const lead: StageStatus = (input.leads30 ?? 0) > 0 ? "done" : "pending";
   const sold: StageStatus = flags.test_sold === true || (input.sold30 ?? 0) > 0 ? "done" : "pending";
-  // An unknown answer reads pending: the dot says "not started", the label says nothing was shown to be wrong.
-  const upload: StageStatus = input.hasDead === true ? "fail" : input.hasUploaded === true ? "done" : "pending";
+  // Done needs both answers: something uploaded and nothing dead. A failed dead read leaves it unknown, which reads pending, never done.
+  const upload: StageStatus = input.hasDead === true ? "fail" : input.hasUploaded === true && input.hasDead === false ? "done" : "pending";
 
   return ["done", template, deploy, domain, lead, sold, upload];
 }
 
+/**
+ * Which stages could not be read: true means the source did not answer, so the dot's pending is "not known" rather than "not started".
+ * The dots title these "ไม่ทราบ". A dead conversion is a fact on its own, so it settles the upload stage even when the uploaded read failed.
+ */
+export function stageUnknowns(input: StageInput): boolean[] {
+  const known = input.checklist && !input.checklist.unknown ? input.checklist : undefined;
+  const flags = checklistFlags(input.checklist);
+  return [
+    false,
+    !known,
+    false,
+    false,
+    input.leads30 == null,
+    flags.test_sold === undefined && input.sold30 == null,
+    input.hasDead !== true && (input.hasUploaded == null || input.hasDead == null),
+  ];
+}
+
 export const STAGE_STATUS_TEXT: Record<StageStatus, string> = { done: "เสร็จ", warn: "มีปัญหา", fail: "ล้มเหลว", pending: "ยังไม่เริ่ม" };
 
-export type AdsChipLabel = "ใช้งาน" | "ไม่มี gclid" | "ยังไม่เชื่อม" | "ยังไม่มีแคมเปญ" | "กำลังสร้าง" | "เปิดแล้ว" | "สร้างไม่สำเร็จ" | "หยุดชั่วคราว" | "ทดลอง";
+export type AdsChipLabel = "ใช้งาน" | "ยังไม่เชื่อม" | "ยังไม่มีแคมเปญ" | "กำลังสร้าง" | "เปิดแล้ว" | "สร้างไม่สำเร็จ" | "หยุดชั่วคราว" | "ทดลอง";
 export interface AdsChip { label: AdsChipLabel; tone: ChipTone }
 
 /**
  * The Google Ads chip of a brand row, from what the panel really knows. First match wins:
  * demo brand (ทดลอง), paused in core (หยุดชั่วคราว); then the campaigns read:
  * not read yet or failed gives null (the cell shows a dash, never "not connected"); a brand absent from `brands` has no Google Ads
- * account (ยังไม่เชื่อม); an account with no campaign (ยังไม่มีแคมเปญ); cost today above 0 (ใช้งาน, or ไม่มี gclid when billed clicks did not reach the site);
+ * account (ยังไม่เชื่อม); an account with no campaign (ยังไม่มีแคมเปญ); cost today above 0 (ใช้งาน);
  * an enabled campaign (เปิดแล้ว); a campaign being drafted or enabled (กำลังสร้าง); only paused ones (หยุดชั่วคราว); only failed ones (สร้างไม่สำเร็จ).
  * A zero or a missing spend report never reads as a state: nothing here says "learning".
  * spendToday: the cost of today for this brand, 0 when the report answered and has none, null when it is not known (employee, failed, loading).
  */
-export function adsChip(input: { brand: LifecycleBrandSummary; paused: boolean; ads: PanelCampaignsResponse | null | undefined; spendToday: number | null; clickLoss: boolean }): AdsChip | null {
+export function adsChip(input: { brand: LifecycleBrandSummary; paused: boolean; ads: PanelCampaignsResponse | null | undefined; spendToday: number | null}): AdsChip | null {
   if (isDemoBrand(input.brand)) return { label: "ทดลอง", tone: "info" };
   if (input.paused || input.brand.status === "paused") return { label: "หยุดชั่วคราว", tone: "neutral" };
   const { ads } = input;
@@ -86,7 +104,7 @@ export function adsChip(input: { brand: LifecycleBrandSummary; paused: boolean; 
   if (!ads.brands.some((row) => row.brand_id === id)) return { label: "ยังไม่เชื่อม", tone: "neutral" };
   const campaigns = ads.campaigns.filter((row) => row.brand_id === id && row.state !== "removed");
   if (campaigns.length === 0) return { label: "ยังไม่มีแคมเปญ", tone: "neutral" };
-  if (input.spendToday !== null && input.spendToday > 0) return input.clickLoss ? { label: "ไม่มี gclid", tone: "warning" } : { label: "ใช้งาน", tone: "success" };
+  if (input.spendToday !== null && input.spendToday > 0) return { label: "ใช้งาน", tone: "success" };
   if (campaigns.some((row) => row.state === "enabled")) return { label: "เปิดแล้ว", tone: "neutral" };
   if (campaigns.some((row) => row.state === "drafting" || row.state === "draft" || row.state === "enabling")) return { label: "กำลังสร้าง", tone: "info" };
   if (campaigns.every((row) => row.state === "paused")) return { label: "หยุดชั่วคราว", tone: "neutral" };

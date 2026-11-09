@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { BrandLifecycle } from "../src/client/screens/BrandLifecycle";
+import { stripEnglishSuffix, wizardErrorText } from "../src/client/wizard/messages";
+import { ApiError } from "../src/client/api";
 import { BrandWizard } from "../src/client/screens/BrandWizard";
 import { TemplatePanel } from "../src/client/wizard/StepPanels";
 import { PANEL_ROLE_TABLE } from "../src/server/panel-roles";
@@ -252,15 +254,33 @@ describe("five-step flow to Generate", () => {
     await heading("เทมเพลต");
   });
 
-  it("shows the first Generate issue when the server finds the draft incomplete", async () => {
-    routes.set("POST /api/brands/brand_new/generate", () => json({ error: "draft_incomplete", issues: [{ field: "profile.contact.email", message: "ต้องระบุอีเมล" }] }, 422));
+  it("shows the first Generate issue in Thai when the server finds the draft incomplete, whatever the server's own text says", async () => {
+    // The real server string is bilingual (apps/web/src/server/generate.ts). The page maps the field to Thai and never shows the English.
+    routes.set("POST /api/brands/brand_new/generate", () => json({ error: "draft_incomplete", issues: [{ field: "profile.contact.email", message: "ต้องระบุอีเมล (Email is required)" }] }, 422));
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const { onGenerated } = setup(owner, { brandId: "brand_new" });
     await heading("ตรวจและสร้าง");
     await screen.findByText(/โซน maple.test active และไม่มี record ที่ขวาง/);
     fireEvent.click(screen.getByRole("button", { name: "สร้างเว็บไซต์" }));
     expect(await screen.findByText("ต้องระบุอีเมล")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Email is required");
     expect(onGenerated).not.toHaveBeenCalled();
+  });
+
+  it("maps every field Generate reports to Thai, and strips the English suffix from a field it does not know", () => {
+    const issue = (field: string, message: string) => wizardErrorText(new ApiError(422, { error: "draft_incomplete", issues: [{ field, message } as never] }));
+    expect(issue("domain", "โดเมนต้องเป็น apex domain ที่ถูกต้อง (Domain must be a valid apex domain)")).toBe("โดเมนต้องเป็นโดเมนหลักที่ถูกต้อง");
+    expect(issue("template_version_id", "เทมเพลตยังไม่ถูก seal (Template version is not sealed)")).toBe("เทมเพลตยังไม่ได้อนุมัติ");
+    expect(issue("keyword_default", "ต้องระบุคีย์เวิร์ด (Keyword is required)")).toBe("ต้องระบุคีย์เวิร์ด");
+    expect(issue("profile", "ข้อมูลโปรไฟล์แบรนด์ไม่ถูกต้อง (Brand profile is invalid)")).toBe("ข้อมูลโปรไฟล์แบรนด์ไม่ถูกต้อง");
+    expect(issue("profile.contact.phone", "ต้องระบุเบอร์โทรศัพท์ (Phone is required)")).toBe("ต้องระบุเบอร์โทรศัพท์");
+    expect(issue("profile.contact.address", "ต้องระบุที่อยู่ (Address is required)")).toBe("ต้องระบุที่อยู่");
+    expect(issue("profile.contact.email", "ต้องระบุอีเมล (Email is required)")).toBe("ต้องระบุอีเมล");
+    // A field the client does not know keeps the server's Thai and loses its English suffix.
+    expect(issue("something.new", "ข้อมูลไม่ครบ (Something is missing)")).toBe("ข้อมูลไม่ครบ");
+    expect(wizardErrorText(new ApiError(422, { error: "draft_incomplete", issues: [] }))).toBe("ฉบับร่างยังไม่ครบ");
+    expect(stripEnglishSuffix("ข้อความ (English text)")).toBe("ข้อความ");
+    expect(stripEnglishSuffix("ใช้ (1) ได้")).toBe("ใช้ (1) ได้");
   });
 
   it("keeps Generate off for an employee with the Thai reason and sends no generate request", async () => {

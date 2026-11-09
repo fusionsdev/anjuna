@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/client/api";
 import { loadUploadFacts } from "../src/client/brand-facts";
-import { adsChip, stageStatuses, STAGE_LABELS, type StageInput, type StageStatus } from "../src/client/brand-stages";
+import { adsChip, stageStatuses, stageUnknowns, STAGE_LABELS, type StageInput, type StageStatus } from "../src/client/brand-stages";
 import { StageDots } from "../src/client/components/StageDots";
 
 afterEach(cleanup);
@@ -53,7 +53,10 @@ describe("stage mapping", () => {
     ["อัปโหลด: any dead", "อัปโหลด", { hasUploaded: true, hasDead: true }, "fail"],
     ["อัปโหลด: nothing uploaded", "อัปโหลด", { hasUploaded: false, hasDead: false }, "pending"],
     ["อัปโหลด: not known reads pending, never done or fail", "อัปโหลด", { hasUploaded: null, hasDead: null }, "pending"],
-    ["อัปโหลด: dead unknown but uploaded known", "อัปโหลด", { hasUploaded: true, hasDead: null }, "done"],
+    // Done needs "uploaded" and "no dead". With the dead read failed the answer is unknown, never done.
+    ["อัปโหลด: uploaded known, dead read failed reads pending, never done", "อัปโหลด", { hasUploaded: true, hasDead: null }, "pending"],
+    ["อัปโหลด: dead known as none, uploaded read failed", "อัปโหลด", { hasUploaded: null, hasDead: false }, "pending"],
+    ["อัปโหลด: a dead row settles it even when the uploaded read failed", "อัปโหลด", { hasUploaded: null, hasDead: true }, "fail"],
   ];
   it.each(cases)("%s", (_name, label, input, expected) => {
     expect(at(label, input)).toBe(expected);
@@ -67,10 +70,9 @@ function installOf(status: string) {
 describe("Google Ads chip", () => {
   const camp = (state: string, brand_id = "b1") => ({ draft_job_id: "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", campaign_id: null, brand_id, account: "1234567890", name: "demo-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state, updated_at: "2026-11-10T00:00:00.000Z", geo: { country: "US" }, final_url: "https://x.test/" });
   const ads = (campaigns: ReturnType<typeof camp>[], withAccount = true) => ({ campaigns, brands: withAccount ? [{ brand_id: "b1", currency: "THB", thb_per_unit: 1, committed_thb_day: 0 }] : [], caps: { total_thb_day: 1, brand_thb_day: 1 }, enabled_total_thb_day: 0 }) as never;
-  const chip = (over: Partial<Parameters<typeof adsChip>[0]> = {}) => adsChip({ brand: brand({ brand_id: "b1" }), paused: false, ads: ads([camp("enabled")]), spendToday: null, clickLoss: false, ...over });
+  const chip = (over: Partial<Parameters<typeof adsChip>[0]> = {}) => adsChip({ brand: brand({ brand_id: "b1" }), paused: false, ads: ads([camp("enabled")]), spendToday: null, ...over });
   it.each([
     ["spend today on an enabled campaign", { spendToday: 120 }, { label: "ใช้งาน", tone: "success" }],
-    ["spend today and clicks lost before the site", { spendToday: 120, clickLoss: true }, { label: "ไม่มี gclid", tone: "warning" }],
     ["no Google Ads account for the brand", { ads: ads([], false) }, { label: "ยังไม่เชื่อม", tone: "neutral" }],
     ["an account with no campaign", { ads: ads([]) }, { label: "ยังไม่มีแคมเปญ", tone: "neutral" }],
     ["only a removed campaign counts as none", { ads: ads([camp("removed")]) }, { label: "ยังไม่มีแคมเปญ", tone: "neutral" }],
@@ -130,6 +132,26 @@ describe("upload facts per brand", () => {
   });
 });
 
+describe("stage unknowns", () => {
+  const unknownAt = (label: (typeof STAGE_LABELS)[number], input: Partial<StageInput> = {}) => stageUnknowns({ brand: brand(), ...input })[STAGE_LABELS.indexOf(label)];
+  it("marks the upload stage unknown when either upload read failed, and known when both answered or a dead row settles it", () => {
+    expect(unknownAt("อัปโหลด", { hasUploaded: true, hasDead: null })).toBe(true);
+    expect(unknownAt("อัปโหลด", { hasUploaded: null, hasDead: false })).toBe(true);
+    expect(unknownAt("อัปโหลด", { hasUploaded: null, hasDead: null })).toBe(true);
+    expect(unknownAt("อัปโหลด")).toBe(true);
+    expect(unknownAt("อัปโหลด", { hasUploaded: true, hasDead: false })).toBe(false);
+    expect(unknownAt("อัปโหลด", { hasUploaded: false, hasDead: false })).toBe(false);
+    expect(unknownAt("อัปโหลด", { hasUploaded: null, hasDead: true })).toBe(false);
+  });
+  it("marks the template, lead and sold stages unknown while their source is missing", () => {
+    expect(unknownAt("เทมเพลต")).toBe(true);
+    expect(unknownAt("เทมเพลต", { checklist: entry({ template_approved: true }) })).toBe(false);
+    expect(unknownAt("ลีด")).toBe(true);
+    expect(unknownAt("ลีด", { leads30: 0 })).toBe(false);
+    expect(unknownAt("ขายได้", { sold30: 0 })).toBe(false);
+  });
+});
+
 describe("StageDots", () => {
   it("names every stage and its state in one label", () => {
     render(<StageDots stages={["done", "warn", "fail", "pending", "pending", "pending", "pending"]} />);
@@ -139,5 +161,13 @@ describe("StageDots", () => {
     expect(label).toContain("ดีพลอย: ล้มเหลว");
     expect(label).toContain("อัปโหลด: ยังไม่เริ่ม");
     expect(document.querySelectorAll(".stage-dot")).toHaveLength(7);
+  });
+
+  it("titles an unknown pending dot ไม่ทราบ and keeps ยังไม่เริ่ม for a known one", () => {
+    render(<StageDots stages={["done", "done", "done", "done", "pending", "pending", "pending"]} unknown={[false, false, false, false, false, false, true]} />);
+    const label = screen.getByRole("img").getAttribute("aria-label")!;
+    expect(label).toContain("อัปโหลด: ไม่ทราบ");
+    expect(label).toContain("ลีด: ยังไม่เริ่ม");
+    expect(document.querySelector('[data-stage="อัปโหลด"]')!.getAttribute("title")).toBe("อัปโหลด · ไม่ทราบ");
   });
 });

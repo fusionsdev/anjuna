@@ -13,6 +13,8 @@ export interface BrandTableRow {
   subtitle?: string;
   demo: boolean;
   stages: StageStatus[];
+  /** Stages whose source did not answer: their pending dot reads "ไม่ทราบ". */
+  stagesUnknown?: boolean[];
   /** null when the source is not readable by this role (an employee has no spend); the cell shows a dash. */
   ads: AdsChip | null;
   /** Cells that carry money are shown to the owner only; the table leaves their columns out for anyone else. */
@@ -69,7 +71,7 @@ export function BrandTable({ rows, showMoney, compact = false, selectedId, onSel
                     </span>
                   </span>
                 </td>
-                <td data-label="ระยะ" data-col="stage"><StageDots stages={row.stages} /></td>
+                <td data-label="ระยะ" data-col="stage"><StageDots stages={row.stages} unknown={row.stagesUnknown} /></td>
                 {showMoney && <td data-label="ค่าโฆษณา" data-col="spend" className="num blue">{row.spend}</td>}
                 <td data-label="ลีด" data-col="leads" className="num">{row.leads}</td>
                 {costColumn && <td data-label="ต้นทุน/ลีด" data-col="cpl" className="num">{row.costPerLead}</td>}

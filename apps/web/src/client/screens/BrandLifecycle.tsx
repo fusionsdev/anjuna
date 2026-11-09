@@ -2,8 +2,8 @@ import { type BrandRevisionsResponse, type BrandSummary, type ChecklistItemName,
 import { BadgeCheck, Globe, Route, Webhook } from "lucide-react";
 import { Fragment, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, stepsFromChecklist, type BrandChecklists, type ChecklistStep, type Me } from "../api";
-import { brandSpendFresh, checklistFlags, clickLossWarning } from "../home-metrics";
-import { adsChip, stageStatuses } from "../brand-stages";
+import { brandSpendFresh, checklistFlags } from "../home-metrics";
+import { adsChip, stageStatuses, stageUnknowns } from "../brand-stages";
 import { useAdsCampaigns, useBrandDeadCount, useUploadFacts } from "../brand-facts";
 import { BrandTable, type BrandTableRow } from "../components/BrandTable";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, nextAction, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleRow, type LifecycleState, type NextAction } from "../lifecycle-state";
@@ -881,24 +881,25 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     const entry = checklists?.brands[brand.brand_id];
     const funnel30 = stageFunnel?.rows.filter((r) => r.brand === brand.brand_id);
     const upload = uploadFacts?.get(brand.brand_id);
-    const stages = stageStatuses({
+    const stageInput = {
       brand, ...(entry ? { checklist: entry } : {}),
       leads30: funnel30 ? funnel30.reduce((sum, r) => sum + r.submits, 0) : null,
       sold30: funnel30 ? funnel30.reduce((sum, r) => sum + r.sold, 0) : null,
       hasUploaded: upload ? upload.uploaded : null,
       hasDead: upload ? upload.dead : null,
-    });
-    const paidClicks = spend ? spend.brands.filter((r) => r.brand_id === brand.brand_id).reduce((sum, r) => sum + r.clicks, 0) : 0;
+    };
+    const stages = stageStatuses(stageInput);
     const paused = runtime?.status === "paused";
     // Cost of today for this brand: 0 when the report answered without it, null when it is not known (employee, failed, loading).
     const todayCost = owner && spendToday ? spendToday.brands.filter((r) => r.brand_id === brand.brand_id).reduce((sum, r) => sum + r.cost, 0) : null;
-    const ads = adsChip({ brand, paused, ads: adsData, spendToday: todayCost, clickLoss: typeof money.clicks === "number" && paidClicks > 0 && clickLossWarning(paidClicks, money.clicks) });
+    const ads = adsChip({ brand, paused, ads: adsData, spendToday: todayCost });
     return {
       id: brand.brand_id,
       title: name,
       ...(brand.name && brand.name !== name ? { subtitle: brand.name } : {}),
       demo: isDemoBrand(brand),
       stages,
+      stagesUnknown: stageUnknowns(stageInput),
       ads,
       spend: <SpendText text={money.spendText} estimated={money.estimated} />,
       leads: count(money.leads),

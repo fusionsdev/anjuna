@@ -1,12 +1,12 @@
 import type { FunnelReportResponse, LifecycleBrandSummary, PanelCampaignsResponse, PanelSpendReportResponse } from "@anjuna/contracts";
 import { isDemoBrand } from "../../brand-health";
-import { checklistFlags, clickLossWarning, isStale } from "../../home-metrics";
+import { checklistFlags, isStale } from "../../home-metrics";
 import { nextAction, type LifecycleRow, type NextAction, type Role } from "../../lifecycle-state";
 import { navigate, routePath } from "../../router";
 import type { ActionBrand, BrandAction } from "../../useBrandActions";
 import type { BrandChecklistEntry, BrandChecklists } from "../../api";
 import { SpendText, byCurrencyText, type ByCurrency } from "../BrandStatsRow";
-import { adsChip, stageStatuses } from "../../brand-stages";
+import { adsChip, stageStatuses, stageUnknowns } from "../../brand-stages";
 import type { UploadFacts } from "../../brand-facts";
 import { BrandTable, type BrandTableRow } from "../../components/BrandTable";
 import { num } from "./shared";
@@ -118,22 +118,24 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, sta
     const own = (rowsOf: { brand: string }[] | undefined) => rowsOf?.filter((row) => row.brand === brand.brand_id);
     const funnel30 = own(stageFunnel?.rows) as FunnelReportResponse["rows"] | undefined;
     const upload = uploadFacts?.get(brand.brand_id);
-    const stages = stageStatuses({
+    const stageInput = {
       brand, ...(entry ? { checklist: entry } : {}),
       leads30: funnel30 ? funnel30.reduce((sum, row) => sum + row.submits, 0) : null,
       sold30: funnel30 ? funnel30.reduce((sum, row) => sum + row.sold, 0) : null,
       hasUploaded: upload ? upload.uploaded : null,
       hasDead: upload ? upload.dead : null,
-    });
+    };
+    const stages = stageStatuses(stageInput);
     // Cost of today for this brand: 0 when the report answered without it, null when the report is not known (employee, failed, loading).
     const todayCost = owner && spendToday ? spendToday.brands.filter((row) => row.brand_id === brand.brand_id).reduce((sum, row) => sum + row.cost, 0) : null;
-    const ads = adsChip({ brand, paused: paused?.has(brand.brand_id) === true, ads: adsData, spendToday: todayCost, clickLoss: brandClickLoss(spend, funnel, brand.brand_id) });
+    const ads = adsChip({ brand, paused: paused?.has(brand.brand_id) === true, ads: adsData, spendToday: todayCost });
     return {
       id: brand.brand_id,
       title: brand.hostnames[0] ?? brand.name ?? brand.brand_id,
       ...(brand.name && brand.name !== brand.hostnames[0] ? { subtitle: brand.name } : {}),
       demo: isDemoBrand(brand),
       stages,
+      stagesUnknown: stageUnknowns(stageInput),
       ads,
       spend: spend === undefined ? "…" : <SpendText text={byCurrencyText(cost)} estimated={estimated} />,
       leads: funnel === undefined ? "…" : leads === null ? "—" : num(leads),
@@ -153,12 +155,4 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, sta
       {tableRows.length > 0 && <BrandTable rows={tableRows} showMoney={owner} label="แบรนด์ที่ต้องดู" />}
     </section>
   );
-}
-
-/** Google billed clicks that did not reach the brand's site in the same window: the sign of a lost gclid or a broken final URL. */
-function brandClickLoss(spend: PanelSpendReportResponse | null | undefined, funnel: FunnelReportResponse | null | undefined, brandId: string): boolean {
-  if (!spend || !funnel) return false;
-  const paid = spend.brands.filter((row) => row.brand_id === brandId).reduce((sum, row) => sum + row.clicks, 0);
-  const reached = funnel.rows.filter((row) => row.brand === brandId).reduce((sum, row) => sum + row.clicks, 0);
-  return paid > 0 && clickLossWarning(paid, reached);
 }

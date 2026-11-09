@@ -175,6 +175,8 @@ describe("brands table for the Owner", () => {
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith("today"));
     await waitFor(() => expect(cells("creditsgene.test")).toMatchObject({ spend: "฿3,150", leads: "2" }));
+    // The chip reads today's spend and the campaigns, so a new period leaves it as it was.
+    expect(cells("creditsgene.test").ads).toBe("ใช้งาน");
     expect(screen.getByRole("button", { name: "วันนี้" }).getAttribute("aria-pressed")).toBe("true");
     const today = funnelPaths().at(-1)!;
     const params = new URLSearchParams(today.split("?")[1]);

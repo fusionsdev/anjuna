@@ -107,15 +107,35 @@ export function describeCopyIssue(field: CopyField, issue: CopyIssue): string {
   return `${label}: ${text}`;
 }
 
-/** A server error as one short Thai + English line. */
+/** Thai text for each issue field Generate reports (apps/web/src/server/generate.ts). The server string stays bilingual; the page shows these. */
+const GENERATE_ISSUE_TEXT: Record<string, string> = {
+  domain: "โดเมนต้องเป็นโดเมนหลักที่ถูกต้อง",
+  template_version_id: "เทมเพลตยังไม่ได้อนุมัติ",
+  keyword_default: "ต้องระบุคีย์เวิร์ด",
+  profile: "ข้อมูลโปรไฟล์แบรนด์ไม่ถูกต้อง",
+  "profile.contact.phone": "ต้องระบุเบอร์โทรศัพท์",
+  "profile.contact.address": "ต้องระบุที่อยู่",
+  "profile.contact.email": "ต้องระบุอีเมล",
+};
+
+/** Drops a trailing "(English …)" from a server message, so an unknown issue still shows Thai only. */
+export function stripEnglishSuffix(text: string): string {
+  return text.replace(/\s*\([A-Za-z][^()]*\)\s*$/, "").trim();
+}
+
+/** A server error as one short Thai line. */
 export function wizardErrorText(error: unknown): string {
   if (!(error instanceof ApiError)) return "ดำเนินการไม่สำเร็จ";
   const code = error.body?.error;
   const message = error.body?.message ?? "";
   if (error.status === 409 && /domain is already registered/i.test(message)) return "โดเมนนี้ถูกใช้แล้ว";
   if (code === "draft_incomplete") {
-    // Generate answers 422 draft_incomplete with Thai + English issues (apps/web/src/server/generate.ts).
-    return error.body?.issues?.[0]?.message ?? "ฉบับร่างยังไม่ครบ";
+    // Generate answers 422 draft_incomplete with Thai + English issues. The field decides the Thai text; an unknown field keeps the
+    // server's message with its English suffix removed.
+    // The server names the field `field`; the shared client type calls it `path`. Both are read.
+    const issue = error.body?.issues?.[0] as { field?: string; path?: string; message?: string } | undefined;
+    if (!issue) return "ฉบับร่างยังไม่ครบ";
+    return GENERATE_ISSUE_TEXT[issue.field ?? issue.path ?? ""] ?? (stripEnglishSuffix(issue.message ?? "") || "ฉบับร่างยังไม่ครบ");
   }
   if (code === "lifecycle_operation_active") return "กำลังติดตั้งแบรนด์นี้อยู่ แก้ไขไม่ได้";
   if (error.status === 409) return "ฉบับร่างถูกแก้ไขหรือติดตั้งแล้ว กรุณาโหลดใหม่";
@@ -125,5 +145,5 @@ export function wizardErrorText(error: unknown): string {
   if (code === "zone_check_unavailable" || code === "zone_check_failed") return "ตรวจโซน Cloudflare ไม่สำเร็จ ลองใหม่ภายหลัง";
   if (code === "preview_unavailable") return "แสดงตัวอย่างไม่ได้";
   if (code === "forbidden_role") return "สิทธิ์ไม่เพียงพอ ต้องเป็น Owner";
-  return error.thai;
+  return stripEnglishSuffix(error.thai);
 }

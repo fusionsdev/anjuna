@@ -1159,12 +1159,35 @@ describe("Home screen, facts behind the brand table", () => {
     await waitFor(() => expect(dotsOf("cg")).toContain("อัปโหลด: ล้มเหลว"));
   });
 
-  it("leaves the upload dot unstarted, never done, when the read fails", async () => {
+  it("reads the upload dot as ไม่ทราบ, never done, when both reads fail", async () => {
     convFacts = () => json({ error: "bad_gateway" }, 502);
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(brandRow("cg")).toBeTruthy());
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
-    expect(dotsOf("cg")).toContain("อัปโหลด: ยังไม่เริ่ม");
+    expect(dotsOf("cg")).toContain("อัปโหลด: ไม่ทราบ");
+    expect(dotsOf("cg")).not.toContain("อัปโหลด: เสร็จ");
+  });
+
+  it("does not call an upload done when uploaded answered but the dead read failed", async () => {
+    // Uploaded has a row for Creditgenie; the dead read fails. "No dead conversion" is not known, so the dot is unknown, not done.
+    convFacts = (url) => (url.searchParams.get("status") === "dead" ? json({ error: "bad_gateway" }, 502) : json(page([convRow("cg", "uploaded")], false)));
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(dotsOf("cg")).toContain("อัปโหลด: ไม่ทราบ");
+    expect(dotsOf("cg")).not.toContain("อัปโหลด: เสร็จ");
+    expect(brandRow("cg")!.querySelector('[data-stage="อัปโหลด"]')!.getAttribute("title")).toBe("อัปโหลด · ไม่ทราบ");
+  });
+
+  it("keeps the Google Ads chip the same when the period changes: it reads today's spend and the campaigns, not the chosen window", async () => {
+    render(<HomeScreen me={owner} />);
+    const chip = () => brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent;
+    await waitFor(() => expect(chip()).toBe("ใช้งาน"));
+    for (const label of ["7 วัน", "30 วัน", "วันนี้"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
+      expect(chip()).toBe("ใช้งาน");
+    }
   });
 
   it("shows a dash in the Google Ads cell while the campaigns read fails, never not connected", async () => {
