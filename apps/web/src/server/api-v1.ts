@@ -12,15 +12,22 @@
  *   GET   /api/v1/adkit/projects/:p/accounts adkit:read        core GET /admin/adkit/projects/:p/accounts
  *   POST  /api/v1/adkit/conversion-actions   adkit:conversion  core POST /admin/adkit/jobs (idempotent)
  *   POST  /api/v1/brands/:id/generate        brand:generate    same checks and install path as /api/brands/:id/generate
+ *   GET   /api/v1/ads/campaigns              ads:read          core GET /admin/adkit/campaigns (campaigns, caps in baht)
+ *   POST  /api/v1/ads/campaigns              ads:draft         queues campaign.draft.create only; no body field can publish
+ *   POST  /api/v1/ads/campaigns/:id/budget   ads:draft         queues campaign.update_budget (core checks the caps)
+ *   POST  /api/v1/ads/campaigns/:id/enable   ads:enable        queues campaign.enable (core checks the caps); no default holder
+ *   GET   /api/v1/ads/spend?brand=&from=&to= ads:read          core GET /admin/spend/rows: cost per brand, currency and allocation
  *
  * Auth: `Authorization: Bearer <key>` only. A key in the query string is refused with 400 before any lookup.
  * Without the header the panel session applies: an owner holds every scope, an employee only brand:draft, so
  * generate needs an owner session or a brand:generate key. A cookie write must come from the panel origin
  * (sessionWriteAllowed). Only an owner mints keys, and a key acts with the owner role inside its scopes; its key_id
- * is the actor in audit rows. A key stops working when its creator is no longer an owner or is banned. The key is
+ * is the actor in audit rows. No session holds `ads:enable` by default: only a key an owner minted with it enables. A key stops working when its creator is no longer an owner or is banned. The key is
  * hashed with SHA-256 like the builder keys and never logged, echoed or written to an audit row.
  */
-import { AdkitJobCreateRequest, roleAtLeast, type AdminRequestContext } from "@anjuna/contracts";
+import {
+  AdkitJobCreateRequest, CampaignDraftPayload, DailyBudget, GoogleCampaignId, SpendRowsQuery, roleAtLeast, type AdminRequestContext,
+} from "@anjuna/contracts";
 import { z } from "zod";
 import type { Auth } from "./auth.js";
 import { callCore } from "./core.js";
@@ -29,12 +36,14 @@ import { createDraft, decodePathSegment, generateDraft, updateDraft } from "./li
 import { authorizePanel } from "./panel-roles.js";
 
 export const API_KEY_PREFIX = "anj_api_";
-export const API_KEY_SCOPES = ["brand:draft", "adkit:read", "adkit:conversion", "brand:generate"] as const;
+export const API_KEY_SCOPES = ["brand:draft", "adkit:read", "adkit:conversion", "brand:generate", "ads:read", "ads:draft", "ads:enable"] as const;
 export const ApiKeyScope = z.enum(API_KEY_SCOPES);
 export type ApiKeyScope = z.infer<typeof ApiKeyScope>;
 
-/** What an employee session may do on /api/v1. An owner session holds every scope. */
+/** What an employee session may do on /api/v1. */
 const EMPLOYEE_SCOPES: readonly ApiKeyScope[] = ["brand:draft"];
+/** An owner session holds every scope except `ads:enable`, which only a key minted with it carries (the panel enables in the UI). */
+const OWNER_SESSION_SCOPES: readonly ApiKeyScope[] = API_KEY_SCOPES.filter((s) => s !== "ads:enable");
 
 /** Query parameter names a client might put a key in. Any of them, or a value that looks like a key, is refused. */
 const KEY_PARAMS = new Set(["key", "api_key", "apikey", "token", "access_token", "bearer", "authorization"]);
@@ -157,11 +166,14 @@ async function principal(request: Request, env: Env, url: URL, auth: Auth): Prom
   if (!sessionWriteAllowed(request, env)) return json(403, { error: "cross_origin" });
   return {
     ctx: { actor_id: session.user.id, actor_role: role, request_id: requestId },
-    scopes: roleAtLeast(role, "owner") ? API_KEY_SCOPES : EMPLOYEE_SCOPES,
+    scopes: roleAtLeast(role, "owner") ? OWNER_SESSION_SCOPES : EMPLOYEE_SCOPES,
   };
 }
 
 const ConversionActionRequest = AdkitJobCreateRequest.omit({ kind: true });
+/** A campaign draft as a client sends it: account and project come from the brand in core, `kind` is fixed here. */
+const CampaignDraftRequest = CampaignDraftPayload.omit({ account: true, project: true });
+const CampaignBudgetRequest = z.strictObject({ daily_budget: DailyBudget });
 
 /** /api/v1/*: always answers, 404 for an unknown path. */
 export async function handleApiV1(request: Request, env: Env, url: URL, path: string, auth: Auth): Promise<Response> {
@@ -205,6 +217,40 @@ export async function handleApiV1(request: Request, env: Env, url: URL, path: st
     const parsed = ConversionActionRequest.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return invalid(parsed.error);
     const r = await callCore(env, ctx, { endpoint: "createAdkitJob", body: { kind: "conversion_action.create", ...parsed.data } });
+    return json(r.status, r.body);
+  }
+  if (path === "/api/v1/ads/campaigns" && method === "GET") {
+    if ((denied = need("ads:read"))) return denied;
+    const r = await callCore(env, ctx, { endpoint: "listCampaigns" });
+    return json(r.status, r.body);
+  }
+  if (path === "/api/v1/ads/campaigns" && method === "POST") {
+    if ((denied = need("ads:draft"))) return denied;
+    const parsed = CampaignDraftRequest.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return invalid(parsed.error);
+    const r = await callCore(env, ctx, { endpoint: "createCampaignJob", body: { kind: "campaign.draft.create", ...parsed.data } });
+    return json(r.status, r.body);
+  }
+  if ((m = path.match(/^\/api\/v1\/ads\/campaigns\/([^/]+)\/(budget|enable)$/)) && method === "POST") {
+    const action = m[2]!;
+    if ((denied = need(action === "budget" ? "ads:draft" : "ads:enable"))) return denied;
+    const raw = decodePathSegment(m[1]!);
+    const campaignId = raw === null ? null : GoogleCampaignId.safeParse(raw);
+    if (!campaignId?.success) return json(404, { error: "not_found", resource: "campaign" });
+    if (action === "enable") {
+      const r = await callCore(env, ctx, { endpoint: "createCampaignJob", body: { kind: "campaign.enable", campaign_id: campaignId.data } });
+      return json(r.status, r.body);
+    }
+    const parsed = CampaignBudgetRequest.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return invalid(parsed.error);
+    const r = await callCore(env, ctx, { endpoint: "createCampaignJob", body: { kind: "campaign.update_budget", campaign_id: campaignId.data, ...parsed.data } });
+    return json(r.status, r.body);
+  }
+  if (path === "/api/v1/ads/spend" && method === "GET") {
+    if ((denied = need("ads:read"))) return denied;
+    const query = SpendRowsQuery.safeParse(Object.fromEntries(url.searchParams));
+    if (!query.success) return invalid(query.error);
+    const r = await callCore(env, ctx, { endpoint: "spendRows", query: url.searchParams });
     return json(r.status, r.body);
   }
   return json(404, { error: "not_found", resource: "route" });
