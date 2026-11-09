@@ -6,6 +6,8 @@
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": false,
+  "durable_objects": { "bindings": [{ "name": "TRAFFIC_TAIL", "class_name": "TrafficTail" }] },
+  "migrations": [{ "tag": "v1-traffic-tail", "new_sqlite_classes": ["TrafficTail"] }],
   "preview_urls": false,
   "routes": [{ "pattern": "core.aduplift.ai", "custom_domain": true }],
   // Cron Triggers: mailing sync every 5 minutes (CO-7), alerts every 15 minutes (FA-5). Strings must match src/cron.ts.

@@ -47,6 +47,7 @@ async function bundle(entry: string): Promise<string> {
 }
 
 export async function createHarness(options: {
+  trafficTail?: boolean;
   brand?: boolean;
   listmonk?: Partial<Record<"LISTMONK_URL" | "LISTMONK_USER" | "LISTMONK_TOKEN" | "LISTMONK_LIST_MAP", string>>;
   /** Extra secrets and vars for the production Worker. */
@@ -76,7 +77,8 @@ export async function createHarness(options: {
   const mf = new Miniflare(convertV4MiniflareOptions({
     cf: false,
     workers: [
-      { ...common, name: "production", script: production },
+      { ...common, name: "production", script: production,
+        ...(options.trafficTail ? { durableObjects: { TRAFFIC_TAIL: { className: "TrafficTail", useSQLite: true } } } : {}) },
       { ...common, name: "test-core", script: testWorker },
       { ...common, name: "no-drain-token", script: production, bindings: {} },
       ...(options.limiters ? [{

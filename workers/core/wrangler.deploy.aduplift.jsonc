@@ -8,6 +8,8 @@
     "global_fetch_strictly_public"
   ],
   "workers_dev": false,
+  "durable_objects": { "bindings": [{ "name": "TRAFFIC_TAIL", "class_name": "TrafficTail" }] },
+  "migrations": [{ "tag": "v1-traffic-tail", "new_sqlite_classes": ["TrafficTail"] }],
   "preview_urls": false,
   "routes": [
     {

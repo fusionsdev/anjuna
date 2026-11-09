@@ -73,6 +73,7 @@ import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
 import { loadTrafficBreakdown } from "./traffic.js";
 import { loadTrafficReport } from "./traffic-log.js"; // spec traffic
 import { loadClientErrors } from "./client-errors.js"; // spec traffic
+import { subscribeTail } from "../traffic-tail/index.js";
 
 const JSON_BODY_LIMIT = 32 * 1024;
 
@@ -1227,6 +1228,12 @@ function routeParam(
 export async function handleAdminRequest(request: Request, env: Env): Promise<Response> {
   const context = adminContextFromHeaders(request.headers);
   if (!context) return adminError(null, { error: "unauthorized" });
+
+  if (request.method === "GET" && new URL(request.url).pathname === "/admin/traffic/tail") {
+    const permission = authorize("trafficReport", context.actor_role);
+    if (!permission.ok) return adminError(context, permission.error);
+    return subscribeTail(request, env);
+  }
 
   let route: ReturnType<typeof matchAdminRoute>;
   try {
