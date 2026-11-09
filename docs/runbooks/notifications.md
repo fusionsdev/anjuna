@@ -11,6 +11,12 @@
 
 - Repository checked out; tenant configured in `tenants/<name>.config.ts`
   (app domain per tenant: `app.aduplift.ai`, `app.maimax.com`).
+- No global `wrangler` install is needed: every command below is
+  `bunx wrangler ...` run from the repo root. It is the version pinned in
+  this repo, not whatever a global install would resolve to.
+- All command blocks are POSIX `sh`/bash. On PowerShell, either use Git
+  Bash / WSL, or convert the `\` line continuations to a single line.
+  Blocks that need bash built-ins (`read -s`, `unset`) are labelled.
 - The core Worker of the tenant is deployed (Wave 4 gate) with
   `TELEGRAM_BOT_TOKEN` as below. Until the token exists the alerts cron
   still runs — it computes reports, writes nothing to Telegram, and logs
@@ -26,18 +32,22 @@
 2. Choose a name (display) and a username ending in `bot` (e.g.
    `anjuna_alerts_bot`).
 3. BotFather answers with the bot token: `<bot-id>:<random-40-hex>`.
-   **The token is a secret** — paste it once into `wrangler secret put`
-   (step 4). Never commit it, never paste it in a chat, log or ticket
-   (acceptance E5: no token appears in any log or D1 row).
-4. Set the token as a core Worker secret, per tenant:
+   **The token is a secret** — feed it only to `wrangler secret put`
+   below. Never commit it, never paste it in a chat, log or ticket,
+   and never as literal text inside a shell command (acceptance E5:
+   no token appears in any log or D1 row).
+4. Set the token as a core Worker secret, per tenant. `secret put`
+   reads the value from an interactive prompt — the prompt does not
+   echo, so the value leaves no copy in shell history, the process
+   list, or any log:
 
 ```sh
-# aduplift
-echo "<bot-token>" | bunx wrangler secret put TELEGRAM_BOT_TOKEN \
+# aduplift — run, then paste the token at the hidden prompt
+bunx wrangler secret put TELEGRAM_BOT_TOKEN \
   --config workers/core/wrangler.deploy.aduplift.jsonc
 
-# maimax
-echo "<bot-token>" | bunx wrangler secret put TELEGRAM_BOT_TOKEN \
+# maimax — same prompt, maimax config
+bunx wrangler secret put TELEGRAM_BOT_TOKEN \
   --config workers/core/wrangler.deploy.maimax.jsonc
 ```
 
@@ -46,29 +56,69 @@ the secret once per tenant account.)
 
 ## 3. Get the chat id
 
+`getUpdates` returns a queue, not a snapshot: it replays every update the
+bot has not confirmed yet, oldest first. `result[0]` is therefore the
+*oldest* pending update and may be a DM you sent ten minutes ago, not the
+group message you just sent. Read the `chat.type` and the group title of
+each entry, and pass `offset` to consume the queue.
+
 **Owner DM (one-to-one with the bot):**
 
 1. In Telegram, write `/start` to your bot (this unlocks the bot sending
    to you).
-2. Fetch the id:
+2. Fetch the queue. The token is read without echo and handed to `curl`
+   through its config on stdin (`-K -`), so it never appears in argv, the
+   process list, or shell history:
 
-```sh
-curl "https://api.telegram.org/bot<bot-token>/getUpdates"
-```
+   ```bash
+   # bash — token stays out of argv and history; writes updates.json
+   read -r -s -p "bot token: " TG_TOKEN; echo
+   curl -s -K - -o updates.json <<EOF
+   url = "https://api.telegram.org/bot${TG_TOKEN}/getUpdates"
+   EOF
+   ```
 
-The field `result[0].message.chat.id` holds the chat id — a positive
-integer like `123456789`. If the result is empty, send another message to
-the bot first and call `getUpdates` again.
+Open `updates.json` in an editor (or pipe the curl output to `bunx
+prettier --parser json`) and read the `chat` objects. Delete the file and
+`unset TG_TOKEN` afterwards; it holds no token, but it does hold your
+chat ids.
+
+The field `result[].message.chat.id` holds the chat id for a DM — a
+positive integer like `123456789`. If the result is empty, send another
+message to the bot first and call `getUpdates` again.
 
 **Team group:**
 
-1. Add the bot to the group (group privacy mode "off" is not required for
-   the *bot* to send).
-2. Send one message in the group.
-3. Same `getUpdates` call: the group chat id is negative, like
-   `-1002345678901` (supergroups) — use the full value including the minus
-   sign. Put both ids in the panel Settings (next step); the group id
-   never goes into `.dev.vars` or wrangler.jsonc.
+1. Add the bot to the group. Group privacy mode does not need to be
+   disabled for the *bot to send*, but with privacy mode **on** the bot
+   only receives commands addressed to it — so post
+   `/start@<bot_username>` in the group, not a plain message.
+2. Read the answer and pick the entry whose `message.chat.type` is
+   `group` or `supergroup` and whose `message.chat.title` is the group you
+   used. Do not take `result[0]`: it is the oldest pending update.
+3. The group chat id is negative, like `-1002345678901` (supergroups) —
+   use the full value including the minus sign. Put both ids in the panel
+   Settings (next step); the group id never goes into `.dev.vars` or
+   wrangler.jsonc.
+4. Once both ids are recorded, drain the queue so the next lookup starts
+   clean: re-run `getUpdates` with `offset` set to the highest
+   `update_id` you saw plus one:
+
+   ```bash
+   # bash — same secret-safe form, offset consumes the queue
+   OFFSET=0   # replace with <highest update_id> + 1
+   curl -s -K - -o updates.json <<EOF
+   url = "https://api.telegram.org/bot${TG_TOKEN}/getUpdates?offset=${OFFSET}"
+   EOF
+   ```
+
+   Telegram then drops every update up to that id and the next call returns
+   only new ones.
+5. `unset TG_TOKEN` when done.
+
+Why the ids differ: a DM id is a user id (positive); a group id is a chat
+id (negative). A bot cannot open a DM with a user who has not written to
+it first, which is what step 1 of the DM block unlocks.
 
 ## 4. Configure the channel in the panel
 
@@ -127,14 +177,24 @@ status `429` to confirm.
 
 ## 7. Quiet hours and repeats, in one place
 
-- **Repeat every N hours** (default 6): while the alert block stays open,
-  the cron resends after `last_sent + N`. A block that flickers
-  ok→warn→ok→warn does not repeat — only a *transition* sends immediately.
+- **Repeat every N hours** (default 6, per rule): while the alert block
+  stays open at the same level, the cron resends after `last_sent + N`.
+- **Every transition sends immediately.** That means leaving `ok` for
+  warn or alert, and also **escalation warn→alert** — a block that goes
+  worse does not wait for the repeat window. Severity only ratchets up:
+  warn→alert notifies at once even if a warn message went out a minute
+  ago, subject to routing rules and quiet hours.
+- **ok→warn→ok→warn sends every time.** Each re-entry into a non-ok
+  level is a transition, so a flickering block produces one message per
+  wobble, not one per repeat window. If that is too noisy, raise the
+  repeat interval (it does not suppress transitions) or open quiet hours.
 - **Quiet hours per channel** (default none): during the window, sends
   hold; the block is not lost — it sends after the window if still open.
+  A transition inside quiet hours is deferred, never dropped.
 - **Acknowledged** (ประวัติการส่ง → รับทราบ, or the panel Alerts page): the
   alert stops repeating and cannot re-send until the block returns to ok
-  and later leaves ok again.
+  and later leaves ok again. Acknowledgement silences the *current*
+  episode, including its repeats; it does not silence the next one.
 - **AdsBot fast path** ignores the cron: any AdsBot hit (or any page
   served with http_status ≠ 200 to AdsBot) notifies within one cron tick
   or faster through the traffic tail (ADR-0006), with a 10-minute cooldown
@@ -146,32 +206,60 @@ Decision D3: Telegram ships in release 1; `LineNotifier` is a follow-up PR
 once the owner has an Official Account. Steps recorded now so the card in
 the panel (marked เร็ว ๆ นี้) has its operator path ready:
 
-1. **Create the LINE Official Account** at [2] in References (Messaging
-   API channel). Note: LINE Notify was shut down on **2025-03-31** —
-   accounts that still used it migrated; new builds use the Messaging API.
-2. **Get the channel access token**: LINE Developers Console → the OA →
-   Messaging API → Channel access token → Issue. Store it like the
-   Telegram token: `bunx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-   --config ...` (optional field in `workers/core/src/env.ts`, added by
-   the LINE PR).
+1. **Create the LINE Official Account, then enable Messaging API.** In the
+   [LINE Official Account Manager](https://manager.line.biz/) create the
+   OA, then open **Settings → Messaging API** and choose a provider
+   (create one if this is the first channel). Messaging API channels are
+   no longer created directly in the Developers Console — the OA turns
+   one on. Note: LINE Notify was shut down on **2025-03-31**; new builds
+   use the Messaging API.
+2. **Get the channel access token.** After step 1 enables Messaging API,
+   the [LINE Developers Console](https://developers.line.biz/console/)
+   now lists the channel under that provider: open it → **Messaging API**
+   tab → **Channel access token (long-lived)** → **Issue**. Store it like
+   the Telegram token, per tenant, letting the prompt read it:
+
+   ```sh
+   # aduplift — paste the token at the hidden prompt
+   bunx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN \
+     --config workers/core/wrangler.deploy.aduplift.jsonc
+
+   # maimax
+   bunx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN \
+     --config workers/core/wrangler.deploy.maimax.jsonc
+   ```
+
+   (`LINE_CHANNEL_ACCESS_TOKEN` is an optional field in
+   `workers/core/src/env.ts`, added by the LINE PR.)
 3. **Get the target id**: for a 1:1 chat, `userId` shows in the console
    (Basic settings → Your user ID) or via a webhook event; for a group,
    add the bot to the group and read `source.groupId` from a webhook
    event (requires the webhook endpoint the LINE PR adds).
-4. **Send** (what `LineNotifier` will do):
-   `POST https://api.line.me/v2/bot/message/push` with
-   `Authorization: Bearer <token>`, body
-   `{"to": "<userId|groupId>", "messages": [{"type": "flex", ...one
-   button "เปิดใน panel"...}]}` — plain `fetch`, allowed by
-   `global_fetch_strictly_public`.
-5. **Quota**: the push quota depends on the OA's contract (the free tier
-   on some OAs is 200 push messages/month; reply messages are free and
-   unlimited). With our cooldown, repeats ≥ 6 h and the daily digest, we
-   consume at most a handful of push messages per day — enable
-   Settings → ช่องทางแจ้งเตือน → digest instead of per-event pushes if the
-   quota is tight. Current quota numbers: LINE Developers → Messaging
-   API → Quota overview of your channel; a 429 from the API means the
-   monthly push limit was reached.
+4. **Send** — what `LineNotifier` will do. Pseudocode, not a
+   copy-pasteable command; the `...` are body fields the LINE PR fills in.
+   It is a plain `fetch`, allowed by `global_fetch_strictly_public`:
+
+   ```text
+   POST https://api.line.me/v2/bot/message/push
+   Authorization: Bearer <channel access token>
+   Content-Type: application/json
+
+   {"to": "<userId|groupId>",
+    "messages": [{"type": "flex", "altText": "<rule> · <brand>", ...}]}
+   ```
+
+5. **Quota and rate limits are different limits.** The push quota depends
+   on the OA's contract and is counted **per recipient**, not per message:
+   one alert to a group of 5 counts as 5 pushes (some free-tier OAs allow
+   200 pushes/month; reply messages are free and unlimited). With our
+   cooldown, repeats ≥ 6 h and the daily digest, a 2-person target costs a
+   few pushes a day — but size the maths by the number of people in every
+   chat you add, and prefer Settings → ช่องทางแจ้งเตือน → digest over
+   per-event pushes if it gets tight. Current numbers live in LINE
+   Developers → Messaging API → **Quota overview** of the channel. A
+   `429` is not always the monthly quota: read the error body — the
+   monthly-limit error is distinct from a per-second rate limit, and the
+   response says which. Response details: [3] in References.
 
 Message content contract (both channels, B6): level emoji + Thai rule
 text + brand, one key number, `ตรวจพบ HH:MM`, deep link
@@ -180,24 +268,40 @@ tokens.
 
 ## 9. Troubleshooting
 
-- **No Telegram messages at all** — first check `wrangler secret list`
-  (TELEGRAM_BOT_TOKEN set), that core was redeployed after the secret was
+- **No Telegram messages at all** — first check the secret is set on the
+  right tenant account, that core was redeployed after the secret was
   added, and that `notify.telegram.enabled` is true with a non-empty chat
-  id list.
+  id list. `wrangler secret list` needs the same tenant config as every
+  other command, so name it explicitly:
+
+   ```sh
+   # aduplift — repeat with wrangler.deploy.maimax.jsonc for the other tenant
+   bunx wrangler secret list \
+     --config workers/core/wrangler.deploy.aduplift.jsonc
+   ```
+
 - **`401` in ประวัติการส่ง** — the token rotated or went into the wrong
-  namespace — re-run the step 2 `wrangler secret put`.
+  namespace — re-run the step 4 `wrangler secret put` for that tenant.
 - **`400 Bad Request: chat not found`** — the chat id is stale (a group
   migrated to supergroup and its id changed) — re-fetch via `getUpdates`.
 - **`429` in ประวัติการส่ง** — the bot hit a group's 20/min cap; raise
   the repeat interval on noisy rules, keep quiet hours for the digest
   channel.
-- **Test button returns 5xx** — check the core logs
-  (`wrangler tail --config ...`): the error name only, never the token,
-  is logged.
+- **Test button returns 5xx** — read the core logs with the tenant
+  config: the error name only, never the token, is logged:
+
+  ```sh
+  bunx wrangler tail \
+    --config workers/core/wrangler.deploy.aduplift.jsonc
+  ```
 
 ## References
 
-- [1] Telegram Bots FAQ — limits:
-  <https://core.telegram.org/bots/faq>
-- [2] LINE Developers Console (create the Official Account):
-  <https://developers.line.biz/console/>
+- [1] Telegram Bots FAQ — limits, and what messages a bot receives
+  (privacy mode): <https://core.telegram.org/bots/faq>
+- [2] LINE Official Account Manager — create the OA, then enable
+  Messaging API: <https://manager.line.biz/>
+- [3] LINE Messaging API — getting started (channel + access token) and
+  error/status codes:
+  <https://developers.line.biz/en/docs/messaging-api/getting-started/>,
+  <https://developers.line.biz/en/reference/messaging-api/#error-responses>
