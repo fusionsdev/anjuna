@@ -1,7 +1,7 @@
 import {
   ANALYTICS_LIMITS, BRAND_ASSET_PATHS, CLICK_PARAM_KEYS, CLICK_TRIGGER_KEYS, HANDOFF_TTL_SECONDS, FormLeadPayload, OpaqueToken, Keyword,
   LeadsRpc, cleanKeyword, encodeRuntimeConfig, isBrandClean, themeCss, themeStyleTag,
-  type AnalyticsVisitor, type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
+  AnalyticsVisitor, type ClickParams, type RuntimeConfig, type LeadsRpcMethod, type LeadsRpcRequest, type LeadsRpcResponse,
 } from "@anjuna/contracts";
 import { assignVariant, type Assignment } from "./assignment.js";
 import { assetResponse, createAssetCache, initialResponse } from "./brand-assets.js";
@@ -157,6 +157,10 @@ async function telemetryVisitor(request: Request, brandId: string): Promise<Anal
   if (userAgent) visitor.user_agent = userAgent;
   const timezone = (request.cf as { timezone?: unknown } | undefined)?.timezone;
   if (typeof timezone === "string" && timezone && timezone.length <= 64) visitor.edge_timezone = timezone;
+  const country = AnalyticsVisitor.shape.country.safeParse(request.cf?.country);
+  const region = AnalyticsVisitor.shape.region.safeParse(request.cf?.region);
+  if (country.success && country.data !== undefined) visitor.country = country.data;
+  if (region.success && region.data !== undefined) visitor.region = region.data;
   const ip = request.headers.get("cf-connecting-ip")?.slice(0, 64);
   if (ip) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${ip}:${brandId}`));

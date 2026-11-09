@@ -60,6 +60,13 @@ describe("AnalyticsForwardRequest", () => {
   it("rejects a content type with control characters", () => {
     expect(AnalyticsForwardRequest.safeParse({ ...golden("errors"), content_type: "text/plain\r\nx: y" }).success).toBe(false);
   });
+  it("validates optional visitor geography without allowing raw or unbounded values", () => {
+    const parse = (visitor: unknown) => AnalyticsForwardRequest.safeParse({ ...golden("telemetry"), visitor });
+    expect(parse({ country: "US", region: "Texas" }).success).toBe(true);
+    expect(parse({ country: "BR", region: "São Paulo" }).success).toBe(true);
+    for (const country of ["", "us", "USA", "US\n", null, 12]) expect(parse({ country }).success).toBe(false);
+    for (const region of ["", "x".repeat(129), "Texas\n", "a\u0000b", null, 12]) expect(parse({ region }).success).toBe(false);
+  });
   it.each(kinds)("allows a %s body at its limit and rejects one byte more", (kind) => {
     const limit = ANALYTICS_LIMITS[kind];
     expect(AnalyticsForwardRequest.safeParse({ ...golden(kind), body: "a".repeat(limit) }).success).toBe(true);

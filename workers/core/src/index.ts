@@ -13,7 +13,8 @@ import { rpcRoutes } from "./rpc/index.js";
 import { handleCampaignSpendIngest, handleSpendIngest } from "./spend.js";
 import { handleFactoryLifecycleRequest, handlePanelLifecycleRequest } from "./lifecycle.js";
 
-export type RpcHandler = (request: Request, env: Env, account: string) => Promise<Response>;
+export { TrafficTail } from "./traffic-tail/do.js";
+export type RpcHandler = (request: Request, env: Env, account: string, ctx?: ExecutionContext) => Promise<Response>;
 
 /** The public entrypoint supplies the authenticated T6c RPC routes. */
 export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = new Map()) {
@@ -22,7 +23,7 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       await handleScheduled(controller, env);
     },
 
-    async fetch(request: Request, env: Env): Promise<Response> {
+    async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/api/health" && request.method === "GET") return json({ ok: true });
       if (pathname === "/api/postback" && ["GET", "POST"].includes(request.method)) {
@@ -53,7 +54,7 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
         : pathname.startsWith("/rpc/") ? rpcRoutes.get(pathname) : analyticsRoutes.get(pathname);
       if (rpc) {
         const account = await authenticateAccount(request, env);
-        return account === null ? unauthorized() : rpc(request, env, account);
+        return account === null ? unauthorized() : rpc(request, env, account, ctx);
       }
       // Includes every /admin/* request, regardless of Host/forwarded headers or credentials.
       return notFound();

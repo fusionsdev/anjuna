@@ -7,6 +7,8 @@ import type { Env } from "./env.js";
 import { json } from "./http.js";
 import type { RpcHandler } from "./index.js";
 import { getRuntime, ownsHostname } from "./rpc/runtime.js";
+import { TrafficTailEvent } from "@anjuna/contracts";
+import { classifyUserAgent, pushTail, tailSessionRef } from "./traffic-tail/index.js";
 
 const POSTHOG_DEFAULT_HOST = "https://us.i.posthog.com";
 /** Ingest endpoints only. Static assets, replay and the admin API are never reachable through the proxy. */
@@ -133,7 +135,7 @@ async function scoreRisk(env: Env, visitor: AnalyticsVisitor | undefined, browse
 }
 
 /** V1 handleTrafficTelemetry. Answers 204 whatever breaks: telemetry must never gate the funnel. */
-async function telemetry(request: AnalyticsForwardRequest, env: Env): Promise<Response> {
+async function telemetry(request: AnalyticsForwardRequest, env: Env, incoming: Request, ctx?: ExecutionContext): Promise<Response> {
   try {
     const body = parseObject(request.body);
     const eventType = clean(body.event_type, 40);
@@ -148,18 +150,30 @@ async function telemetry(request: AnalyticsForwardRequest, env: Env): Promise<Re
     const browserTimezone = clean(body.browser_timezone, 64);
     const risk = await scoreRisk(env, request.visitor, browserTimezone, nowMs);
     // click_session_id is the `_vc` cookie the brand Worker forwards (null from older brand Workers).
-    await env.LEADS.prepare(`INSERT INTO traffic_events (
+    const family = classifyUserAgent(request.visitor?.user_agent ?? incoming.headers.get("user-agent") ?? "");
+    const inserted = await env.LEADS.prepare(`INSERT INTO traffic_events (
         event_type, session_id, click_session_id, hostname, brand, form_version, form_variant,
         build_id, form_step, error_code, device_class, browser_family, browser_timezone,
-        touch_capable, source, campaign, occurred_at, clock_skew, created_at, risk_score, risk_signals
-      ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)`).bind(
+        touch_capable, source, campaign, occurred_at, clock_skew, created_at, risk_score, risk_signals,
+        user_agent_family, country, region
+      ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)`).bind(
       eventType, sessionId, request.visitor?.click_session_id ?? null, hostname, clean(body.brand, 40) || null,
       clean(body.form_version, 32) || null, clean(body.form_variant, 40) || null, clean(body.build_id, 64) || "unknown", formStep,
       pick(body.error_code, TRAFFIC_ERROR_CODES), pick(body.device_class, TRAFFIC_DEVICE_CLASSES),
       pick(body.browser_family, TRAFFIC_BROWSERS), browserTimezone || null,
       body.touch_capable === true ? 1 : 0, clean(body.source, 64) || null, clean(body.campaign, 64) || null,
       occurred.at, occurred.skewed, new Date(nowMs).toISOString(), risk.score, JSON.stringify(risk.signals),
+      family, request.visitor?.country ?? null, request.visitor?.region ?? null,
     ).run();
+    const publish = async () => {
+      const event = TrafficTailEvent.parse({ event_id: String(inserted.meta.last_row_id), ts: nowMs, event_type: eventType,
+        session_ref: await tailSessionRef(sessionId), brand: request.brand_id, domain: hostname,
+        device_type: pick(body.device_class, TRAFFIC_DEVICE_CLASSES), browser: pick(body.browser_family, TRAFFIC_BROWSERS),
+        user_agent_family: family, url: `https://${hostname}/`, http_status: null, response_ms: null, gate_passed: null });
+      await pushTail(env, event);
+    };
+    const pending = publish().catch(() => { console.warn("traffic_tail_publish_failed"); });
+    if (ctx) ctx.waitUntil(pending); else await pending;
   } catch (error) {
     // Only the error name: a D1 error can echo bound values.
     console.warn(JSON.stringify({ msg: "telemetry_write_failed", err_kind: (error as { name?: string })?.name || "Error" }));
@@ -263,7 +277,7 @@ async function readEnvelope(request: Request, limit: number): Promise<string> {
 }
 
 function handler(kind: AnalyticsKind): RpcHandler {
-  return async (request, env, account) => {
+  return async (request, env, account, ctx) => {
     let raw: unknown;
     try { raw = JSON.parse(await readEnvelope(request, readCap(kind))); }
     catch (error) { return rejected(error instanceof RangeError ? 413 : 400); }
@@ -278,7 +292,7 @@ function handler(kind: AnalyticsKind): RpcHandler {
       // After authentication, parsing and ownership; before any D1 write or outbound call.
       if (!await withinLimit(kind, envelope.brand_id, env)) return json({ error: "rate_limited" }, 429);
       switch (kind) {
-        case "telemetry": return await telemetry(envelope, env);
+        case "telemetry": return await telemetry(envelope, env, request, ctx);
         case "errors": return await errors(envelope, env);
         case "posthog": return await posthog(envelope, env);
         case "sentry": return await sentry(envelope, env);

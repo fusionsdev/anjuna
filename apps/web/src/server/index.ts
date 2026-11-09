@@ -42,6 +42,7 @@ import { handleSuppressionsRoute } from "./suppressions.js";
 import { handleTemplateRoute } from "./templates.js";
 import { handleTrafficRiskRoute } from "./traffic-risk.js";
 import { handleTrafficLogRoute } from "./traffic-log.js"; // spec traffic
+import { handleTrafficTailRoute } from "./traffic-tail.js";
 import { handleWizardRoute } from "./wizard.js";
 import { handleUsersAdminRoute } from "./users-admin.js"; // spec polish
 import { handleCampaignsRoute } from "./campaigns.js";
@@ -117,6 +118,8 @@ async function route(
   email: string,
 ): Promise<Response> {
   const { method } = request;
+  const tail = await handleTrafficTailRoute(request, env, url, path, ctx);
+  if (tail) return tail;
   const rid = ctx.request_id;
   let m: RegExpMatchArray | null;
 

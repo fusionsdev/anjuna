@@ -9,6 +9,18 @@ const EMPTY_OK = [204, ""] as const;
 const answer = async (response: Response) => [response.status, await response.text()];
 
 describe("ADR-0004 forwarding", () => {
+  it("preserves Unicode edge geography and ignores invalid metadata", async () => {
+    const { worker, core } = setup();
+    for (const [cf, expected] of [
+      [{ country: "BR", region: "São Paulo" }, { country: "BR", region: "São Paulo" }],
+      [{ country: "bad", region: "Texas\n" }, undefined],
+    ] as const) {
+      const request = new Request("https://brand-a.example/api/telemetry", { method: "POST", body: "{}" });
+      Object.defineProperty(request, "cf", { value: cf });
+      expect((await worker.fetch(request)).status).toBe(204);
+      expect(core.analytics.at(-1)!.visitor).toEqual(expected);
+    }
+  });
   it.each([
     ["/_t", "posthog", "/"], ["/_t/i/v0/", "posthog", "/i/v0/"],
     ["/_e", "sentry", "/"], ["/api/telemetry", "telemetry", "/"], ["/api/errors", "errors", "/"],

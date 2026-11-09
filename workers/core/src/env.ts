@@ -1,4 +1,5 @@
 export interface Env {
+  TRAFFIC_TAIL?: DurableObjectNamespace;
   LEADS: D1Database;
   FACTORY: D1Database;
   DRAIN_TOKEN?: string;

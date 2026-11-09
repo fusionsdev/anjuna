@@ -78,7 +78,8 @@ describe.each(["HTTPS", "Service Binding"])("%s core transport", (kind) => {
 });
 
 describe.each(ANALYTICS_KINDS)("analytics forward of %s", (kind) => {
-  const body = { brand_id: "brand-a", hostname: "brand-a.example", kind, path: "/", content_type: "application/json", body: "{}" };
+  const body = { brand_id: "brand-a", hostname: "brand-a.example", kind, path: "/", content_type: "application/json", body: "{}",
+    ...(kind === "telemetry" ? { visitor: { country: "US", region: "Texas" } } : {}) };
   it.each(["HTTPS", "Service Binding"])("posts the envelope to the contract path over %s with no path option", async (transport) => {
     const send = vi.fn(async (_request: Request) => new Response(null, { status: 204 }));
     const options = { credential: "test-account-credential" };
@@ -93,6 +94,7 @@ describe.each(ANALYTICS_KINDS)("analytics forward of %s", (kind) => {
     const send = vi.fn(async (_request: Request) => new Response(null, { status: 503 }));
     const core = new HttpsCoreClient({ credential: "test" }, send);
     await expect(core.forwardAnalytics({ ...body, path: "/../x" })).rejects.toThrow();
+    await expect(core.forwardAnalytics({ ...body, visitor: { country: "invalid" } })).rejects.toThrow();
     await expect(core.forwardAnalytics({ ...body, body: "a".repeat(ANALYTICS_LIMITS[kind] + 1) })).rejects.toThrow();
     expect(send).not.toHaveBeenCalled();
     await expect(core.forwardAnalytics(body)).rejects.toMatchObject({ status: 503 });

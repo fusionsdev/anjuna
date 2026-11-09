@@ -44,6 +44,9 @@ export const AnalyticsVisitor = z.strictObject({
   user_agent: z.string().max(512).optional(),
   /** Cloudflare edge `request.cf.timezone`, e.g. America/Chicago. */
   edge_timezone: z.string().max(64).optional(),
+  /** Visitor edge geography, forwarded explicitly because transport creates a new Request. */
+  country: z.string().regex(/^[A-Z]{2}$/).optional(),
+  region: z.string().min(1).max(128).regex(/^[^\x00-\x1f\x7f]+$/).optional(),
   /** Hex SHA-256 of `<ip>:<brand_id>`; core keeps it for one hour only. The raw IP never leaves the edge. */
   ip_hash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   /** The `_vc` click cookie, the only join from a telemetry row to its click (gclid). */
