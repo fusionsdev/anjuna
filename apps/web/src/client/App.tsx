@@ -32,6 +32,10 @@ import { SectionTabs } from "./components/SectionTabs";
 import { Spinner } from "./components/Spinner";
 import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, groupViews, visibleTabs, type SidebarBadge } from "./nav-groups";
 import { BrandScopeProvider } from "./useBrandScope";
+import { ScopeSubtitle } from "./components/ScopeSubtitle";
+
+/** The pages that show brand data. Each carries the scope chip, and each filters its rows by the scope (PLAN A9). */
+const SCOPED_VIEWS: ReadonlySet<string> = new Set(["home", "brands", "campaigns", "traffic", "funnel", "leads", "conversions", "alerts"]);
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -113,6 +117,7 @@ export function App() {
       nav={<SidebarNav items={items} current={view} onOpen={open} />}
     >
       {group && <SectionTabs tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />}
+      {SCOPED_VIEWS.has(view) && <div className="scope-bar"><ScopeSubtitle /></div>}
       {view === "home" && <HomeScreen me={me} onGo={open} />}
       {(view === "brands" || view === "new-brand") && (
         <BrandLifecycle

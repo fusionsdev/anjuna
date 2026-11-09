@@ -9,6 +9,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { isPlainLeftClick, navigate, routePath } from "../router";
+import { useBrandScope } from "../useBrandScope";
 
 // spec leads
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -131,7 +132,9 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
     link.remove();
   };
 
-  const brandOptions = new Map(domains);
+  // The brand scope decides which leads and which brand choices show (PLAN A9). The chosen filter brand always stays in the list.
+  const { inScopeId } = useBrandScope();
+  const brandOptions = new Map([...domains].filter(([id]) => inScopeId(id) || id === filter.brand));
   if (filter.brand && !brandOptions.has(filter.brand)) brandOptions.set(filter.brand, filter.brand);
   const outcomeTone = new Map(outcomes.map(([value, label, tone]) => [value, { label, tone }]));
 
@@ -205,7 +208,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
     <section className="panel" style={{ marginTop: 16 }} aria-label="รายการลีด (Lead list)">
       {!valid ? <p className="hint">แก้ตัวกรองด้านบนก่อนจึงจะโหลดรายการได้ (Fix the filter above to load the list)</p>
         : error ? <p role="alert">{error}</p> : !page ? <Spinner /> : <>
-        <DataTable label="รายการลีด (Lead list)" columns={columns} rows={page.rows} rowKey={(r) => r.lead_id} empty={empty} />
+        <DataTable label="รายการลีด (Lead list)" columns={columns} rows={page.rows.filter((r) => inScopeId(r.brand))} rowKey={(r) => r.lead_id} empty={empty} />
         {page.next_cursor && <div style={{ marginTop: 10 }}><button type="button" className="btn" onClick={() => setCursor(page.next_cursor)}>ถัดไป (Next)</button></div>}
       </>}
     </section>

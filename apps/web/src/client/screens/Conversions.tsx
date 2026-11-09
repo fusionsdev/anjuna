@@ -14,6 +14,7 @@ import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { REASON_TEXT } from "../conversion-labels";
 import { navigate, useSearch, viewPath } from "../router";
 import "./Conversions.css";
+import { useBrandScope } from "../useBrandScope";
 
 type Row = ConversionsReportResponse["rows"][number];
 export interface ConversionFilters { period: SpendPeriod; status: "all" | ConversionStatus; brand: string | null }
@@ -74,6 +75,7 @@ function Reason({ row }: { row: Row }) {
 type Load = { report: ConversionsReportResponse; limit: number } | { error: string } | null;
 
 export function ConversionsScreen({ me }: { me: Me }) {
+  const { inScopeId } = useBrandScope();
   const owner = me.role === "owner";
   const { period, status, brand } = readConversionFilters(useSearch());
   const domains = useBrandDomains();
@@ -204,12 +206,12 @@ export function ConversionsScreen({ me }: { me: Me }) {
             <DataTable
               label="รายการคอนเวอร์ชัน (Conversions)"
               columns={columns}
-              rows={report.rows}
+              rows={report.rows.filter((row) => inScopeId(row.brand))}
               rowKey={(row) => row.lead_id}
               empty={<EmptyState title="ยังไม่มีคอนเวอร์ชันในช่วงนี้" />}
             />
             {loadMoreError && <p role="alert">{loadMoreError}</p>}
-            <LoadMore shown={report.rows.length} hasMore={report.truncated} atMax={shownLimit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
+            <LoadMore shown={report.rows.filter((row) => inScopeId(row.brand)).length} hasMore={report.truncated} atMax={shownLimit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
           </section>
         </div>
       )}

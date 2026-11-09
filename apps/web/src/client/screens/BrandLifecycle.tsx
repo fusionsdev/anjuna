@@ -17,7 +17,6 @@ import { useBrandActions, type BrandAction } from "../useBrandActions";
 import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
 import { BRAND_PERIODS, BrandStatsRow, SpendText, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandFilters } from "./BrandFilters";
-import { ScopeSubtitle } from "../components/ScopeSubtitle";
 import { useBrandScope } from "../useBrandScope";
 import { toScopeBrand } from "../brand-scope";
 import { BrandWizard } from "./BrandWizard";
@@ -834,7 +833,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
 
   return <div className="brands-page">
     <div className="brands-head">
-      <div><h1>Lifecycle แบรนด์</h1><p className="brands-sub"><ScopeSubtitle>{shownRows.length} แบรนด์ เลือกแถวเพื่อดูและแก้ไข</ScopeSubtitle></p></div>
+      <div><h1>Lifecycle แบรนด์</h1><p className="brands-sub">{shownRows.length} แบรนด์ เลือกแถวเพื่อดูและแก้ไข</p></div>
       <div className="brands-actions">
         <div className="seg" role="group" aria-label="ช่วงเวลา">{BRAND_PERIODS.map(([key, label]) => <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div>
         <button className="btn" onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช</button>
