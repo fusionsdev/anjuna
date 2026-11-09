@@ -79,9 +79,9 @@ each entry, and pass `offset` to consume the queue.
    ```
 
 Open `updates.json` in an editor (or pipe the curl output to `bunx
-prettier --parser json`) and read the `chat` objects. Delete the file and
-`unset TG_TOKEN` afterwards; it holds no token, but it does hold your
-chat ids.
+prettier --parser json`) and read the `chat` objects. Leave the file in
+place for now: the group block below re-writes it. Cleanup (delete the
+file, `unset TG_TOKEN`) is one step at the end of this section.
 
 The field `result[].message.chat.id` holds the chat id for a DM — a
 positive integer like `123456789`. If the result is empty, send another
@@ -93,14 +93,26 @@ message to the bot first and call `getUpdates` again.
    disabled for the *bot to send*, but with privacy mode **on** the bot
    only receives commands addressed to it — so post
    `/start@<bot_username>` in the group, not a plain message.
-2. Read the answer and pick the entry whose `message.chat.type` is
+2. Fetch the queue again. This is the same secret-safe `getUpdates`
+   call as the DM block; `TG_TOKEN` was never unset, but read it again
+   silently so the block stands on its own:
+
+   ```bash
+   # bash — token stays out of argv and history; overwrites updates.json
+   read -r -s -p "bot token: " TG_TOKEN; echo
+   curl -s -K - -o updates.json <<EOF
+   url = "https://api.telegram.org/bot${TG_TOKEN}/getUpdates"
+   EOF
+   ```
+
+3. Read the answer and pick the entry whose `message.chat.type` is
    `group` or `supergroup` and whose `message.chat.title` is the group you
    used. Do not take `result[0]`: it is the oldest pending update.
-3. The group chat id is negative, like `-1002345678901` (supergroups) —
+4. The group chat id is negative, like `-1002345678901` (supergroups) —
    use the full value including the minus sign. Put both ids in the panel
    Settings (next step); the group id never goes into `.dev.vars` or
    wrangler.jsonc.
-4. Once both ids are recorded, drain the queue so the next lookup starts
+5. Once both ids are recorded, drain the queue so the next lookup starts
    clean: re-run `getUpdates` with `offset` set to the highest
    `update_id` you saw plus one:
 
@@ -114,7 +126,15 @@ message to the bot first and call `getUpdates` again.
 
    Telegram then drops every update up to that id and the next call returns
    only new ones.
-5. `unset TG_TOKEN` when done.
+6. Now clean up, after both the DM and the group are done: delete the
+   file and unset the token. `updates.json` holds no token, but it does
+   hold your chat ids.
+
+   ```bash
+   # bash — cleanup, run only after both ids are recorded
+   rm -f updates.json
+   unset TG_TOKEN
+   ```
 
 Why the ids differ: a DM id is a user id (positive); a group id is a chat
 id (negative). A bot cannot open a DM with a user who has not written to
