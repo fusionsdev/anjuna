@@ -1,0 +1,48 @@
+# workers/core .dev.vars — copy to `.dev.vars` for local Miniflare work (gitignored).
+# Values are placeholders; everything here is optional — leaving a value absent
+# means local dev skips that feature cleanly (a cron or route degrades gracefully;
+# see the comments in src/env.ts and wrangler.jsonc).
+#
+# True secrets are marked SECRET: never put real production values in this file.
+
+# SECRET. Drain contract on core (`GET /api/conversions/pending`, `/api/conversions/ack`).
+DRAIN_TOKEN=dev-drain-token
+
+# SECRET. Tenant-wide LeadsGate postback token; accepted for every brand of this core.
+POSTBACK_TOKEN=dev-postback-token
+
+# SECRET + var pair. Signed continuation handoff (issueHandoff/verifyHandoff); HANDOFF_KEY_ID selects the key.
+HANDOFF_KEY=dev-handoff-key
+HANDOFF_KEY_ID=dev-key-id
+
+# Vars tagging the served form asset bundle and the consent string stamped on leads.
+FORM_SITE_ID=dev-site-id
+FORM_VERSION=2026-01-01
+CONSENT_VERSION=2026-01
+PARTNER_LIST_VERSION=2026-01
+
+# Var naming the tenant; normally set in wrangler.jsonc "vars" (LIFECYCLE_ACCOUNT).
+# LIFECYCLE_ACCOUNT=aduplift
+
+# Mailing cron (CO-7): without the three below the cron skips cleanly with a warning.
+LISTMONK_URL=http://127.0.0.1:1234
+LISTMONK_USER=dev-user
+LISTMONK_TOKEN=dev-listmonk-token
+# Optional fallback JSON {"<brand_id>": <listmonk list id>} for brands without brand_runtime.listmonk_list_id.
+LISTMONK_LIST_MAP={}
+
+# Analytics forward (ADR-0004): without these core accepts and drops the kind (204, warn once).
+# POSTHOG_HOST is a plain var (default https://us.i.posthog.com).
+POSTHOG_KEY=dev-posthog-key
+POSTHOG_HOST=https://us.i.posthog.com
+SENTRY_DSN=https://00000000000000000000000000000000@o000000.ingest.us.sentry.io/0000000
+
+# Wave 5 T20 (task W01-4): Telegram notifications. Optional in release 1 — the cron
+# skips sending when unset, exactly like LISTMONK_*. Channel config (chat ids, quiet hours,
+# digest) lives in panel_settings, NOT here. See docs/adr/0007-alert-channels.md and
+# docs/runbooks/notifications.md.
+TELEGRAM_BOT_TOKEN=0000000000:dev-telegram-bot-token
+
+# Rate limiter bindings (POSTHOG_LIMITER, SENTRY_LIMITER, TELEMETRY_LIMITER, ERRORS_LIMITER)
+# are wrangler "ratelimits" bindings, not dev vars — nothing to set here.
+# Required bindings in local dev: LEADS and FACTORY (D1), from wrangler.jsonc / test helpers.

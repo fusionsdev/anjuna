@@ -1,0 +1,29 @@
+# apps/web .dev.vars — copy to `.dev.vars` for local dev (gitignored).
+# Values are placeholders. The panel Worker talks to local core via
+# `bun run dev` in workers/core plus `MOCK_CORE` (see below).
+
+# Secret: better-auth signing secret (production: `wrangler secret put BETTER_AUTH_SECRET`).
+BETTER_AUTH_SECRET=dev-better-auth-secret-000000000000000000000000
+
+# Var. Public origin of the panel; local dev uses the loopback origin of the dev server.
+BETTER_AUTH_URL=http://127.0.0.1:8787
+
+# Var. "1" serves the admin API from a fixture-backed mock core instead of the CORE service
+# binding (dev/test without a running core Worker). Never set in wrangler.jsonc.
+MOCK_CORE=1
+
+# Dev/test only: "1" relaxes better-auth origin and cookie checks on loopback.
+# Never set in wrangler.jsonc or in any deploy config (apps/web/wrangler.jsonc line 38).
+DEV_ACCESS_BYPASS=1
+
+# Vars seeding the add-brand wizard defaults before a real account exists.
+DEFAULT_ACCOUNT=aduplift
+DEFAULT_AID=10001
+DEFAULT_PREPOP_BASE=/apply
+DEFAULT_FORM_ROUTE=/request
+DEFAULT_AMOUNT_BUCKETS=[350,500,750,1000,1500,1750,2000,3000,3250,4500,5000]
+DEFAULT_PAYLOAD_VERSION=2026-01
+
+# Service bindings (CORE, CORE_LIFECYCLE, FACTORY_WORKER, TEMPLATE_MCP) and the ARTIFACTS
+# R2 bucket are wrangler bindings, not dev vars. Run `bun run dev` in workers/core (and
+# workers/factory) or leave MOCK_CORE=1 to use the mock.
