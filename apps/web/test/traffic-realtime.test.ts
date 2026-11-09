@@ -6,7 +6,7 @@ beforeAll(setupDatabases);
 const zero = { landing_views: 0, form_starts: 0, leads: 0, validation_errors: 0, redirect_errors: 0, suspicious_sessions: 0, no_gclid_landings: { count: 0, pct: 0 }, gate_drops: 0, non_us_pct: null };
 const report = TrafficRealtimeResponse.parse({ period: "24h", from: "2026-11-09T00:00:00.000Z", to: "2026-11-10T00:00:00.000Z", kpis: zero,
   deltas: Object.fromEntries(Object.keys(zero).map(key => [key, null])),
-  bots_now: Object.fromEntries(["adsbot", "googlebot", "other-bot"].map(key => [key, { "15m": 0, "1h": 0, "24h": 0 }])),
+  bots_now: Object.fromEntries(["adsbot", "googlebot", "other-bot"].map(key => [key, { current_hour: 0, "24h": 0 }])),
   adsbot_last: [], breakdowns: { source: [], hostname: [], device: [], browser: [], brand: [] }, trend: [], recent: [] });
 
 it.each(["owner", "employee"] as const)("%s receives validated report and forwarded brand filter", async role => {

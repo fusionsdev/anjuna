@@ -56,11 +56,11 @@ export async function loadTrafficRealtime(env: Pick<Env, "LEADS">, query: Traffi
       SUM(event_type='lead_submitted') AS leads FROM events GROUP BY at ORDER BY at`),
     statement("SELECT * FROM events ORDER BY created_at DESC, id DESC LIMIT 200"),
     statement("SELECT brand_id, hostname, created_at FROM events WHERE user_agent_family='adsbot' ORDER BY created_at DESC, id DESC LIMIT 20"),
-    // bot_hits has hourly counters only: windows include their overlapping UTC hour buckets.
-    env.LEADS.prepare(`SELECT kind, SUM(CASE WHEN hour >= ?1 THEN hits ELSE 0 END) AS m15,
-      SUM(CASE WHEN hour >= ?2 THEN hits ELSE 0 END) AS h1, SUM(hits) AS h24 FROM bot_hits
-      WHERE hour >= ?3 AND hour <= ?4 AND (json_array_length(?5)=0 OR brand_id IN (SELECT value FROM json_each(?5))) GROUP BY kind`)
-      .bind(hour(now.getTime() - 900_000), hour(now.getTime() - 3_600_000), hour(now.getTime() - 86_400_000), hour(now.getTime()), brands),
+    // Exactly 24 UTC hour buckets, including the current partial bucket; no inferred 15-minute count.
+    env.LEADS.prepare(`SELECT kind, SUM(CASE WHEN hour = ?1 THEN hits ELSE 0 END) AS current_hour,
+      SUM(hits) AS h24 FROM bot_hits
+      WHERE hour >= ?2 AND hour <= ?1 AND (json_array_length(?3)=0 OR brand_id IN (SELECT value FROM json_each(?3))) GROUP BY kind`)
+      .bind(hour(now.getTime()), hour(now.getTime() - 23 * 3_600_000), brands),
   ]);
   const current = results[0]!.results[0] as unknown as Totals;
   const totals = kpis(current);
@@ -71,10 +71,10 @@ export async function loadTrafficRealtime(env: Pick<Env, "LEADS">, query: Traffi
     return [k, delta(k === "no_gclid_landings" ? totals[k].count : totals[k], k === "no_gclid_landings" ? prior[k].count : prior[k])];
   }));
   const breakdowns = Object.fromEntries(keys.map((key, i) => [key, results[i + 2]!.results.map(row => ({ key: row.key, count: row.count, pct: pct(Number(row.count), current.total) }))]));
-  const bots = { googlebot: { "15m": 0, "1h": 0, "24h": 0 }, adsbot: { "15m": 0, "1h": 0, "24h": 0 }, "other-bot": { "15m": 0, "1h": 0, "24h": 0 } };
+  const bots = { googlebot: { current_hour: 0, "24h": 0 }, adsbot: { current_hour: 0, "24h": 0 }, "other-bot": { current_hour: 0, "24h": 0 } };
   for (const row of results[10]!.results) {
     const kind = row.kind as keyof typeof bots;
-    if (Object.hasOwn(bots, kind)) bots[kind] = { "15m": Number(row.m15), "1h": Number(row.h1), "24h": Number(row.h24) };
+    if (Object.hasOwn(bots, kind)) bots[kind] = { current_hour: Number(row.current_hour), "24h": Number(row.h24) };
   }
   return TrafficRealtimeResponse.parse({ period: query.period, from, to, kpis: totals, deltas, breakdowns, bots_now: bots,
     trend: results[7]!.results.map(row => ({ ...row, at: String(row.at) + (bucket === "hour" ? ":00:00.000Z" : "T00:00:00.000Z") })),

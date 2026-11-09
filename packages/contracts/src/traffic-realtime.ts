@@ -34,7 +34,8 @@ const Count = z.number().int().nonnegative();
 const Pct = z.number().min(0).max(100);
 const NullableDelta = z.number().finite().nullable();
 const Breakdown = z.array(z.strictObject({ key: z.string(), count: Count, pct: Pct })).max(10);
-const BotCounts = z.strictObject({ "15m": Count, "1h": Count, "24h": Count });
+/** Hourly counters: current_hour is the current UTC bucket; 24h is that bucket plus the previous 23. */
+const BotCounts = z.strictObject({ current_hour: Count, "24h": Count });
 export const TrafficRealtimeResponse = z.strictObject({
   period: TrafficLogPeriod, from: z.iso.datetime(), to: z.iso.datetime(),
   kpis: TrafficMetrics.extend({
