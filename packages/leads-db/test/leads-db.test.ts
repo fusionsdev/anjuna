@@ -8,10 +8,10 @@ const ANJUNA_ADDED_COLUMNS: Record<string, string[]> = {
   leads: ["experiment_id", "variant", "keyword"],
   click_sessions: ["experiment_id", "variant", "keyword", "brand_id"],
   consent_evidence: ["consent_text_hash", "consent_brand", "gpc"],
-  traffic_events: ["risk_score", "risk_signals"], // 0015, FUS-372
+  traffic_events: ["risk_score", "risk_signals", "user_agent_family", "country", "region"],
   suppressions: ["added_by"], // 0017, FUS-382
 };
-const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup", "adkit_directory", "adkit_jobs", "campaign_brand_map", "ad_spend_unallocated", "bot_hits", "ad_spend_campaign"];
+const ANJUNA_TABLES = ["brand_runtime", "mailing_outbox", "account_credentials", "continuations", "ad_spend", "traffic_velocity", "conversion_setup", "adkit_directory", "adkit_jobs", "campaign_brand_map", "ad_spend_unallocated", "bot_hits", "ad_spend_campaign", "alert_state", "notification_log"];
 
 interface ColumnInfo {
   cid: number;
@@ -121,6 +121,7 @@ describe("leads-db migrations", () => {
         "ad_spend_unallocated",
         "adkit_directory",
         "adkit_jobs",
+        "alert_state",
         "bot_hits",
         "brand_runtime",
         "campaign_brand_map",
@@ -132,6 +133,7 @@ describe("leads-db migrations", () => {
         "conversion_uploads",
         "leads",
         "mailing_outbox",
+        "notification_log",
         "postback_events",
         "suppressions",
         "traffic_events",
