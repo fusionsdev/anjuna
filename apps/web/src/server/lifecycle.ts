@@ -550,7 +550,7 @@ function withRuntimeState(row: FactoryBrandRow, runtime: ReturnType<typeof runti
   });
 }
 
-async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{ brands: LifecycleBrandSummary[]; core_error: CoreListError | null }> {
+export async function lifecycleBrandRows(env: Env, ctx: AdminRequestContext): Promise<{ brands: LifecycleBrandSummary[]; core_error: CoreListError | null }> {
   const { results } = await env.FACTORY.prepare("SELECT b.brand_id,b.name,b.account,b.domain,b.keyword_default,b.status,b.current_revision_id,r.template_version_id,r.form_artifact_id,fa.bundle_form_version,fa.payload_version,fa.created_at AS form_created_at FROM brands b LEFT JOIN brand_revisions r ON r.revision_id=COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1)) LEFT JOIN form_artifacts fa ON fa.form_artifact_id=r.form_artifact_id ORDER BY b.created_at DESC").all<FactoryBrandRow>();
   const defaults = tenantDefaults(env);
   const newest = defaults ? await env.FACTORY.prepare(`SELECT form_artifact_id, bundle_form_version, created_at FROM form_artifacts WHERE ${COMPATIBLE_FORM} ORDER BY created_at DESC, form_artifact_id DESC LIMIT 1`).bind(defaults.payload_version).first<NewestForm>() : null;

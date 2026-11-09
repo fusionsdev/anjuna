@@ -76,6 +76,7 @@ import { loadTrafficBreakdown } from "./traffic.js";
 import { loadTrafficReport } from "./traffic-log.js"; // spec traffic
 import { loadClientErrors } from "./client-errors.js"; // spec traffic
 import { subscribeTail } from "../traffic-tail/index.js";
+import { handleAlertStateRoute } from "./alerts-state.js";
 
 const JSON_BODY_LIMIT = 32 * 1024;
 
@@ -1230,6 +1231,8 @@ function routeParam(
 export async function handleAdminRequest(request: Request, env: Env): Promise<Response> {
   const context = adminContextFromHeaders(request.headers);
   if (!context) return adminError(null, { error: "unauthorized" });
+  const alertState = await handleAlertStateRoute(request, env, context);
+  if (alertState) return alertState;
 
   if (request.method === "GET" && new URL(request.url).pathname === "/admin/traffic/tail") {
     const permission = authorize("trafficReport", context.actor_role);
