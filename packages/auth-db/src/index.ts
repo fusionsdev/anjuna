@@ -6,7 +6,7 @@
  *   admin({ defaultRole: DEFAULT_ROLE, adminRoles: [...ADMIN_ROLES], ac, roles: { owner, employee } })
  */
 
-export const AUTH_DB_MIGRATIONS = ["0001_better_auth.sql"] as const;
+export const AUTH_DB_MIGRATIONS = ["0001_better_auth.sql", "0002_user_prefs.sql"] as const;
 
 export const AUTH_ROLES = ["owner", "employee"] as const;
 export type AuthRole = (typeof AUTH_ROLES)[number];

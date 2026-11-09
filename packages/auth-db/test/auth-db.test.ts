@@ -35,7 +35,7 @@ describe("auth-db migrations", () => {
     await applyD1Migrations(env.DB, env.MIGRATIONS);
     const { results } = await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>();
     expect(results.map((r) => r.name)).toEqual([...AUTH_DB_MIGRATIONS]);
-    expect(await userTables(env.DB)).toEqual(["account", "session", "user", "verification"]);
+    expect(await userTables(env.DB)).toEqual(["account", "session", "user", "user_prefs", "verification"]);
   });
 
   it("re-applying is a no-op", async () => {
