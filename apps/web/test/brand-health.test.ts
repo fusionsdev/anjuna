@@ -85,11 +85,11 @@ describe("matchesBrandChip", () => {
   });
   it("puts a failed install under needs-fix and not under live", () => {
     const row = brand({ status: "failed" });
-    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all", "needs-fix"]);
+    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["needs-fix", "all"]);
   });
   it("puts a brand that never installed under needs-fix (no live domain) and unfinished", () => {
     const row = brand({ status: "draft", current_revision_id: null, runtime_sync_status: "queued" });
-    expect(chips(row, brandHealth(row, undefined))).toEqual(["all", "needs-fix", "unfinished"]);
+    expect(chips(row, brandHealth(row, undefined))).toEqual(["needs-fix", "all", "unfinished"]);
   });
   it("puts a running install under unfinished, and a live brand with a queued redeploy too", () => {
     const installing = brand({ status: "installing", current_revision_id: null });
@@ -100,12 +100,12 @@ describe("matchesBrandChip", () => {
   });
   it("puts a live brand with a sync error under needs-fix, so no live brand with a problem is missing from every status chip", () => {
     const row = brand({ runtime_sync_status: "sync_error" });
-    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all", "needs-fix"]);
+    expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["needs-fix", "all"]);
   });
   it("puts a live brand with a failing checklist under needs-fix and still under live", () => {
     const row = brand();
     expect(brandHealth(row, { status: "live" }, { checklistFailing: true }).issues).toEqual(["checklist_failing"]);
-    expect(chips(row, brandHealth(row, { status: "live" }, { checklistFailing: true }))).toEqual(["all", "needs-fix", "live"]);
+    expect(chips(row, brandHealth(row, { status: "live" }, { checklistFailing: true }))).toEqual(["needs-fix", "all", "live"]);
     expect(chips(row, brandHealth(row, { status: "live" }, { checklistFailing: false }))).toEqual(["all", "live"]);
   });
   it("keeps a core-only brand out of needs-fix and out of live", () => {
@@ -113,8 +113,8 @@ describe("matchesBrandChip", () => {
     expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all"]);
   });
   it("lists every chip and sort, with profit the only owner-only sort", () => {
-    expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["all", "needs-fix", "live", "unfinished", "paused"]);
-    expect(BRAND_CHIPS.map((chip) => chip.label)).toEqual(["ทั้งหมด", "ต้องแก้", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
+    expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["needs-fix", "all", "live", "unfinished", "paused"]);
+    expect(BRAND_CHIPS.map((chip) => chip.label)).toEqual(["ต้องแก้", "ทั้งหมด", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
     expect(BRAND_SORTS.filter((sort) => sort.ownerOnly).map((sort) => sort.id)).toEqual(["profit"]);
   });
   it("carries no English in parentheses on a chip or sort label", () => {
