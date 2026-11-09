@@ -20,6 +20,15 @@ export interface BrandScopeState {
   setOpen: (open: boolean) => void;
   /** True while a `?scope=` link decides the scope for this visit. */
   fromUrl: boolean;
+  /** True when the last save of the scope failed or could not start. The scope still applies on this device. */
+  saveFailed: boolean;
+  /**
+   * Whether a screen shows the rows of one brand. Before the brand list has loaded every brand shows, because nothing is known.
+   * A brand the list does not hold follows the brand ticks only.
+   */
+  inScopeId: (brandId: string) => boolean;
+  /** True once the list has loaded and the scope hides at least one brand. A screen that cannot filter an aggregate says so. */
+  hidesBrands: boolean;
 }
 
 const Context = createContext<BrandScopeState | null>(null);
@@ -33,8 +42,16 @@ function useScopeState(persist: boolean): BrandScopeState {
   const [fromUrl, setFromUrl] = useState(urlScope.current !== null);
   const [list, setList] = useState<ScopeListEntry[] | null>(null);
   const [open, setOpen] = useState(false);
-  const savedViews = useRef<Record<string, unknown>>({});
+  const [saveFailed, setSaveFailed] = useState(false);
+  // null until GET /api/me/prefs has answered: a write before that would replace the saved views with an empty object.
+  const savedViews = useRef<Record<string, unknown> | null>(null);
+  const reading = useRef<Promise<boolean> | null>(null);
   const decidedByUser = useRef(false);
+  const latest = useRef<BrandScope>(scope);
+  // Writes run one after another, so two quick changes can never reach the server out of order.
+  const writes = useRef<Promise<void>>(Promise.resolve());
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const loadList = useCallback(async () => {
     const [lifecycle, runtime] = await Promise.allSettled([api.lifecycleBrands(), api.brands()]);
@@ -43,23 +60,31 @@ function useScopeState(persist: boolean): BrandScopeState {
     setList(lifecycle.value.brands.map((brand) => ({ brand, scope: toScopeBrand(brand, statuses.get(brand.brand_id)), group: groupOfBrand(brand, statuses.get(brand.brand_id)) })));
   }, []);
 
+  /** Reads the saved prefs once at a time. True when they are known. A failed read can be tried again by the next write. */
+  const readPrefs = useCallback((): Promise<boolean> => {
+    if (savedViews.current !== null) return Promise.resolve(true);
+    if (!reading.current) {
+      reading.current = api.mePrefs().then((prefs) => {
+        savedViews.current = prefs.saved_views;
+        // A link's ?scope= and a choice made before the answer arrived both win over the saved scope.
+        if (mounted.current && urlScope.current === null && !decidedByUser.current) { latest.current = scopeFromPrefs(prefs.brand_scope); setScopeState(latest.current); }
+        return true;
+      }, () => false).finally(() => { reading.current = null; });
+    }
+    return reading.current;
+  }, []);
+
   useEffect(() => {
     if (!persist) return;
-    let active = true;
-    void api.mePrefs().then((prefs) => {
-      if (!active) return;
-      savedViews.current = prefs.saved_views;
-      // A link's ?scope= and a choice made before the answer arrived both win over the saved scope.
-      if (urlScope.current === null && !decidedByUser.current) setScopeState(scopeFromPrefs(prefs.brand_scope));
-    }, () => undefined);
+    void readPrefs();
     void loadList();
-    return () => { active = false; };
-  }, [persist, loadList]);
+  }, [persist, readPrefs, loadList]);
   // The popover lists current brands, so opening it reads them again.
   useEffect(() => { if (persist && open) void loadList(); }, [persist, open, loadList]);
 
   const setScope = useCallback((next: BrandScope) => {
     decidedByUser.current = true;
+    latest.current = next;
     setScopeState(next);
     if (urlScope.current !== null) {
       urlScope.current = null;
@@ -68,14 +93,31 @@ function useScopeState(persist: boolean): BrandScopeState {
       url.searchParams.delete("scope");
       window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
     }
-    if (persist) void api.saveMePrefs({ brand_scope: scopeToPrefs(next), saved_views: savedViews.current }).catch(() => undefined);
-  }, [persist]);
+    if (!persist) return;
+    writes.current = writes.current.then(async () => {
+      const target = latest.current;
+      // Wait for the saved views. If they cannot be read, writing would erase them, so nothing is written and the user is told.
+      if (!(await readPrefs())) { if (mounted.current) setSaveFailed(true); return; }
+      try {
+        await api.saveMePrefs({ brand_scope: scopeToPrefs(target), saved_views: savedViews.current ?? {} });
+        if (mounted.current && latest.current === target) setSaveFailed(false);
+      } catch {
+        if (mounted.current) setSaveFailed(true);
+      }
+    });
+  }, [persist, readPrefs]);
 
   return useMemo(() => {
     const isVisible = (brand: ScopeBrand) => inScope(scope, brand);
     const visible = list ? list.filter((entry) => isVisible(entry.scope)).length : null;
-    return { scope, setScope, list, visibleCount: visible, totalCount: list ? list.length : null, isVisible, open, setOpen, fromUrl };
-  }, [scope, setScope, list, open, fromUrl]);
+    const byId = new Map((list ?? []).map((entry) => [entry.brand.brand_id, entry.scope] as const));
+    const inScopeId = (brandId: string) => {
+      if (list === null) return true;
+      const known = byId.get(brandId);
+      return known ? isVisible(known) : scope.brandIds === null || scope.brandIds.includes(brandId);
+    };
+    return { scope, setScope, list, visibleCount: visible, totalCount: list ? list.length : null, isVisible, open, setOpen, fromUrl, saveFailed, inScopeId, hidesBrands: list !== null && visible !== list.length };
+  }, [scope, setScope, list, open, fromUrl, saveFailed]);
 }
 
 /** Holds the signed-in user's brand scope for the whole panel: saved through /api/me/prefs, overridden by `?scope=`. */

@@ -97,6 +97,23 @@ ${read("styles.css")}`);
     expect(html).toContain("<title>Anjuna</title>");
   });
 
+  it("keeps relative font sizes at 13px or more inside a 13px parent", () => {
+    // A size in em or % shrinks inside a small parent: .875em in a 13px .small is 11.4px. Every such size must be wrapped in max(13px, ...).
+    const sources = ["styles.css", "screens/Audit.tsx", "screens/Suppressions.tsx", "screens/Home.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css", "screens/BuilderKeys.tsx"];
+    for (const file of sources) {
+      for (const match of read(file).matchAll(/font-?[sS]ize:\s*"?([^;"},]+(?:\([^)]*\))?[^;"},]*)/g)) {
+        const value = match[1]!.trim();
+        const relative = value.match(/([\d.]+)(em|%)/);
+        if (!relative) continue;
+        const factor = relative[2] === "%" ? Number(relative[1]) / 100 : Number(relative[1]);
+        const wrapped = /^max\(\s*13px/.test(value);
+        // Resolve it against the smallest parent size the panel uses.
+        const resolved = wrapped ? Math.max(13, 13 * factor) : 13 * factor;
+        expect(resolved, `${file}: ${match[0]}`).toBeGreaterThanOrEqual(13);
+      }
+    }
+  });
+
   it("sets no font size under 13px in any stylesheet", () => {
     const files = ["styles.css", "styles/tokens.css", "screens/Home.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css"];
     for (const file of files) {

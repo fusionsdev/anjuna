@@ -196,3 +196,109 @@ describe("brand scope in the app", () => {
     expect(within(dialog).getByRole("checkbox", { name: /Alpha Loans/ })).toBeTruthy();
   });
 });
+
+const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (reason?: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
+
+describe("saving the scope", () => {
+  const applyDemoToggle = async () => {
+    const dialog = await openPopover();
+    fireEvent.click(within(dialog).getByRole("switch", { name: "แสดงแบรนด์ทดลอง" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "ใช้" }));
+  };
+
+  it("waits for the saved prefs before it writes, and writes the saved views it read", async () => {
+    const read = deferred<ReturnType<typeof prefs>>();
+    vi.mocked(api.mePrefs).mockReturnValue(read.promise);
+    render(<App />);
+    await loaded();
+    await applyDemoToggle();
+    // The change shows at once and nothing is written yet: the saved views are not known.
+    await waitFor(() => expect(rowCount()).toBe(3));
+    expect(api.saveMePrefs).not.toHaveBeenCalled();
+    read.resolve(prefs({ hide_inactive: true }));
+    await waitFor(() => expect(api.saveMePrefs).toHaveBeenCalledTimes(1));
+    expect(api.saveMePrefs).toHaveBeenCalledWith({ brand_scope: { hide_inactive: true, show_demo: true, brand_ids: null }, saved_views: { brands: { chip: "live" } } });
+    // The choice made before the answer arrived wins over the saved scope.
+    expect(rowCount()).toBe(3);
+  });
+
+  it("writes nothing when the saved prefs cannot be read, keeps the scope on this device and says so", async () => {
+    vi.mocked(api.mePrefs).mockRejectedValue(new ApiError(500, null));
+    render(<App />);
+    await loaded();
+    await applyDemoToggle();
+    await waitFor(() => expect(rowCount()).toBe(3));
+    expect(await screen.findByText("บันทึกขอบเขตไม่สำเร็จ ใช้ได้เฉพาะเครื่องนี้")).toBeTruthy();
+    expect(api.saveMePrefs).not.toHaveBeenCalled();
+  });
+
+  it("says so when the write fails and clears the notice after a later write succeeds", async () => {
+    vi.mocked(api.saveMePrefs).mockRejectedValueOnce(new ApiError(500, null));
+    render(<App />);
+    await loaded();
+    await applyDemoToggle();
+    expect(await screen.findByText("บันทึกขอบเขตไม่สำเร็จ ใช้ได้เฉพาะเครื่องนี้")).toBeTruthy();
+    await applyDemoToggle();
+    await waitFor(() => expect(screen.queryByText("บันทึกขอบเขตไม่สำเร็จ ใช้ได้เฉพาะเครื่องนี้")).toBeNull());
+  });
+
+  it("sends the writes one after another, so the last choice is the last write", async () => {
+    const first = deferred<ReturnType<typeof prefs>>();
+    vi.mocked(api.saveMePrefs).mockReturnValueOnce(first.promise as never);
+    render(<App />);
+    await loaded();
+    await applyDemoToggle();
+    await waitFor(() => expect(api.saveMePrefs).toHaveBeenCalledTimes(1));
+    // A second change while the first write is still in flight must wait for it.
+    const dialog = await openPopover();
+    fireEvent.click(within(dialog).getByRole("switch", { name: "ซ่อนแบรนด์ที่ไม่ได้ใช้แล้ว" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "ใช้" }));
+    await act(async () => undefined);
+    expect(api.saveMePrefs).toHaveBeenCalledTimes(1);
+    first.resolve(prefs());
+    await waitFor(() => expect(api.saveMePrefs).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.saveMePrefs).mock.calls[1]![0].brand_scope).toEqual({ hide_inactive: false, show_demo: true, brand_ids: null });
+  });
+});
+
+describe("scope on the other pages", () => {
+  const funnelRows = [
+    { brand: "brand-cg", keyword: null, variant: null, clicks: 100, go_count: 80, form_views: 60, submits: 11, sold: 3, revenue: null, submit_rate: null, sold_rate: null },
+    { brand: "brand-al", keyword: null, variant: null, clicks: 400, go_count: 300, form_views: 200, submits: 40, sold: 9, revenue: null, submit_rate: null, sold_rate: null },
+  ];
+  const withFunnel = () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => (input.startsWith("/api/funnel?") ? json({ from: "2026-11-03", to: "2026-11-10", rows: funnelRows }) : base(input))));
+  };
+  const ledger = () => within(screen.getByRole("group", { name: "สรุปตัวเลข" }));
+  const leadsCell = () => ledger().getByText("ลีด", { selector: "p.k" }).nextElementSibling!.textContent;
+
+  it("counts only the brands in scope in the Home numbers and brand rows", async () => {
+    window.history.replaceState(null, "", "/");
+    withFunnel();
+    render(<App />);
+    await waitFor(() => expect(leadsCell()).toBe("11")); // brand-al is paused, so its 40 leads stay out
+    const dialog = await openPopover();
+    fireEvent.click(within(dialog).getByRole("switch", { name: "ซ่อนแบรนด์ที่ไม่ได้ใช้แล้ว" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "ใช้" }));
+    await waitFor(() => expect(leadsCell()).toBe("51"));
+  });
+
+  it("shows the scope chip with the แก้ไข button on every page that shows brand data", async () => {
+    for (const path of ["/", "/brands", "/campaigns", "/traffic", "/funnel", "/leads", "/conversions", "/alerts"]) {
+      window.history.replaceState(null, "", path);
+      const view = render(<App />);
+      expect(await screen.findByText("แสดง 2 จาก 5 แบรนด์ · ซ่อนที่ไม่ได้ใช้ 3"), path).toBeTruthy();
+      expect(screen.getByRole("button", { name: "แก้ไข" }), path).toBeTruthy();
+      view.unmount();
+      cleanup();
+    }
+  });
+
+  it("shows no chip on pages without brand data", async () => {
+    window.history.replaceState(null, "", "/templates");
+    render(<App />);
+    await screen.findByRole("button", { name: /แบรนด์ที่ใช้งาน/ });
+    expect(screen.queryByRole("button", { name: "แก้ไข" })).toBeNull();
+  });
+});

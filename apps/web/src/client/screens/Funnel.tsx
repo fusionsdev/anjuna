@@ -1,9 +1,11 @@
 import type { FunnelReportResponse, TrafficBreakdownResponse, TrafficDimension, TrafficPeriod } from "@anjuna/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { ApiError, api } from "../api";
 import { BrandLabel, useBrandLabels } from "../brand-labels";
 import { RiskPanel } from "./RiskPanel";
+import { scopeFunnel } from "../home-metrics";
+import { useBrandScope } from "../useBrandScope";
 
 const periods: Array<[TrafficPeriod, string]> = [["today", "วันนี้"], ["7d", "7 วัน"], ["30d", "30 วัน"]];
 const tabs = { source: "แหล่งที่มา", domain: "โดเมน", device: "อุปกรณ์", browser: "Browser" } as const;
@@ -49,7 +51,9 @@ export function FunnelScreen() {
   const [traffic, setTraffic] = useState<TrafficBreakdownResponse | null>(null);
   const [breakdown, setBreakdown] = useState<TrafficBreakdownResponse | null>(null);
   const [hours, setHours] = useState<TrafficBreakdownResponse | null>(null);
-  const [report, setReport] = useState<FunnelReportResponse | null>(null);
+  const [reportRaw, setReport] = useState<FunnelReportResponse | null>(null);
+  const { inScopeId } = useBrandScope();
+  const report = useMemo(() => (reportRaw ? scopeFunnel(reportRaw, inScopeId) : reportRaw), [reportRaw, inScopeId]);
   const [paid, setPaid] = useState(new Map<string, number>());
   const [owner, setOwner] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,7 +129,7 @@ export function FunnelScreen() {
       {error ? <p role="alert">{error}</p> : !traffic ? <p role="status">กำลังโหลด…</p> :
         <div className="tw"><table><thead><tr>
           <th>แบรนด์</th><th>คลิกที่จ่าย</th><th>ถึงเว็บ</th><th>ถึง /go</th><th>เปิดฟอร์ม</th><th>ลีด</th><th>ขายได้</th><th>จุดรั่วมากสุด</th>
-        </tr></thead><tbody>{[...brands.values()].map((b) => {
+        </tr></thead><tbody>{[...brands.values()].filter((b) => inScopeId(b.brand_id)).map((b) => {
           const sold = report ? report.rows.filter((r) => r.brand === b.brand_id).reduce((sum, r) => sum + r.sold, 0) : null;
           const clicks = paid.get(b.brand_id) ?? null;
           const leak = biggestLeak([["คลิกที่จ่าย", clicks], ["ถึงเว็บ", b.visits], ["ถึง /go", b.go_count], ["ฟอร์ม", b.form_views], ["ลีด", b.leads]]);
