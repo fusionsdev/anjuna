@@ -57,6 +57,8 @@ import {
   type RemoveSuppressionResponse,
 } from "@anjuna/contracts";
 import type { Env } from "../env.js";
+import { TrafficRealtimeQuery } from "@anjuna/contracts";
+import { loadTrafficRealtime } from "./traffic-realtime.js";
 import { json } from "../http.js";
 import { globalPostbackDigest } from "../postback-token.js";
 import { parseStoredTheme } from "../rpc/runtime.js";
@@ -1233,6 +1235,13 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
     const permission = authorize("trafficReport", context.actor_role);
     if (!permission.ok) return adminError(context, permission.error);
     return subscribeTail(request, env);
+  }
+  if (request.method === "GET" && new URL(request.url).pathname === "/admin/traffic/realtime") {
+    const permission = authorize("trafficReport", context.actor_role);
+    if (!permission.ok) return adminError(context, permission.error);
+    const query = TrafficRealtimeQuery.safeParse(Object.fromEntries(new URL(request.url).searchParams));
+    if (!query.success) return invalid(context, schemaIssues(query.error.issues));
+    return json(await loadTrafficRealtime(env, query.data));
   }
 
   let route: ReturnType<typeof matchAdminRoute>;

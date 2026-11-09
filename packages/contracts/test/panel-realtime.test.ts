@@ -14,13 +14,14 @@ it("TrafficTailEvent parses and rejects private fields", () => {
 });
 it("TrafficRealtimeResponse parses all report fields", () => {
   const metrics = { landing_views: 0, form_starts: 0, leads: 0, validation_errors: 0, redirect_errors: 0 };
-  const bots = { "15m": 0, "1h": 0, "24h": 0 };
+  const bots = { current_hour: 0, "24h": 0 };
   const report = { period: "24h", from: at, to: at,
     kpis: { ...metrics, suspicious_sessions: null, no_gclid_landings: { count: 0, pct: 0 }, gate_drops: 0, non_us_pct: null },
     deltas: { ...metrics, suspicious_sessions: null, no_gclid_landings: null, gate_drops: null, non_us_pct: null },
     bots_now: { googlebot: bots, adsbot: bots, "other-bot": bots }, adsbot_last: [],
     breakdowns: { source: [], hostname: [], device: [], browser: [], brand: [] }, trend: [], recent: [] };
   expect(TrafficRealtimeResponse.parse(report)).toEqual(report);
+  expect(TrafficRealtimeResponse.safeParse({ ...report, bots_now: { ...report.bots_now, adsbot: { "15m": 0, "1h": 0, "24h": 0 } } }).success).toBe(false);
   expect(TrafficRealtimeResponse.safeParse({ ...report, kpis: { ...report.kpis, email: "private" } }).success).toBe(false);
 });
 it("AlertStateRow parses", () => {
