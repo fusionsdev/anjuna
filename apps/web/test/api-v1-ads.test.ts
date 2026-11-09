@@ -38,7 +38,7 @@ function adsCore(override?: (url: URL, body: unknown) => Response | undefined) {
       const forced = override?.(url, body);
       if (forced) return forced;
       if (url.pathname === "/admin/adkit/campaigns") {
-        return Response.json({ campaigns: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
+        return Response.json({ campaigns: [], brands: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
       }
       if (url.pathname === "/admin/adkit/campaign-jobs") {
         const b = body as Record<string, unknown>;
@@ -127,7 +127,7 @@ describe("/api/v1/ads campaigns", () => {
     const core = adsCore();
     const response = await call("/api/v1/ads/campaigns", { headers: bearer(key.secret), env: core.env });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ campaigns: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
+    expect(await response.json()).toEqual({ campaigns: [], brands: [], caps: { total_thb_day: 3000, brand_thb_day: 3000 }, enabled_total_thb_day: 0 });
     expect(core.seen).toEqual([expect.objectContaining({ method: "GET", path: "/admin/adkit/campaigns", actor: key.key_id })]);
   });
 
