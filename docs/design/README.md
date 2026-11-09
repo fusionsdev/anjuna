@@ -11,6 +11,12 @@ README are planned per `PLAN.md` section D, lane W02, and are therefore
 marked with the W02 task that owns them; they are relative to
 `apps/web/src/client/` when not otherwise prefixed.
 
+The exported copy under `docs/design/magic-patterns-20261109/` is also
+**lint-exempt**: it is third-party reference source kept byte-for-byte as
+exported, so it is excluded from markdown linting by the repo-root
+`.markdownlint-cli2.jsonc` ignore list. Linting this README is still
+expected.
+
 ## 1. State: screenshots missing
 
 The export contains **zero screenshots** (0 PNG or any image files in the
@@ -56,10 +62,10 @@ Expanded details for the pages whose design splits into parts:
 | home/HumanTasksCard.tsx | screens/home/HumanTasks.tsx (W02-2) |
 | home/KpiRow.tsx | planned screens/home/KpiRow.tsx (W02-2) |
 | home/FunnelStrip.tsx | screens/Funnel.tsx (W02-2) |
-| home/ConversionQueueCard.tsx | planned ConversionQueueCard (W02-2) |
+| home/ConversionQueueCard.tsx | screens/home/ConversionQueueCard.tsx (W02-2) |
 | brands/BrandTable.tsx | screens/home/BrandRows.tsx + DataTable (W02-2) |
 | brands/BrandDetailPanel.tsx | screens/BrandLifecycle.tsx detail card |
-| brands/StageDots.tsx | lifecycle-state.ts + StageDots (W02-2) |
+| brands/StageDots.tsx | components/StageDots.tsx + lifecycle-state.ts (W02-2) |
 | brands/RowMenu.tsx | components/RowMenu.tsx restyle (W02-2) |
 | ui/Button.tsx | planned components/Button.tsx (W02-1) |
 | ui/Chip.tsx | planned components/Chip.tsx (W02-1) |
@@ -70,7 +76,7 @@ Expanded details for the pages whose design splits into parts:
 | ui/Icon.tsx | planned components/Icon.tsx, lucide-react (W02-1) |
 | layout/Sidebar.tsx | components/SidebarNav.tsx restyle (W02-1) |
 | layout/MobileTopBar.tsx | components/AppShell.tsx mobile bar (W02-1) |
-| layout/BrandScopeControl.tsx | planned BrandScopeControl (W02-1) |
+| layout/BrandScopeControl.tsx | components/BrandScopeControl.tsx (W02-1) |
 | wizard/WizardStepper.tsx | planned wizard/Stepper.tsx (W02-2) |
 | wizard/BrandInfoStep.tsx | wizard/StepPanels.tsx + steps.ts (W02-2) |
 | wizard/TemplateStep.tsx | wizard/StepPanels.tsx + steps.ts (W02-2) |
