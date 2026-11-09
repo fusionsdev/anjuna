@@ -24,6 +24,9 @@ describe("migration 0027 on a populated adkit_jobs", () => {
       seq++;
     }
     const before = (await env.DB.prepare("SELECT * FROM adkit_jobs ORDER BY id").all()).results;
+    const indexList = async () => (await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'adkit_jobs' AND sql IS NOT NULL ORDER BY name")
+      .all<{ name: string }>()).results.map((r) => r.name);
+    const indexesBefore = await indexList();
 
     await applyD1Migrations(env.DB, env.MIGRATIONS);
     const applied = (await env.DB.prepare("SELECT name FROM d1_migrations WHERE name LIKE '0027%'").first<{ name: string }>())!.name;
@@ -39,8 +42,7 @@ describe("migration 0027 on a populated adkit_jobs", () => {
     await expect(insert("claimed-no-claim", "terminal.run", "claimed", "key-claim")).rejects.toThrow(/CHECK constraint failed/);
     await expect(insert("dup", "terminal.run", "queued", "terminal:1")).rejects.toThrow(/UNIQUE constraint failed/);
 
-    const indexes = (await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'adkit_jobs' AND sql IS NOT NULL ORDER BY name")
-      .all<{ name: string }>()).results.map((r) => r.name);
-    expect(indexes).toEqual(["idx_adkit_jobs_campaign", "idx_adkit_jobs_claim_seq", "idx_adkit_jobs_result_seq", "idx_adkit_jobs_seq", "idx_adkit_jobs_status"]);
+    expect(indexesBefore).toHaveLength(5);
+    expect(await indexList()).toEqual(indexesBefore);
   });
 });

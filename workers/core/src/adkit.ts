@@ -297,7 +297,7 @@ export async function handleJobResult(request: Request, env: Env, deps: JobResul
     .bind(data.job_id, data.claim_id, retry ? "queued" : final, JSON.stringify({ error: terminal ? redactTerminalOutput(data.error).slice(0, 500) : data.error }), nextAttemptAt, at, row.attempts)
     .run();
   if (!update.meta.changes) return stale();
-  if (!retry) await audit(env, DRAIN_ACTOR, `adkit.job.${final}`, data.job_id, { error: data.error, attempts: row.attempts }, at);
+  if (!retry) await audit(env, DRAIN_ACTOR, `adkit.job.${final}`, data.job_id, { error: terminal ? redactTerminalOutput(data.error).slice(0, 500) : data.error, attempts: row.attempts }, at);
   if (!retry && final === "unknown") await queueStatusChecks(env, at);
   return json({ status: retry ? "queued" : final });
 }

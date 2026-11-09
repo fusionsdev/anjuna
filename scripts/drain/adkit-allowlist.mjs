@@ -173,6 +173,10 @@ function normalize(tokens) {
     a.splice(account + 2, 0, "--limit", "500");
   }
   if (command === "results campaigns" && !a.includes("--limit")) a.push("--limit", "500");
+  // The checker reads the parsed object, so forward exactly that object (JSON.parse keeps the last of a duplicate key).
+  const di = a.indexOf("--data");
+  const parsed = di !== -1 && di + 1 < a.length ? parseObject(a[di + 1]) : null;
+  if (parsed) a[di + 1] = JSON.stringify(parsed);
   return [...a, "--json", ...project];
 }
 
@@ -198,6 +202,11 @@ export function checkTerminalArgv(argv, mode) {
     return refuse(need === "draft"
       ? "คำสั่งนี้สร้างแคมเปญร่าง สลับเป็นโหมดร่างก่อนส่ง"
       : "คำสั่งนี้เขียนข้อมูลจริง สลับเป็นโหมดเผยแพร่ก่อนส่ง");
+  }
+  const di = argv.indexOf("--data");
+  if (di !== -1) {
+    const data = parseObject(argv[di + 1]);
+    if (data && JSON.stringify(data) !== argv[di + 1]) return refuse("ข้อมูล JSON ไม่เป็นรูปแบบมาตรฐาน (เช่น คีย์ซ้ำ)");
   }
   if (command === "campaigns update") {
     const data = parseObject(argv[argv.indexOf("--data") + 1]);
@@ -229,14 +238,26 @@ export function parseTerminalLine(line, mode) {
 }
 
 const CLICK_KEYS = "gclid|gbraid|wbraid|msclkid|fbclid|click[_-]?id";
-const SECRET_KEYS = "[A-Za-z_-]*(?:token|secret|password|passwd|api[_-]?key|authorization|credential)[A-Za-z_-]*";
-/** Hide click ids and tokens, then cut to TERMINAL_OUTPUT_MAX bytes. Pure and idempotent. */
+// Prefix and suffix are bounded, so a long run of key-like characters costs at most about 64 steps per position.
+const SECRET_KEYS = "[A-Za-z_-]{0,32}(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|authorization|credential)[A-Za-z_-]{0,32}";
+/** A paging cursor is not a secret: its value is kept so `campaigns list` paging keeps working. */
+const keepKey = (key) => /page[_-]?token/i.test(key);
+const keepBefore = (text, offset) => /(?:page[_-]?token["']?\s*[:=]?\s*["']?|--page-token\s+)$/i.test(text.slice(Math.max(0, offset - 40), offset));
+
+/** Hide click ids and tokens, then cut to TERMINAL_OUTPUT_MAX bytes. The input is cut first, so the cost is bounded whatever its size. */
 export function redactTerminalOutput(text) {
-  let out = String(text ?? "");
-  out = out.replace(new RegExp(`("(?:${CLICK_KEYS}|${SECRET_KEYS})"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, "gi"), '$1"***"');
-  out = out.replace(new RegExp(`\\b((?:${CLICK_KEYS}|${SECRET_KEYS})\\s*[=:]\\s*)[^\\s,"'&}]+`, "gi"), "$1***");
+  let out = String(text ?? "").slice(0, TERMINAL_OUTPUT_MAX);
+  out = out.replace(/-----BEGIN [A-Z ]{0,24}PRIVATE KEY-----[\s\S]{0,8192}?(?:-----END [A-Z ]{0,24}PRIVATE KEY-----|$)/g, "***");
+  out = out.replace(new RegExp(`("(?:${CLICK_KEYS}|${SECRET_KEYS})"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, "gi"),
+    (m, head) => (keepKey(head) ? m : `${head}"***"`));
+  out = out.replace(new RegExp(`\\b((?:${CLICK_KEYS}|${SECRET_KEYS})\\s*[=:]\\s*)[^\\s,"'&}]+`, "gi"),
+    (m, head) => (keepKey(head) ? m : `${head}***`));
   out = out.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***");
-  out = out.replace(/\b[A-Za-z0-9_-]{40,}\b/g, "***");
+  // A bare opaque token: 40 or more characters, or 22 or more mixed-case ones (a Google Ads developer token).
+  out = out.replace(/\b[A-Za-z0-9_-]{22,}\b/g, (m, offset, whole) => {
+    if (keepBefore(whole, offset)) return m;
+    return m.length >= 40 || (/[a-z]/.test(m) && /[A-Z]/.test(m)) ? "***" : m;
+  });
   const bytes = new TextEncoder().encode(out);
   if (bytes.length <= TERMINAL_OUTPUT_MAX) return out;
   const note = "\n...(ตัดที่ 20 KB)";

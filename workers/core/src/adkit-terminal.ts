@@ -87,12 +87,13 @@ export async function createTerminalJob(request: Request, env: Env, context: Adm
 
   const id = crypto.randomUUID();
   const at = new Date().toISOString();
-  const payload = TerminalRunPayload.parse({ line, argv: parsed.argv, mode });
+  // The stored line is what the panel shows back, so secret-like values in it are masked; argv stays exact for the executor.
+  const payload = TerminalRunPayload.parse({ line: redact(line), argv: parsed.argv, mode });
   await env.LEADS.prepare(`
     INSERT INTO adkit_jobs (id, kind, payload, status, result, attempts, idempotency_key, requested_by, created_at, updated_at, seq)
     VALUES (?1, 'terminal.run', ?2, 'queued', NULL, 0, ?3, ?4, ?5, ?5, ${NEXT_SEQ})`)
     .bind(id, JSON.stringify(payload), `terminal:${id}`, context.actor_id, at).run();
-  await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.terminal.run", id, { mode, argv: parsed.argv }, at);
+  await audit(env, { id: context.actor_id, role: context.actor_role }, "adkit.terminal.run", id, { mode, argv: parsed.argv.map((arg) => redact(arg)) }, at);
   const row = await env.LEADS.prepare("SELECT * FROM adkit_jobs WHERE id = ?1").bind(id).first<JobRow>();
   const job = row ? terminalView(row) : null;
   if (!job) throw new Error("terminal job row missing after insert");

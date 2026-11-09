@@ -177,3 +177,31 @@ describe("terminal job result", () => {
     expect((await readJob("not-a-uuid")).status).toBe(404);
   });
 });
+
+describe("review fixes (PR 196)", () => {
+  it("masking 1 MB of a- is fast in core, and a 64 KB result posts fast", async () => {
+    const { redactTerminalOutput } = await import("../src/adkit-terminal.js");
+    const t = performance.now();
+    redactTerminalOutput("a-".repeat(524288));
+    expect(performance.now() - t).toBeLessThan(500);
+    const created = await (await post({ line: "manage google accounts list", mode: "read" })).json() as { job: { id: string } };
+    const claim = await (await vps("jobs/claim", { job_id: created.job.id })).json() as { claim_id: string };
+    const t2 = performance.now();
+    const res = await vps("jobs/result", { job_id: created.job.id, claim_id: claim.claim_id, result: { output: "a-".repeat(32768) } });
+    expect(res.status).toBe(200);
+    expect(performance.now() - t2).toBeLessThan(2000);
+    const t3 = performance.now();
+    await readJob(created.job.id);
+    expect(performance.now() - t3).toBeLessThan(2000);
+  });
+
+  it("masks the audit error of a failed terminal job and the stored line of a secret-like value", async () => {
+    const created = await (await post({ line: "manage google accounts list --project p1", mode: "read" })).json() as { job: { id: string; line: string } };
+    const claim = await (await vps("jobs/claim", { job_id: created.job.id })).json() as { claim_id: string };
+    await vps("jobs/result", { job_id: created.job.id, claim_id: claim.claim_id, error: "boom refresh_token=1//0SECRETREFRESH" });
+    const rows = await h.factory.prepare("SELECT after_json FROM audit_log WHERE entity_id = ?1").bind(created.job.id).all<{ after_json: string }>();
+    expect(JSON.stringify(rows.results)).not.toContain("SECRETREFRESH");
+    const withSecret = await (await post({ line: "manage google accounts list --project AbCdEfGhIjKlMnOpQrStUvWx", mode: "read" })).json() as { job: { line: string } };
+    expect(withSecret.job.line).not.toContain("AbCdEfGhIjKlMnOpQrStUvWx");
+  });
+});
