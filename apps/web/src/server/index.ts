@@ -7,6 +7,7 @@
  *   4. call core over the admin API contract, or write a panel-only audit row
  */
 import {
+  AdAllocationAssignRequest,
   AdminRole,
   BrandId,
   BrandPatchRequest,
@@ -340,6 +341,16 @@ async function route(
     if (report.status !== 200) return fromCore(report);
     const fx = await readFxSetting(env.FACTORY);
     return json(200, withUsd(SpendReportResponse.parse(report.body), fx.thbPerUsd));
+  }
+
+  // T13 A3 allocation tab: owner only. The panel role gate runs first; core checks the owner role again.
+  if (path === "/api/ad-allocation" && (method === "GET" || method === "PATCH")) {
+    const g = authorizePanel("adAllocation", ctx.actor_role);
+    if (!g.ok) return forbidden(g.error, rid);
+    if (method === "GET") return fromCore(await callCore(env, ctx, { endpoint: "adAllocation", query: url.searchParams }));
+    const body = AdAllocationAssignRequest.safeParse(await readJson(request));
+    if (!body.success) return invalid(body.error, rid);
+    return fromCore(await callCore(env, ctx, { endpoint: "assignAdCampaign", body: body.data }));
   }
 
   // Conversion action status (FUS-384): owner only, shown in the money section.

@@ -19,6 +19,7 @@ import { NotFound } from "./screens/NotFound";
 import { TemplatesScreen } from "./screens/Templates";
 import { UsersScreen } from "./screens/Users";
 import { SettingsScreen } from "./screens/Settings";
+import { AdAllocationScreen } from "./screens/AdAllocation";
 import { TrafficScreen } from "./screens/Traffic"; // spec traffic
 import { ClientErrorsScreen } from "./screens/ClientErrors"; // spec traffic
 import { roleAtLeast } from "@anjuna/contracts";
@@ -56,7 +57,8 @@ export function App() {
     }
     let cancelled = false;
     api.alerts().then((report) => {
-      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate, report.click_risk]
+      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate, report.click_risk,
+        ...(report.ad_spend_unallocated ? [report.ad_spend_unallocated] : [])]
         .filter(({ state }) => state === "warn" || state === "alert").length;
       if (!cancelled) setAlertCount(count);
     }).catch(() => {
@@ -155,6 +157,10 @@ export function App() {
       {view === "settings" && (roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings)
         ? <SettingsScreen me={me} />
         : <NotFound title="สำหรับ Owner เท่านั้น (Owner only)" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้ (An employee account cannot open this page.)" />)}
+      {/* T13 A3: owner only; the server answers 403 to an employee as well */}
+      {view === "ad-allocation" && (roleAtLeast(me.role, PANEL_ROLE_TABLE.adAllocation)
+        ? <AdAllocationScreen />
+        : <NotFound title="สำหรับ Owner เท่านั้น" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้" />)}
       {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
     </AppShell>
   );

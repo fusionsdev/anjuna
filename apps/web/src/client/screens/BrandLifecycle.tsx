@@ -15,7 +15,7 @@ import { finalUrl, siteUrl } from "../final-url";
 import { isPlainLeftClick, navigate, routePath } from "../router";
 import { useBrandActions, type BrandAction } from "../useBrandActions";
 import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
-import { BRAND_PERIODS, BrandStatsRow, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
+import { BRAND_PERIODS, BrandStatsRow, SpendText, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandFilters } from "./BrandFilters";
 import { BrandWizard } from "./BrandWizard";
 import { ConfigPanel } from "./ConfigPanel";
@@ -788,7 +788,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const adkit = owner && selected ? (() => {
     const fresh = brandSpendFresh(spend, selected.brand_id, new Date(clock));
     const money = brandMoney(selected.brand_id, runtimeBrands, periodFunnel, spend);
-    return { periodLabel: BRAND_PERIODS.find(([key]) => key === period)?.[1] ?? period, spendText: fresh ? money.spendText : "—", profitText: fresh ? usd(money.profit) : "—" };
+    return { periodLabel: BRAND_PERIODS.find(([key]) => key === period)?.[1] ?? period, spendText: fresh ? money.spendText : "—", spendEstimated: fresh && money.estimated, profitText: fresh ? usd(money.profit) : "—" };
   })() : undefined;
   const runtimeBrand = runtimeBrands.find((brand) => brand.brand_id === selectedId);
   // A row menu opens Runtime config for its own row without selecting it, so the panel follows configBrandId, not the selection.
@@ -860,12 +860,12 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
                     <RowMenu label="จัดการ" items={menuItemsFor(brand, runtime, primary)} />
                   </td>
                   <td data-label="โฟลว์">{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
-                  {owner && <td data-label="ค่าโฆษณา" className="blue">{money.spendText}</td>}
+                  {owner && <td data-label="ค่าโฆษณา" className="blue"><SpendText text={money.spendText} estimated={money.estimated} /></td>}
                   <td data-label="คลิก">{count(money.clicks)}</td>
                   <td data-label="ลีด">{count(money.leads)}</td>
                   {owner && <>
-                    <td data-label="ต้นทุน/ลีด">{money.costPerLeadText}</td>
-                    <td data-label="กำไร" className={money.profit === null ? undefined : money.profit < 0 ? "neg" : "pos"}>{usd(money.profit)}</td>
+                    <td data-label="ต้นทุน/ลีด"><SpendText text={money.costPerLeadText} estimated={money.estimated} /></td>
+                    <td data-label="กำไร" className={money.profit === null ? undefined : money.profit < 0 ? "neg" : "pos"}><SpendText text={usd(money.profit)} estimated={money.estimated} /></td>
                   </>}
                 </tr>
                 <tr className={isSelected ? "click sel stats" : "click stats"} onClick={select}><td colSpan={columns} data-label=""><BrandStatsRow name={name} stats={stats} /></td></tr>
@@ -910,7 +910,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
  * onCopyFinalUrl: omitted by a caller with no clipboard handling, which then gets no Copy button.
  * manualCopyUrl: the Final URL to show in a read-only input once the clipboard was missing or refused it.
  */
-export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, steps = [], revisions, revisionsRetrying = false, onRetryRevisions, onCopyFinalUrl, manualCopyUrl, onInstall, onRollback, onRedeploy, onRedeployLatest, onRetry, onRecover, onResumeWizard, onDuplicate, onFix, adkit }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; steps?: ChecklistStep[]; revisions?: BrandRevisionsResponse | null; revisionsRetrying?: boolean; onRetryRevisions?: () => void; onCopyFinalUrl?: () => void; manualCopyUrl?: string | null; onInstall: () => void; onRollback: () => void; onRedeploy: () => void; onRedeployLatest?: () => void; onRetry: () => void; onRecover: () => void; onResumeWizard?: () => void; onDuplicate?: () => void; onFix?: (item: ChecklistItemName) => void; adkit?: { periodLabel: string; spendText: string; profitText: string } }) {
+export function LifecycleDetail({ me, brand, state, install, pendingOperation = false, steps = [], revisions, revisionsRetrying = false, onRetryRevisions, onCopyFinalUrl, manualCopyUrl, onInstall, onRollback, onRedeploy, onRedeployLatest, onRetry, onRecover, onResumeWizard, onDuplicate, onFix, adkit }: { me: Me; brand: LifecycleBrandSummary; state?: LifecycleState; install?: InstallWithReceipts; pendingOperation?: boolean; steps?: ChecklistStep[]; revisions?: BrandRevisionsResponse | null; revisionsRetrying?: boolean; onRetryRevisions?: () => void; onCopyFinalUrl?: () => void; manualCopyUrl?: string | null; onInstall: () => void; onRollback: () => void; onRedeploy: () => void; onRedeployLatest?: () => void; onRetry: () => void; onRecover: () => void; onResumeWizard?: () => void; onDuplicate?: () => void; onFix?: (item: ChecklistItemName) => void; adkit?: { periodLabel: string; spendText: string; spendEstimated?: boolean; profitText: string } }) {
   const lifecycleStatus = state?.lifecycle_status ?? (brand.status === "installing" ? "running" : brand.status === "live" ? "ready" : brand.status);
   // The same gating as the row menu; the buttons below keep their labels, order and handlers.
   const actionItems = brandActionItems({
@@ -930,7 +930,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const finalUrlFieldId = useId();
   return <section className="panel brand-side lifecycle-detail"><div className="side-head"><div><h2>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</h2><p className="muted">{brand.name && brand.name !== (brand.hostnames[0] ?? brand.name ?? brand.brand_id) && `${brand.name} · `}form <code>{brand.bundle_form_version ?? "—"}</code> · payload <code>{brand.payload_version ?? "—"}</code></p></div><StatusBadge tone={statusBadgeTone[brand.status] ?? "mute"} label={statusLabel[brand.status] ?? brand.status} /></div>
     <div className="status-grid"><div><span className="muted">สถานะ lifecycle</span><strong>{statusLabel[lifecycleStatus] ?? lifecycleStatus}</strong></div><div><span className="muted">การซิงก์ runtime</span><strong>{statusLabel[state?.runtime_sync_status ?? brand.runtime_sync_status] ?? brand.runtime_sync_status}</strong></div></div>
-    {adkit && me.role === "owner" && <section className="section" aria-label="ตัวเลขโฆษณา"><h3>ตัวเลขโฆษณา · {adkit.periodLabel}</h3><div className="status-grid"><div><span className="muted">ค่าโฆษณา</span><strong>{adkit.spendText}</strong></div><div><span className="muted">กำไร</span><strong>{adkit.profitText}</strong></div></div></section>}
+    {adkit && me.role === "owner" && <section className="section" aria-label="ตัวเลขโฆษณา"><h3>ตัวเลขโฆษณา · {adkit.periodLabel}</h3><div className="status-grid"><div><span className="muted">ค่าโฆษณา</span><strong><SpendText text={adkit.spendText} estimated={adkit.spendEstimated === true} /></strong></div><div><span className="muted">กำไร</span><strong><SpendText text={adkit.profitText} estimated={adkit.spendEstimated === true} /></strong></div></div></section>}
     {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง</button>}{showAction("rollback") && <button className="btn" {...gate("rollback")} onClick={onRollback}>ย้อนกลับ</button>}{showAction("redeploy") && <button className="btn" {...gate("redeploy")} onClick={onRedeploy}>ติดตั้งใหม่</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" {...gate("redeployLatest")} onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด</button>}{showAction("recover") && <button className="btn danger" {...gate("recover")} onClick={onRecover}>กู้คืน</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}{ownerOnlyShown && <p className="muted small" role="note">ปุ่มที่กดไม่ได้ใช้ได้เฉพาะเจ้าของ</p>}</div>}
     {/* spec timeline: the managed-only row above would hide it for an unmanaged brand */}
     <div className="side-actions"><a className="btn" href={routePath({ view: "brand-timeline", brandId: brand.brand_id })} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); }}>ไทม์ไลน์</a></div>

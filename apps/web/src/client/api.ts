@@ -4,6 +4,7 @@ import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisio
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, type CampaignJobCreateRequest } from "@anjuna/contracts";
+import { AdAllocationAssignResponse, AdAllocationResponse, type AdAllocationAssignRequest } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
 import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
@@ -294,6 +295,9 @@ export const api = {
   mailing: () => request<MailingStatusResponse>("GET", "/api/mailing"),
   /** Owner only: an employee gets 403 forbidden_role. */
   spend: (period: SpendPeriod) => request<PanelSpendReportResponse>("GET", `/api/spend?period=${encodeURIComponent(period)}`),
+  /** T13 A3 allocation tab (owner only; an employee gets 403). */
+  adAllocation: () => request<unknown>("GET", "/api/ad-allocation").then((body) => AdAllocationResponse.parse(body)),
+  assignAdCampaign: (body: AdAllocationAssignRequest) => request<unknown>("PATCH", "/api/ad-allocation", body).then((r) => AdAllocationAssignResponse.parse(r)),
   trafficRisk: (period: RiskPeriod) =>
     request<unknown>("GET", `/api/traffic/risk?${new URLSearchParams({ period })}`).then((body) => TrafficRiskResponse.parse(body)),
   /** Owner only. A plain link: the browser downloads the CSV with the session cookie. */

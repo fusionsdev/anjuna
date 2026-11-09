@@ -5,7 +5,7 @@ import { nextAction, type LifecycleRow, type NextAction, type Role } from "../..
 import { navigate, routePath } from "../../router";
 import type { ActionBrand, BrandAction } from "../../useBrandActions";
 import type { BrandChecklistEntry, BrandChecklists } from "../../api";
-import { byCurrencyText, type ByCurrency } from "../BrandStatsRow";
+import { SpendText, byCurrencyText, type ByCurrency } from "../BrandStatsRow";
 import { num } from "./shared";
 
 const MAX_ROWS = 10;
@@ -50,12 +50,13 @@ function rowOf(brand: LifecycleBrandSummary, entry: BrandChecklistEntry | undefi
  * Spend of one brand in each currency its accounts bill in, never added across currencies. Null when no row exists
  * (nothing was synced) or any row is older than 2 hours: a stale number is never shown as today's.
  */
-function brandSpend(spend: PanelSpendReportResponse, brandId: string, now: Date): ByCurrency | null {
+function brandSpend(spend: PanelSpendReportResponse, brandId: string, now: Date): { cost: ByCurrency; estimated: boolean } | null {
   const rows = spend.brands.filter((row) => row.brand_id === brandId);
   if (rows.length === 0 || rows.some((row) => isStale(row.updated_at, now, 2))) return null;
   const cost: ByCurrency = {};
   for (const row of rows) cost[row.currency] = (cost[row.currency] ?? 0) + row.cost;
-  return cost;
+  // The mark comes from the same rows as the number: a brand with no shown cost is never marked.
+  return { cost, estimated: rows.some((row) => row.allocation === "estimated") };
 }
 
 /** The leads of a live brand in the period. Null when the funnel did not load or the brand is not live, so nothing was recorded for it. */
@@ -112,15 +113,17 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, onA
       <ul className="home-brands">
         {rows.slice(0, MAX_ROWS).map(({ brand, action }) => {
           const leads = brandLeads(funnel, brand);
-          const cost = owner && spend ? brandSpend(spend, brand.brand_id, now) : null;
+          const shown = owner && spend ? brandSpend(spend, brand.brand_id, now) : null;
+          const cost = shown?.cost ?? null;
+          const estimated = shown?.estimated ?? false;
           const perLead: ByCurrency | null = cost && leads ? Object.fromEntries(Object.entries(cost).map(([currency, amount]) => [currency, amount / leads])) as ByCurrency : null;
           return (
             <li className="home-brand" key={brand.brand_id} data-brand-id={brand.brand_id}>
               <span className="n" data-col="name"><b>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</b>{brand.name && brand.name !== brand.hostnames[0] && <small className="muted"> {brand.name}</small>}</span>
               <span data-col="state" data-label="สถานะ">{STATUS_TEXT[brand.status] ?? brand.status}</span>
               <span data-col="leads" data-label="ลีด">{funnel === undefined ? "…" : leads === null ? "—" : num(leads)}</span>
-              {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : byCurrencyText(cost)}</span>}
-              {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : byCurrencyText(perLead)}</span>}
+              {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : <SpendText text={byCurrencyText(cost)} estimated={estimated} />}</span>}
+              {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : <SpendText text={byCurrencyText(perLead)} estimated={estimated} />}</span>}
               <button type="button" className={`btn${needsPerson(action, brand) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => click(action, brand)}>{action.label}</button>
             </li>
           );

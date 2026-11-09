@@ -4,8 +4,11 @@ export function siteUrl(hostnames: readonly string[]): string | null {
   return host ? `https://${host}` : null;
 }
 
-/** The `{keyword}` placeholder stays literal: Google Ads substitutes it, and percent-encoding the braces would break that. */
+/**
+ * The `{keyword}` and `{campaignid}` placeholders stay literal: Google Ads substitutes them, and percent-encoding the
+ * braces would break that. Core maps a campaign to its brand from `utm_campaign` on the clicks (T13 Part A1).
+ */
 export function finalUrl(hostnames: readonly string[]): string | null {
   const site = siteUrl(hostnames);
-  return site ? `${site}/?keyword={keyword}` : null;
+  return site ? `${site}/?keyword={keyword}&utm_campaign={campaignid}` : null;
 }

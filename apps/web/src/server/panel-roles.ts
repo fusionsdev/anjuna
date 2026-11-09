@@ -75,6 +75,8 @@ export const PANEL_ROLE_TABLE = {
   createAdsEvent: "employee",
   /** Deleting a manual Ads account event: Owner only. */
   deleteAdsEvent: "owner",
+  /** T13 A3: the allocation tab (shared accounts, campaign owners, unallocated cost). Owner only; an employee never sees it. */
+  adAllocation: "owner",
   /**
    * Campaigns screen (T13 Part B). The action names match CAMPAIGN_JOB_ROLES in @anjuna/contracts; core enforces the
    * same roles again. Enable is the only job that spends money.

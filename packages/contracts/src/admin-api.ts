@@ -35,7 +35,10 @@ import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { BrandTheme } from "./theme.js";
 import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, TrafficRiskResponse } from "./traffic-risk.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
-import { SpendPeriod, SpendQuery, SpendReportResponse, SpendRowsQuery, SpendRowsResponse } from "./spend.js";
+import {
+  AdAllocationAssignRequest, AdAllocationAssignResponse, AdAllocationQuery, AdAllocationResponse,
+  SpendCurrency, SpendPeriod, SpendQuery, SpendReportResponse, SpendRowsQuery, SpendRowsResponse,
+} from "./spend.js";
 import { CONVERSIONS_MAX_LIMIT, CONVERSION_STATUSES, ConversionReasonCode, ConversionStatus } from "./conversions.js";
 import { ClientErrorsQuery, ClientErrorsResponse, TrafficReportQuery, TrafficReportResponse } from "./traffic-log.js"; // spec traffic
 
@@ -635,6 +638,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   "brand.update", "brand.pause", "brand.resume",
   "pii.lead_view", "pii.lead_export", "lead.export", "pii.suppression_search",
   "suppression.add", "suppression.remove",
+  "ad_allocation.assign",
 ] as const;
 
 export const AuditActorRole = z.enum(["owner", "employee", "system"]);
@@ -888,6 +892,23 @@ export const AlertsReportResponse = z.strictObject({
       adsbot_hours: z.array(z.strictObject({ brand: z.string().min(1), hour: Timestamp, hits: Count })),
     }),
   }).optional(),
+  /**
+   * T13 A3 "ค่าโฆษณายังไม่จัดสรร": accounts shared by several brands whose unmapped campaign cost in the last
+   * `window_days` is above `alert_at` of their cost, one row per account and currency. Shares only, no money,
+   * because an employee reads this report. Optional so a core that predates it still parses.
+   */
+  ad_spend_unallocated: z.strictObject({
+    state: AlertState,
+    detail: z.strictObject({
+      window_days: z.number().int().positive(),
+      alert_at: z.number().min(0).max(1),
+      accounts: z.array(z.strictObject({
+        account: GoogleAdsAccount,
+        currency: SpendCurrency,
+        share: z.number().finite().min(0).max(1),
+      })),
+    }),
+  }).optional(),
 });
 export type AlertsReportResponse = z.infer<typeof AlertsReportResponse>;
 
@@ -1040,6 +1061,22 @@ export const AdminApi = {
     min_role: "owner",
     query: SpendQuery,
     response: SpendReportResponse,
+  },
+  /** T13 A3: shared accounts, their campaigns with 7 day cost and owner, the mode and the unallocated total. */
+  adAllocation: {
+    method: "GET",
+    path: "/admin/ad-allocation",
+    min_role: "owner",
+    query: AdAllocationQuery,
+    response: AdAllocationResponse,
+  },
+  /** T13 A3: the owner gives a campaign of a shared account to one of its brands (`source = 'manual'`). */
+  assignAdCampaign: {
+    method: "PATCH",
+    path: "/admin/ad-allocation/campaign",
+    min_role: "owner",
+    request: AdAllocationAssignRequest,
+    response: AdAllocationAssignResponse,
   },
   /** T13-7: spend per brand, currency and allocation over a day range, for API v1. Cost only: no USD, no profit. */
   spendRows: {

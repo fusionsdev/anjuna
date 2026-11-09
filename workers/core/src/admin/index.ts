@@ -1,5 +1,6 @@
 import {
   ADMIN_ERROR_STATUS,
+  AdAllocationQuery,
   AlertsQuery,
   AlertsReportResponse,
   AuditQuery,
@@ -64,6 +65,7 @@ import { loadAlerts, loadFunnel, loadMailingStatus } from "./reports.js";
 import { loadConversionSetupState } from "../conversion-setup.js";
 import { createAdkitJob, loadAdkitDirectory } from "../adkit.js";
 import { createCampaignJob, listPanelCampaigns } from "../campaign-jobs.js";
+import { assignAdCampaign, loadAdAllocation } from "../ad-allocation.js";
 import { loadSpendReport, loadSpendRows } from "../spend.js";
 import { loadTrafficRisk, loadTrafficRiskExport } from "./traffic-risk.js";
 
@@ -1263,6 +1265,13 @@ export async function handleAdminRequest(request: Request, env: Env): Promise<Re
   // T13 Part B campaign jobs: employee and owner; createCampaignJob refuses enable, pause and budget below owner.
   if (route.endpoint === "createCampaignJob") return createCampaignJob(request, env, context);
   if (route.endpoint === "listCampaigns") return json(await listPanelCampaigns(env));
+  // T13 A3 allocation tab: owner only (authorize() above).
+  if (route.endpoint === "adAllocation") {
+    const query = parseWith(AdAllocationQuery, parseQuery(new URL(request.url)), context);
+    if (query instanceof Response) return query;
+    return json(await loadAdAllocation(env, query.now ? new Date(query.now) : new Date()));
+  }
+  if (route.endpoint === "assignAdCampaign") return assignAdCampaign(request, env, context);
 
   // spec leads
   if (route.endpoint === "listLeads") return listLeads(new URL(request.url), env, context);

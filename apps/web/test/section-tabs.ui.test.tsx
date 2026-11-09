@@ -56,7 +56,7 @@ describe("nav groups", () => {
     expect(labels("brands", "owner")).toEqual(["แบรนด์", "แคมเปญ", "ประวัติการติดตั้ง"]);
     expect(labels("traffic", "owner")).toEqual(["ทราฟฟิก", "ฟันเนล", "ข้อผิดพลาดฝั่งเว็บ"]);
     expect(labels("leads", "owner")).toEqual(["ลีด", "คอนเวอร์ชัน"]);
-    expect(labels("settings", "owner")).toEqual(["ตั้งค่า", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
+    expect(labels("settings", "owner")).toEqual(["ตั้งค่า", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
   it("leaves the owner-only tabs out for an employee", () => {
@@ -71,7 +71,7 @@ describe("nav groups", () => {
       brands: "brands", "new-brand": "brands", "brand-timeline": "brands", deploys: "brands", campaigns: "brands",
       traffic: "traffic", funnel: "traffic", errors: "traffic",
       leads: "leads", conversions: "leads",
-      settings: "settings", users: "settings", mailing: "settings", suppressions: "settings", audit: "settings", "builder-keys": "settings",
+      settings: "settings", "ad-allocation": "settings", users: "settings", mailing: "settings", suppressions: "settings", audit: "settings", "builder-keys": "settings",
     };
     for (const [view, group] of Object.entries(grouped)) expect(groupOfView(view as View)?.id ?? null, view).toBe(group);
   });
@@ -87,6 +87,6 @@ describe("nav groups", () => {
     expect(groupViews(NAV_GROUPS.traffic)).toEqual(["traffic", "funnel", "errors"]);
     expect(groupViews(NAV_GROUPS.leads)).toEqual(["leads", "conversions"]);
     expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "campaigns", "deploys", "new-brand"]);
-    expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["audit", "builder-keys", "mailing", "settings", "suppressions", "users"]);
+    expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["ad-allocation", "audit", "builder-keys", "mailing", "settings", "suppressions", "users"]);
   });
 });
