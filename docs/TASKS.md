@@ -209,6 +209,34 @@ Critical path: T2/T3 → T6 → T10 → T13 → T16.
 
 ---
 
+---
+
+## Wave 5 — Panel redesign (2026-11-10, brief `panel-redesign-20261110`)
+
+> Scope, decisions and acceptance criteria come from `H:/w/anjuna-wt/_briefs/panel-redesign-20261110/PLAN.md` (section E below). Lanes: W01 (backend) owns T18–T21, W02 (UI) owns T22, W03 (docs/fixtures) produced the ADRs, runbooks and fixtures.
+
+### T18 [P] Real-time traffic tail (D1 → Durable Object → SSE) · Lane W01 (W01-1)
+- **Do:** `TrafficTail` Durable Object in `workers/core` (ring 500, dedupe by event_id, ping 15 s, `retry: 3000`), push hook from `analytics.ts` after insert, `GET /admin/traffic/tail?brand=` SSE, panel proxy `GET /api/traffic/tail` with a 5 s connect timeout, strict envelope (`session_ref` = sha256 slice, no email/ip/gclid), wrangler DO binding for both tenants. Release 1 (decision D4): stream + KPI + AdsBot only.
+- **Accept (E4, E8):** a telemetry POST appears in the panel stream within 2 s (Miniflare test with the DO); reconnect within 3 s after a dropped stream; duplicate event_id dropped; the telemetry response bytes are identical for a browser UA and an AdsBot UA; no deploy.
+
+### T19 [P] Real-time report endpoint · Lane W01 (W01-3)
+- **Do:** `GET /admin/traffic/realtime?period=24h|7d|30d&brand=` — KPI 6 + 3, deltas vs the same hour yesterday, `bots_now` (15 m/1 h/24 h) from `bot_hits`, `adsbot_last`, quiet brands out of release 1, breakdowns 6, recent 200; SQL ported from `aurum-observe-admin/src/db/traffic.ts` with Anjuna event types.
+- **Accept (E4):** the 40-event fixture (`workers/core/test/fixtures/traffic-events.ndjson` + `traffic-events.expected.json`) produces the exact expected number for every field; the response validates against `TrafficRealtimeResponse`; KPI numbers equal the SQL totals for the same window; ≤ 12 queries per request.
+
+### T20 [P] Telegram alerts: MultiNotifier + cron fast path · Lane W01 (W01-4)
+- **Do:** `TelegramNotifier` and `MultiNotifier` in `packages/insights/src/notify/` implementing the existing `Notifier` interface; wiring into `cron.ts` (`CronDeps.notifier`); AdsBot fast path from the traffic tail with a 10-minute cooldown; settings read from `panel_settings` (`notify.*`) through `FACTORY`; message format `format.ts`; digest cron `0 2 * * *` (09:00 Asia/Bangkok). ADR-0007.
+- **Accept (E5):** the Telegram notifier and the channel interface pass a fetch-mock test for success, 429 (`retry_after`) and 5xx; cooldown stops repeats; an acknowledged alert is not resent until it clears and returns; quiet hours hold messages; the digest contains the 5 KPI numbers; no token appears in any log or D1 row (grep test); no deploy, no real external call.
+
+### T21 [P] Settings and alert-state API · Lane W01 (W01-5)
+- **Do:** owner-only `GET/PUT /api/settings/notify` + `POST /api/settings/notify/test` (`authorizePanel("viewSettings")` + zod + one `audit_log` row); `POST /api/alerts/:key/ack` and `/close` writing `alert_state`; `GET /api/alerts/log?limit=100` and owner retry; `GET/PUT /api/me/prefs` (`user_prefs`, auth D1); `GET /api/nav/counts` for sidebar badges.
+- **Accept (E5, E6, E7):** employee gets 403 on `notify.*` writes; an owner write creates one `audit_log` row; the test-message button returns the provider response code; ack/close change `alert_state` and drop the nav badge; ประวัติการส่ง lists the last 100 deliveries newest first; prefs round-trip between devices (no `localStorage`).
+
+### T22 [P] Panel redesign UI · Lane W02 (W02-1 to W02-5)
+- **Do:** tokens and shell per decisions D1/D2 (light theme only, 9 flat sidebar items, 3 dividers, Settings left section list, AdKit Terminal owner-only); Home, Brands, wizard (A3, A4, A6); Templates, Campaigns, Leads/Conversions, Alerts (acknowledge/close, ประวัติการส่ง), Settings 8 sections incl. ช่องทางแจ้งเตือน; Traffic page with the real-time tab (`useTrafficTail` port; capture/export/drawer/geo stay in release 2); mobile pass 375 px, keyboard shortcuts, CSV export. Migration review and runbook inputs: T2 migration 0028–0030 + auth 0002 (`docs/runbooks/migrations-0028-0030.md`), notifications runbook `docs/runbooks/notifications.md`, design mapping `docs/design/README.md`.
+- **Accept (E2, E3, E8):** every page in `docs/design/magic-patterns-20261109` has a live counterpart; screenshot pairs at 1280 and 375 on the PR; no text under 12 px, body 14 px, Thai renders in IBM Plex Sans Thai (computed font-family check); `prefers-color-scheme: dark` changes nothing; sidebar shows 9 items with badges equal to API counts and a brand-scope chip on every page; default scope hides paused/retired/demo and persists via `user_prefs`; a CI grep for `user-agent` / `cf.country` / `asn` inside `packages/brand-runtime` and templates stays empty.
+
+---
+
 ## Linear mapping (project P-FUS-17 "Anjuna", team Fusionfx)
 
 | Task | Issue | Task | Issue | Task | Issue |
