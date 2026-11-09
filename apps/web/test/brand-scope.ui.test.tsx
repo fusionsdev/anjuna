@@ -1,3 +1,6 @@
+import alertsFixture from "@anjuna/contracts/fixtures/admin/alerts.response.json";
+import conversionsFixture from "@anjuna/contracts/fixtures/admin/conversions.response.json";
+import trafficFixture from "@anjuna/contracts/fixtures/admin/traffic-report.response.json";
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -300,5 +303,77 @@ describe("scope on the other pages", () => {
     render(<App />);
     await screen.findByRole("button", { name: /แบรนด์ที่ใช้งาน/ });
     expect(screen.queryByRole("button", { name: "แก้ไข" })).toBeNull();
+  });
+});
+
+describe("scope on Home work items and the all-brand labels", () => {
+  /** The base stub plus extra routes. A route that returns undefined falls through to the base. */
+  const withRoutes = (routes: Record<string, () => unknown>) => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      const path = input.split("?")[0]!;
+      return routes[path] ? json(routes[path]!()) : base(input);
+    }));
+  };
+  const fixList = () => within(screen.getByRole("region", { name: "ต้องแก้" }));
+  const todo = () => within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
+  const showInactive = async () => {
+    const dialog = await openPopover();
+    fireEvent.click(within(dialog).getByRole("switch", { name: "ซ่อนแบรนด์ที่ไม่ได้ใช้แล้ว" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "ใช้" }));
+  };
+
+  it("leaves a hidden brand out of the Home fix list and brings it back when the scope shows it", async () => {
+    window.history.replaceState(null, "", "/");
+    const alerts = { ...alertsFixture, brands_without_postbacks: { state: "warn", detail: { window_hours: 24, brands: [{ brand: "brand-cg", leads: 5 }, { brand: "brand-al", leads: 7 }] } } };
+    vi.mocked(api.alerts).mockResolvedValue(alerts as never);
+    render(<App />);
+    await waitFor(() => expect(fixList().getByText("brand-cg")).toBeTruthy());
+    // brand-al is paused in core, so the default scope hides it.
+    expect(fixList().queryByText("brand-al")).toBeNull();
+    await showInactive();
+    await waitFor(() => expect(fixList().getByText("brand-al")).toBeTruthy());
+  });
+
+  it("counts Test sold only for brands in scope and batches only those", async () => {
+    window.history.replaceState(null, "", "/");
+    const open = { checklist: [], template_approved: true, template_waiting_id: null };
+    withRoutes({ "/api/brands/checklists": () => ({ brands: { "brand-cg": open, "brand-nv": open, "brand-al": open } }) });
+    render(<App />);
+    // Credit Genie and Nova Cash are in scope. Alpha Loans is paused in core, so it is out.
+    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("2 แบรนด์"));
+    fireEvent.click(todo().getAllByRole("button", { name: "เปิด" })[0]!);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("Credit Genie");
+    expect(dialog.textContent).toContain("Nova Cash");
+    expect(dialog.textContent).not.toContain("Alpha Loans");
+    fireEvent.click(within(dialog).getByRole("button", { name: /ยกเลิก/ }));
+    await showInactive();
+    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("3 แบรนด์"));
+  });
+
+  it("labels the Home conversion queue ทุกแบรนด์ while the scope hides brands, and not when every brand shows", async () => {
+    window.history.replaceState(null, "", "/");
+    withRoutes({ "/api/conversions": () => conversionsFixture });
+    render(<App />);
+    const queue = () => screen.getByRole("region", { name: "คอนเวอร์ชัน" });
+    await waitFor(() => expect(queue().querySelector(".all-brands-note")!.textContent).toBe("ทุกแบรนด์"));
+    cleanup();
+    window.history.replaceState(null, "", "/?scope=all");
+    render(<App />);
+    await screen.findByRole("region", { name: "คอนเวอร์ชัน" });
+    await act(async () => undefined);
+    expect(queue().querySelector(".all-brands-note")).toBeNull();
+  });
+
+  it("labels the Conversions and Traffic totals ทุกแบรนด์ while the scope hides brands", async () => {
+    withRoutes({ "/api/conversions": () => conversionsFixture, "/api/traffic/report": () => trafficFixture });
+    window.history.replaceState(null, "", "/conversions");
+    render(<App />);
+    await waitFor(() => expect(document.querySelector(".conv-stack .all-brands-note")!.textContent).toContain("ทุกแบรนด์"));
+    cleanup();
+    window.history.replaceState(null, "", "/traffic");
+    render(<App />);
+    await waitFor(() => expect(document.querySelector(".traffic-stack .all-brands-note")!.textContent).toContain("ทุกแบรนด์"));
   });
 });

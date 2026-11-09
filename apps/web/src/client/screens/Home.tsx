@@ -5,7 +5,7 @@ import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars
 import { Sparkline } from "../components/Sparkline";
 import { Chip } from "../components/Chip";
 import { isDemoBrand } from "../brand-health";
-import { checklistFlags, clickLossWarning, delta, previousRange, scopeFunnel, scopeSpend, spendSeries, spendTotals } from "../home-metrics";
+import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
 import { conversionsPath } from "./Conversions";
 import { BrandRows } from "./home/BrandRows";
@@ -16,6 +16,7 @@ import { inApp, mark, num, type Value } from "./home/shared";
 import { navigate } from "../router";
 import { useBrandActions, type ActionBrand } from "../useBrandActions";
 import "./Home.css";
+import { AllBrandsNote } from "../components/AllBrandsNote";
 
 export type { HomePeriod };
 export type HomeTarget = "brands" | "new-brand" | "templates" | "funnel" | "alerts";
@@ -195,6 +196,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const scopedBrands = brands ? brands.filter((brand) => inScopeId(brand.brand_id)) : brands;
   const stageFunnel = useMemo(() => (stageFunnelRaw ? scopeFunnel(stageFunnelRaw, inScopeId) : stageFunnelRaw), [stageFunnelRaw, inScopeId]);
   const spendToday = useMemo(() => (spendTodayRaw ? scopeSpend(spendTodayRaw, inScopeId) : spendTodayRaw), [spendTodayRaw, inScopeId]);
+  // The alert items that name a brand follow the scope. The conversion items count every brand and say so ("ทุกแบรนด์").
+  const scopedAlerts = useMemo(() => (alerts ? scopeAlerts(alerts, inScopeId) : alerts), [alerts, inScopeId]);
   const leads = funnel === undefined ? undefined : funnel?.leads ?? null;
   // Spend and cost per lead stay in baht. Profit subtracts the server's USD spend from USD revenue, never baht.
   const spendThb: Value = spend === undefined ? undefined : spend?.thb ?? null;
@@ -202,7 +205,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const revenue: Value = funnel === undefined ? undefined : funnel === null ? null : funnel.revenue;
   const costPerLead: Value = spendThb === undefined || leads === undefined ? undefined : spendThb === null || !leads ? null : spendThb / leads;
   const profit: Value = spendUsd === undefined || revenue === undefined ? undefined : spendUsd === null || revenue === null ? null : revenue - spendUsd;
-  const pending: Value = alerts === undefined ? undefined : alerts === null ? null : pendingLeads(alerts);
+  const pending: Value = scopedAlerts === undefined ? undefined : scopedAlerts === null ? null : pendingLeads(scopedAlerts);
   const field = (pick: (f: FunnelTotals) => number): Value => (funnel === undefined ? undefined : funnel === null ? null : pick(funnel));
   const before = (pick: (f: FunnelTotals) => Value): Value => (previousFunnel === undefined ? undefined : previousFunnel === null ? null : pick(previousFunnel));
   const conversion = (pick: (c: ConversionsReportResponse) => number): Value => (conversions === undefined ? undefined : conversions === null ? null : pick(conversions));
@@ -253,7 +256,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     ...(drainBrands ?? []).map((b): FixItem => ({ id: `drain:${b.brand_id}`, level: "warn", brand: b.hostnames[0] ?? b.name ?? b.brand_id, message: "ยังไม่ได้ตั้งเส้นทาง drain คอนเวอร์ชันจะไม่ถูกส่ง", kind: "drain-route", onAct: () => void actions.run("set-route", actionBrand(b)) })),
     ...(clickLoss ? [{ id: "click-loss", level: "warn", brand: "ทุกแบรนด์", message: `Google คิดเงิน ${num(clickLoss.paid)} คลิก มาถึงเว็บ ${num(clickLoss.reached)} คน ตรวจ gclid และ URL ปลายทาง`, kind: "gclid", path: "/traffic" } satisfies FixItem] : []),
   ];
-  const fixes = fixItems(alerts, conversions, period, extraFixes);
+  const fixes = fixItems(scopedAlerts, conversions, period, extraFixes);
   // The banner reads only the alert-level items, which the extras never are.
   const urgent = fixes.filter((item) => item.level === "bad");
 
@@ -285,7 +288,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
       <div className="home-stack">
         <IncidentBanner urgent={urgent} clickLoss={clickLoss} onQueue={() => navigate(allPath)} onAlerts={go("alerts")} />
         <div className="home-grid2">
-          <NeedsFixList alerts={alerts} conversions={conversions} fixes={fixes} onAlerts={go("alerts")} />
+          <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} onAlerts={go("alerts")} />
           <HumanTasks tasks={tasks} />
         </div>
         <div className="ledger kpi-row" role="group" aria-label="สรุปตัวเลข">
@@ -339,7 +342,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
         </section>
         <section className="panel home-conv" aria-label="คอนเวอร์ชัน">
           <div className="home-ptitle">
-            <h2>คิวคอนเวอร์ชัน</h2>
+            <div className="home-ptitle-main"><h2>คิวคอนเวอร์ชัน</h2><AllBrandsNote inline /></div>
             <a className="btn" href={allPath} onClick={inApp(allPath)}>ดูคิว</a>
           </div>
           <div className="ledger queue-stats" role="group" aria-label="สรุปคอนเวอร์ชัน">

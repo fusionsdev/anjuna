@@ -114,6 +114,10 @@ ${read("styles.css")}`);
     }
   });
 
+  it("gives an unsized <small> the 13px floor, so the browser default of 12.5px never shows", () => {
+    expect(read("styles.css")).toContain("small { font-size: max(13px, .875em); }");
+  });
+
   it("sets no font size under 13px in any stylesheet", () => {
     const files = ["styles.css", "styles/tokens.css", "screens/Home.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css"];
     for (const file of files) {
