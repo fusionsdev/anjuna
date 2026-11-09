@@ -176,8 +176,8 @@ export async function assignAdCampaign(request: Request, env: Env, context: Admi
   const before = await env.LEADS.prepare("SELECT brand_id, source FROM campaign_brand_map WHERE account = ?1 AND campaign_id = ?2")
     .bind(account, campaign_id).first<{ brand_id: string; source: string }>();
   const at = new Date().toISOString();
-  const now = new URL(request.url).searchParams.get("now");
-  const plan = await planReallocation(env, account, campaign_id, brand_id, allocationWindow(now ? new Date(now) : new Date()));
+  // The window comes from the server clock only: the PATCH takes no `now`, so a caller cannot move it back to older slots.
+  const plan = await planReallocation(env, account, campaign_id, brand_id, allocationWindow(new Date()));
   if ("response" in plan) throw new Error(`re-allocation of account ${account} refused: ${plan.response.status}`);
   // The map row and every re-run statement are one batch: a failing statement leaves the map as it was.
   await env.LEADS.batch([
@@ -188,13 +188,20 @@ export async function assignAdCampaign(request: Request, env: Env, context: Admi
       .bind(account, campaign_id, brand_id, at),
     ...plan.statements,
   ]);
-  await env.FACTORY.prepare(
-    `INSERT INTO audit_log (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
-     VALUES (?1, ?2, 'ad_allocation.assign', 'campaign', ?3, ?4, ?5, ?6)`,
-  ).bind(
-    context.actor_id, context.actor_role, `${account}:${campaign_id}`,
-    before ? JSON.stringify(before) : null, JSON.stringify({ brand_id, source: "manual" }), at,
-  ).run();
+  // The audit row lives in FACTORY, a second database: one batch cannot span both. The LEADS batch above is applied
+  // first; if this insert fails the owner gets 500 audit_failed and repeats the PATCH, which is idempotent (it writes
+  // the same map row and the same allocation again).
+  try {
+    await env.FACTORY.prepare(
+      `INSERT INTO audit_log (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
+       VALUES (?1, ?2, 'ad_allocation.assign', 'campaign', ?3, ?4, ?5, ?6)`,
+    ).bind(
+      context.actor_id, context.actor_role, `${account}:${campaign_id}`,
+      before ? JSON.stringify(before) : null, JSON.stringify({ brand_id, source: "manual" }), at,
+    ).run();
+  } catch {
+    return json({ error: "audit_failed", message: "The assignment was applied but its audit entry was not written; repeat the request", request_id: context.request_id }, 500);
+  }
   return json(AdAllocationAssignResponse.parse({ account, campaign_id, brand_id, source: "manual", updated_at: at }));
 }
 
@@ -205,8 +212,9 @@ interface StoredSlotRow {
 
 /**
  * Statements that allocate the slots of the window that hold the campaign again, per currency and zone, with the
- * stored updated_at of each slot kept. Slots before the window (what spend-sync still covers) are never touched,
- * so a brand that left the account keeps its older rows.
+ * stored updated_at of each slot kept. The window is the tab's 7 UTC days ending today, so brand totals match what
+ * the tab shows after the new map. spend-sync itself re-posts only yesterday and today. Slots before the window are
+ * never touched, so a brand that left the account keeps its older rows.
  */
 async function planReallocation(
   env: Env, account: string, campaignId: string, brandId: string, window: { from: string; to: string },
