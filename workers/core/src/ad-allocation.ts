@@ -23,7 +23,7 @@ import {
 import { JOB_BODY_LIMIT, adminError, parseBody } from "./adkit.js";
 import type { Env } from "./env.js";
 import { json } from "./http.js";
-import { loadAllocationMode } from "./spend.js";
+import { allocateCampaignSlots, loadAllocationMode } from "./spend.js";
 
 const DAY_MS = 86_400_000;
 const ACCOUNT_RE = /^[0-9]{10}$/;
@@ -154,8 +154,9 @@ export async function loadUnallocatedAlert(env: Pick<Env, "LEADS">, now: string)
 
 /**
  * PATCH /admin/ad-allocation/campaign (owner). Writes `source = 'manual'`, which no click or create write
- * replaces. The brand must be on the account today. The next campaign ingest of a slot uses the new owner;
- * stored brand rows change when spend-sync posts that slot again.
+ * replaces. The brand must be on the account today, and the campaign must have been ingested for the account (404 if
+ * not). The stored slots that hold the campaign are allocated again from ad_spend_campaign, so the brand totals
+ * move at once: the old estimated shares go, the totals stay exact to 2 decimals, the "~" flag clears.
  */
 export async function assignAdCampaign(request: Request, env: Env, context: AdminRequestContext): Promise<Response> {
   const body = await parseBody(request, AdAllocationAssignRequest, JOB_BODY_LIMIT);
@@ -169,6 +170,9 @@ export async function assignAdCampaign(request: Request, env: Env, context: Admi
   if (!onAccount) {
     return adminError(context, { error: "invalid", issues: [{ path: "brand_id", message: "The brand is not on this Google Ads account" }] });
   }
+  const ingested = await env.LEADS.prepare("SELECT 1 FROM ad_spend_campaign WHERE account = ?1 AND campaign_id = ?2 LIMIT 1")
+    .bind(account, campaign_id).first();
+  if (!ingested) return adminError(context, { error: "not_found", resource: "campaign" });
   const before = await env.LEADS.prepare("SELECT brand_id, source FROM campaign_brand_map WHERE account = ?1 AND campaign_id = ?2")
     .bind(account, campaign_id).first<{ brand_id: string; source: string }>();
   const at = new Date().toISOString();
@@ -177,6 +181,7 @@ export async function assignAdCampaign(request: Request, env: Env, context: Admi
     VALUES (?1, ?2, ?3, 'manual', ?4, ?4)
     ON CONFLICT (account, campaign_id) DO UPDATE SET brand_id = excluded.brand_id, source = 'manual', updated_at = excluded.updated_at`)
     .bind(account, campaign_id, brand_id, at).run();
+  await reallocateCampaignSlots(env, account, campaign_id);
   await env.FACTORY.prepare(
     `INSERT INTO audit_log (actor_id, actor_role, action, entity_type, entity_id, before_json, after_json, created_at)
      VALUES (?1, ?2, 'ad_allocation.assign', 'campaign', ?3, ?4, ?5, ?6)`,
@@ -185,4 +190,34 @@ export async function assignAdCampaign(request: Request, env: Env, context: Admi
     before ? JSON.stringify(before) : null, JSON.stringify({ brand_id, source: "manual" }), at,
   ).run();
   return json(AdAllocationAssignResponse.parse({ account, campaign_id, brand_id, source: "manual", updated_at: at }));
+}
+
+interface StoredSlotRow {
+  date: string; hour: number | null; campaign_id: string; cost: number; clicks: number; impressions: number;
+  currency: SpendCurrency; utc_offset_minutes: number;
+}
+
+/** Every stored slot of the account that holds the campaign, with all its campaigns, allocated again per currency and zone. */
+async function reallocateCampaignSlots(env: Env, account: string, campaignId: string): Promise<void> {
+  const { results } = await env.LEADS.prepare(`
+    SELECT c.date, c.hour, c.campaign_id, c.cost, c.clicks, c.impressions, c.currency, c.utc_offset_minutes
+    FROM ad_spend_campaign c
+    WHERE c.account = ?1 AND EXISTS (
+      SELECT 1 FROM ad_spend_campaign t
+      WHERE t.account = c.account AND t.currency = c.currency AND t.date = c.date
+        AND COALESCE(t.hour, -1) = COALESCE(c.hour, -1) AND t.campaign_id = ?2)`).bind(account, campaignId).all<StoredSlotRow>();
+  const groups = new Map<string, { currency: SpendCurrency; offset: number; rows: StoredSlotRow[] }>();
+  for (const row of results) {
+    const key = `${row.currency}|${row.utc_offset_minutes}`;
+    const group = groups.get(key) ?? { currency: row.currency, offset: Number(row.utc_offset_minutes), rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+  for (const { currency, offset, rows } of groups.values()) {
+    const out = await allocateCampaignSlots(env, {
+      account, currency, offset, deriveMap: false,
+      rows: rows.map((r) => ({ date: r.date, hour: r.hour, campaign_id: r.campaign_id, cost: Number(r.cost), clicks: Number(r.clicks), impressions: Number(r.impressions) })),
+    });
+    if ("response" in out) throw new Error(`re-allocation of account ${account} refused: ${out.response.status}`);
+  }
 }

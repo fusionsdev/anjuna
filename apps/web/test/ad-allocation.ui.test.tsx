@@ -116,7 +116,7 @@ describe("allocation tab", () => {
       return json({ brands: [] });
     }));
     render(<AdAllocationScreen />);
-    expect((await screen.findByRole("alert")).textContent).not.toBe("");
+    expect((await screen.findByRole("alert")).textContent).toContain("สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)");
     expect(screen.getByRole("button", { name: "ลองอีกครั้ง" })).toBeTruthy();
   });
 });

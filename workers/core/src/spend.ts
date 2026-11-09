@@ -122,9 +122,9 @@ const CAMPAIGN_CLEAR_SQL = `
 
 /** One row per campaign and slot (migration 0026), read by the allocation tab and the unallocated alert. */
 const CAMPAIGN_INSERT_SQL = `
-  INSERT INTO ad_spend_campaign (account, date, hour, campaign_id, cost, currency, clicks, impressions, updated_at)
+  INSERT INTO ad_spend_campaign (account, date, hour, campaign_id, cost, currency, clicks, impressions, updated_at, utc_offset_minutes)
   SELECT ?3, json_extract(value, '$.date'), json_extract(value, '$.hour'), json_extract(value, '$.campaign_id'),
-         json_extract(value, '$.cost'), ?4, json_extract(value, '$.clicks'), json_extract(value, '$.impressions'), ?2
+         json_extract(value, '$.cost'), ?4, json_extract(value, '$.clicks'), json_extract(value, '$.impressions'), ?2, ?5
   FROM json_each(?1) WHERE true`;
 
 /** A slot with no unallocated cost keeps no unallocated row, so a rerun in `estimated` mode clears it. */
@@ -181,14 +181,28 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
   const body = await readBody(request, CampaignSpendIngestRequest);
   if ("response" in body) return body.response;
   const { account, currency, utc_offset_minutes: offset, rows } = body.data;
+  const out = await allocateCampaignSlots(env, { account, currency, offset, rows, deriveMap: true });
+  if ("response" in out) return out.response;
+  return json({ status: "accepted", upserted: out.upserted, unallocated: out.unallocated });
+}
 
+/**
+ * Allocate the campaign rows of one account and currency, slot by slot, and write ad_spend, ad_spend_campaign and
+ * ad_spend_unallocated in one batch. The ingest posts new rows; an owner assignment passes the stored rows of the
+ * slots that hold the campaign, so every brand share of those slots follows the new map. `deriveMap` refreshes
+ * the click map first; the re-run skips it.
+ */
+export async function allocateCampaignSlots(env: Env, input: {
+  account: string; currency: SpendCurrency; offset: number; rows: readonly CampaignSpendRow[]; deriveMap: boolean;
+}): Promise<{ upserted: number; unallocated: number } | { response: Response }> {
+  const { account, currency, offset, rows } = input;
   const slots = new Map<string, { date: string; hour: number | null; campaigns: CampaignSpendRow[]; ids: Set<string> }>();
   for (const row of rows) {
     const hour = row.hour ?? null;
     const key = slotKey(row.date, hour);
     const slot = slots.get(key) ?? { date: row.date, hour, campaigns: [], ids: new Set<string>() };
     if (slot.ids.has(row.campaign_id)) {
-      return invalid("Duplicate campaign row", { date: row.date, hour, campaign_id: row.campaign_id });
+      return { response: invalid("Duplicate campaign row", { date: row.date, hour, campaign_id: row.campaign_id }) };
     }
     slot.ids.add(row.campaign_id);
     slot.campaigns.push(row);
@@ -199,10 +213,10 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
     "SELECT brand_id FROM brand_runtime WHERE google_ads_account = ?1 ORDER BY brand_id",
   ).bind(account).all<{ brand_id: string }>();
   const brands = brandRows.map((r) => r.brand_id);
-  if (!brands.length) return invalid("Unknown account", {}, 422);
-  if (!slots.size) return json({ status: "accepted", upserted: 0, unallocated: 0 });
+  if (!brands.length) return { response: invalid("Unknown account", {}, 422) };
+  if (!slots.size) return { upserted: 0, unallocated: 0 };
 
-  await deriveCampaignMap(env.LEADS);
+  if (input.deriveMap) await deriveCampaignMap(env.LEADS);
   const dates = [...new Set(rows.map((r) => r.date))].sort();
   const [mapResult, clickResult] = await env.LEADS.batch([
     env.LEADS.prepare("SELECT campaign_id, brand_id FROM campaign_brand_map WHERE account = ?1").bind(account),
@@ -267,12 +281,12 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
   await env.LEADS.batch([
     ...chunksOf(spend).map((chunk) => env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(chunk), stamp)),
     env.LEADS.prepare(CAMPAIGN_CLEAR_SQL).bind(slotList, account, currency),
-    ...chunksOf(campaignRows).map((chunk) => env.LEADS.prepare(CAMPAIGN_INSERT_SQL).bind(JSON.stringify(chunk), stamp, account, currency)),
+    ...chunksOf(campaignRows).map((chunk) => env.LEADS.prepare(CAMPAIGN_INSERT_SQL).bind(JSON.stringify(chunk), stamp, account, currency, offset)),
     env.LEADS.prepare(STALE_BRAND_CLEAR_SQL).bind(account, JSON.stringify(brands), slotList),
     env.LEADS.prepare(UNALLOCATED_UPSERT_SQL).bind(JSON.stringify(unallocated), stamp, account, currency),
     env.LEADS.prepare(UNALLOCATED_CLEAR_SQL).bind(JSON.stringify(cleared), account, currency),
   ]);
-  return json({ status: "accepted", upserted: spend.length, unallocated: unallocatedUnits / 100 });
+  return { upserted: spend.length, unallocated: unallocatedUnits / 100 };
 }
 
 const cents = (value: number) => Math.round(value * 100) / 100;

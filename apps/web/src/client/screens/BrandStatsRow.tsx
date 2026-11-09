@@ -147,7 +147,7 @@ export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funn
     profit: costUsd !== null && revenue !== null ? Math.round((revenue - costUsd) * 100) / 100 : null,
     spendText: byCurrencyText(cost),
     costPerLeadText: byCurrencyText(costPerLead),
-    estimated: spendEstimated(spend, brandId),
+    estimated: spendRows.some((row) => row.allocation === "estimated"),
   };
 }
 

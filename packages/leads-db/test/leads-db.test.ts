@@ -437,7 +437,7 @@ describe("Anjuna additions", () => {
 
   describe("ad_spend_campaign (0026)", () => {
     const insert = (hour: number | null, campaign: string, currency = "THB") => env.DB.prepare(
-      "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', ?1, ?2, 1, ?3, 1, 1, 'x')").bind(hour, campaign, currency);
+      "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', ?1, ?2, 1, ?3, 1, 1, 'x', 0)").bind(hour, campaign, currency);
 
     it("keys rows by account, date, hour (NULL = whole day), campaign and currency", async () => {
       await insert(null, "1").run();
@@ -449,12 +449,12 @@ describe("Anjuna additions", () => {
     });
 
     it.each([
-      ["short account", "INSERT INTO ad_spend_campaign VALUES ('538116393', '2026-10-21', 1, '1', 1, 'THB', 1, 1, 'x')"],
-      ["non-numeric campaign", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, 'summer', 1, 'THB', 1, 1, 'x')"],
-      ["negative cost", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, '1', -1, 'THB', 1, 1, 'x')"],
-      ["hour 24", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 24, '1', 1, 'THB', 1, 1, 'x')"],
-      ["currency EUR", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, '1', 1, 'EUR', 1, 1, 'x')"],
-      ["negative clicks", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, '1', 1, 'THB', -1, 1, 'x')"],
+      ["short account", "INSERT INTO ad_spend_campaign VALUES ('538116393', '2026-10-21', 1, '1', 1, 'THB', 1, 1, 'x', 0)"],
+      ["non-numeric campaign", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, 'summer', 1, 'THB', 1, 1, 'x', 0)"],
+      ["negative cost", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, '1', -1, 'THB', 1, 1, 'x', 0)"],
+      ["hour 24", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 24, '1', 1, 'THB', 1, 1, 'x', 0)"],
+      ["currency EUR", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, '1', 1, 'EUR', 1, 1, 'x', 0)"],
+      ["negative clicks", "INSERT INTO ad_spend_campaign VALUES ('5381163935', '2026-10-21', 1, '1', 1, 'THB', -1, 1, 'x', 0)"],
     ])("rejects %s", async (_name, sql) => {
       await expect(env.DB.prepare(sql).run()).rejects.toThrow(/CHECK constraint failed/);
     });

@@ -145,6 +145,19 @@ describe("brands table for the Owner", () => {
     }
   });
 
+  it("marks spend, cost per lead and profit with ~ when the spend row is an estimated campaign share", async () => {
+    const week = DATA["7d"]!;
+    const saved = { funnel: week.funnel, spend: week.spend };
+    week.funnel = [funnelRow("brand-al", 50, 5, 20)];
+    week.spend = [{ ...cost("brand-al", 10), allocation: "estimated" } as never];
+    try {
+      render(<BrandLifecycle me={owner} />);
+      await waitFor(() => expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "~฿350", "50", "5", "~฿70", "~$10"]));
+    } finally {
+      Object.assign(week, saved);
+    }
+  });
+
   it("shows a loss in the negative colour class and a gain in the positive one", async () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(cells("floatsme.test")[6]).toBe("−$620"));

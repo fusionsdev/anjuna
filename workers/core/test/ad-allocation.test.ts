@@ -32,7 +32,7 @@ beforeEach(async () => {
 });
 
 const campaignRow = (account: string, date: string, hour: number | null, campaign: string, cost: number, currency = "THB", clicks = 1) =>
-  h.db.prepare("INSERT INTO ad_spend_campaign VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 'x')").bind(account, date, hour, campaign, cost, currency, clicks);
+  h.db.prepare("INSERT INTO ad_spend_campaign VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 'x', 0)").bind(account, date, hour, campaign, cost, currency, clicks);
 const mapRow = (campaign: string, brand: string, source: string, account = SHARED) =>
   h.db.prepare("INSERT INTO campaign_brand_map VALUES (?1, ?2, ?3, ?4, 'x', 'x')").bind(account, campaign, brand, source);
 const read = async (context = owner) => h.admin(`/admin/ad-allocation?now=${NOW}`, context);
@@ -119,6 +119,38 @@ describe("PATCH /admin/ad-allocation/campaign", () => {
     const body = AdAllocationResponse.parse(await (await read()).json());
     expect(body.accounts[0]!.unmapped_cost_by_currency).toEqual({ THB: 0, USD: 0 });
     expect(body.campaigns[0]).toMatchObject({ campaign_id: "444", brand_id: "petvetpay", source: "manual" });
+  });
+
+  it("answers 404 for a campaign the account never ingested and writes nothing", async () => {
+    const response = await assign({ account: SHARED, campaign_id: "555", brand_id: "petvetpay" });
+    expect(response.status).toBe(404);
+    expect(AdminError.parse(await response.json())).toMatchObject({ error: "not_found", resource: "campaign" });
+    expect((await h.db.prepare("SELECT COUNT(*) AS n FROM campaign_brand_map").first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it("re-allocates the stored slots: the other brand loses its share and the parts still add up to the account cost", async () => {
+    const days = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08"];
+    const costs = [42.86, 42.86, 42.86, 42.86, 42.86, 42.86, 42.84]; // 300 baht over 7 days
+    const post = await h.request("/api/spend/campaign-ingest", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${DRAIN_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ account: SHARED, currency: "THB", utc_offset_minutes: 0,
+        rows: days.map((date, i) => ({ date, hour: null, campaign_id: "222", cost: costs[i], clicks: 1, impressions: 1 })) }),
+    });
+    expect(post.status).toBe(200);
+    const totals = () => h.db.prepare(
+      "SELECT brand_id, ROUND(SUM(cost), 2) AS cost, MIN(allocation) AS lo, MAX(allocation) AS hi FROM ad_spend GROUP BY brand_id ORDER BY brand_id").all();
+    expect((await totals()).results).toEqual([
+      { brand_id: "bisoncash", cost: 150, lo: "estimated", hi: "estimated" },
+      { brand_id: "petvetpay", cost: 150, lo: "estimated", hi: "estimated" },
+    ]);
+    expect((await assign({ account: SHARED, campaign_id: "222", brand_id: "bisoncash" })).status).toBe(200);
+    expect((await totals()).results).toEqual([
+      { brand_id: "bisoncash", cost: 300, lo: "exact", hi: "exact" },
+      { brand_id: "petvetpay", cost: 0, lo: "exact", hi: "exact" },
+    ]);
+    const body = AdAllocationResponse.parse(await (await read()).json());
+    expect(body.accounts[0]!.unmapped_cost_by_currency).toEqual({ THB: 0, USD: 0 });
   });
 
   it("refuses a brand that is not on the account and writes nothing", async () => {

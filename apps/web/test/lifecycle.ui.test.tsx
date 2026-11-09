@@ -787,6 +787,15 @@ describe("AdKit numbers on the brand detail", () => {
     expect(adkit.textContent).toContain("−$100");
   });
 
+  it("marks the spend and the profit with ~ when the brand's spend row is an estimated share", async () => {
+    const body = spendBody(new Date().toISOString());
+    routes.set("GET /api/spend?period=7d", () => json({ ...body, brands: body.brands.map((row) => ({ ...row, allocation: "estimated" })) }));
+    render(<BrandLifecycle me={owner} />);
+    const adkit = await block();
+    await waitFor(() => expect(adkit.textContent).toContain("~฿3,500"));
+    expect(adkit.textContent).toContain("~−$100");
+  });
+
   it("shows — for spend and profit when the sync is older than 2 hours", async () => {
     routes.set("GET /api/spend?period=7d", () => json(spendBody(new Date(Date.now() - 3 * 3_600_000).toISOString())));
     render(<BrandLifecycle me={owner} />);
