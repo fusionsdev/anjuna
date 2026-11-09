@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api, type Me } from "./api";
+import { ApiError, api, type Me, type NavCounts } from "./api";
 import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
@@ -30,7 +30,8 @@ import { AppShell, pageTitle } from "./components/AppShell";
 import { SidebarNav, type NavItem } from "./components/SidebarNav";
 import { SectionTabs } from "./components/SectionTabs";
 import { Spinner } from "./components/Spinner";
-import { NAV_GROUPS, activeTabId, groupOfView, groupViews, visibleTabs, type NavGroup } from "./nav-groups";
+import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, groupViews, visibleTabs, type SidebarBadge } from "./nav-groups";
+import { BrandScopeProvider } from "./useBrandScope";
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -38,7 +39,8 @@ export function App() {
   const [wizardRequest, setWizardRequest] = useState(() => (parseRoute(window.location.pathname).view === "new-brand" ? 1 : 0));
   const route = useRoute();
   const view = route.view;
-  const [alertCount, setAlertCount] = useState<number | null>(null);
+  // Sidebar badge counts. A count the panel could not read is null and shows no badge.
+  const [counts, setCounts] = useState<Record<SidebarBadge, number | null>>({ brands_need_fix: null, templates_awaiting: null, alerts_open: null });
 
   const refresh = useCallback(async () => {
     try {
@@ -52,20 +54,21 @@ export function App() {
   }, []);
   useEffect(() => void refresh(), [refresh]);
   useEffect(() => {
+    const unknown: Record<SidebarBadge, number | null> = { brands_need_fix: null, templates_awaiting: null, alerts_open: null };
     if (!me) {
-      setAlertCount(null);
+      setCounts(unknown);
       return;
     }
     let cancelled = false;
-    api.alerts().then((report) => {
-      const count = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate, report.click_risk,
-        ...(report.ad_spend_unallocated ? [report.ad_spend_unallocated] : [])]
-        .filter(({ state }) => state === "warn" || state === "alert").length;
-      if (!cancelled) setAlertCount(count);
-    }).catch(() => {
-      // An unavailable report must not look like zero active alerts.
-      if (!cancelled) setAlertCount(null);
-    });
+    const set = (next: Record<SidebarBadge, number | null>) => { if (!cancelled) setCounts(next); };
+    api.navCounts().then((c: NavCounts) => set({ brands_need_fix: c.brands_need_fix, templates_awaiting: c.templates_awaiting, alerts_open: c.alerts_open }), () =>
+      // Without /api/nav/counts only the alerts badge can be filled, from the alerts report.
+      api.alerts().then((report) => {
+        const alerts = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate, report.click_risk,
+          ...(report.ad_spend_unallocated ? [report.ad_spend_unallocated] : [])]
+          .filter(({ state }) => state === "warn" || state === "alert").length;
+        set({ ...unknown, alerts_open: alerts });
+      }).catch(() => set(unknown))); // An unavailable report must not look like zero active alerts.
     return () => { cancelled = true; };
   }, [me, view]);
   useEffect(() => { document.title = me ? `${pageTitle[view]} · Control Panel` : "Control Panel"; }, [me, view]);
@@ -77,27 +80,32 @@ export function App() {
     if (id === "new-brand") setWizardRequest((count) => count + 1);
     navigate(viewPath(id));
   };
-  // One item per group. The settings group stays for an employee through the tabs they may open, and its link opens the first of them.
-  const groupItem = (group: NavGroup): NavItem & { show: boolean } => {
-    const tabs = visibleTabs(group, me.role);
-    return { id: group.id, label: group.label, show: tabs.length > 0, activeFor: groupViews(group), target: tabs[0]?.id };
+  // Nine flat items. A page that holds section tabs marks its item on every view it owns and opens the first tab the role may use.
+  // A thin divider sets off the watch and owner sections; an item the role may not use is left out.
+  const badgeLabel: Record<SidebarBadge, (count: number) => string> = {
+    brands_need_fix: (count) => `${count} แบรนด์ที่ต้องแก้`,
+    templates_awaiting: (count) => `${count} เทมเพลตรออนุมัติ`,
+    alerts_open: (count) => `${count} รายการที่ต้องจัดการ`,
   };
-  const nav: (NavItem & { show: boolean })[] = [
-    { id: "home", label: "หน้าแรก", show: true },
-    groupItem(NAV_GROUPS.brands),
-    { id: "templates", label: "เทมเพลต", show: true },
-    groupItem(NAV_GROUPS.traffic),
-    groupItem(NAV_GROUPS.leads),
-    { id: "alerts", label: "การแจ้งเตือน", show: true, badge: alertCount !== null ? { count: alertCount, label: `${alertCount} รายการที่ต้องจัดการ` } : null },
-    groupItem(NAV_GROUPS.settings),
-  ];
-  const items: NavItem[] = nav.filter((n) => n.show);
+  const shown = SIDEBAR_ENTRIES.flatMap((entry) => {
+    if (entry.minRole && !roleAtLeast(me.role, entry.minRole)) return [];
+    const group = entry.group ? NAV_GROUPS[entry.group] : null;
+    const tabs = group ? visibleTabs(group, me.role) : null;
+    if (tabs && tabs.length === 0) return [];
+    const count = entry.badge ? counts[entry.badge] : null;
+    return [{ entry, item: {
+      id: entry.id, label: entry.label, icon: entry.icon, tag: entry.tag,
+      activeFor: group ? groupViews(group) : [entry.id], target: tabs?.[0]?.id ?? entry.id,
+      badge: entry.badge && count !== null && count > 0 ? { count, label: badgeLabel[entry.badge](count) } : null,
+    } as NavItem }];
+  });
+  const items: NavItem[] = shown.map(({ entry, item }, index) => ({ ...item, dividerBefore: index > 0 && shown[index - 1]!.entry.section !== entry.section }));
   const group = groupOfView(view);
 
   return (
+    <BrandScopeProvider>
     <AppShell
       me={me}
-      title={pageTitle[view]}
       onSignOut={async () => {
         await api.signOut().catch(() => undefined);
         setMe(null);
@@ -165,5 +173,6 @@ export function App() {
         : <NotFound title="สำหรับ Owner เท่านั้น" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้" />)}
       {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
     </AppShell>
+    </BrandScopeProvider>
   );
 }

@@ -8,8 +8,8 @@ import { parseRoute, routePath } from "../src/client/router";
 
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
 const employee: Me = { id: "u2", email: "staff@example.test", role: "employee" };
-const TRAFFIC_TITLE = "ทราฟฟิก (Traffic)";
-const ERRORS_TITLE = "ข้อผิดพลาดฝั่งเว็บ (Client errors)";
+const TRAFFIC_TITLE = "ทราฟฟิก";
+const ERRORS_TITLE = "ข้อผิดพลาดฝั่งเว็บ";
 const TRAFFIC_TAB = "ทราฟฟิก";
 const ERRORS_TAB = "ข้อผิดพลาดฝั่งเว็บ";
 
@@ -20,6 +20,8 @@ const tabLabels = () => tabs().getAllByRole("link").map((a) => a.textContent);
 
 beforeEach(() => {
   vi.spyOn(api, "alerts").mockRejectedValue(new Error("alerts are not under test"));
+  vi.spyOn(api, "navCounts").mockRejectedValue(new Error("counts are not under test"));
+  vi.spyOn(api, "mePrefs").mockRejectedValue(new Error("prefs are not under test"));
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const url = new URL(input, window.location.origin);
     if (url.pathname === "/api/traffic/report") return json(trafficFixture);
@@ -71,7 +73,6 @@ describe("Traffic and Client errors routes", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "ทราฟฟิก" })).toBeTruthy();
     // The title is set in an effect that can run after the heading appears.
     await waitFor(() => expect(document.title).toBe(`${TRAFFIC_TITLE} · Control Panel`));
-    expect(document.querySelector(".topbar-title")?.textContent).toBe(TRAFFIC_TITLE);
     expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
     expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
   });
@@ -83,7 +84,6 @@ describe("Traffic and Client errors routes", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "ข้อผิดพลาดฝั่งเว็บ" })).toBeTruthy();
     // The title is set in an effect that can run after the heading appears.
     await waitFor(() => expect(document.title).toBe(`${ERRORS_TITLE} · Control Panel`));
-    expect(document.querySelector(".topbar-title")?.textContent).toBe(ERRORS_TITLE);
     expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
     expect(tabs().getByRole("link", { name: ERRORS_TAB }).getAttribute("aria-current")).toBe("page");
   });

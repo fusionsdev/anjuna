@@ -6,10 +6,10 @@
 .home-stack { display: flex; flex-direction: column; gap: 16px; }
 .home-grid2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; }
 .home-ptitle { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.home-ptitle h2 { margin: 0; font-size: 16px; font-weight: 500; }
+.home-ptitle h2 { margin: 0; font-size: 18px; font-weight: 600; }
 .home-flow, .home-drops { display: grid; grid-template-columns: repeat(var(--stages, 6), minmax(0, 1fr)); gap: 6px; }
 .home-flow { align-items: end; margin-top: 12px; }
-.home-drops { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.home-drops { font-size: 13px; color: var(--muted); margin-top: 4px; }
 .ledger .d { margin: 2px 0 0; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .ledger .d:not(.pos):not(.neg) { color: var(--muted); }
 .home-stage { display: flex; flex-direction: column; gap: 4px; }
@@ -18,11 +18,11 @@
 .home-stage.leak .home-bar { background: var(--leak); }
 .home-stage.gap .home-bar { background: var(--line); }
 .home-n { margin: 0; font-size: 16px; font-weight: 500; }
-.home-l { margin: 0; font-size: 11px; color: var(--muted); }
+.home-l { margin: 0; font-size: 13px; color: var(--muted); }
 .home-item { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
 .home-item:first-of-type { border-top: 0; }
 .home-item .t { flex: 1; min-width: 0; }
-.home-item .t span { display: block; color: var(--muted); font-size: 12px; }
+.home-item .t span { display: block; color: var(--muted); font-size: 13px; }
 /* The conversions card sits alone on the first row; the fix list and the to-do list keep their 1.6 : 1 split below it. */
 .home-conv { grid-column: 1 / -1; }
 .home-conv .ledger { margin-top: 12px; }
@@ -33,7 +33,7 @@
 .bars-svg { display: block; width: 100%; height: 120px; margin-top: 12px; }
 .bar-leads { fill: var(--spend); }
 .bar-sold { fill: var(--money); }
-.bars-legend { display: flex; gap: 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 11px; color: var(--muted); }
+.bars-legend { display: flex; gap: 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
 .bars-legend li { display: flex; align-items: center; gap: 6px; }
 .bars-swatch { width: 10px; height: 10px; border-radius: 2px; }
 .bars-swatch.leads { background: var(--spend); }
@@ -50,7 +50,7 @@
 .home-brands { list-style: none; margin: 8px 0 0; padding: 0; }
 .home-brand { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) repeat(3, minmax(0, 1fr)) auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .home-brand:first-child { border-top: 0; }
-.home-brand [data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); }
+.home-brand [data-label]::before { content: attr(data-label); display: block; font-size: 13px; color: var(--muted); }
 .home-brand .n b { font-weight: 500; }
 @media (max-width: 760px) {
   .home-brand { grid-template-columns: repeat(2, minmax(0, 1fr)); }

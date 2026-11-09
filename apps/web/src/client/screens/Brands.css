@@ -12,7 +12,7 @@
 .brand-table .brand-pick b { font-weight: 500; }
 .brand-table .brand-pick:focus-visible { outline: 2px solid var(--leak); outline-offset: 2px; }
 .brand-table tr.sel td { background: var(--paper); }
-.brand-table .btn.row-action { margin-left: 8px; padding: 3px 8px; font-size: 12px; }
+.brand-table .btn.row-action { margin-left: 8px; padding: 3px 8px; font-size: 13px; }
 .brand-table .row-reason { display: block; margin: 4px 0 0 8px; }
 
 /* Row action menu: a button next to Pause/Resume with a popup list. RowMenu sets position: fixed inline so the .tw scroller cannot clip it. */
@@ -25,15 +25,15 @@
 .row-menu-item.disabled:hover { background: transparent; }
 .row-menu-sep { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .brand-table tr.stats td { border-top: 0; padding: 0 8px 8px 0; text-align: left; }
-.brand-table .brand-stats { padding: 0; font-size: 12px; }
+.brand-table .brand-stats { padding: 0; font-size: 13px; }
 .brand-table .brand-stats b { font-weight: 500; }
 
 /* Filter chips, sort and domain search above the table. */
 .brand-filters { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .brand-chip-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .brand-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.brand-demo-toggle { display: inline-flex; gap: 6px; align-items: center; margin-bottom: 0; font-size: 12px; color: var(--muted); }
-.brand-chip { border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 12px; padding: 5px 11px; }
+.brand-demo-toggle { display: inline-flex; gap: 6px; align-items: center; margin-bottom: 0; font-size: 13px; color: var(--muted); }
+.brand-chip { border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 13px; padding: 5px 11px; }
 .brand-chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .brand-chip-count { margin-left: 4px; font-variant-numeric: tabular-nums; }
 .brand-filter-fields { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -43,21 +43,21 @@
 .brand-side { border-left: 3px solid var(--money); border-radius: 0; padding-left: 14px; }
 .side-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .side-head h2 { margin: 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
-.side-head p { margin: 2px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+.side-head p { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
 .side-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
 .final-url-manual { flex: 1 1 100%; display: grid; gap: 4px; }
-.final-url-manual label { font-size: 12px; color: var(--muted); }
-.final-url-field { flex: 1 1 220px; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+.final-url-manual label { font-size: 13px; color: var(--muted); }
+.final-url-field { flex: 1 1 220px; min-width: 0; font-family: ui-monospace, monospace; font-size: 13px; }
 .revision-error { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; color: var(--danger); font-size: 13px; }
 .revision-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
 .revision-list li { overflow-wrap: anywhere; }
-.revision-tag { font-size: 12px; font-weight: 500; }
+.revision-tag { font-size: 13px; font-weight: 500; }
 .revision-tag.current { color: var(--money); }
 .revision-tag.target { color: var(--muted); }
 .brand-side .status-grid { margin: 12px 0; }
 .brand-side .status-grid div { background: var(--paper); }
 .brand-side .section { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 12px 0 0; margin: 12px 0 0; }
-.brand-side h3, .config-drawer h3 { font-size: 14px; font-weight: 500; }
+.brand-side h3, .config-drawer h3 { font-size: 15px; font-weight: 500; }
 
 /* Config drawer opened from the side panel. */
 .drawer.config-drawer { background: var(--paper); border-left: 3px solid var(--money); }
@@ -76,10 +76,10 @@
   /* One card per brand: the quiet 7-day stats row joins the card of its main row instead of becoming a second card. */
   .brand-table tbody tr.click:not(.stats) { margin-bottom: 0; border-bottom: 0; border-radius: 10px 10px 0 0; padding-bottom: 0; }
   .brand-table tbody tr.stats { border-top: 0; border-radius: 0 0 10px 10px; padding-top: 0; }
-  .brand-table .btn.row-primary { padding: 8px 14px; font-size: 14px; }
+  .brand-table .btn.row-primary { padding: 8px 14px; font-size: 15px; }
   .brand-table td[data-label^="สถานะ"] > .row-reason { flex: 1 1 100%; margin: 0; white-space: normal; }
   .brand-table td { border: 0; padding: 6px 0; text-align: left; height: auto; display: flex; gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
-  .brand-table td::before { content: attr(data-label); flex: 0 0 auto; max-width: 45%; color: var(--muted); font-size: 12px; }
+  .brand-table td::before { content: attr(data-label); flex: 0 0 auto; max-width: 45%; color: var(--muted); font-size: 13px; }
   .brand-table td > * { min-width: 0; flex: 1 1 auto; }
   .brand-table td[data-label^="สถานะ"] { flex-wrap: wrap; align-items: center; }
   .brand-table td[data-label^="สถานะ"] > * { flex: 0 0 auto; white-space: nowrap; }
