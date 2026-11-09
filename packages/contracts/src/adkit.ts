@@ -248,6 +248,9 @@ export const PanelCampaign = z.strictObject({
   daily_budget_thb: z.number().nullable(),
   state: CampaignState,
   updated_at: Timestamp,
+  /** Copied from the draft job, so the enable dialog can show where the ads run and which page they open. */
+  geo: CampaignGeo,
+  final_url: CampaignFinalUrl,
 });
 export type PanelCampaign = z.infer<typeof PanelCampaign>;
 

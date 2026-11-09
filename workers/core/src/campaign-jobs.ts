@@ -351,7 +351,7 @@ export async function listPanelCampaigns(env: Env): Promise<PanelCampaignsRespon
     return {
       draft_job_id: c.draft.id, campaign_id: c.campaign_id, brand_id: c.payload.brand_id, account: c.payload.account,
       name: c.payload.name, daily_budget: c.budget, currency: rates.currency(c.payload.account),
-      daily_budget_thb: thb, state: c.state, updated_at: c.updated_at,
+      daily_budget_thb: thb, state: c.state, updated_at: c.updated_at, geo: c.payload.geo, final_url: c.payload.final_url,
     };
   });
   return PanelCampaignsResponse.parse({ campaigns: items, caps, enabled_total_thb_day: round2(enabledTotal) });
