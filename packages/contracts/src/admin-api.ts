@@ -35,7 +35,7 @@ import { SiteBrandName, SiteDescription, SiteTitle } from "./site-text.js";
 import { BrandTheme } from "./theme.js";
 import { TrafficRiskExportQuery, TrafficRiskExportResponse, TrafficRiskQuery, TrafficRiskResponse } from "./traffic-risk.js";
 import { REQUESTED_AMOUNT_RANGE } from "./v1.js";
-import { SpendPeriod, SpendQuery, SpendReportResponse } from "./spend.js";
+import { SpendPeriod, SpendQuery, SpendReportResponse, SpendRowsQuery, SpendRowsResponse } from "./spend.js";
 import { CONVERSIONS_MAX_LIMIT, CONVERSION_STATUSES, ConversionReasonCode, ConversionStatus } from "./conversions.js";
 import { ClientErrorsQuery, ClientErrorsResponse, TrafficReportQuery, TrafficReportResponse } from "./traffic-log.js"; // spec traffic
 
@@ -1040,6 +1040,14 @@ export const AdminApi = {
     min_role: "owner",
     query: SpendQuery,
     response: SpendReportResponse,
+  },
+  /** T13-7: spend per brand, currency and allocation over a day range, for API v1. Cost only: no USD, no profit. */
+  spendRows: {
+    method: "GET",
+    path: "/admin/spend/rows",
+    min_role: "owner",
+    query: SpendRowsQuery,
+    response: SpendRowsResponse,
   },
   /** FUS-384 auto-created conversion action status for one brand. */
   conversionSetup: {

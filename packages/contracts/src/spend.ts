@@ -162,3 +162,49 @@ export function spendPeriodRange(period: SpendPeriod, now: Date = new Date()): {
   const from = new Date(Date.parse(`${to}T00:00:00.000Z`) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
   return { from, to };
 }
+
+/** Longest range `GET /admin/spend/rows` reads, in days (inclusive). */
+export const SPEND_ROWS_MAX_DAYS = 93;
+
+/**
+ * Query of `GET /admin/spend/rows` and the API v1 spend route. Without `from` and `to` the range is the last 7 UTC days
+ * including today. `from` and `to` are inclusive UTC days. `brand` narrows to one brand.
+ */
+export const SpendRowsQuery = z.strictObject({
+  brand: BrandId.optional(),
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+}).superRefine((q, ctx) => {
+  if ((q.from === undefined) !== (q.to === undefined)) {
+    ctx.addIssue({ code: "custom", path: [q.from === undefined ? "from" : "to"], message: "from and to go together" });
+    return;
+  }
+  if (q.from === undefined || q.to === undefined) return;
+  const days = (Date.parse(q.to) - Date.parse(q.from)) / 86_400_000 + 1;
+  if (days < 1) ctx.addIssue({ code: "custom", path: ["to"], message: "to is before from" });
+  else if (days > SPEND_ROWS_MAX_DAYS) ctx.addIssue({ code: "custom", path: ["to"], message: `range is longer than ${SPEND_ROWS_MAX_DAYS} days` });
+});
+export type SpendRowsQuery = z.infer<typeof SpendRowsQuery>;
+
+/**
+ * One brand, one currency and one allocation over the range. `allocation` is `exact` (cost of campaigns mapped to the
+ * brand) or `estimated` (an unmapped campaign split by click share). Cost stays in its own currency: no row and no
+ * field adds baht to dollars, and no USD or profit figure is part of this response.
+ */
+export const SpendRowsRow = z.strictObject({
+  brand_id: BrandId,
+  currency: SpendCurrency,
+  allocation: SpendAllocation,
+  cost: Money,
+  clicks: Count,
+  impressions: Count,
+  updated_at: z.iso.datetime(),
+});
+export type SpendRowsRow = z.infer<typeof SpendRowsRow>;
+
+export const SpendRowsResponse = z.strictObject({
+  from: z.iso.date(),
+  to: z.iso.date(),
+  rows: z.array(SpendRowsRow),
+});
+export type SpendRowsResponse = z.infer<typeof SpendRowsResponse>;
