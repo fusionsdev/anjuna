@@ -65,10 +65,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("brand row basics", () => {
-  it("shows the flow-gate label on each row", async () => {
+  it("shows seven stage dots and the Google Ads chip on each row", async () => {
     render(<BrandLifecycle me={owner} />);
-    expect(within(await rowOf("live.example")).getByText("Keyword Param")).toBeTruthy();
-    expect(within(await rowOf("paused.example")).getByText("Single Page Cookie")).toBeTruthy();
+    const live = await rowOf("live.example");
+    const dots = live.querySelector('[role="img"]')!;
+    expect(dots.querySelectorAll(".stage-dot")).toHaveLength(7);
+    expect(dots.getAttribute("aria-label")).toContain("สร้าง: เสร็จ");
+    // The harness has no spend rows, so no Google Ads account is connected to the live brand. The paused brand reads paused.
+    expect(live.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
+    expect((await rowOf("paused.example")).querySelector('[data-col="ads"]')!.textContent).toBe("หยุดชั่วคราว");
   });
 
   it("pauses from the row menu after a confirm, without selecting the row", async () => {
@@ -167,20 +172,18 @@ describe("brand row basics", () => {
   });
 });
 
-describe("brand row status badge", () => {
-  it("shows the paused badge for a factory-live brand that core reports as paused", async () => {
+describe("brand row Google Ads chip for a paused brand", () => {
+  it("shows หยุดชั่วคราว for a factory-live brand that core reports as paused", async () => {
     routes.set("GET /api/brands", () => json({ brands: [runtimeRow("b-live", "paused", "param"), runtimeRow("b-paused", "paused", "signed_cookie")], generated_at: "2026-10-06T00:00:00Z" }));
     render(<BrandLifecycle me={owner} />);
     const row = await rowOf("live.example");
-    const badge = (await within(row).findByText("หยุดชั่วคราว (paused)")).closest(".pill")!;
-    expect(badge.className).toContain("p-warn");
-    expect(within(row).queryByText("live")).toBeNull();
+    await waitFor(() => expect(row.querySelector('[data-col="ads"]')!.textContent).toBe("หยุดชั่วคราว"));
   });
 
-  it("keeps the live badge while core reports the brand live", async () => {
+  it("does not show หยุดชั่วคราว while core reports the brand live", async () => {
     render(<BrandLifecycle me={owner} />);
-    const badge = (await within(await rowOf("live.example")).findByText("live")).closest(".pill")!;
-    expect(badge.className).toContain("p-live");
+    const row = await rowOf("live.example");
+    expect(row.querySelector('[data-col="ads"]')!.textContent).not.toBe("หยุดชั่วคราว");
   });
 });
 
@@ -189,32 +192,15 @@ describe("brand table cards", () => {
     render(<BrandLifecycle me={owner} />);
     const row = await rowOf("live.example");
     const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
-    expect(labels).toEqual([
-      "แบรนด์",
-      "สถานะ",
-      "โฟลว์",
-      "ค่าโฆษณา",
-      "คลิก",
-      "ลีด",
-      "ต้นทุน/ลีด",
-      "กำไร",
-    ]);
-    const stats = row.nextElementSibling!;
-    expect(stats.className).toContain("stats");
-    expect(stats.querySelector("td")!.getAttribute("data-label")).toBe("");
+    // The Brands table is compact: no cost per lead column, and no second row of stats under each brand.
+    expect(labels).toEqual(["แบรนด์", "ระยะ", "ค่าโฆษณา", "ลีด", "Google Ads", ""]);
+    expect(row.nextElementSibling?.className ?? "").not.toContain("stats");
   });
 
   it("brand table cells carry data-label without the owner-only cells for a non-owner", async () => {
     render(<BrandLifecycle me={{ ...owner, role: "employee" }} />);
     const row = await rowOf("live.example");
     const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
-    expect(labels).toEqual([
-      "แบรนด์",
-      "สถานะ",
-      "โฟลว์",
-      "คลิก",
-      "ลีด",
-    ]);
-    expect(row.nextElementSibling!.querySelector("td")!.getAttribute("data-label")).toBe("");
+    expect(labels).toEqual(["แบรนด์", "ระยะ", "ลีด", "Google Ads", ""]);
   });
 });

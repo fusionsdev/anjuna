@@ -9,6 +9,7 @@ import { api } from "../api";
 import { ColorPair } from "../components/ColorPair";
 import { FIELD_LABEL, TRACKING_TEXT, wizardErrorText } from "./messages";
 import { copyFieldErrors, visibleCopyLength, type FieldErrors, type FieldKey, type WizardForm } from "./steps";
+import { Chip } from "../components/Chip";
 
 export interface FieldsProps {
   form: WizardForm;
@@ -287,6 +288,8 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
     }
   }
 
+  // The currency of the chosen account, read from the AdKit directory. Nothing is typed.
+  const currency = freshItems(accounts)?.find((item) => item.id === form.google_ads_account)?.currency ?? null;
   const stale = (projects.state === "ready" && freshItems(projects) === null) || (accounts.state === "ready" && freshItems(accounts) === null);
   const failed = job?.status === "failed" ? (job.result && "error" in job.result ? job.result.error : "") : null;
   return (
@@ -299,7 +302,13 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
       <DirectorySelect label={TRACKING_TEXT.account} value={form.google_ads_account} directory={accounts} placeholder={TRACKING_TEXT.pickAccount} disabled={!project} error={errors.google_ads_account}
         describe={(item) => [item.name, item.id, item.currency].filter(Boolean).join(" · ")}
         onChange={(value) => { set("google_ads_account", value); set("google_conversion_action", ""); resetJob(); }} />
-      <div style={{ display: "grid", gap: 8, gridColumn: "1 / -1" }}>
+      <div className="currency-strip" style={{ gridColumn: "1 / -1" }}>
+        <span>สกุลเงินของบัญชี</span>
+        <b className="num">{currency ?? "—"}</b>
+        {currency && <Chip tone="info" dot>ตรวจพบอัตโนมัติ</Chip>}
+        <small className="muted">ตามบัญชี Google Ads ที่เลือก แก้เองไม่ได้</small>
+      </div>
+      <div className="wizard-card" style={{ display: "grid", gap: 8, gridColumn: "1 / -1" }}>
         <p><span>{TRACKING_TEXT.conversion}:</span> <b>{form.google_conversion_action || "—"}</b></p>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <button type="button" className="btn" onClick={() => void start()} disabled={!draftId || !form.google_ads_account || starting || pending || job?.status === "done"}>{TRACKING_TEXT.create}</button>

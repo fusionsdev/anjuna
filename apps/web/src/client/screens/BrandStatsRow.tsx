@@ -38,7 +38,7 @@ export function brandStats(brandId: string, runtime: BrandSummary[] | null, funn
 }
 
 /** The core funnel report of a period, reloaded when `refreshKey` changes. Null while loading, when it failed, or when `period` is null. */
-function useFunnelWindow(period: BrandPeriod | null, refreshKey: number): FunnelReportResponse | null {
+export function useFunnelWindow(period: BrandPeriod | null, refreshKey: number): FunnelReportResponse | null {
   // The period travels with the report so that a report of the previous period is never shown for the new one.
   const [loaded, setLoaded] = useState<{ period: BrandPeriod; report: FunnelReportResponse } | null>(null);
   useEffect(() => {

@@ -91,7 +91,7 @@ const chipButton = (label: RegExp) => within(screen.getByRole("group", { name: "
 /** Waits until the list and the spend report have both landed, so the profit figures are in. */
 const loaded = (me: typeof owner | typeof employee) => waitFor(() => {
   expect(names()).toHaveLength(4);
-  if (me.role === "owner") expect(document.querySelector(".brand-table")?.textContent).toContain("−$620");
+  if (me.role === "owner") expect(document.querySelector(".brand-table")?.textContent).toContain("฿21,700");
 });
 
 describe("brands list filters and sort", () => {
@@ -164,11 +164,11 @@ describe("brands list filters and sort", () => {
     expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]);
   });
 
-  it("offers the chips ทั้งหมด, ต้องแก้, ใช้งาน, ยังไม่เสร็จ and หยุด, with no English in parentheses", async () => {
+  it("offers the chips ต้องแก้, ทั้งหมด, ใช้งาน, ยังไม่เสร็จ and หยุด in the design order, with no English in parentheses", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     const chips = within(screen.getByRole("group", { name: "ตัวกรองแบรนด์" })).getAllByRole("button");
-    expect(chips.map((chip) => chip.firstChild?.textContent?.trim())).toEqual(["ทั้งหมด", "ต้องแก้", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
+    expect(chips.map((chip) => chip.firstChild?.textContent?.trim())).toEqual(["ต้องแก้", "ทั้งหมด", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
     expect(chips.every((chip) => !/\([A-Za-z]/.test(chip.textContent ?? ""))).toBe(true);
   });
 
@@ -285,26 +285,14 @@ describe("brands list filters and sort", () => {
     expect(screen.getByRole("heading", { level: 2, name: /wizard.test/ })).toBeTruthy();
   });
 
-  it("on a narrow screen the filters sit behind the Filters button", async () => {
-    const original = window.matchMedia;
-    window.matchMedia = ((query: string) => ({
-      matches: true, media: query, addEventListener: () => undefined, removeEventListener: () => undefined,
-    })) as unknown as typeof window.matchMedia;
-    try {
-      render(<BrandLifecycle me={owner} />);
-      await loaded(owner);
-      expect(screen.getByRole("button", { name: "ตัวกรอง (Filters)" })).toBeTruthy();
-      // The status chips stay outside the modal.
-      expect(chipButton(/^ทั้งหมด/)).toBeTruthy();
-      expect(screen.queryByLabelText(/เรียงลำดับ/)).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: "ตัวกรอง (Filters)" }));
-      expect(screen.getByRole("dialog", { name: "ตัวกรองแบรนด์" })).toBeTruthy();
-      expect(screen.getByLabelText(/เรียงลำดับ/)).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: "เสร็จ (Done)" }));
-      expect(screen.queryByRole("dialog")).toBeNull();
-    } finally {
-      window.matchMedia = original;
-    }
+  it("keeps the search, the sort and the demo toggle on one row under the chips, with no Filters button", async () => {
+    render(<BrandLifecycle me={owner} />);
+    await loaded(owner);
+    const row = document.querySelector<HTMLElement>(".brand-filter-row")!;
+    expect(within(row).getByPlaceholderText("ค้นหาชื่อหรือโดเมน")).toBeTruthy();
+    expect(within(row).getByLabelText(/เรียงลำดับ/)).toBeTruthy();
+    expect(within(row).getByLabelText("แสดงแบรนด์ทดลอง")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /ตัวกรอง \(Filters\)/ })).toBeNull();
   });
 
   it("hides brands named demo<digits> until แสดงแบรนด์ทดลอง is on, and counts only the shown ones", async () => {
@@ -349,7 +337,7 @@ describe("brands list filters and sort", () => {
     render(<BrandLifecycle me={owner} />);
     expect(await screen.findByText(/ไม่พบแบรนด์ที่ตรงกับตัวกรอง/)).toBeTruthy();
     expect(names()).toEqual([]);
-    expect(document.querySelector(".brand-table")!.textContent).toContain("แบรนด์ทดลอง 2 แบรนด์ถูกซ่อนอยู่");
+    expect(document.querySelector(".lifecycle-list")!.textContent).toContain("แบรนด์ทดลอง 2 แบรนด์ถูกซ่อนอยู่");
     // Nothing is selected for the operator: the side panel keeps its prompt and shows no hidden brand.
     expect(within(document.querySelector<HTMLElement>(".brands-aside")!).getByText("เลือกแบรนด์จากตารางเพื่อดูและแก้ไข")).toBeTruthy();
     expect(document.querySelector(".brands-aside h2")?.textContent ?? "").not.toMatch(/demo/);
@@ -377,11 +365,12 @@ describe("brands list filters and sort", () => {
   it("labels the columns and the page buttons in Thai only, and each cell carries its column label for the card layout", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
-    const ownerHeaders = ["แบรนด์", "สถานะ", "โฟลว์", "ค่าโฆษณา", "คลิก", "ลีด", "ต้นทุน/ลีด", "กำไร"];
+    const ownerHeaders = ["แบรนด์", "ระยะ", "ค่าโฆษณา", "ลีด", "Google Ads", "การทำงาน"];
     const headers = () => [...document.querySelectorAll(".brand-table th")].map((th) => th.textContent);
     const cellLabels = () => [...document.querySelector(".brand-table tbody tr.click:not(.stats)")!.querySelectorAll("td")].map((td) => td.getAttribute("data-label"));
     expect(headers()).toEqual(ownerHeaders);
-    expect(cellLabels()).toEqual(ownerHeaders);
+    // The last cell holds the buttons and has no label of its own.
+    expect(cellLabels()).toEqual([...ownerHeaders.slice(0, -1), ""]);
     expect(screen.getByRole("button", { name: "รีเฟรช" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "แบรนด์ใหม่" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "จัดการ" })).toHaveLength(4);
@@ -389,8 +378,8 @@ describe("brands list filters and sort", () => {
 
     render(<BrandLifecycle me={employee} />);
     await loaded(employee);
-    expect(headers()).toEqual(["แบรนด์", "สถานะ", "โฟลว์", "คลิก", "ลีด"]);
-    expect(cellLabels()).toEqual(["แบรนด์", "สถานะ", "โฟลว์", "คลิก", "ลีด"]);
+    expect(headers()).toEqual(["แบรนด์", "ระยะ", "ลีด", "Google Ads", "การทำงาน"]);
+    expect(cellLabels()).toEqual(["แบรนด์", "ระยะ", "ลีด", "Google Ads", ""]);
   });
 
   it("turns each row into one card under 768 px with CSS alone", () => {
@@ -398,7 +387,5 @@ describe("brands list filters and sort", () => {
     const media = css.match(/@media \(max-width: 767px\) \{([\s\S]*?)\r?\n\}/)?.[1] ?? "";
     expect(media).toContain(".brand-table, .brand-table tbody, .brand-table tr, .brand-table td { display: block; width: 100%; }");
     expect(media).toContain("content: attr(data-label)");
-    // The quiet 7-day stats row joins the card of its brand instead of becoming a second card.
-    expect(media).toMatch(/\.brand-table tbody tr\.stats \{[^}]*border-top: 0/);
   });
 });

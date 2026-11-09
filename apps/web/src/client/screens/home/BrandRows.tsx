@@ -1,19 +1,17 @@
-import type { FunnelReportResponse, LifecycleBrandSummary, PanelSpendReportResponse } from "@anjuna/contracts";
+import type { ConversionsReportResponse, FunnelReportResponse, LifecycleBrandSummary, PanelSpendReportResponse } from "@anjuna/contracts";
 import { isDemoBrand } from "../../brand-health";
-import { checklistFlags, isStale } from "../../home-metrics";
+import { checklistFlags, clickLossWarning, isStale } from "../../home-metrics";
 import { nextAction, type LifecycleRow, type NextAction, type Role } from "../../lifecycle-state";
 import { navigate, routePath } from "../../router";
 import type { ActionBrand, BrandAction } from "../../useBrandActions";
 import type { BrandChecklistEntry, BrandChecklists } from "../../api";
 import { SpendText, byCurrencyText, type ByCurrency } from "../BrandStatsRow";
+import { adsChip, stageStatuses } from "../../brand-stages";
+import { BrandTable, type BrandTableRow } from "../../components/BrandTable";
 import { num } from "./shared";
 
-const MAX_ROWS = 10;
-
-const STATUS_TEXT: Record<string, string> = {
-  live: "ใช้งาน", draft: "ร่าง", paused: "หยุดชั่วคราว", failed: "ติดตั้งไม่สำเร็จ", rolled_back: "ย้อนกลับแล้ว",
-  installing: "กำลังติดตั้ง", queued: "รอติดตั้ง", running: "กำลังติดตั้ง", unmanaged: "ไม่มีในระบบสร้าง",
-};
+/** Home shows the five brands that need a person first; "ดูทั้งหมด n" opens the rest on Brands. */
+const MAX_ROWS = 5;
 
 /**
  * A brand that needs nothing: retired, or live with a sound runtime and no install in progress or failed.
@@ -72,7 +70,7 @@ const DIALOG_ACTION: Partial<Record<NextAction["kind"], BrandAction>> = { "test-
  * One row per brand with the numbers of the period and the one button `nextAction` picks. Spend and cost per lead are owner only
  * and come from the server's baht rows. `undefined` is loading, `null` is failed.
  */
-export function BrandRows({ role, brands, checklists, paused, funnel, spend, onAction }: {
+export function BrandRows({ role, brands, checklists, paused, funnel, spend, stageFunnel, stageConversions, spendToday, onAction }: {
   role: Role;
   brands: LifecycleBrandSummary[] | null | undefined;
   checklists: BrandChecklists | null | undefined;
@@ -81,6 +79,11 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, onA
   funnel: FunnelReportResponse | null | undefined;
   /** Owner only. `undefined` while loading, `null` when it failed or the period has no rows. */
   spend: PanelSpendReportResponse | null | undefined;
+  /** The last 30 days of the funnel and of the conversion rows: they feed the lead, sold and upload stages. */
+  stageFunnel?: FunnelReportResponse | null;
+  stageConversions?: ConversionsReportResponse | null;
+  /** Owner only: today's spend report, which decides the Google Ads chip. Null when it is unreadable. */
+  spendToday?: PanelSpendReportResponse | null;
   /** Runs a dialog action on one brand. Without it the row button opens the brand. */
   onAction?: (action: BrandAction, brand: ActionBrand) => void;
 }) {
@@ -101,34 +104,65 @@ export function BrandRows({ role, brands, checklists, paused, funnel, spend, onA
     }
     navigate(routePath({ view: "brands", brandId: brand.brand_id }));
   };
+  const tableRows: BrandTableRow[] = rows.slice(0, MAX_ROWS).map(({ brand, action }) => {
+    const leads = brandLeads(funnel, brand);
+    const shown = owner && spend ? brandSpend(spend, brand.brand_id, now) : null;
+    const cost = shown?.cost ?? null;
+    const estimated = shown?.estimated ?? false;
+    const perLead: ByCurrency | null = cost && leads ? Object.fromEntries(Object.entries(cost).map(([currency, amount]) => [currency, amount / leads])) as ByCurrency : null;
+    const entry = checklists?.brands[brand.brand_id];
+    const own = (rowsOf: { brand: string }[] | undefined) => rowsOf?.filter((row) => row.brand === brand.brand_id);
+    const funnel30 = own(stageFunnel?.rows) as FunnelReportResponse["rows"] | undefined;
+    const conv30 = own(stageConversions?.rows) as ConversionsReportResponse["rows"] | undefined;
+    const stages = stageStatuses({
+      brand, ...(entry ? { checklist: entry } : {}),
+      leads30: funnel30 ? funnel30.reduce((sum, row) => sum + row.submits, 0) : null,
+      sold30: funnel30 ? funnel30.reduce((sum, row) => sum + row.sold, 0) : null,
+      uploaded: conv30 ? conv30.filter((row) => row.status === "uploaded").length : null,
+      dead: conv30 ? conv30.filter((row) => row.status === "dead").length : null,
+    });
+    const spendRows = spendToday?.brands.filter((row) => row.brand_id === brand.brand_id);
+    const ads = owner && spendToday !== undefined && spendToday !== null
+      ? adsChip({ brand, paused: paused?.has(brand.brand_id) === true, spendToday: spendRows && spendRows.length > 0 ? spendRows.reduce((sum, row) => sum + row.cost, 0) : null, clickLoss: brandClickLoss(spend, funnel, brand.brand_id) })
+      : owner ? null : adsChipWithoutSpend(brand, paused?.has(brand.brand_id) === true);
+    return {
+      id: brand.brand_id,
+      title: brand.hostnames[0] ?? brand.name ?? brand.brand_id,
+      ...(brand.name && brand.name !== brand.hostnames[0] ? { subtitle: brand.name } : {}),
+      demo: isDemoBrand(brand),
+      stages,
+      ads,
+      spend: spend === undefined ? "…" : <SpendText text={byCurrencyText(cost)} estimated={estimated} />,
+      leads: funnel === undefined ? "…" : leads === null ? "—" : num(leads),
+      costPerLead: spend === undefined ? "…" : <SpendText text={byCurrencyText(perLead)} estimated={estimated} />,
+      action: { kind: action.kind, label: action.label, disabled: action.disabled, reason: action.reason, primary: needsPerson(action, brand), onClick: () => click(action, brand) },
+    };
+  });
   return (
     <section className="panel" aria-label="แบรนด์">
       <div className="home-ptitle">
         <h2>แบรนด์</h2>
-        <a className="btn" href="/brands" onClick={(event) => { event.preventDefault(); navigate("/brands"); }}>ดูแบรนด์ทั้งหมด</a>
+        <a className="btn" href="/brands" onClick={(event) => { event.preventDefault(); navigate("/brands"); }}>{`ดูทั้งหมด ${rows.length}`}</a>
       </div>
       {brands === undefined && <p className="hint">…</p>}
       {brands === null && <p className="hint">— โหลดรายการแบรนด์ไม่สำเร็จ</p>}
       {brands && rows.length === 0 && <p className="hint">ยังไม่มีแบรนด์</p>}
-      <ul className="home-brands">
-        {rows.slice(0, MAX_ROWS).map(({ brand, action }) => {
-          const leads = brandLeads(funnel, brand);
-          const shown = owner && spend ? brandSpend(spend, brand.brand_id, now) : null;
-          const cost = shown?.cost ?? null;
-          const estimated = shown?.estimated ?? false;
-          const perLead: ByCurrency | null = cost && leads ? Object.fromEntries(Object.entries(cost).map(([currency, amount]) => [currency, amount / leads])) as ByCurrency : null;
-          return (
-            <li className="home-brand" key={brand.brand_id} data-brand-id={brand.brand_id}>
-              <span className="n" data-col="name"><b>{brand.hostnames[0] ?? brand.name ?? brand.brand_id}</b>{brand.name && brand.name !== brand.hostnames[0] && <small className="muted"> {brand.name}</small>}</span>
-              <span data-col="state" data-label="สถานะ">{STATUS_TEXT[brand.status] ?? brand.status}</span>
-              <span data-col="leads" data-label="ลีด">{funnel === undefined ? "…" : leads === null ? "—" : num(leads)}</span>
-              {owner && <span data-col="spend" data-label="ค่าโฆษณา">{spend === undefined ? "…" : <SpendText text={byCurrencyText(cost)} estimated={estimated} />}</span>}
-              {owner && <span data-col="cpl" data-label="ต้นทุนต่อลีด">{spend === undefined ? "…" : <SpendText text={byCurrencyText(perLead)} estimated={estimated} />}</span>}
-              <button type="button" className={`btn${needsPerson(action, brand) ? " pri" : ""}`} data-next-action={action.kind} disabled={action.disabled} title={action.reason} onClick={() => click(action, brand)}>{action.label}</button>
-            </li>
-          );
-        })}
-      </ul>
+      {tableRows.length > 0 && <BrandTable rows={tableRows} showMoney={owner} label="แบรนด์ที่ต้องดู" />}
     </section>
   );
+}
+
+/** Google billed clicks that did not reach the brand's site in the same window: the sign of a lost gclid or a broken final URL. */
+function brandClickLoss(spend: PanelSpendReportResponse | null | undefined, funnel: FunnelReportResponse | null | undefined, brandId: string): boolean {
+  if (!spend || !funnel) return false;
+  const paid = spend.brands.filter((row) => row.brand_id === brandId).reduce((sum, row) => sum + row.clicks, 0);
+  const reached = funnel.rows.filter((row) => row.brand === brandId).reduce((sum, row) => sum + row.clicks, 0);
+  return paid > 0 && clickLossWarning(paid, reached);
+}
+
+/** An employee has no spend report, so the chip can only say what the brand's own state says. */
+function adsChipWithoutSpend(brand: LifecycleBrandSummary, paused: boolean): BrandTableRow["ads"] {
+  if (isDemoBrand(brand)) return adsChip({ brand, paused, spendToday: null, clickLoss: false });
+  if (paused || brand.status === "paused") return adsChip({ brand, paused: true, spendToday: null, clickLoss: false });
+  return null;
 }

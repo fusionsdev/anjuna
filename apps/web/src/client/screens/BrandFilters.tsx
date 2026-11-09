@@ -1,7 +1,7 @@
 import { BRAND_CHIPS, BRAND_SORTS, type BrandChip, type BrandSortMode } from "../brand-health";
-import { FilterBar } from "../components/FilterBar";
+import { Search } from "lucide-react";
 
-// spec brands (FUS-377). Local to the Brands screen on purpose: a shared FilterBar would collide with lane B.
+// Chips first, then one row with the search, the sort and the demo toggle (design Brands page).
 // showDemo: the "แสดงแบรนด์ทดลอง" box. Brands named demo<digits> stay out of the list until it is on.
 export function BrandFilters({ chip, onChip, counts, sort, onSort, owner, search, onSearch, showDemo, onShowDemo }: {
   chip: BrandChip; onChip: (chip: BrandChip) => void; counts: Record<BrandChip, number>;
@@ -10,27 +10,23 @@ export function BrandFilters({ chip, onChip, counts, sort, onSort, owner, search
   showDemo: boolean; onShowDemo: (value: boolean) => void;
 }) {
   return <div className="brand-filters">
-    <div className="brand-chip-row">
-      <div className="brand-chips" role="group" aria-label="ตัวกรองแบรนด์">
-        {BRAND_CHIPS.map(({ id, label }) => <button key={id} type="button" className="brand-chip" aria-pressed={chip === id} onClick={() => onChip(id)}>
-          {label} <span className="brand-chip-count">{counts[id]}</span>
-        </button>)}
-      </div>
-      {/* Beside the chips, outside the modal, so a narrow screen keeps it in reach. */}
-      <label className="brand-demo-toggle"><input type="checkbox" checked={showDemo} onChange={(e) => onShowDemo(e.target.checked)} />แสดงแบรนด์ทดลอง</label>
+    <div className="brand-chips" role="group" aria-label="ตัวกรองแบรนด์">
+      {BRAND_CHIPS.map(({ id, label }) => <button key={id} type="button" className="brand-chip" aria-pressed={chip === id} onClick={() => onChip(id)}>
+        {label} <span className="brand-chip-count num">{counts[id]}</span>
+      </button>)}
     </div>
-    {/* The chips stay outside the modal like segment buttons, so only sort and search count. */}
-    <FilterBar label="ตัวกรองแบรนด์" activeCount={(sort !== "issues" ? 1 : 0) + (search ? 1 : 0)}>
-    <div className="brand-filter-fields">
-      <label>เรียงลำดับ
+    <div className="brand-filter-row">
+      <label className="brand-search">
+        <span className="sr-only">ค้นหาโดเมน</span>
+        <Search size={16} aria-hidden="true" />
+        <input type="search" value={search} placeholder="ค้นหาชื่อหรือโดเมน" onChange={(e) => onSearch(e.target.value)} />
+      </label>
+      <label className="brand-sort">เรียงลำดับ
         <select value={sort} onChange={(e) => onSort(e.target.value as BrandSortMode)}>
           {BRAND_SORTS.filter((option) => owner || !option.ownerOnly).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
       </label>
-      <label>ค้นหาโดเมน
-        <input type="search" value={search} onChange={(e) => onSearch(e.target.value)} />
-      </label>
+      <label className="brand-demo-toggle"><input type="checkbox" checked={showDemo} onChange={(e) => onShowDemo(e.target.checked)} />แสดงแบรนด์ทดลอง</label>
     </div>
-    </FilterBar>
   </div>;
 }

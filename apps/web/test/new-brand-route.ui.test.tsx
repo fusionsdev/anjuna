@@ -7,7 +7,7 @@ import { api } from "../src/client/api";
 // The real App with the real Brands screen: the wizard entry points must go through the router.
 const employee = { id: "employee", email: "employee@example.test", role: "employee" as const };
 const newBrand = "แบรนด์ใหม่";
-const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" });
+const wizard = () => screen.queryByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" });
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const back = () => act(async () => {
   window.history.back();
@@ -50,7 +50,7 @@ describe("New brand button on the Brands page", () => {
   it("opens /brands/new with the wizard, and Back closes the wizard", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: newBrand }));
-    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeTruthy();
     expect(window.location.pathname).toBe("/brands/new");
     await back();
     expect(window.location.pathname).toBe("/brands");
@@ -61,7 +61,7 @@ describe("New brand button on the Brands page", () => {
   it("opens the wizard again from a reload at /brands/new", async () => {
     window.history.replaceState(null, "", "/brands/new");
     render(<App />);
-    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeTruthy();
   });
 });
 
@@ -91,10 +91,10 @@ describe("a resumed draft wizard", () => {
   it("closes when Back returns to /brands, and the draft stays selected", async () => {
     render(<App />);
     await screen.findByRole("heading", { name: "live.test" });
-    fireEvent.click(screen.getByRole("button", { name: /Maple Cash/ }));
+    fireEvent.click(screen.getByRole("button", { name: /maple.test/ }));
     expect(window.location.pathname).toBe("/brands/brand_new");
     fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด" }));
-    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeTruthy();
     await back();
     expect(window.location.pathname).toBe("/brands");
     await waitFor(() => expect(wizard()).toBeNull());
@@ -107,15 +107,15 @@ describe("a resumed draft wizard", () => {
     routes["/api/lifecycle/brands"] = { brands: [row("brand_new", "Maple Cash", "maple.test", "draft"), row("brand_live", "Live Cash", "live.test", "live")] };
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: newBrand }));
-    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่ (New brand wizard)" })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "วิซาร์ดแบรนด์ใหม่" })).toBeTruthy();
     await back();
     await waitFor(() => expect(wizard()).toBeNull());
     fireEvent.click(await screen.findByRole("button", { name: "ทำต่อในวิซาร์ด" }));
-    expect(await screen.findByRole("heading", { level: 2, name: "ตรวจสอบ (Review)" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 2, name: "ตรวจและสร้าง" })).toBeTruthy();
     expect(window.location.pathname).toBe("/brands");
     await forward();
     expect(window.location.pathname).toBe("/brands/new");
-    expect(await screen.findByRole("heading", { level: 2, name: "แบรนด์ (Brand)" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 2, name: "ข้อมูลแบรนด์" })).toBeTruthy();
     expect((screen.getByRole("textbox", { name: "ชื่อแบรนด์ (Brand name)" }) as HTMLInputElement).value).toBe("");
     await back();
     expect(window.location.pathname).toBe("/brands");

@@ -3,15 +3,17 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type BrandChecklists, type Me } from "../api";
 import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars";
 import { Sparkline } from "../components/Sparkline";
+import { Chip } from "../components/Chip";
 import { isDemoBrand } from "../brand-health";
-import { clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals } from "../home-metrics";
+import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
 import { conversionsPath } from "./Conversions";
 import { BrandRows } from "./home/BrandRows";
 import { HumanTasks, type HumanTask } from "./home/HumanTasks";
 import { IncidentBanner } from "./home/IncidentBanner";
-import { NeedsFixList, fixItems, type HomePeriod } from "./home/NeedsFixList";
+import { NeedsFixList, fixItems, type FixItem, type HomePeriod } from "./home/NeedsFixList";
 import { inApp, mark, num, type Value } from "./home/shared";
+import { navigate } from "../router";
 import { useBrandActions, type ActionBrand } from "../useBrandActions";
 import "./Home.css";
 import { AllBrandsNote } from "../components/AllBrandsNote";
@@ -24,6 +26,9 @@ export type SpendReport = PanelSpendReportResponse;
 
 const PERIODS: Array<[HomePeriod, string]> = [["today", "วันนี้"], ["7d", "7 วัน"], ["30d", "30 วัน"]];
 const PERIOD_DAYS: Record<HomePeriod, number> = { today: 1, "7d": 7, "30d": 30 };
+const COMPARE: Record<HomePeriod, string> = { today: "เทียบกับเมื่อวาน", "7d": "เทียบกับ 7 วันก่อนหน้า", "30d": "เทียบกับ 30 วันก่อนหน้า" };
+/** "วันศุกร์ 6 พฤศจิกายน 2569": today in Bangkok, in the Buddhist calendar. */
+const thaiDate = (now = new Date()): string => now.toLocaleDateString("th-TH-u-ca-buddhist", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Bangkok" });
 
 const shiftDay = (dayText: string, days: number): string => {
   const date = new Date(`${dayText}T00:00:00.000Z`);
@@ -129,6 +134,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [paused, setPaused] = useState<ReadonlySet<string> | null | undefined>(undefined);
   // The whole reports feed the brand rows; the totals above feed the tiles. Both come from the same answer.
   const [spendRaw, setSpendRaw] = useState<PanelSpendReportResponse | null | undefined>(undefined);
+  // The brand table reads 30 days for its stages and today's spend for the Google Ads chip, whatever period the page shows.
+  const [stageFunnelRaw, setStageFunnelRaw] = useState<FunnelReportResponse | null | undefined>(undefined);
+  const [stageConversions, setStageConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
+  const [spendTodayRaw, setSpendTodayRaw] = useState<PanelSpendReportResponse | null | undefined>(undefined);
   // An action that changed a brand raises this, so the brand list and the batch checklist are read again.
   const [reloadKey, setReloadKey] = useState(0);
   const actions = useBrandActions({ onDone: () => setReloadKey((value) => value + 1) });
@@ -157,6 +166,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   useEffect(() => {
     let current = true;
     api.alerts().then((report) => current && setAlerts(report), () => current && setAlerts(null));
+    api.funnel(periodRange("30d")).then((report) => current && setStageFunnelRaw(report), () => current && setStageFunnelRaw(null));
+    api.conversions({ period: "30d" }).then((report) => current && setStageConversions(report), () => current && setStageConversions(null));
+    if (owner) api.spend("today").then((report) => current && setSpendTodayRaw(report), () => current && setSpendTodayRaw(null));
+    else setSpendTodayRaw(null);
     api.templates().then(
       (list) => {
         if (!current) return;
@@ -171,7 +184,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     // Core pauses a brand while its factory status still reads live, so the paused set comes from core's brand list like on the Brands screen.
     api.brands().then((list) => current && setPaused(new Set(list.brands.filter((b) => b.status === "paused").map((b) => b.brand_id))), () => current && setPaused(null));
     return () => { current = false; };
-  }, [reloadKey]);
+  }, [reloadKey, owner]);
 
   const funnelReport = useMemo(() => (funnelRaw ? scopeFunnel(funnelRaw, inScopeId) : funnelRaw), [funnelRaw, inScopeId]);
   const funnel = useMemo(() => (funnelReport === undefined ? undefined : funnelReport === null ? null : sumFunnel(funnelReport)), [funnelReport]);
@@ -181,6 +194,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   // The daily series has no brand, so a scope that hides brands shows no line.
   const spendDays = spendRaw && !hidesBrands ? spendSeries(spendRaw) : null;
   const scopedBrands = brands ? brands.filter((brand) => inScopeId(brand.brand_id)) : brands;
+  const stageFunnel = useMemo(() => (stageFunnelRaw ? scopeFunnel(stageFunnelRaw, inScopeId) : stageFunnelRaw), [stageFunnelRaw, inScopeId]);
+  const spendToday = useMemo(() => (spendTodayRaw ? scopeSpend(spendTodayRaw, inScopeId) : spendTodayRaw), [spendTodayRaw, inScopeId]);
   // The alert items that name a brand follow the scope. The conversion items count every brand and say so ("ทุกแบรนด์").
   const scopedAlerts = useMemo(() => (alerts ? scopeAlerts(alerts, inScopeId) : alerts), [alerts, inScopeId]);
   const leads = funnel === undefined ? undefined : funnel?.leads ?? null;
@@ -209,7 +224,6 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const note = leakNote(stages, leak);
   const biggest = Math.max(1, ...stages.map((s) => (typeof s.value === "number" ? s.value : 0)));
 
-  const fixes = fixItems(scopedAlerts, conversions, period);
   // The card links keep the period Home shows, like the fix list. The default period gives the bare /conversions.
   const allPath = conversionsPath({ period, status: "all", brand: null });
   const deadPath = conversionsPath({ period, status: "dead", brand: null });
@@ -221,28 +235,45 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const testSold: Value = testSoldBrands === undefined ? undefined : testSoldBrands === null ? null : testSoldBrands.length;
   const actionBrand = (b: LifecycleBrandSummary): ActionBrand => ({ id: b.brand_id, name: b.name ?? b.brand_id, domain: b.hostnames[0] ?? b.brand_id });
   const drafts: Value = brands === undefined ? undefined : brands === null ? null : (scopedBrands ?? []).filter((b) => b.status === "draft").length;
+  // A live brand whose checklist has no drain route row. Only the batch read can say so: an unknown or missing entry never counts.
+  const drainBrands: LifecycleBrandSummary[] | null | undefined = brands === undefined || checklists === undefined ? undefined
+    : brands === null || checklists === null ? null
+      : (scopedBrands ?? []).filter((b) => b.status === "live" && !isDemoBrand(b) && checklistFlags(checklists.brands[b.brand_id]).drain_route === false);
   const tasks: HumanTask[] = [
     { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", show: true, onOpen: () => { if (testSoldBrands) void actions.runBatch("test-sold", testSoldBrands.map(actionBrand)); else go("brands")(); } },
+    { id: "drain-route", title: "ตั้ง drain route", count: drainBrands === undefined ? undefined : drainBrands === null ? null : drainBrands.length, unit: "แบรนด์", show: owner, onOpen: () => { if (drainBrands && drainBrands.length === 1) void actions.run("set-route", actionBrand(drainBrands[0]!)); else go("brands")(); } },
     { id: "templates", title: "อนุมัติเทมเพลต", count: templates, unit: "รายการ", show: owner, onOpen: go("templates") },
     { id: "drafts", title: "ร่างที่ยังไม่กดสร้าง", count: drafts, unit: "ร่าง", show: true, onOpen: go("new-brand") },
   ];
 
   // The banner: items that reached the alert level, and paid clicks that did not reach the site. Only the owner has paid clicks.
-  const urgent = fixes.filter((item) => item.level === "bad");
   const paidClicks = owner && spend ? spend.clicks : null;
   const reached = funnel ? funnel.clicks : null;
   const clickLoss = paidClicks !== null && reached !== null && clickLossWarning(paidClicks, reached) ? { paid: paidClicks, reached } : null;
+
+  // Items the alert and conversion reports do not carry: brands waiting for a drain route, and clicks that never reached the site.
+  const extraFixes: FixItem[] = [
+    ...(drainBrands ?? []).map((b): FixItem => ({ id: `drain:${b.brand_id}`, level: "warn", brand: b.hostnames[0] ?? b.name ?? b.brand_id, message: "ยังไม่ได้ตั้งเส้นทาง drain คอนเวอร์ชันจะไม่ถูกส่ง", kind: "drain-route", onAct: () => void actions.run("set-route", actionBrand(b)) })),
+    ...(clickLoss ? [{ id: "click-loss", level: "warn", brand: "ทุกแบรนด์", message: `Google คิดเงิน ${num(clickLoss.paid)} คลิก มาถึงเว็บ ${num(clickLoss.reached)} คน ตรวจ gclid และ URL ปลายทาง`, kind: "gclid", path: "/traffic" } satisfies FixItem] : []),
+  ];
+  const fixes = fixItems(scopedAlerts, conversions, period, extraFixes);
+  // The banner reads only the alert-level items, which the extras never are.
+  const urgent = fixes.filter((item) => item.level === "bad");
+
+  const soldNow = funnel?.sold ?? null;
+  const soldShare = soldNow !== null && leads ? Math.round((soldNow / leads) * 100) : null;
 
   return (
     <>
       <div className="home-head">
         <div>
-          <h1>
+          <h1>หน้าแรก</h1>
+          <p className="home-summary" aria-live="polite">
             {owner
               ? `จ่ายค่าโฆษณา ${thb(spendThb)} ได้ ${num(leads)} ลีด ต้นทุนลีดละ ${thb(costPerLead)}`
               : `ผู้เข้าเว็บ ${num(field((f) => f.clicks))} คน ได้ ${num(leads)} ลีด ขายได้ ${num(field((f) => f.sold))}`}
-          </h1>
-          <p className="home-sub">{owner ? "ทุกแบรนด์ใน aduplift ค่าโฆษณาจาก AdKit อัปเดตทุกชั่วโมง" : "ทุกแบรนด์ใน aduplift"}</p>
+          </p>
+          <p className="home-sub">{`${thaiDate()} · ${owner ? "ทุกแบรนด์ใน aduplift ค่าโฆษณาจาก AdKit อัปเดตทุกชั่วโมง" : "ทุกแบรนด์ใน aduplift"}`}</p>
         </div>
         <div className="home-actions">
           <div className="seg" role="group" aria-label="ช่วงเวลา">
@@ -250,23 +281,28 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
               <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>
             ))}
           </div>
+          <span className="home-compare">{COMPARE[period]}</span>
           <button type="button" className="btn pri" onClick={go("new-brand")}>+ สร้างแบรนด์ใหม่</button>
         </div>
       </div>
       <div className="home-stack">
-        <IncidentBanner urgent={urgent} clickLoss={clickLoss} />
+        <IncidentBanner urgent={urgent} clickLoss={clickLoss} onQueue={() => navigate(allPath)} onAlerts={go("alerts")} />
         <div className="home-grid2">
           <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} onAlerts={go("alerts")} />
           <HumanTasks tasks={tasks} />
         </div>
-        <div className="ledger" role="group" aria-label="สรุปตัวเลข">
+        <div className="ledger kpi-row" role="group" aria-label="สรุปตัวเลข">
           {owner ? (
             <>
-              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{thb(spendThb)}</p>{typeof spendUsd === "number" && <p className="hint">{usd(spendUsd)}</p>}{spendDays && <Sparkline values={spendDays} label="ค่าโฆษณารายวัน" />}</div>
-              <div className="cell"><p className="k">ต้นทุนต่อลีด</p><p className="v">{thb(costPerLead)}</p></div>
+              <div className="cell"><p className="k">ค่าโฆษณา</p><p className="v blue">{thb(spendThb)}</p>{typeof spendUsd === "number" && <p className="hint">{`≈${usd(spendUsd)}`}</p>}{spendDays && <Sparkline values={spendDays} label="ค่าโฆษณารายวัน" />}</div>
               <div className="cell"><p className="k">ลีด</p><p className="v">{num(leads)}</p><Delta now={leads} before={before((f) => f.leads)} /></div>
-              <div className="cell"><p className="k">รายได้</p><p className="v">{usd(revenue)}</p><Delta now={revenue} before={before((f) => f.revenue)} /></div>
-              <div className="cell"><p className="k">กำไร/ขาดทุน</p><p className={typeof profit === "number" ? (profit < 0 ? "v neg" : "v pos") : "v"}>{usd(profit)}</p></div>
+              <div className="cell"><p className="k">ต้นทุนต่อลีด</p><p className="v">{thb(costPerLead)}</p>{typeof costPerLead === "number" && typeof spendThb === "number" && typeof spendUsd === "number" && spendThb > 0 && <p className="hint">{`≈${usd(costPerLead * (spendUsd / spendThb))}`}</p>}</div>
+              <div className="cell"><p className="k">ขายได้</p><p className="v">{num(field((f) => f.sold))}</p>{soldShare !== null && <p className="hint">{`${soldShare}% ของลีด`}</p>}<Delta now={field((f) => f.sold)} before={before((f) => f.sold)} /></div>
+              <div className="kpi-pair">
+                <Chip tone="accent" className="kpi-owner">owner</Chip>
+                <div className="cell"><p className="k">รายได้</p><p className="v">{usd(revenue)}</p><Delta now={revenue} before={before((f) => f.revenue)} /></div>
+                <div className="cell"><p className="k">กำไร/ขาดทุน</p><p className={typeof profit === "number" ? (profit < 0 ? "v neg" : "v pos") : "v"}>{usd(profit)}</p></div>
+              </div>
             </>
           ) : (
             <>
@@ -278,7 +314,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </>
           )}
         </div>
-        <BrandRows role={me.role} brands={scopedBrands} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
+        <BrandRows role={me.role} brands={scopedBrands} stageFunnel={stageFunnel} stageConversions={stageConversions} spendToday={spendToday} checklists={checklists} paused={paused} funnel={funnelReport} spend={spendReport} onAction={(action, brand) => void actions.run(action, { ...brand, templateLabel: brand.templateId ? templateLabels[brand.templateId] ?? null : null })} />
+        <div className="home-grid-fq">
         <section className="panel" aria-label="เงินไหลไปถึงไหน">
           <div className="home-ptitle">
             <h2>{owner ? "เงินไหลไปถึงไหน" : "คนไหลไปถึงไหน"}</h2>
@@ -303,6 +340,23 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
             </p>
           )}
         </section>
+        <section className="panel home-conv" aria-label="คอนเวอร์ชัน">
+          <div className="home-ptitle">
+            <div className="home-ptitle-main"><h2>คิวคอนเวอร์ชัน</h2><AllBrandsNote inline /></div>
+            <a className="btn" href={allPath} onClick={inApp(allPath)}>ดูคิว</a>
+          </div>
+          <div className="ledger queue-stats" role="group" aria-label="สรุปคอนเวอร์ชัน">
+            <div className="cell"><p className="k">ส่งแล้ว</p><p className="v">{num(conversion((c) => c.totals.uploaded))}</p></div>
+            <div className="cell"><p className="k">ค้างส่ง</p><p className="v">{num(conversion((c) => c.totals.pending))}</p></div>
+            <a className="cell" href={deadPath} onClick={inApp(deadPath)}><p className="k">ส่งไม่ได้</p><p className="v">{num(conversion((c) => c.totals.dead))}</p></a>
+            <div className="cell"><p className="k">{`ค้างเกิน ${CONVERSION_STALLED_HOURS} ชม.`}</p><p className="v">{num(conversion((c) => c.stalled))}</p></div>
+            {typeof uploadedValue === "number" && <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v">{usdCents(uploadedValue)}</p></div>}
+          </div>
+          <p className="hint" data-testid="reconciliation">
+            {`กระทบยอด: ขายได้ ${num(field((f) => f.sold))} = ส่งแล้ว ${num(conversion((c) => c.totals.uploaded))} + ส่งไม่ได้ ${num(conversion((c) => c.totals.dead))} + ค้างส่ง ${num(conversion((c) => c.totals.pending))}`}
+          </p>
+        </section>
+        </div>
         <section className="panel" aria-label="ลีดรายวัน">
           <div className="home-ptitle">
             <h2>ลีดรายวัน</h2>
@@ -311,19 +365,6 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
           {daily === undefined && <p className="hint">…</p>}
           {daily === null && <p className="hint">— โหลดลีดรายวันไม่สำเร็จ</p>}
           {daily && <DailyBars days={daily} />}
-        </section>
-        <section className="panel home-conv" aria-label="คอนเวอร์ชัน">
-          <div className="home-ptitle">
-            <div className="home-ptitle-main"><h2>คอนเวอร์ชัน</h2><AllBrandsNote inline /></div>
-            <a className="btn" href={allPath} onClick={inApp(allPath)}>ดูทั้งหมด</a>
-          </div>
-          <div className="ledger" role="group" aria-label="สรุปคอนเวอร์ชัน">
-            <div className="cell"><p className="k">ส่งแล้ว</p><p className="v">{num(conversion((c) => c.totals.uploaded))}</p></div>
-            <div className="cell"><p className="k">ค้างส่ง</p><p className="v">{num(conversion((c) => c.totals.pending))}</p></div>
-            <a className="cell" href={deadPath} onClick={inApp(deadPath)}><p className="k">ส่งไม่ได้</p><p className="v">{num(conversion((c) => c.totals.dead))}</p></a>
-            <div className="cell"><p className="k">{`ค้างเกิน ${CONVERSION_STALLED_HOURS} ชม.`}</p><p className="v">{num(conversion((c) => c.stalled))}</p></div>
-            {typeof uploadedValue === "number" && <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v">{usdCents(uploadedValue)}</p></div>}
-          </div>
         </section>
       </div>
       {actions.view}

@@ -340,14 +340,14 @@ describe("App deep link", () => {
     routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: /^แบรนด์$/ }));
-    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "แบรนด์" })).toBeTruthy();
     await goTo("#other");
     expect(screen.queryByRole("heading", { name: "เทมเพลต (Templates)" })).toBeNull();
     await goTo("#templates/tv-bolt-1");
     expect(await screen.findByRole("heading", { name: "เทมเพลต (Templates)" })).toBeTruthy();
     expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
     expect(window.location.pathname).toBe("/templates/tv-bolt-1");
-    expect(screen.queryByRole("heading", { name: "Lifecycle แบรนด์" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "แบรนด์" })).toBeNull();
   });
 
   describe("theme vars", () => {
