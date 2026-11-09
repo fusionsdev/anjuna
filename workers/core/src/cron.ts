@@ -8,6 +8,7 @@ import {
   type AlertsReport,
   type Notifier,
   type SubmitErrorCountsSource,
+  type DigestNumbers,
   reportNotices,
   RULE_TEXT,
 } from "@anjuna/insights";
@@ -91,6 +92,11 @@ export async function runDigest(env: Env, scheduledTime: number): Promise<void> 
   const notifier = await createNotifier(env);
   const now = new Date(scheduledTime);
   if (!notifier.digestDue(now.toISOString())) return;
+  await notifier.digest(await loadDigestNumbers(env, now), now.toISOString());
+}
+
+/** Rebuild the same completed UTC day for cron and retries, anchored to the original delivery time. */
+export async function loadDigestNumbers(env: Env, now: Date): Promise<DigestNumbers> {
   const spend = await loadSpendReport(env, "yesterday", now);
   const from = `${spend.from}T00:00:00.000Z`;
   const to = `${now.toISOString().slice(0, 10)}T00:00:00.000Z`;
@@ -106,8 +112,8 @@ export async function runDigest(env: Env, scheduledTime: number): Promise<void> 
   const count = leads?.n ?? 0;
   const fixes = reportNotices(report).filter(n => n.level !== "ok").sort((a, b) => Number(b.level === "alert") - Number(a.level === "alert"));
   const first = fixes[0];
-  await notifier.digest({ spend: cost, leads: count, cpl: count ? cost / count : 0, sold: sold?.n ?? 0,
-    profit: (sold?.revenue ?? 0) - cost, top_fix: first ? `${RULE_TEXT[first.rule]} · ${first.brand}` : "ไม่มี" }, now.toISOString());
+  return { spend: cost, leads: count, cpl: count ? cost / count : 0, sold: sold?.n ?? 0,
+    profit: (sold?.revenue ?? 0) - cost, top_fix: first ? `${RULE_TEXT[first.rule]} · ${first.brand}` : "ไม่มี" };
 }
 
 /** B-01 retention: expired duplicate snapshots are cleared even if their token is never claimed. */

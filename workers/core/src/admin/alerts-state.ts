@@ -1,7 +1,8 @@
 import { AlertStateRow, NotificationLogRow, type AdminRequestContext } from "@anjuna/contracts";
-import { InMemorySubmitErrorCounts, formatNotice, loadReportNotices, runAlerts, type Notice } from "@anjuna/insights";
+import { InMemorySubmitErrorCounts, formatDigest, formatNotice, loadReportNotices, runAlerts, type Notice, type NotificationMessage } from "@anjuna/insights";
 import type { Env } from "../env.js";
 import { createNotifier } from "../traffic-tail/alerts.js";
+import { loadDigestNumbers } from "../cron.js";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
 async function currentNotices(env: Env): Promise<Notice[]> {
@@ -48,10 +49,19 @@ export async function handleAlertStateRoute(request: Request, env: Env, ctx: Adm
     const notifier = await createNotifier(env);
     if (!env.TELEGRAM_BOT_TOKEN || !notifier.settings.telegram.enabled || !notifier.settings.telegram.chat_ids.includes(row.target)) return json({ error: "not_configured" }, 409);
     if (row.status !== "failed") return json({ error: "already_sent" }, 409);
-    const notice = (await currentNotices(env)).find(n => n.key === row.alert_key);
-    if (!notice && row.alert_key !== "test:panel") return json({ error: "alert_resolved" }, 409);
     const at = new Date().toISOString();
-    const message = notice ? formatNotice(notice, at, notifier.host) : { text: "🟠 ทดสอบการแจ้งเตือน", url: `https://${notifier.host}/alerts` };
+    let message: NotificationMessage;
+    if (/^digest:\d{4}-\d{2}-\d{2}$/.test(row.alert_key)) {
+      // A retry log has a new sent_at. Anchor all attempts to the first delivery of this digest key.
+      const originalAt = await env.LEADS.prepare("SELECT MIN(sent_at) AS at FROM notification_log WHERE alert_key=?1")
+        .bind(row.alert_key).first<string>("at");
+      if (!originalAt || !Number.isFinite(Date.parse(originalAt))) return json({ error: "invalid_digest" }, 409);
+      message = formatDigest(await loadDigestNumbers(env, new Date(originalAt)), originalAt, notifier.host);
+    } else {
+      const notice = (await currentNotices(env)).find(n => n.key === row.alert_key);
+      if (!notice && row.alert_key !== "test:panel") return json({ error: "alert_resolved" }, 409);
+      message = notice ? formatNotice(notice, at, notifier.host) : { text: "🟠 ทดสอบการแจ้งเตือน", url: `https://${notifier.host}/alerts` };
+    }
     const result = await notifier.sendDirect(row.alert_key, message, at, [row.target]);
     await audit(env, ctx, "notification.retry", row.id, { status: row.status }, result[0]);
     return json(result[0]);
@@ -65,10 +75,22 @@ export async function handleAlertStateRoute(request: Request, env: Env, ctx: Adm
   const notice = (await currentNotices(env)).find(n => n.key === key);
   if (!notice) return json({ error: "not_found" }, 404);
   const at = new Date().toISOString();
-  await env.LEADS.prepare("INSERT OR IGNORE INTO alert_state(alert_key,state,first_seen,updated_at) VALUES (?1,?2,?3,?3)").bind(key, notice.level, at).run();
-  if (action[2] === "ack") await env.LEADS.prepare("UPDATE alert_state SET acknowledged_by=?1,acknowledged_at=?2,updated_at=?2 WHERE alert_key=?3").bind(ctx.actor_id, at, key).run();
-  else await env.LEADS.prepare("UPDATE alert_state SET closed_at=?1,updated_at=?1 WHERE alert_key=?2").bind(at, key).run();
-  const after = AlertStateRow.parse(await env.LEADS.prepare("SELECT * FROM alert_state WHERE alert_key=?1").bind(key).first());
+  // Open a recurred incident and record the user's action in one statement, so cron cannot observe half the change.
+  const saved = await env.LEADS.prepare(`INSERT INTO alert_state
+    (alert_key,state,first_seen,acknowledged_by,acknowledged_at,closed_at,updated_at)
+    VALUES (?1,?2,?3,CASE WHEN ?4='ack' THEN ?5 END,CASE WHEN ?4='ack' THEN ?3 END,CASE WHEN ?4='close' THEN ?3 END,?3)
+    ON CONFLICT(alert_key) DO UPDATE SET
+      state=excluded.state,
+      first_seen=CASE WHEN alert_state.state='ok' THEN excluded.first_seen ELSE alert_state.first_seen END,
+      last_sent=CASE WHEN alert_state.state='ok' THEN NULL ELSE alert_state.last_sent END,
+      acknowledged_by=CASE WHEN ?4='ack' THEN excluded.acknowledged_by WHEN alert_state.state='ok' THEN NULL ELSE alert_state.acknowledged_by END,
+      acknowledged_at=CASE WHEN ?4='ack' THEN excluded.acknowledged_at WHEN alert_state.state='ok' THEN NULL ELSE alert_state.acknowledged_at END,
+      closed_at=CASE WHEN ?4='close' THEN excluded.closed_at WHEN alert_state.state='ok' THEN NULL ELSE alert_state.closed_at END,
+      updated_at=excluded.updated_at
+    WHERE alert_state.updated_at <= excluded.updated_at
+    RETURNING *`).bind(key, notice.level, at, action[2], ctx.actor_id).first();
+  if (!saved) return json({ error: "state_changed" }, 409);
+  const after = AlertStateRow.parse(saved);
   await audit(env, ctx, "alert." + action[2], key, before, after);
   return json(after);
 }
