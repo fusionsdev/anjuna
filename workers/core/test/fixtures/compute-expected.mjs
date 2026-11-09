@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 // Run: node workers/core/test/fixtures/compute-expected.mjs [--check]
 // NDJSON is the strict public tail envelope. Private synthetic seed data stays in
 // the context sidecar. No previous-day events are seeded: every delta is null.
-const read = name => readFileSync(new URL(name, import.meta.url), "utf8");
+const read = name => readFileSync(new URL(name, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const events = read("traffic-events.ndjson").trim().split(/\r?\n/).map(JSON.parse);
 const context = JSON.parse(read("traffic-events.context.json"));
 const hour = ts => new Date(ts).toISOString().slice(0, 13) + ":00:00.000Z";
