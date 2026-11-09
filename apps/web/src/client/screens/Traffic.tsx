@@ -11,6 +11,7 @@ import { navigate, useSearch, viewPath } from "../router";
 import { DEFAULT_TRAFFIC_LOG_PERIOD, TRAFFIC_LOG_PERIOD_LABEL, readTrafficLogPeriod } from "../traffic-periods";
 import "./Traffic.css";
 import { useBrandScope } from "../useBrandScope";
+import { AllBrandsNote } from "../components/AllBrandsNote";
 
 type Breakdown = keyof TrafficReportResponse["breakdowns"];
 type BreakdownRow = TrafficReportResponse["breakdowns"][Breakdown][number];
@@ -159,6 +160,7 @@ export function TrafficScreen() {
       )}
       {report && (
         <div className="traffic-stack">
+          <AllBrandsNote>ยอดสรุปและแนวโน้มนับทุกแบรนด์ ส่วนตารางแยกตามและเหตุการณ์ล่าสุดตามขอบเขตแบรนด์</AllBrandsNote>
           <div className="ledger" role="group" aria-label="สรุปทราฟฟิก">
             {TRAFFIC_METRICS.map((key) => (
               <div className="cell" key={key}><p className="k">{METRIC_LABEL[key]}</p><p className="v">{count(report.totals[key])}</p></div>

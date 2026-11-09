@@ -6,6 +6,7 @@ import { BrandLabel, useBrandLabels } from "../brand-labels";
 import { RiskPanel } from "./RiskPanel";
 import { scopeFunnel } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
+import { AllBrandsNote } from "../components/AllBrandsNote";
 
 const periods: Array<[TrafficPeriod, string]> = [["today", "วันนี้"], ["7d", "7 วัน"], ["30d", "30 วัน"]];
 const tabs = { source: "แหล่งที่มา", domain: "โดเมน", device: "อุปกรณ์", browser: "Browser" } as const;
@@ -147,7 +148,7 @@ export function FunnelScreen() {
 
     <section className="panel" style={{ marginTop: 16 }} aria-label="แหล่งที่มาของผู้เข้าชม">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <h2>คนที่เข้าเว็บมาจากไหน</h2>
+        <div className="home-ptitle-main"><h2>คนที่เข้าเว็บมาจากไหน</h2><AllBrandsNote inline /></div>
         <div className="seg" aria-label="แยกผู้เข้าชม">{(Object.entries(tabs) as Array<[Tab, string]>).map(([key, label]) =>
           <button key={key} type="button" aria-pressed={tab === key} onClick={() => setTab(key)}>{label}</button>)}
         </div>
@@ -160,6 +161,7 @@ export function FunnelScreen() {
           </tr>)}{selected.rows.length === 0 && <tr><td colSpan={5} className="hint">ไม่มีข้อมูลในช่วงนี้</td></tr>}</tbody>
         </table></div>}
       <h3 style={{ marginTop: 14 }}>ตามชั่วโมง (เวลาสหรัฐฯ ฝั่งตะวันออก)</h3>
+      <AllBrandsNote>กราฟรายชั่วโมงนับทุกแบรนด์</AllBrandsNote>
       {hourError ? <p role="alert">{hourError}</p> : !hours ? <p role="status">กำลังโหลด…</p> : <>
         <div role="img" aria-label="จำนวนคนเข้าเว็บแต่ละชั่วโมง" style={{ display: "grid", gridTemplateColumns: "repeat(24,minmax(0,1fr))", gap: 2, alignItems: "end", height: 90, marginTop: 8 }}>
           {hours.rows.map((h) => <div key={h.key} title={`${h.key}:00 เข้าเว็บ ${h.visits} ลีด ${h.leads}`} style={{ height: `${h.visits / maxHour * 80}px`, background: "var(--spend)", opacity: .55, borderRadius: "2px 2px 0 0" }} />)}

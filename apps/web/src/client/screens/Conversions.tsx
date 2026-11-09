@@ -15,6 +15,7 @@ import { REASON_TEXT } from "../conversion-labels";
 import { navigate, useSearch, viewPath } from "../router";
 import "./Conversions.css";
 import { useBrandScope } from "../useBrandScope";
+import { AllBrandsNote } from "../components/AllBrandsNote";
 
 type Row = ConversionsReportResponse["rows"][number];
 export interface ConversionFilters { period: SpendPeriod; status: "all" | ConversionStatus; brand: string | null }
@@ -188,6 +189,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
       {load && "error" in load && <p role="alert">{load.error}</p>}
       {report && (
         <div className="conv-stack">
+          <AllBrandsNote>ยอดสรุปด้านล่างนับทุกแบรนด์ ส่วนตารางตามขอบเขตแบรนด์</AllBrandsNote>
           <div className="ledger" role="group" aria-label="สรุปคอนเวอร์ชัน">
             {COUNT_CELLS.map(([key, label]) => (
               <div className="cell" key={key}><p className="k">{label}</p><p className={key === "dead" && report.totals.dead > 0 ? "v neg" : "v"}>{count(report.totals[key])}</p></div>
