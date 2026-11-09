@@ -5,6 +5,7 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import "./Campaigns.css";
+import { useBrandScope } from "../useBrandScope";
 
 type State = PanelCampaign["state"];
 type Geo = PanelCampaign["geo"];
@@ -155,7 +156,10 @@ export function CampaignsScreen({ me }: { me: Me }) {
   const statusCheck = (c: PanelCampaign) =>
     c.campaign_id && run(c.campaign_id, () => api.checkAdsCampaignStatus(c.campaign_id!), "ส่งคำสั่งตรวจสถานะแล้ว");
 
-  const capBrands = useMemo(() => [...new Set((data?.campaigns ?? []).map((c) => c.brand_id))], [data]);
+  // The brand scope decides which campaigns show (PLAN A9).
+  const { inScopeId } = useBrandScope();
+  const shown = useMemo(() => (data?.campaigns ?? []).filter((c) => inScopeId(c.brand_id)), [data, inScopeId]);
+  const capBrands = useMemo(() => [...new Set(shown.map((c) => c.brand_id))], [shown]);
 
   return (
     <div className="campaigns-page">
@@ -168,11 +172,11 @@ export function CampaignsScreen({ me }: { me: Me }) {
 
       <section className="campaigns-card">
         <h2>แคมเปญทั้งหมด</h2>
-        {!data ? <p className="campaigns-muted">กำลังโหลด</p> : data.campaigns.length === 0 ? <p className="campaigns-muted">ยังไม่มีแคมเปญจากหน้านี้</p> : (
+        {!data ? <p className="campaigns-muted">กำลังโหลด</p> : shown.length === 0 ? <p className="campaigns-muted">ยังไม่มีแคมเปญจากหน้านี้</p> : (
           <div className="campaigns-scroll"><table>
             <thead><tr><th>แคมเปญ</th><th>แบรนด์</th><th>สถานะ</th><th className="num">งบต่อวัน</th><th>บัญชี</th><th /></tr></thead>
             <tbody>
-              {data.campaigns.map((c) => (
+              {shown.map((c) => (
                 <tr key={c.draft_job_id}>
                   <td><strong>{c.name}</strong></td>
                   <td>{brandOf(c.brand_id).name}</td>

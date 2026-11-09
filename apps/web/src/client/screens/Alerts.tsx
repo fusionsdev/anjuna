@@ -1,7 +1,9 @@
 import type { AlertsReportResponse } from "@anjuna/contracts";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiError, api } from "../api";
 import { BrandLabel, useBrandLabels } from "../brand-labels";
+import { scopeAlerts } from "../home-metrics";
+import { useBrandScope } from "../useBrandScope";
 
 const LABEL: Record<string, string> = {
   ok: "ปกติ",
@@ -30,7 +32,10 @@ function AlertRow({ state, title, detail, children }: { state: "ok" | "warn" | "
 }
 
 export function AlertsScreen() {
-  const [report, setReport] = useState<AlertsReportResponse | null>(null);
+  const [raw, setReport] = useState<AlertsReportResponse | null>(null);
+  // The brand lists follow the scope. The alert states come from core and cover every brand.
+  const { inScopeId, hidesBrands } = useBrandScope();
+  const report = useMemo(() => (raw ? scopeAlerts(raw, inScopeId) : raw), [raw, inScopeId]);
   const [error, setError] = useState<string | null>(null);
   const labelOf = useBrandLabels();
 
@@ -42,7 +47,7 @@ export function AlertsScreen() {
     <>
       <div style={{ marginBottom: 18 }}>
         <h1 aria-label="การแจ้งเตือน (Alerts)">การแจ้งเตือน</h1>
-        <p className="hint">ตรวจสถานะและเรื่องที่ต้องจัดการ</p>
+        <p className="hint">ตรวจสถานะและเรื่องที่ต้องจัดการ{hidesBrands ? " · สถานะแจ้งเตือนนับทุกแบรนด์ รายชื่อแบรนด์ตามขอบเขต" : ""}</p>
       </div>
       {error ? (
         <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{error}</div>

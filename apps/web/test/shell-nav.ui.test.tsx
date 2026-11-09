@@ -1,0 +1,120 @@
+import type { AlertsReportResponse } from "@anjuna/contracts";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { App } from "../src/client/App";
+import { api } from "../src/client/api";
+import { Chip } from "../src/client/components/Chip";
+import { SourceChip } from "../src/client/components/SourceChip";
+import { SIDEBAR_ENTRIES } from "../src/client/nav-groups";
+
+vi.mock("../src/client/screens/Home", () => ({ HomeScreen: () => <h1>หน้าแรก</h1> }));
+
+const owner = { id: "owner", email: "owner@example.test", role: "owner" as const };
+const employee = { id: "staff", email: "staff@example.test", role: "employee" as const };
+const healthy: AlertsReportResponse = {
+  generated_at: "2026-11-10T00:00:00.000Z",
+  conversion_stalled: { state: "ok", detail: { max_hours: 6, stuck_count: 0, oldest_created_at: null } },
+  brands_without_postbacks: { state: "ok", detail: { window_hours: 24, brands: [] } },
+  submit_error_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.3, samples: [] } },
+  reject_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.3, brands: [] } },
+  click_risk: { state: "ok", detail: { window_hours: 24, alert_at: 0.2, min_visits: 50, hostnames: [] } },
+};
+
+beforeEach(() => {
+  window.history.replaceState(null, "", "/");
+  vi.spyOn(api, "me").mockResolvedValue(owner);
+  vi.spyOn(api, "alerts").mockResolvedValue(healthy);
+  vi.spyOn(api, "navCounts").mockResolvedValue({ brands_need_fix: 3, templates_awaiting: 4, alerts_open: 2 });
+  vi.spyOn(api, "mePrefs").mockRejectedValue(new Error("unavailable"));
+  vi.spyOn(api, "lifecycleBrands").mockRejectedValue(new Error("unavailable"));
+  vi.spyOn(api, "brands").mockRejectedValue(new Error("unavailable"));
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+const nav = () => screen.getByRole("navigation", { name: "เมนูหลัก" });
+/** The menu as a reader sees it: link names in order, "|" for each divider. */
+const outline = () => [...nav().children].map((el) => (el.getAttribute("role") === "separator" ? "|" : el.querySelector("span")?.textContent));
+
+describe("sidebar", () => {
+  it("shows 9 items to the owner with a divider before ทราฟฟิก, before AdKit Terminal and at the end", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    expect(within(nav()).getAllByRole("link")).toHaveLength(9);
+    expect(outline()).toEqual(["หน้าแรก", "แบรนด์", "เทมเพลต", "แคมเปญ", "|", "ทราฟฟิก", "ลีดและคอนเวอร์ชัน", "การแจ้งเตือน", "|", "AdKit Terminal", "ตั้งค่า", "|"]);
+    expect(within(nav()).getAllByRole("separator")).toHaveLength(3);
+  });
+
+  it("shows 8 items to an employee: AdKit Terminal is hidden and the divider moves above ตั้งค่า", async () => {
+    vi.mocked(api.me).mockResolvedValue(employee);
+    render(<App />);
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    expect(within(nav()).getAllByRole("link")).toHaveLength(8);
+    expect(within(nav()).queryByRole("link", { name: /AdKit Terminal/ })).toBeNull();
+    expect(outline()).toEqual(["หน้าแรก", "แบรนด์", "เทมเพลต", "แคมเปญ", "|", "ทราฟฟิก", "ลีดและคอนเวอร์ชัน", "การแจ้งเตือน", "|", "ตั้งค่า", "|"]);
+  });
+
+  it("gives every item a lucide icon and tags AdKit Terminal owner", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    for (const link of within(nav()).getAllByRole("link")) expect(link.querySelector("svg"), link.textContent ?? "").toBeTruthy();
+    const adkit = within(nav()).getByRole("link", { name: /AdKit Terminal/ });
+    expect(adkit.querySelector(".nav-tag")?.textContent).toBe("owner");
+    expect(SIDEBAR_ENTRIES).toHaveLength(9);
+  });
+
+  it("shows the badge counts GET /api/nav/counts returns", async () => {
+    render(<App />);
+    expect((await screen.findByLabelText("3 แบรนด์ที่ต้องแก้")).textContent).toBe("3");
+    expect(screen.getByLabelText("4 เทมเพลตรออนุมัติ").textContent).toBe("4");
+    expect(screen.getByLabelText("2 รายการที่ต้องจัดการ").textContent).toBe("2");
+    expect(screen.getByLabelText("3 แบรนด์ที่ต้องแก้").closest("a")?.textContent).toBe("แบรนด์3");
+  });
+
+  it("shows no badge for a count of 0", async () => {
+    vi.mocked(api.navCounts).mockResolvedValue({ brands_need_fix: 0, templates_awaiting: 0, alerts_open: 0 });
+    render(<App />);
+    await waitFor(() => expect(api.navCounts).toHaveBeenCalled());
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    expect(nav().querySelectorAll("b")).toHaveLength(0);
+  });
+
+  it("falls back to the alerts report for the alerts badge when the counts call fails", async () => {
+    vi.mocked(api.navCounts).mockRejectedValue(new Error("not served yet"));
+    vi.mocked(api.alerts).mockResolvedValue({ ...healthy, conversion_stalled: { state: "alert", detail: { max_hours: 6, stuck_count: 5, oldest_created_at: "2026-11-09T00:00:00.000Z" } } });
+    render(<App />);
+    expect((await screen.findByLabelText("1 รายการที่ต้องจัดการ")).textContent).toBe("1");
+    expect(screen.queryByLabelText(/แบรนด์ที่ต้องแก้/)).toBeNull();
+  });
+
+  it("links the logo to Home", async () => {
+    window.history.replaceState(null, "", "/alerts");
+    render(<App />);
+    await screen.findAllByRole("link", { name: "Anjuna" });
+    const side = within(document.querySelector<HTMLElement>("aside.sidebar")!);
+    expect(side.getByRole("link", { name: "Anjuna" }).getAttribute("href")).toBe("/");
+  });
+});
+
+describe("Chip and SourceChip", () => {
+  it.each(["success", "warning", "danger", "info", "neutral", "accent"] as const)("renders the %s tone", (tone) => {
+    render(<Chip tone={tone}>ข้อความ</Chip>);
+    const chip = screen.getByText("ข้อความ");
+    expect(chip.className).toContain(`chip-${tone}`);
+    expect(chip.querySelector(".chip-dot")).toBeNull();
+  });
+
+  it("draws a dot only when asked", () => {
+    render(<Chip tone="success" dot>ใช้งาน</Chip>);
+    expect(screen.getByText("ใช้งาน").querySelector(".chip-dot")).toBeTruthy();
+  });
+
+  it("names the data source with an icon", () => {
+    render(<SourceChip>D1 · brands</SourceChip>);
+    const chip = screen.getByText("D1 · brands");
+    expect(chip.className).toBe("source-chip");
+    expect(chip.querySelector("svg")).toBeTruthy();
+  });
+});

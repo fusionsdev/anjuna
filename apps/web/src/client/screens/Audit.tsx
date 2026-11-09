@@ -25,8 +25,8 @@ function actorCell(entry: AuditEntry, usersById: Map<string, PanelUser>, me: Me,
   const user = usersById.get(entry.actor_id);
   if (user) return <span style={{ overflowWrap: "anywhere" }}>{user.name} ({user.email})</span>;
   if (entry.actor_id === me.id) return <span style={{ overflowWrap: "anywhere" }}>{me.email}</span>;
-  if (usersFailed) return <code style={{ fontSize: "0.85em", overflowWrap: "anywhere" }}>{entry.actor_id}</code>;
-  return <code title="ผู้ใช้ที่ถูกลบ (Deleted user)" style={{ fontSize: "0.85em", overflowWrap: "anywhere" }}>{entry.actor_id}</code>;
+  if (usersFailed) return <code style={{ fontSize: "max(13px, 0.875em)", overflowWrap: "anywhere" }}>{entry.actor_id}</code>;
+  return <code title="ผู้ใช้ที่ถูกลบ (Deleted user)" style={{ fontSize: "max(13px, 0.875em)", overflowWrap: "anywhere" }}>{entry.actor_id}</code>;
 }
 
 export function AuditScreen({ me }: { me: Me }) {

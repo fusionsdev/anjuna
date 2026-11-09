@@ -17,6 +17,8 @@ import { useBrandActions, type BrandAction } from "../useBrandActions";
 import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
 import { BRAND_PERIODS, BrandStatsRow, SpendText, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandFilters } from "./BrandFilters";
+import { useBrandScope } from "../useBrandScope";
+import { toScopeBrand } from "../brand-scope";
 import { BrandWizard } from "./BrandWizard";
 import { ConfigPanel } from "./ConfigPanel";
 import "./Brands.css";
@@ -213,8 +215,11 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const [chip, setChip] = useState<BrandChip>("all");
   const [sort, setSort] = useState<BrandSortMode>("issues");
   const [search, setSearch] = useState("");
-  // Brands named demo<digits> stay hidden until the operator asks for them.
-  const [showDemo, setShowDemo] = useState(false);
+  // The brand scope (sidebar control) decides which brands show: paused and retired brands and demo<digits> brands are hidden by default.
+  // The "แสดงแบรนด์ทดลอง" box on this screen is the scope's own demo toggle.
+  const brandScope = useBrandScope();
+  const showDemo = brandScope.scope.showDemo;
+  const setShowDemo = (value: boolean) => brandScope.setScope({ ...brandScope.scope, showDemo: value });
   // load() is memoised on the selection, so it reads the checkbox through a ref.
   const showDemoRef = useRef(showDemo);
   showDemoRef.current = showDemo;
@@ -806,12 +811,21 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
   }));
   // Chip counts follow the demo toggle and the search, so a count never promises rows they have hidden.
-  const shownRows = tableRows.filter((row) => showDemo || !isDemoBrand(row.brand));
-  const hiddenDemoCount = tableRows.length - shownRows.length;
+  // The scope also hides paused and retired brands, except under the "หยุด" chip, which exists to show them.
+  const inScopeRow = (row: (typeof tableRows)[number], hideInactive: boolean) => {
+    const scoped = toScopeBrand(row.brand, runtimeBrands.find((r) => r.brand_id === row.brand.brand_id)?.status);
+    return brandScope.scope.brandIds === null || brandScope.scope.brandIds.includes(scoped.id)
+      ? (showDemo || !scoped.demo) && !(hideInactive && scoped.inactive)
+      : false;
+  };
+  const shownRows = tableRows.filter((row) => inScopeRow(row, brandScope.scope.hideInactive));
+  const hiddenDemoCount = showDemo ? 0 : tableRows.filter((row) => isDemoBrand(row.brand)).length;
   const searchedRows = shownRows.filter((row) => matchesBrandSearch(row.brand, search));
-  const chipCounts = Object.fromEntries(BRAND_CHIPS.map(({ id }) => [id, searchedRows.filter((row) => matchesBrandChip(row.health, row.brand, id)).length])) as Record<BrandChip, number>;
+  const pausedRows = tableRows.filter((row) => inScopeRow(row, false) && matchesBrandSearch(row.brand, search));
+  const chipRows = (id: BrandChip) => (id === "paused" ? pausedRows : searchedRows).filter((row) => matchesBrandChip(row.health, row.brand, id));
+  const chipCounts = Object.fromEntries(BRAND_CHIPS.map(({ id }) => [id, chipRows(id).length])) as Record<BrandChip, number>;
   const sortedRows = sortBrands(
-    searchedRows.filter((row) => matchesBrandChip(row.health, row.brand, chip)),
+    chipRows(chip),
     sort,
     (row) => ({ health: row.health, domain: row.brand.hostnames[0] ?? row.brand.brand_id, profit: row.money.profit }),
   );

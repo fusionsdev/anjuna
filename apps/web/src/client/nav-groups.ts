@@ -1,4 +1,5 @@
 import { roleAtLeast } from "@anjuna/contracts";
+import { Activity, Bell, Home, LayoutTemplate, Megaphone, Settings, Store, Target, Terminal, type LucideIcon } from "lucide-react";
 import { PANEL_ROLE_TABLE } from "../server/panel-roles";
 import type { Me } from "./api";
 import type { View } from "./router";
@@ -11,16 +12,14 @@ export type NavGroupId = "brands" | "traffic" | "leads" | "settings";
 /** One sidebar item. Its id is also the view of its first tab. */
 export type NavGroup ={ id: NavGroupId; label: string; tabs: NavTab[] };
 
-/** The four sidebar items that hold several screens. Home, Templates and Alerts stand alone. Every route keeps its own URL. */
+/** The four pages that hold several screens as section tabs. Every other page stands alone. Every route keeps its own URL. */
 export const NAV_GROUPS: Record<NavGroupId, NavGroup> = {
   brands: {
     id: "brands",
     label: "แบรนด์",
     // New brand is a button on the Brands screen, so /brands/new and the brand timeline select the Brands tab.
-    // Campaigns (T13 Part B) is a tab here, so the sidebar keeps the redesign's 7 items.
     tabs: [
       { id: "brands", label: "แบรนด์", alsoFor: ["new-brand", "brand-timeline"] },
-      { id: "campaigns", label: "แคมเปญ" },
       { id: "deploys", label: "ประวัติการติดตั้ง" },
     ],
   },
@@ -45,7 +44,6 @@ export const NAV_GROUPS: Record<NavGroupId, NavGroup> = {
       { id: "suppressions", label: "อีเมลที่บล็อก", minRole: "owner" },
       { id: "audit", label: "ประวัติการแก้ไข" },
       { id: "builder-keys", label: "คีย์ Builder" },
-      { id: "adkit-terminal", label: "AdKit Terminal", minRole: PANEL_ROLE_TABLE.useTerminal },
     ],
   },
 };
@@ -68,3 +66,24 @@ export function groupOfView(view: View): NavGroup | null {
 export function activeTabId(group: NavGroup, view: View): ShownView | null {
   return group.tabs.find((tab) => tab.id === view || tab.alsoFor?.includes(view as ShownView))?.id ?? null;
 }
+
+export type SidebarBadge = "brands_need_fix" | "templates_awaiting" | "alerts_open";
+export type SidebarSection = "work" | "watch" | "owner";
+
+/**
+ * One row of the sidebar. The nine rows are flat, in three sections (work, watch, owner) that a thin divider separates.
+ * `group` makes the row current on every view of that page group. `minRole` hides the row from a lower role.
+ */
+export type SidebarEntry = { id: ShownView; label: string; icon: LucideIcon; section: SidebarSection; group?: NavGroupId; minRole?: Me["role"]; tag?: string; badge?: SidebarBadge };
+
+export const SIDEBAR_ENTRIES: SidebarEntry[] = [
+  { id: "home", label: "หน้าแรก", icon: Home, section: "work" },
+  { id: "brands", label: "แบรนด์", icon: Store, section: "work", group: "brands", badge: "brands_need_fix" },
+  { id: "templates", label: "เทมเพลต", icon: LayoutTemplate, section: "work", badge: "templates_awaiting" },
+  { id: "campaigns", label: "แคมเปญ", icon: Megaphone, section: "work" },
+  { id: "traffic", label: "ทราฟฟิก", icon: Activity, section: "watch", group: "traffic" },
+  { id: "leads", label: "ลีดและคอนเวอร์ชัน", icon: Target, section: "watch", group: "leads" },
+  { id: "alerts", label: "การแจ้งเตือน", icon: Bell, section: "watch", badge: "alerts_open" },
+  { id: "adkit-terminal", label: "AdKit Terminal", icon: Terminal, section: "owner", minRole: PANEL_ROLE_TABLE.useTerminal, tag: "owner" },
+  { id: "settings", label: "ตั้งค่า", icon: Settings, section: "owner", group: "settings" },
+];

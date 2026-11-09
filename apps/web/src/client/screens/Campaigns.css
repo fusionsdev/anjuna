@@ -22,7 +22,7 @@
 .campaigns-muted { color: var(--c-muted); font-size: 13px; margin: 8px 0 0; }
 .campaigns-scroll { overflow-x: auto; }
 .campaigns-page table { width: 100%; border-collapse: collapse; }
-.campaigns-page th { text-align: left; font-weight: 500; color: var(--c-muted); font-size: 12px; padding: 8px 10px; border-bottom: 1px solid var(--c-line); white-space: nowrap; }
+.campaigns-page th { text-align: left; font-weight: 500; color: var(--c-muted); font-size: 13px; padding: 8px 10px; border-bottom: 1px solid var(--c-line); white-space: nowrap; }
 .campaigns-page td { padding: 10px; border-bottom: 1px solid var(--c-line); white-space: nowrap; }
 .campaigns-page .num { font-family: var(--mono); text-align: right; }
 .campaigns-actions { display: flex; gap: 8px; justify-content: flex-end; }

@@ -10,6 +10,8 @@ import { TrendChart } from "../components/TrendChart";
 import { navigate, useSearch, viewPath } from "../router";
 import { DEFAULT_TRAFFIC_LOG_PERIOD, TRAFFIC_LOG_PERIOD_LABEL, readTrafficLogPeriod } from "../traffic-periods";
 import "./Traffic.css";
+import { useBrandScope } from "../useBrandScope";
+import { AllBrandsNote } from "../components/AllBrandsNote";
 
 type Breakdown = keyof TrafficReportResponse["breakdowns"];
 type BreakdownRow = TrafficReportResponse["breakdowns"][Breakdown][number];
@@ -50,13 +52,16 @@ type BotRow = BotHits["detail"]["brands"][number];
  */
 function BotStrip({ domains }: { domains: Map<string, string> }) {
   const [bots, setBots] = useState<BotHits | null>(null);
+  const { inScopeId } = useBrandScope();
   useEffect(() => {
     let active = true;
     api.alerts().then((report) => { if (active) setBots(report.bot_hits ?? null); }, () => { /* hidden */ });
     return () => { active = false; };
   }, []);
   if (!bots) return null;
-  const { brands, adsbot_hours: hours } = bots.detail;
+  const { brands: allBrands, adsbot_hours: allHours } = bots.detail;
+  const brands = allBrands.filter((row) => inScopeId(row.brand));
+  const hours = allHours.filter((row) => inScopeId(row.brand));
   const columns: Column<BotRow>[] = [
     { key: "brand", header: "แบรนด์", cell: (row) => <BrandLabel brandId={row.brand} domain={domains.get(row.brand) ?? row.brand} /> },
     { key: "googlebot", header: "Googlebot", align: "right", cell: (row) => count(row.googlebot) },
@@ -90,6 +95,7 @@ function BotStrip({ domains }: { domains: Map<string, string> }) {
 type Load = { report: TrafficReportResponse } | { error: string } | null;
 
 export function TrafficScreen() {
+  const { inScopeId } = useBrandScope();
   const period = readTrafficPeriod(useSearch());
   const domains = useBrandDomains();
   const [tab, setTab] = useState<Breakdown>("brand");
@@ -154,6 +160,7 @@ export function TrafficScreen() {
       )}
       {report && (
         <div className="traffic-stack">
+          <AllBrandsNote>ยอดสรุปและแนวโน้มนับทุกแบรนด์ ส่วนตารางแยกตามและเหตุการณ์ล่าสุดตามขอบเขตแบรนด์</AllBrandsNote>
           <div className="ledger" role="group" aria-label="สรุปทราฟฟิก">
             {TRAFFIC_METRICS.map((key) => (
               <div className="cell" key={key}><p className="k">{METRIC_LABEL[key]}</p><p className="v">{count(report.totals[key])}</p></div>
@@ -172,7 +179,7 @@ export function TrafficScreen() {
             <DataTable
               label="แยกตาม (Breakdown)"
               columns={breakdownColumns}
-              rows={report.breakdowns[tab]}
+              rows={tab === "brand" ? report.breakdowns[tab].filter((row) => inScopeId(row.key)) : report.breakdowns[tab]}
               rowKey={(row) => row.key}
               empty={<EmptyState title="ยังไม่มีทราฟฟิกในช่วงนี้" />}
             />
@@ -185,7 +192,7 @@ export function TrafficScreen() {
             <DataTable
               label="เหตุการณ์ล่าสุด (Recent events)"
               columns={recentColumns}
-              rows={report.recent.map((row, n) => ({ ...row, n }))}
+              rows={report.recent.filter((row) => inScopeId(row.brand_id)).map((row, n) => ({ ...row, n }))}
               rowKey={(row) => `${row.n}`}
               empty={<EmptyState title="ยังไม่มีทราฟฟิกในช่วงนี้" />}
             />

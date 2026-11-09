@@ -26,7 +26,7 @@
 .term-prompt span { font-family: var(--mono); color: var(--c-muted); }
 .term-prompt input { flex: 1; min-height: 44px; border: 0; background: transparent; font-family: var(--mono); min-width: 0; }
 .term-examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.term-examples .btn { font-family: var(--mono); font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-examples .btn { font-family: var(--mono); font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .term-foot { display: flex; justify-content: flex-end; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--c-line); }
 .term-page .btn { min-height: 36px; }
 .term-page .btn.pri { background: var(--c-accent); border-color: var(--c-accent); color: #FFFFFF; }
@@ -34,7 +34,7 @@
 .term-reason { color: var(--bad); font-weight: 500; margin: 10px 0 0; }
 .term-result-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
 .term-line { font-family: var(--mono); overflow-wrap: anywhere; min-width: 0; }
-.term-output { margin: 12px 0 0; padding: 12px; background: var(--c-page); border: 1px solid var(--c-line); border-radius: 10px; font-family: var(--mono); font-size: 12px; max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-output { margin: 12px 0 0; padding: 12px; background: var(--c-page); border: 1px solid var(--c-line); border-radius: 10px; font-family: var(--mono); font-size: 13px; max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .term-error { color: var(--bad); }
 .term-confirm dl { display: grid; gap: 6px; margin: 0 0 12px; }
 .term-confirm dl > div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px; }

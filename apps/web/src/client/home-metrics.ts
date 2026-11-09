@@ -1,4 +1,4 @@
-import type { PanelSpendReportResponse } from "@anjuna/contracts";
+import type { AlertsReportResponse, FunnelReportResponse, PanelSpendReportResponse } from "@anjuna/contracts";
 
 /** The window of equal length that ends where `range` starts. Both ends are ISO instants. */
 export function previousRange(range: { from: string; to: string }): { from: string; to: string } {
@@ -87,4 +87,42 @@ export function checklistFlags(entry: { checklist: ReadonlyArray<{ item: string 
   const rows = entry.checklist;
   const has = (item: string) => rows.some((row) => row.item === item);
   return { checklistFailing: CHECKLIST_ITEMS.some((item) => !has(item)), drain_route: has("drain_route"), test_sold: has("test_sold") };
+}
+
+/** The funnel report with only the brands the scope shows. The same object when nothing is hidden. */
+export function scopeFunnel(report: FunnelReportResponse, inScope: (brandId: string) => boolean): FunnelReportResponse {
+  const rows = report.rows.filter((row) => inScope(row.brand));
+  return rows.length === report.rows.length ? report : { ...report, rows };
+}
+
+/**
+ * The spend report with only the brands the scope shows, its totals added up again from those rows.
+ * The daily series has no brand, so it is dropped when any brand is hidden.
+ */
+export function scopeSpend(report: PanelSpendReportResponse, inScope: (brandId: string) => boolean): PanelSpendReportResponse {
+  const brands = report.brands.filter((row) => inScope(row.brand_id));
+  if (brands.length === report.brands.length) return report;
+  const cost_by_currency = { THB: 0, USD: 0 };
+  let clicks = 0;
+  let impressions = 0;
+  let total_cost_usd = 0;
+  for (const row of brands) {
+    cost_by_currency[row.currency] += row.cost;
+    clicks += row.clicks;
+    impressions += row.impressions;
+    total_cost_usd += row.cost_usd;
+  }
+  const { daily: _daily, ...rest } = report;
+  return { ...rest, brands, total_cost_usd, totals: { cost_by_currency, clicks, impressions } };
+}
+
+/** The alerts report with only the brands the scope shows in each brand list. The alert states come from core and cover every brand. */
+export function scopeAlerts(report: AlertsReportResponse, inScope: (brandId: string) => boolean): AlertsReportResponse {
+  const only = <T extends { brand: string }>(rows: T[]): T[] => rows.filter((row) => inScope(row.brand));
+  return {
+    ...report,
+    brands_without_postbacks: { ...report.brands_without_postbacks, detail: { ...report.brands_without_postbacks.detail, brands: only(report.brands_without_postbacks.detail.brands) } },
+    submit_error_rate: { ...report.submit_error_rate, detail: { ...report.submit_error_rate.detail, samples: only(report.submit_error_rate.detail.samples) } },
+    reject_rate: { ...report.reject_rate, detail: { ...report.reject_rate.detail, brands: only(report.reject_rate.detail.brands) } },
+  };
 }

@@ -10,11 +10,11 @@
 
 /* One detail region, full width, directly below the table. */
 .deploy-detail-region { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; text-align: left; }
-.deploy-detail-head { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.deploy-detail-head { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
 .deploy-detail { text-align: left; }
 .deploy-audit dl { display: grid; gap: 4px; margin: 0; }
 .deploy-audit dl > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px; }
-.deploy-audit dt { color: var(--muted); font-size: 12px; }
+.deploy-audit dt { color: var(--muted); font-size: 13px; }
 .deploy-audit dd { margin: 0; overflow-wrap: anywhere; }
 
 /* The two revision ids are long; wrap them instead of widening the table. */

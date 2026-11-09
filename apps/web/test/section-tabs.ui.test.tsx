@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SectionTabs } from "../src/client/components/SectionTabs";
-import { NAV_GROUPS, activeTabId, groupOfView, groupViews, visibleTabs } from "../src/client/nav-groups";
+import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, groupViews, visibleTabs } from "../src/client/nav-groups";
 import type { View } from "../src/client/router";
 
 afterEach(cleanup);
@@ -53,10 +53,10 @@ describe("nav groups", () => {
   const labels = (group: keyof typeof NAV_GROUPS, role: "owner" | "employee") => visibleTabs(NAV_GROUPS[group], role).map((t) => t.label);
 
   it("lists the tab sets of the brief for an owner", () => {
-    expect(labels("brands", "owner")).toEqual(["แบรนด์", "แคมเปญ", "ประวัติการติดตั้ง"]);
+    expect(labels("brands", "owner")).toEqual(["แบรนด์", "ประวัติการติดตั้ง"]);
     expect(labels("traffic", "owner")).toEqual(["ทราฟฟิก", "ฟันเนล", "ข้อผิดพลาดฝั่งเว็บ"]);
     expect(labels("leads", "owner")).toEqual(["ลีด", "คอนเวอร์ชัน"]);
-    expect(labels("settings", "owner")).toEqual(["ตั้งค่า", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder", "AdKit Terminal"]);
+    expect(labels("settings", "owner")).toEqual(["ตั้งค่า", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
   it("leaves the owner-only tabs out for an employee", () => {
@@ -64,22 +64,23 @@ describe("nav groups", () => {
     for (const group of ["brands", "traffic", "leads"] as const) expect(labels(group, "employee")).toEqual(labels(group, "owner"));
   });
 
-  it("maps every screen to a group except Home, Templates, Alerts and not-found", () => {
+  it("maps every screen to a group except Home, Templates, Campaigns, Alerts, AdKit Terminal and not-found", () => {
     // A Record forces a new view to be listed here, so a screen added later cannot silently miss the menu.
     const grouped: Record<View, string | null> = {
-      home: null, templates: null, alerts: null, "not-found": null,
-      brands: "brands", "new-brand": "brands", "brand-timeline": "brands", deploys: "brands", campaigns: "brands",
+      home: null, templates: null, alerts: null, campaigns: null, "adkit-terminal": null, "not-found": null,
+      brands: "brands", "new-brand": "brands", "brand-timeline": "brands", deploys: "brands",
       traffic: "traffic", funnel: "traffic", errors: "traffic",
       leads: "leads", conversions: "leads",
       settings: "settings", "ad-allocation": "settings", users: "settings", mailing: "settings", suppressions: "settings", audit: "settings", "builder-keys": "settings",
-      "adkit-terminal": "settings",
     };
     for (const [view, group] of Object.entries(grouped)) expect(groupOfView(view as View)?.id ?? null, view).toBe(group);
   });
 
-  it("shows the AdKit Terminal tab to the owner only (T13-6)", () => {
-    expect(labels("settings", "owner")).toContain("AdKit Terminal");
-    expect(labels("settings", "employee")).not.toContain("AdKit Terminal");
+  it("keeps AdKit Terminal out of the Settings tabs: it is a sidebar item for the owner (T13-6)", () => {
+    expect(labels("settings", "owner")).not.toContain("AdKit Terminal");
+    const entry = SIDEBAR_ENTRIES.find((e) => e.id === "adkit-terminal")!;
+    expect(entry.minRole).toBe("owner");
+    expect(entry.tag).toBe("owner");
   });
 
   it("selects the Brands tab on the wizard and the brand timeline, which have no tab of their own", () => {
@@ -92,7 +93,7 @@ describe("nav groups", () => {
   it("makes the sidebar item current on every view of its group", () => {
     expect(groupViews(NAV_GROUPS.traffic)).toEqual(["traffic", "funnel", "errors"]);
     expect(groupViews(NAV_GROUPS.leads)).toEqual(["leads", "conversions"]);
-    expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "campaigns", "deploys", "new-brand"]);
-    expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["ad-allocation", "adkit-terminal", "audit", "builder-keys", "mailing", "settings", "suppressions", "users"]);
+    expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "deploys", "new-brand"]);
+    expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["ad-allocation", "audit", "builder-keys", "mailing", "settings", "suppressions", "users"]);
   });
 });

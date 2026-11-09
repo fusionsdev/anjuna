@@ -65,7 +65,7 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
               <td>
                 {k.secret ? (
                   <>
-                    <code style={{ display: "inline-block", maxWidth: "min(100%, 30ch)", overflowWrap: "anywhere", padding: "2px 6px", border: "1px solid var(--line)", borderRadius: 6, background: "var(--paper)", fontSize: 12 }}>{k.secret}</code>{" "}
+                    <code style={{ display: "inline-block", maxWidth: "min(100%, 30ch)", overflowWrap: "anywhere", padding: "2px 6px", border: "1px solid var(--line)", borderRadius: 6, background: "var(--paper)", fontSize: 13 }}>{k.secret}</code>{" "}
                     <button className="btn" aria-label={`คัดลอกคีย์ ${k.label} (Copy)`} onClick={() => void copy(k)}>
                       {copiedId === k.key_id ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}
                     </button>
