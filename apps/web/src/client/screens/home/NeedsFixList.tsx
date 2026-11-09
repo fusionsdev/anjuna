@@ -4,8 +4,14 @@ import { inApp } from "./shared";
 
 export type HomePeriod = "today" | "7d" | "30d";
 
-/** An item with a `path` links there; one without opens the alerts screen. */
-export interface FixItem { id: string; level: "bad" | "warn"; brand: string; message: string; path?: string }
+export type FixKind = "gclid" | "retry" | "drain-route" | "leads" | "details";
+/** What the item's button says. Every kind not listed here reads "ดูรายละเอียด". */
+export const FIX_LABEL: Record<FixKind, string> = { gclid: "ตรวจ gclid", retry: "ลองใหม่", "drain-route": "ตั้ง drain route", leads: "ดูลีด", details: "ดูรายละเอียด" };
+/**
+ * An item with a `path` links there; one with `onAct` runs that; one with neither opens the alerts screen.
+ * `kind` picks the button label.
+ */
+export interface FixItem { id: string; level: "bad" | "warn"; brand: string; message: string; path?: string; kind?: FixKind; onAct?: () => void }
 
 const percent = (rate: number) => `${Math.round(rate * 100)}%`;
 
@@ -14,7 +20,7 @@ const level = (state: "ok" | "warn" | "alert"): "bad" | "warn" => (state === "al
 /** The conversion items. The links keep the period Home shows; stalled rows count at any age, so theirs uses the widest list. */
 function conversionItems(report: ConversionsReportResponse, period: HomePeriod): FixItem[] {
   const items: FixItem[] = [];
-  if (report.totals.dead > 0) items.push({ id: "conversions:dead", level: "bad", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันส่งไม่ได้ ${report.totals.dead} รายการ`, path: conversionsPath({ period, status: "dead", brand: null }) });
+  if (report.totals.dead > 0) items.push({ id: "conversions:dead", level: "bad", brand: "ทุกแบรนด์", kind: "retry", message: `คอนเวอร์ชันส่งไม่ได้ ${report.totals.dead} รายการ`, path: conversionsPath({ period, status: "dead", brand: null }) });
   if (report.stalled > 0) items.push({ id: "conversions:stalled", level: "warn", brand: "ทุกแบรนด์", message: `คอนเวอร์ชันค้างเกิน ${CONVERSION_STALLED_HOURS} ชม. ${report.stalled} รายการ`, path: conversionsPath({ period: "30d", status: "pending", brand: null }) });
   return items;
 }
@@ -28,7 +34,7 @@ function alertItems(report: AlertsReportResponse, stalledElsewhere: boolean): Fi
   }
   const noPostback = report.brands_without_postbacks;
   if (noPostback.state !== "ok") {
-    for (const b of noPostback.detail.brands) items.push({ id: `postback:${b.brand}`, level: level(noPostback.state), brand: b.brand, message: `${b.leads} ลีดยังไม่มีผลจาก LeadsGate เกิน ${noPostback.detail.window_hours} ชั่วโมง` });
+    for (const b of noPostback.detail.brands) items.push({ id: `postback:${b.brand}`, level: level(noPostback.state), brand: b.brand, kind: "leads", path: `/leads?brand=${encodeURIComponent(b.brand)}`, message: `${b.leads} ลีดยังไม่มีผลจาก LeadsGate เกิน ${noPostback.detail.window_hours} ชั่วโมง` });
   }
   const submitErrors = report.submit_error_rate;
   if (submitErrors.state !== "ok") {
@@ -42,8 +48,8 @@ function alertItems(report: AlertsReportResponse, stalledElsewhere: boolean): Fi
 }
 
 /** Each source adds its items once it answered: `undefined` is loading and `null` is failed, and neither blocks the other. Bad items come first. */
-export function fixItems(alerts: AlertsReportResponse | null | undefined, conversions: ConversionsReportResponse | null | undefined, period: HomePeriod): FixItem[] {
-  const items = [...(conversions ? conversionItems(conversions, period) : []), ...(alerts ? alertItems(alerts, (conversions?.stalled ?? 0) > 0) : [])];
+export function fixItems(alerts: AlertsReportResponse | null | undefined, conversions: ConversionsReportResponse | null | undefined, period: HomePeriod, extra: FixItem[] = []): FixItem[] {
+  const items = [...(conversions ? conversionItems(conversions, period) : []), ...(alerts ? alertItems(alerts, (conversions?.stalled ?? 0) > 0) : []), ...extra];
   return items.sort((a, b) => Number(b.level === "bad") - Number(a.level === "bad"));
 }
 
@@ -72,8 +78,8 @@ export function NeedsFixList({ alerts, conversions, fixes, onAlerts }: {
           <span className="dot" style={{ background: item.level === "bad" ? "var(--bad)" : "var(--leak)" }} aria-hidden="true" />
           <div className="t"><b style={{ fontWeight: 500 }}>{item.brand}</b><span>{item.message}</span></div>
           {item.path
-            ? <a className="btn" href={item.path} onClick={inApp(item.path)}>ดูรายละเอียด</a>
-            : <button type="button" className="btn" onClick={onAlerts}>ดูรายละเอียด</button>}
+            ? <a className="btn" href={item.path} onClick={inApp(item.path)}>{FIX_LABEL[item.kind ?? "details"]}</a>
+            : <button type="button" className="btn" onClick={item.onAct ?? onAlerts}>{FIX_LABEL[item.kind ?? "details"]}</button>}
         </div>
       ))}
     </section>

@@ -309,3 +309,15 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 
 /* The scope chip row the shell draws on every page that shows brand data. */
 .scope-bar { margin: 0 0 var(--space-3); color: var(--sub); font-size: var(--text-body); }
+
+/* BrandTable (Home, Brands). One DOM: the table stacks as cards under 768px through the .data-table rules. */
+.brand-grid-table table { min-width: 0; }
+.brand-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.brand-avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); color: var(--sub); font-size: 13px; font-weight: 600; }
+.brand-name-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.brand-name-text b, .brand-name-text .brand-pick { font-weight: 500; color: var(--ink); }
+.brand-name-text small { font-size: 13px; }
+.brand-pick { min-height: 0; padding: 0; border: 0; background: none; text-align: left; font-size: var(--text-body); }
+.row-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.brand-grid-table tr.sel { background: var(--brand-tint); }
+.brand-grid-table td[data-col="action"] { text-align: right; }
