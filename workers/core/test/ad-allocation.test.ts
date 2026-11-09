@@ -31,12 +31,12 @@ beforeEach(async () => {
   ]);
 });
 
-const campaignRow = (account: string, date: string, hour: number | null, campaign: string, cost: number, currency = "THB", clicks = 1) =>
-  h.db.prepare("INSERT INTO ad_spend_campaign VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 'x', 0)").bind(account, date, hour, campaign, cost, currency, clicks);
+const campaignRow = (account: string, date: string, hour: number | null, campaign: string, cost: number, currency = "THB", clicks = 1, updatedAt = "x", offset = 0) =>
+  h.db.prepare("INSERT INTO ad_spend_campaign VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9)").bind(account, date, hour, campaign, cost, currency, clicks, updatedAt, offset);
 const mapRow = (campaign: string, brand: string, source: string, account = SHARED) =>
   h.db.prepare("INSERT INTO campaign_brand_map VALUES (?1, ?2, ?3, ?4, 'x', 'x')").bind(account, campaign, brand, source);
 const read = async (context = owner) => h.admin(`/admin/ad-allocation?now=${NOW}`, context);
-const assign = (body: unknown, context = owner) => h.admin("/admin/ad-allocation/campaign", context, {
+const assign = (body: unknown, context = owner) => h.admin(`/admin/ad-allocation/campaign?now=${NOW}`, context, {
   method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
 });
 const alerts = async () => AlertsReportResponse.parse(await (await h.admin(`/admin/alerts?now=${NOW}`, owner)).json());
@@ -237,5 +237,92 @@ describe("campaign ingest keeps ad_spend_campaign and the spend report marks est
     await ingest([{ date, hour: 1, campaign_id: "111", cost: 10, clicks: 2, impressions: 2 }]);
     report = SpendReportResponse.parse(await (await h.admin("/admin/spend?period=7d", owner)).json());
     expect(report.brands.map((b) => [b.brand_id, b.allocation])).toEqual([["bisoncash", "exact"], ["petvetpay", "exact"]]);
+  });
+});
+
+describe("PATCH /admin/ad-allocation/campaign re-allocation", () => {
+  const spendRow = (brand: string, date: string, hour: number | null, cost: number, allocation: string, updatedAt: string, account: string | null = SHARED, currency = "THB") =>
+    h.db.prepare(`INSERT INTO ad_spend (brand_id, date, hour, cost, currency, clicks, impressions, source, allocation, account, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, 'google', ?6, ?7, ?8)`).bind(brand, date, hour, cost, currency, allocation, account, updatedAt);
+  const spendRows = (where = "1 = 1") => h.db.prepare(
+    `SELECT brand_id, date, hour, cost, currency, allocation, account, updated_at FROM ad_spend WHERE ${where} ORDER BY date, hour, brand_id, currency`).all();
+  const campaignRows = () => h.db.prepare("SELECT account, date, hour, campaign_id, cost, currency, updated_at FROM ad_spend_campaign ORDER BY account, date, hour, campaign_id, currency").all();
+  let n = 0;
+  const paidClick = (brand: string, seenAt: string) => h.db.prepare(`INSERT INTO click_sessions (click_session_id, gclid, click_seen_at, first_seen_at, last_seen_at,
+    created_at, hostname, brand_id) VALUES (?1, 'gclid-x', ?2, ?2, ?2, ?2, ?3, ?4)`).bind(`cs-alloc-${++n}`, seenAt, `${brand}.example`, brand);
+
+  it("keeps each slot's stored updated_at: a slot synced 5 hours ago stays 5 hours old", async () => {
+    const old = "2026-11-08T07:00:00.000Z";
+    await h.db.batch([campaignRow(SHARED, "2026-11-08", 9, "222", 100, "THB", 1, old), campaignRow(SHARED, "2026-11-08", 9, "333", 50, "THB", 1, old)]);
+    expect((await assign({ account: SHARED, campaign_id: "222", brand_id: "bisoncash" })).status).toBe(200);
+    const spend = (await spendRows()).results;
+    expect(spend.length).toBe(2);
+    expect(spend.map((r) => r.updated_at)).toEqual([old, old]);
+    expect((await campaignRows()).results.map((r) => r.updated_at)).toEqual([old, old]);
+  });
+
+  it("never touches a slot before the window: a brand that left in October keeps its September rows", async () => {
+    await h.db.batch([
+      campaignRow(SHARED, "2026-09-10", 9, "222", 100), campaignRow(SHARED, "2026-11-08", 9, "222", 100),
+      spendRow("oldbrand", "2026-09-10", 9, 40, "estimated", "2026-09-10T10:00:00.000Z"),
+      spendRow("petvetpay", "2026-09-10", 9, 60, "estimated", "2026-09-10T10:00:00.000Z"),
+    ]);
+    const september = () => spendRows("date = '2026-09-10'");
+    const before = (await september()).results;
+    expect((await assign({ account: SHARED, campaign_id: "222", brand_id: "bisoncash" })).status).toBe(200);
+    expect((await september()).results).toEqual(before);
+    expect((await spendRows("date = '2026-11-08'")).results.map((r) => [r.brand_id, r.cost, r.allocation])).toEqual([["bisoncash", 100, "exact"], ["petvetpay", 0, "exact"]]);
+  });
+
+  it("is one batch: a failing statement leaves the map unchanged and writes no audit row", async () => {
+    await h.db.batch([campaignRow(SHARED, "2026-11-08", 9, "222", 100), mapRow("222", "petvetpay", "click")]);
+    const auditBefore = (await h.factory.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE entity_id = ?1").bind(`${SHARED}:222`).first<{ n: number }>())!.n;
+    await h.db.prepare("CREATE TRIGGER boom BEFORE INSERT ON ad_spend BEGIN SELECT RAISE(ABORT, 'boom'); END").run();
+    try {
+      const outcome = await assign({ account: SHARED, campaign_id: "222", brand_id: "bisoncash" }).then((r) => r.status, () => 500);
+      expect(outcome).toBeGreaterThanOrEqual(500);
+    } finally {
+      await h.db.prepare("DROP TRIGGER boom").run();
+    }
+    expect(await h.db.prepare("SELECT brand_id, source FROM campaign_brand_map WHERE campaign_id = '222'").first()).toEqual({ brand_id: "petvetpay", source: "click" });
+    const audit = await h.factory.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE entity_id = ?1").bind(`${SHARED}:222`).first<{ n: number }>();
+    expect(audit!.n).toBe(auditBefore);
+  });
+
+  it("leaves another account and another campaign untouched, keeps two currencies apart, and a repeated PATCH gives identical rows", async () => {
+    const other = "2222222222";
+    await h.db.batch([
+      campaignRow(SHARED, "2026-11-08", null, "222", 100), campaignRow(SHARED, "2026-11-08", null, "333", 50),
+      campaignRow(SHARED, "2026-11-07", null, "222", 20, "USD"), // ad_spend_key has no currency, so a second currency needs its own day
+      campaignRow(other, "2026-11-08", null, "222", 70),
+      spendRow("brand-a", "2026-11-08", null, 70, "exact", "2026-11-08T08:00:00.000Z", other),
+    ]);
+    const untouchedBefore = (await spendRows(`account = '${other}'`)).results;
+    const otherCampaignBefore = (await campaignRows()).results.filter((r) => r.account === other);
+    expect((await assign({ account: SHARED, campaign_id: "222", brand_id: "bisoncash" })).status).toBe(200);
+    const first = (await spendRows()).results;
+    expect((await spendRows(`account = '${other}'`)).results).toEqual(untouchedBefore);
+    expect((await campaignRows()).results.filter((r) => r.account === other)).toEqual(otherCampaignBefore);
+    // THB: 222 (100) is bisoncash exact; 333 (50) stays split 25 / 25 (no clicks, equal weights). USD: 20 is bisoncash exact.
+    expect(first.filter((r) => r.account === SHARED).map((r) => [r.brand_id, r.currency, r.cost, r.allocation])).toEqual([
+      ["bisoncash", "USD", 20, "exact"], ["petvetpay", "USD", 0, "exact"], ["bisoncash", "THB", 125, "estimated"], ["petvetpay", "THB", 25, "estimated"],
+    ]);
+    const campaigns = (await campaignRows()).results;
+    expect((await assign({ account: SHARED, campaign_id: "222", brand_id: "bisoncash" })).status).toBe(200);
+    expect((await spendRows()).results).toEqual(first);
+    expect((await campaignRows()).results).toEqual(campaigns);
+  });
+
+  it("weights the other campaigns of a slot by the stored utc_offset_minutes (a +420 slot near midnight)", async () => {
+    // Slot 2026-11-05 hour 23 local (UTC+7). Local hour 23 is 16:00 UTC. petvetpay 3 paid clicks and bisoncash 1 in that hour;
+    // bisoncash has 10 more at local hour 8. With offset 0 the hour would be empty and the day would weigh 3 : 11.
+    await h.db.batch([
+      campaignRow(SHARED, "2026-11-05", 23, "777", 100, "THB", 1, "x", 420), campaignRow(SHARED, "2026-11-05", 23, "888", 40, "THB", 1, "x", 420),
+      ...[0, 1, 2].map((i) => paidClick("petvetpay", `2026-11-05T16:${10 + i}:00.000Z`)),
+      paidClick("bisoncash", "2026-11-05T16:30:00.000Z"),
+      ...Array.from({ length: 10 }, (_, i) => paidClick("bisoncash", `2026-11-05T01:${10 + i}:00.000Z`)),
+    ]);
+    expect((await assign({ account: SHARED, campaign_id: "888", brand_id: "bisoncash" })).status).toBe(200);
+    expect((await spendRows()).results.map((r) => [r.brand_id, r.cost, r.allocation])).toEqual([["bisoncash", 65, "estimated"], ["petvetpay", 75, "estimated"]]);
   });
 });

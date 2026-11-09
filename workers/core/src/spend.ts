@@ -35,7 +35,7 @@ const UPSERT_SQL = `
   SELECT json_extract(value, '$.brand_id'), json_extract(value, '$.date'), json_extract(value, '$.hour'),
          json_extract(value, '$.cost'), json_extract(value, '$.currency'), json_extract(value, '$.clicks'),
          json_extract(value, '$.impressions'), 'google', COALESCE(json_extract(value, '$.allocation'), 'exact'),
-         json_extract(value, '$.account'), ?2
+         json_extract(value, '$.account'), COALESCE(json_extract(value, '$.updated_at'), ?2)
   FROM json_each(?1) WHERE true
   ON CONFLICT (brand_id, date, COALESCE(hour, -1), source) DO UPDATE SET
     cost = excluded.cost, currency = excluded.currency, clicks = excluded.clicks, impressions = excluded.impressions,
@@ -107,7 +107,7 @@ export async function loadAllocationMode(env: Pick<Env, "FACTORY">): Promise<Ads
 
 const UNALLOCATED_UPSERT_SQL = `
   INSERT INTO ad_spend_unallocated (account, date, hour, cost, currency, updated_at)
-  SELECT ?3, json_extract(value, '$.date'), json_extract(value, '$.hour'), json_extract(value, '$.cost'), ?4, ?2
+  SELECT ?3, json_extract(value, '$.date'), json_extract(value, '$.hour'), json_extract(value, '$.cost'), ?4, COALESCE(json_extract(value, '$.updated_at'), ?2)
   FROM json_each(?1) WHERE true
   ON CONFLICT (account, date, COALESCE(hour, -1), currency) DO UPDATE SET
     cost = excluded.cost, updated_at = excluded.updated_at`;
@@ -124,7 +124,7 @@ const CAMPAIGN_CLEAR_SQL = `
 const CAMPAIGN_INSERT_SQL = `
   INSERT INTO ad_spend_campaign (account, date, hour, campaign_id, cost, currency, clicks, impressions, updated_at, utc_offset_minutes)
   SELECT ?3, json_extract(value, '$.date'), json_extract(value, '$.hour'), json_extract(value, '$.campaign_id'),
-         json_extract(value, '$.cost'), ?4, json_extract(value, '$.clicks'), json_extract(value, '$.impressions'), ?2, ?5
+         json_extract(value, '$.cost'), ?4, json_extract(value, '$.clicks'), json_extract(value, '$.impressions'), COALESCE(json_extract(value, '$.updated_at'), ?2), ?5
   FROM json_each(?1) WHERE true`;
 
 /** A slot with no unallocated cost keeps no unallocated row, so a rerun in `estimated` mode clears it. */
@@ -192,11 +192,25 @@ export async function handleCampaignSpendIngest(request: Request, env: Env): Pro
  * slots that hold the campaign, so every brand share of those slots follows the new map. `deriveMap` refreshes
  * the click map first; the re-run skips it.
  */
-export async function allocateCampaignSlots(env: Env, input: {
-  account: string; currency: SpendCurrency; offset: number; rows: readonly CampaignSpendRow[]; deriveMap: boolean;
-}): Promise<{ upserted: number; unallocated: number } | { response: Response }> {
+export async function allocateCampaignSlots(env: Env, input: CampaignSlotsInput): Promise<{ upserted: number; unallocated: number } | { response: Response }> {
+  const plan = await planCampaignSlots(env, input);
+  if ("response" in plan) return plan;
+  if (plan.statements.length) await env.LEADS.batch(plan.statements);
+  return { upserted: plan.upserted, unallocated: plan.unallocated };
+}
+
+/** A row may carry the updated_at it was stored with; the owner's re-run keeps it, so a slot synced 5 hours ago stays 5 hours old. */
+export type StoredCampaignRow = CampaignSpendRow & { updated_at?: string };
+export interface CampaignSlotsInput {
+  account: string; currency: SpendCurrency; offset: number; rows: readonly StoredCampaignRow[]; deriveMap: boolean;
+  /** An owner assignment not written yet: the plan allocates as if the map already held it. */
+  mapOverride?: { campaign_id: string; brand_id: string };
+}
+
+/** The statements of allocateCampaignSlots, not yet run, so a caller can add its own and run them in one batch. */
+export async function planCampaignSlots(env: Env, input: CampaignSlotsInput): Promise<{ upserted: number; unallocated: number; statements: D1PreparedStatement[] } | { response: Response }> {
   const { account, currency, offset, rows } = input;
-  const slots = new Map<string, { date: string; hour: number | null; campaigns: CampaignSpendRow[]; ids: Set<string> }>();
+  const slots = new Map<string, { date: string; hour: number | null; campaigns: StoredCampaignRow[]; ids: Set<string> }>();
   for (const row of rows) {
     const hour = row.hour ?? null;
     const key = slotKey(row.date, hour);
@@ -214,7 +228,7 @@ export async function allocateCampaignSlots(env: Env, input: {
   ).bind(account).all<{ brand_id: string }>();
   const brands = brandRows.map((r) => r.brand_id);
   if (!brands.length) return { response: invalid("Unknown account", {}, 422) };
-  if (!slots.size) return { upserted: 0, unallocated: 0 };
+  if (!slots.size) return { upserted: 0, unallocated: 0, statements: [] };
 
   if (input.deriveMap) await deriveCampaignMap(env.LEADS);
   const dates = [...new Set(rows.map((r) => r.date))].sort();
@@ -226,6 +240,7 @@ export async function allocateCampaignSlots(env: Env, input: {
     ),
   ]);
   const map = new Map((mapResult as D1Result<{ campaign_id: string; brand_id: string }>).results.map((r) => [r.campaign_id, r.brand_id]));
+  if (input.mapOverride) map.set(input.mapOverride.campaign_id, input.mapOverride.brand_id);
   const hourClicks = new Map<string, Record<string, number>>();
   const dayClicks = new Map<string, Record<string, number>>();
   for (const r of (clickResult as D1Result<{ brand_id: string; date: string; hour: number; n: number }>).results) {
@@ -239,7 +254,7 @@ export async function allocateCampaignSlots(env: Env, input: {
 
   const spend: Record<string, unknown>[] = [];
   const campaignRows: Record<string, unknown>[] = [];
-  const unallocated: { date: string; hour: number | null; cost: number }[] = [];
+  const unallocated: { date: string; hour: number | null; cost: number; updated_at?: string }[] = [];
   const cleared: { date: string; hour: number | null }[] = [];
   let unallocatedUnits = 0;
   for (const { date, hour, campaigns } of slots.values()) {
@@ -249,10 +264,12 @@ export async function allocateCampaignSlots(env: Env, input: {
     let brandClicks = weightsFrom(hour === null ? undefined : hourClicks.get(slotKey(date, hour)));
     if (total(brandClicks) === 0) brandClicks = weightsFrom(dayClicks.get(date));
     const result = allocateSpend({ campaigns, map, brandClicks, mode });
+    // Newest stored stamp of the slot; undefined for a fresh ingest, which stamps `now`.
+    const slotStamp = campaigns.map((c) => c.updated_at).filter((v): v is string => v !== undefined).sort().at(-1);
     // The same hundredths allocateSpend used, so the campaign rows of a slot add up to its brand rows.
     slotUnits(campaigns.map((c) => c.cost)).forEach((u, i) => {
       const c = campaigns[i]!;
-      campaignRows.push({ date, hour, campaign_id: c.campaign_id, cost: u / 100, clicks: c.clicks, impressions: c.impressions });
+      campaignRows.push({ date, hour, campaign_id: c.campaign_id, cost: u / 100, clicks: c.clicks, impressions: c.impressions, updated_at: c.updated_at });
     });
     for (const brand of brands) {
       const parts = result.rows.filter((r) => r.brand_id === brand);
@@ -263,10 +280,11 @@ export async function allocateCampaignSlots(env: Env, input: {
         clicks: parts.reduce((t, p) => t + p.clicks, 0),
         impressions: parts.reduce((t, p) => t + p.impressions, 0),
         allocation: parts.some((p) => p.allocation === "estimated") ? "estimated" : "exact",
+        updated_at: slotStamp,
       });
     }
     if (result.unallocated > 0) {
-      unallocated.push({ date, hour, cost: result.unallocated });
+      unallocated.push({ date, hour, cost: result.unallocated, updated_at: slotStamp });
       unallocatedUnits += Math.round(result.unallocated * 100);
     } else {
       cleared.push({ date, hour });
@@ -278,15 +296,15 @@ export async function allocateCampaignSlots(env: Env, input: {
   const stamp = new Date().toISOString();
   const chunksOf = <T>(rows: T[]) => Array.from({ length: Math.ceil(rows.length / 2000) }, (_, i) => rows.slice(i * 2000, (i + 1) * 2000));
   const slotList = JSON.stringify([...slots.values()].map(({ date, hour }) => ({ date, hour })));
-  await env.LEADS.batch([
+  const statements = [
     ...chunksOf(spend).map((chunk) => env.LEADS.prepare(UPSERT_SQL).bind(JSON.stringify(chunk), stamp)),
     env.LEADS.prepare(CAMPAIGN_CLEAR_SQL).bind(slotList, account, currency),
     ...chunksOf(campaignRows).map((chunk) => env.LEADS.prepare(CAMPAIGN_INSERT_SQL).bind(JSON.stringify(chunk), stamp, account, currency, offset)),
     env.LEADS.prepare(STALE_BRAND_CLEAR_SQL).bind(account, JSON.stringify(brands), slotList),
     env.LEADS.prepare(UNALLOCATED_UPSERT_SQL).bind(JSON.stringify(unallocated), stamp, account, currency),
     env.LEADS.prepare(UNALLOCATED_CLEAR_SQL).bind(JSON.stringify(cleared), account, currency),
-  ]);
-  return { upserted: spend.length, unallocated: unallocatedUnits / 100 };
+  ];
+  return { upserted: spend.length, unallocated: unallocatedUnits / 100, statements };
 }
 
 const cents = (value: number) => Math.round(value * 100) / 100;
