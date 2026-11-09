@@ -41,7 +41,7 @@ export function BrandTable({ rows, showMoney, compact = false, selectedId, onSel
   const costColumn = showMoney && !compact;
   return (
     <div className="data-table brand-grid-table">
-      <table aria-label={label}>
+      <table className="brand-table" aria-label={label}>
         <thead>
           <tr>
             <th>แบรนด์</th><th>ระยะ</th>
@@ -78,6 +78,7 @@ export function BrandTable({ rows, showMoney, compact = false, selectedId, onSel
                   <span className="row-actions" onClick={(event) => event.stopPropagation()}>
                     <button type="button" className={`btn${row.action.primary ? " pri" : ""}`} data-next-action={row.action.kind} disabled={row.action.disabled} title={row.action.reason} onClick={row.action.onClick}>{row.action.label}</button>
                     {row.menu}
+                    {row.action.reason && <span className="row-reason muted small">{row.action.reason}</span>}
                   </span>
                 </td>
               </tr>

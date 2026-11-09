@@ -87,3 +87,20 @@
   .brand-table td[data-label=""] { display: block; }
   .brand-table td[data-label=""]::before { content: none; }
 }
+
+/* v9 Brands: chips, then search + sort + demo toggle on one row, then the table beside a 360px sticky detail panel. */
+.brands-head h1 { font-size: var(--text-h1); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.brands-sub { font-size: var(--text-body); color: var(--sub); }
+.brands-grid { grid-template-columns: minmax(0, 1fr) 360px; }
+.brands-aside { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.brand-filters { flex-direction: column; align-items: stretch; gap: 12px; }
+.brand-chip { min-height: 44px; padding: 0 14px; font-size: var(--text-body); }
+.brand-chip[aria-pressed="true"] { background: var(--brand-tint); color: var(--brand-ink); border-color: var(--brand); font-weight: 600; }
+.brand-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.brand-filter-row label { margin: 0; }
+.brand-search { position: relative; flex: 1 1 220px; display: block; }
+.brand-search svg { position: absolute; left: 12px; top: 14px; color: var(--sub); }
+.brand-search input { width: 100%; padding-left: 36px; }
+.brand-sort { flex-direction: row; align-items: center; gap: 8px; color: var(--sub); }
+.brand-demo-toggle { flex-direction: row; align-items: center; min-height: 44px; font-size: var(--text-body); color: var(--sub); }
+@media (max-width: 1100px) { .brands-grid { grid-template-columns: minmax(0, 1fr); } .brands-aside { position: static; max-height: none; } }

@@ -9,8 +9,8 @@ const NO_ISSUE_SEVERITY = 99;
 export type BrandChip = "all" | "needs-fix" | "live" | "unfinished" | "paused";
 
 export const BRAND_CHIPS: ReadonlyArray<{ id: BrandChip; label: string }> = [
-  { id: "all", label: "ทั้งหมด" },
   { id: "needs-fix", label: "ต้องแก้" },
+  { id: "all", label: "ทั้งหมด" },
   { id: "live", label: "ใช้งาน" },
   { id: "unfinished", label: "ยังไม่เสร็จ" },
   { id: "paused", label: "หยุด" },

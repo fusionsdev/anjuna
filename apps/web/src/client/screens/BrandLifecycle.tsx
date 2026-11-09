@@ -1,7 +1,9 @@
-import { type BrandRevisionsResponse, type BrandSummary, type ChecklistItemName, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
+import { type BrandRevisionsResponse, type BrandSummary, type ChecklistItemName, type ConversionsReportResponse, type LifecycleBrandSummary, type InstallWithReceipts, type CoreListError, type CoreListErrorCode } from "@anjuna/contracts";
 import { Fragment, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, stepsFromChecklist, type BrandChecklists, type ChecklistStep, type Me } from "../api";
-import { brandSpendFresh, checklistFlags } from "../home-metrics";
+import { brandSpendFresh, checklistFlags, clickLossWarning } from "../home-metrics";
+import { adsChip, stageStatuses } from "../brand-stages";
+import { BrandTable, type BrandTableRow } from "../components/BrandTable";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, nextAction, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleRow, type LifecycleState, type NextAction } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
@@ -15,7 +17,7 @@ import { finalUrl, siteUrl } from "../final-url";
 import { isPlainLeftClick, navigate, routePath } from "../router";
 import { useBrandActions, type BrandAction } from "../useBrandActions";
 import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
-import { BRAND_PERIODS, BrandStatsRow, SpendText, brandMoney, brandStats, usePeriodFunnel, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
+import { BRAND_PERIODS, SpendText, brandMoney, usePeriodFunnel, useFunnelWindow, useSpendReport, useWeekFunnel, type BrandPeriod } from "./BrandStatsRow";
 import { BrandFilters } from "./BrandFilters";
 import { useBrandScope } from "../useBrandScope";
 import { toScopeBrand } from "../brand-scope";
@@ -233,6 +235,14 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const periodFunnel = usePeriodFunnel(period, refresh, weekFunnel);
   // The spend API answers 403 to an Employee, so only the Owner asks, and only the Owner sees money columns.
   const spend = useSpendReport(period, owner, refresh);
+  // The stage dots read 30 days of the funnel and of the conversion rows, whatever period the money columns show.
+  const stageFunnel = useFunnelWindow("30d", refresh);
+  const [stageConversions, setStageConversions] = useState<ConversionsReportResponse | null>(null);
+  useEffect(() => {
+    let active = true;
+    api.conversions({ period: "30d" }).then((report) => { if (active) setStageConversions(report); }, () => { if (active) setStageConversions(null); });
+    return () => { active = false; };
+  }, [refresh]);
 
   useEffect(() => { if (wizardRequest > 0) setWizard({}); }, [wizardRequest]);
   // The wizard replaces this screen's JSX, which hides {confirmDialog}; close an open question so it cannot come back later.
@@ -808,7 +818,6 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     name: brand.hostnames[0] ?? brand.name ?? brand.brand_id,
     health: brandHealth(brand, runtimeBrands.find((r) => r.brand_id === brand.brand_id), { coreListFailed: coreListError !== null, ...(checklists?.brands[brand.brand_id] ? { checklistFailing: checklistFlags(checklists.brands[brand.brand_id]).checklistFailing } : {}) }),
     money: brandMoney(brand.brand_id, runtimeList, periodFunnel, spend),
-    stats: brandStats(brand.brand_id, runtimeList, weekFunnel),
   }));
   // Chip counts follow the demo toggle and the search, so a count never promises rows they have hidden.
   // The scope also hides paused and retired brands, except under the "หยุด" chip, which exists to show them.
@@ -829,11 +838,45 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     sort,
     (row) => ({ health: row.health, domain: row.brand.hostnames[0] ?? row.brand.brand_id, profit: row.money.profit }),
   );
-  const columns = owner ? 8 : 5;
+  // One BrandTable row per brand: the seven stage dots, the money of the chosen period, the Google Ads chip, the one primary button and the row menu.
+  const rowModels: BrandTableRow[] = sortedRows.map(({ brand, name, money }) => {
+    const runtime = runtimeBrands.find((r) => r.brand_id === brand.brand_id);
+    const primary = rowPrimary(brand, runtime);
+    const entry = checklists?.brands[brand.brand_id];
+    const funnel30 = stageFunnel?.rows.filter((r) => r.brand === brand.brand_id);
+    const conv30 = stageConversions?.rows.filter((r) => r.brand === brand.brand_id);
+    const stages = stageStatuses({
+      brand, ...(entry ? { checklist: entry } : {}),
+      leads30: funnel30 ? funnel30.reduce((sum, r) => sum + r.submits, 0) : null,
+      sold30: funnel30 ? funnel30.reduce((sum, r) => sum + r.sold, 0) : null,
+      uploaded: conv30 ? conv30.filter((r) => r.status === "uploaded").length : null,
+      dead: conv30 ? conv30.filter((r) => r.status === "dead").length : null,
+    });
+    const spendRows = spend ? spend.brands.filter((r) => r.brand_id === brand.brand_id) : [];
+    const paidClicks = spendRows.reduce((sum, r) => sum + r.clicks, 0);
+    const paused = runtime?.status === "paused";
+    // The chip reads spend, which only the Owner has. An employee still sees the demo and paused chips, and a dash for the rest.
+    const ads = owner
+      ? adsChip({ brand, paused, spendToday: spend ? (spendRows.length > 0 ? spendRows.reduce((sum, r) => sum + r.cost, 0) : null) : null, clickLoss: typeof money.clicks === "number" && paidClicks > 0 && clickLossWarning(paidClicks, money.clicks) })
+      : isDemoBrand(brand) || paused ? adsChip({ brand, paused, spendToday: null, clickLoss: false }) : null;
+    return {
+      id: brand.brand_id,
+      title: name,
+      ...(brand.name && brand.name !== name ? { subtitle: brand.name } : {}),
+      demo: isDemoBrand(brand),
+      stages,
+      ads,
+      spend: <SpendText text={money.spendText} estimated={money.estimated} />,
+      leads: count(money.leads),
+      costPerLead: null,
+      action: { kind: primary.kind, label: primary.label, disabled: primary.disabled, reason: primary.reason, primary: true, onClick: () => runPrimary(primary, brand, runtime) },
+      menu: <RowMenu label="จัดการ" items={menuItemsFor(brand, runtime, primary)} />,
+    };
+  });
 
   return <div className="brands-page">
     <div className="brands-head">
-      <div><h1>Lifecycle แบรนด์</h1><p className="brands-sub">{shownRows.length} แบรนด์ เลือกแถวเพื่อดูและแก้ไข</p></div>
+      <div><h1>แบรนด์</h1><p className="brands-sub">{shownRows.length} แบรนด์ เลือกแถวเพื่อดูและแก้ไข</p></div>
       <div className="brands-actions">
         <div className="seg" role="group" aria-label="ช่วงเวลา">{BRAND_PERIODS.map(([key, label]) => <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div>
         <button className="btn" onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช</button>
@@ -848,51 +891,13 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     {coreListError && <p className="error" role="alert">{coreListLabel[coreListError.code] ?? coreListError.message}. ใช้รายการแบรนด์จาก Core ไม่ได้ จึงแสดงเฉพาะแบรนด์จาก factory (Core brand list is unavailable) กรุณารีเฟรชเพื่อลองใหม่</p>}
     <div className="brands-grid">
       <section className="panel lifecycle-list">
-        <div className="tw"><table className="brand-table">
-          <thead><tr>
-            <th>แบรนด์</th><th>สถานะ</th><th>โฟลว์</th>
-            {owner && <th>ค่าโฆษณา</th>}
-            <th>คลิก</th><th>ลีด</th>
-            {owner && <><th>ต้นทุน/ลีด</th><th>กำไร</th></>}
-          </tr></thead>
-          <tbody>
-            {sortedRows.map(({ brand, name, money, stats }) => {
-              const isSelected = brand.brand_id === selectedId;
-              const select = () => { setSelectedId(brand.brand_id); onSelectBrand?.(brand.brand_id); };
-              const runtime = runtimeBrands.find((r) => r.brand_id === brand.brand_id);
-              const primary = rowPrimary(brand, runtime);
-              // Pause lives in core and the factory brand stays live, so a paused brand's factory status still reads live.
-              const badgeStatus = brand.status === "live" && runtime?.status === "paused" ? "paused" : brand.status;
-              return <Fragment key={brand.brand_id}>
-                <tr className={isSelected ? "click sel" : "click"} onClick={select}>
-                  <td data-label="แบรนด์"><button type="button" className="brand-pick" aria-current={isSelected || undefined}><b>{name}</b>{brand.name && brand.name !== name && <small className="muted"> {brand.name}</small>}</button></td>
-                  <td data-label="สถานะ">
-                    <StatusBadge tone={statusBadgeTone[badgeStatus] ?? "mute"} label={statusLabel[badgeStatus] ?? badgeStatus} />
-                    <button type="button" className="btn pri row-action row-primary" data-next-action={primary.kind} disabled={primary.disabled} title={primary.reason}
-                      onClick={(e) => { e.stopPropagation(); runPrimary(primary, brand, runtime); }}>{primary.label}</button>
-                    {primary.reason && <span className="row-reason muted small">{primary.reason}</span>}
-                    <RowMenu label="จัดการ" items={menuItemsFor(brand, runtime, primary)} />
-                  </td>
-                  <td data-label="โฟลว์">{runtime ? flowGateLabel[runtime.flow_gate_mode] : "—"}</td>
-                  {owner && <td data-label="ค่าโฆษณา" className="blue"><SpendText text={money.spendText} estimated={money.estimated} /></td>}
-                  <td data-label="คลิก">{count(money.clicks)}</td>
-                  <td data-label="ลีด">{count(money.leads)}</td>
-                  {owner && <>
-                    <td data-label="ต้นทุน/ลีด"><SpendText text={money.costPerLeadText} estimated={money.estimated} /></td>
-                    <td data-label="กำไร" className={money.profit === null ? undefined : money.profit < 0 ? "neg" : "pos"}><SpendText text={usd(money.profit)} estimated={money.estimated} /></td>
-                  </>}
-                </tr>
-                <tr className={isSelected ? "click sel stats" : "click stats"} onClick={select}><td colSpan={columns} data-label=""><BrandStatsRow name={name} stats={stats} /></td></tr>
-              </Fragment>;
-            })}
-            {brands.length === 0 && <tr><td colSpan={columns} data-label="" className="muted">ยังไม่มีแบรนด์</td></tr>}
-            {brands.length > 0 && sortedRows.length === 0 && <tr><td colSpan={columns} data-label="">
-              <EmptyState title="ไม่พบแบรนด์ที่ตรงกับตัวกรอง" hint={hiddenDemoCount > 0 ? `ลองล้างตัวกรองหรือคำค้นหา แบรนด์ทดลอง ${hiddenDemoCount} แบรนด์ถูกซ่อนอยู่ ติ๊ก แสดงแบรนด์ทดลอง เพื่อดู` : "ลองล้างตัวกรองหรือคำค้นหา"}
-                action={<button type="button" className="btn" onClick={() => { setChip("all"); setSearch(""); setShowDemo(false); }}>ล้างตัวกรอง</button>} />
-            </td></tr>}
-          </tbody>
-        </table></div>
-        <p className="muted small">ปุ่มหลักของแต่ละแถวคือขั้นตอนถัดไปของแบรนด์ ปุ่มจัดการรวมการทำงานอื่น</p>
+        {rowModels.length > 0 && <BrandTable rows={rowModels} showMoney={owner} compact selectedId={selectedId} onSelect={(id) => { setSelectedId(id); onSelectBrand?.(id); }} label="แบรนด์" />}
+        {brands.length === 0 && <p className="muted">ยังไม่มีแบรนด์</p>}
+        {brands.length > 0 && sortedRows.length === 0 && (
+          <EmptyState title="ไม่พบแบรนด์ที่ตรงกับตัวกรอง" hint={hiddenDemoCount > 0 ? `ลองล้างตัวกรองหรือคำค้นหา แบรนด์ทดลอง ${hiddenDemoCount} แบรนด์ถูกซ่อนอยู่ ติ๊ก แสดงแบรนด์ทดลอง เพื่อดู` : "ลองล้างตัวกรองหรือคำค้นหา"}
+            action={<button type="button" className="btn" onClick={() => { setChip("all"); setSearch(""); setShowDemo(false); }}>ล้างตัวกรอง</button>} />
+        )}
+        <p className="muted small">ปุ่มหลักของแต่ละแถวคือขั้นตอนถัดไปของแบรนด์ ปุ่ม ⋯ รวมการทำงานอื่น</p>
         <p className="hint">{owner ? `${sort === "profit" ? "เรียงจากกำไรน้อยที่สุดก่อน " : ""}ค่าโฆษณาจาก AdKit อัปเดตทุกชั่วโมง ` : ""}เครื่องหมาย — คือยังไม่มีข้อมูล</p>
       </section>
       <div className="brands-aside">
