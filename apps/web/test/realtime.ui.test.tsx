@@ -11,12 +11,17 @@ let report: TrafficRealtimeResponse;
 let reportStatus: number;
 let requests: string[];
 let audio: { constructed: number; resumed: number; started: number };
+/** What the server holds for GET/PUT /api/me/prefs, and every body a PUT sent. */
+let prefs: { brand_scope: { hide_inactive: boolean; show_demo: boolean; brand_ids: string[] | null }; saved_views: Record<string, unknown> };
+let prefsWrites: Array<typeof prefs>;
 
 beforeEach(() => {
   report = realtimeReport();
   reportStatus = 200;
   requests = [];
   audio = { constructed: 0, resumed: 0, started: 0 };
+  prefs = { brand_scope: { hide_inactive: false, show_demo: true, brand_ids: ["brand-a"] }, saved_views: { traffic: { period: "7d" } } };
+  prefsWrites = [];
   MockEventSource.reset();
   vi.stubGlobal("EventSource", MockEventSource);
   vi.stubGlobal("AudioContext", class {
@@ -30,9 +35,13 @@ beforeEach(() => {
   });
   window.localStorage.clear();
   window.history.replaceState(null, "", "/realtime");
-  vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     requests.push(input);
     const url = new URL(input, window.location.origin);
+    if (url.pathname === "/api/me/prefs") {
+      if (init?.method === "PUT") { prefs = JSON.parse(String(init.body)); prefsWrites.push(prefs); }
+      return json(prefs);
+    }
     if (url.pathname === "/api/traffic/realtime") return reportStatus === 200 ? json({ ...report, period: url.searchParams.get("period") ?? "24h" }) : json({ error: "upstream" }, reportStatus);
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [{ brand_id: "brand-a", hostnames: ["a.example"] }, { brand_id: "brand-b", hostnames: ["b.example"] }] });
     if (url.pathname === "/api/brands") return json({ brands: [], generated_at: "2026-11-10T00:00:00.000Z" });
@@ -62,6 +71,11 @@ describe("Realtime tab report", () => {
     await open();
     expect(kpi("landing_views").querySelector(".v")!.textContent).toBe("1,234");
     expect(kpi("landing_views").textContent).toContain("+12%");
+    // The delta figure sits in a .num span (the number font); the words next to it do not.
+    const delta = kpi("landing_views").querySelector(".rt-delta")!;
+    expect(delta.querySelector("span.num")!.textContent).toBe("+12%");
+    expect(delta.querySelector(".hint")!.className).not.toContain("num");
+    expect(kpi("redirect_errors").querySelector(".rt-delta span.num")!.textContent).toBe("—");
     expect(kpi("form_starts").querySelector(".v")!.textContent).toBe("456");
     expect(kpi("form_starts").textContent).toContain("-8%");
     expect(kpi("leads").querySelector(".v")!.textContent).toBe("78");
@@ -271,10 +285,9 @@ describe("Realtime tab AdsBot banner and sound", () => {
     expect((scroll.mock.contexts[0] as HTMLElement).id).toBe("session-efefefefefefefef");
   });
 
-  it("beeps once per AdsBot event when the switch is on, never for a browser event, and keeps the switch on this device", async () => {
+  it("beeps once per AdsBot event when the switch is on and never for a browser event", async () => {
     await open();
     fireEvent.click(screen.getByRole("button", { name: /เสียงเตือน AdsBot ปิด/ }));
-    expect(window.localStorage.getItem("anjuna.traffic.sound")).toBe("1");
     expect(audio.constructed).toBe(1);
     emit({ event_id: "h1" });
     expect(audio.started).toBe(0);
@@ -283,13 +296,58 @@ describe("Realtime tab AdsBot banner and sound", () => {
     fireEvent.click(screen.getByRole("button", { name: /เสียงเตือน AdsBot เปิด/ }));
     emit({ event_id: "ab5", user_agent_family: "adsbot", session_ref: "0b0b0b0b0b0b0b0b" });
     expect(audio.started).toBe(1);
-    expect(window.localStorage.getItem("anjuna.traffic.sound")).toBe("0");
   });
 
-  it("starts with the switch on when this device saved it on", async () => {
-    window.localStorage.setItem("anjuna.traffic.sound", "1");
+  it("saves the switch in the user prefs, keeps the brand scope and the other saved views, and never touches localStorage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
     await open();
-    expect(screen.getByRole("button", { name: /เสียงเตือน AdsBot เปิด/ }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: /เสียงเตือน AdsBot ปิด/ }));
+    await waitFor(() => expect(prefsWrites).toHaveLength(1));
+    expect(prefsWrites[0]).toEqual({
+      brand_scope: { hide_inactive: false, show_demo: true, brand_ids: ["brand-a"] },
+      saved_views: { traffic: { period: "7d" }, realtime_sound: true },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /เสียงเตือน AdsBot เปิด/ }));
+    await waitFor(() => expect(prefsWrites).toHaveLength(2));
+    expect(prefsWrites[1]!.saved_views).toEqual({ traffic: { period: "7d" }, realtime_sound: false });
+    expect(prefsWrites[1]!.brand_scope).toEqual(prefs.brand_scope);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it("loads the saved switch back after a fresh page, also on a device that never set it", async () => {
+    prefs.saved_views = { traffic: { period: "7d" }, realtime_sound: true };
+    await open();
+    await waitFor(() => expect(screen.getByRole("button", { name: /เสียงเตือน AdsBot เปิด/ }).getAttribute("aria-pressed")).toBe("true"));
+    emit({ event_id: "ab6", user_agent_family: "adsbot", session_ref: "0c0c0c0c0c0c0c0c" });
+    expect(audio.started).toBe(1);
+    expect(prefsWrites).toHaveLength(0);
+  });
+
+  it("keeps a scope saved by another writer while the switch saves", async () => {
+    await open();
+    // The scope changes on the server after this page loaded. The switch save reads the prefs fresh and keeps that scope.
+    prefs = { ...prefs, brand_scope: { hide_inactive: true, show_demo: false, brand_ids: ["brand-b"] } };
+    fireEvent.click(screen.getByRole("button", { name: /เสียงเตือน AdsBot ปิด/ }));
+    await waitFor(() => expect(prefsWrites).toHaveLength(1));
+    expect(prefsWrites[0]!.brand_scope).toEqual({ hide_inactive: true, show_demo: false, brand_ids: ["brand-b"] });
+  });
+
+  it("starts silent and says so when the prefs cannot be read or saved", async () => {
+    vi.mocked(fetch).mockImplementation((async (input: string) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/me/prefs") return json({ error: "down" }, 502);
+      if (path === "/api/traffic/realtime") return json(report);
+      if (path === "/api/lifecycle/brands") return json({ brands: [] });
+      if (path === "/api/brands") return json({ brands: [], generated_at: "2026-11-10T00:00:00.000Z" });
+      throw new Error("Unexpected test HTTP request: " + String(input));
+    }) as typeof fetch);
+    await open();
+    expect(screen.getByRole("button", { name: /เสียงเตือน AdsBot ปิด/ }).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: /เสียงเตือน AdsBot ปิด/ }));
+    // The switch works on this page and the failed save is reported.
+    expect(screen.getByRole("button", { name: /เสียงเตือน AdsBot เปิด/ })).toBeTruthy();
+    expect(await screen.findByText(/บันทึกการตั้งค่าเสียงเตือนไม่สำเร็จ/)).toBeTruthy();
   });
 
   it("shows the latest AdsBot visit of the report before any live event arrives", async () => {
@@ -312,6 +370,19 @@ describe("traffic live helpers", () => {
   });
   it("reads a delta as a signed whole percent and a missing one as a dash", () => {
     expect([deltaText(12.4), deltaText(-7.6), deltaText(0), deltaText(null)]).toEqual(["+12%", "-8%", "0%", "—"]);
+  });
+  it("keeps a session chain and lastTs in event time when an older event arrives after a newer one", () => {
+    const ref = "bbbbbbbbbbbbbbbb";
+    const landing = tailEvent({ event_id: "o1", session_ref: ref, event_type: "landing_viewed", ts: 1_800_000_000_000 });
+    const started = tailEvent({ event_id: "o2", session_ref: ref, event_type: "form_started", ts: 1_800_000_010_000 });
+    const other = tailEvent({ event_id: "o3", session_ref: "cccccccccccccccc", ts: 1_800_000_005_000 });
+    // The stream keeps arrival order, newest arrival first: form_started came first, landing_viewed arrived late, then another session.
+    const sessions = groupSessions([other, landing, started]);
+    const mine = sessions.find((s) => s.sessionRef === ref)!;
+    expect(mine.events.map((e) => e.event_id)).toEqual(["o1", "o2"]);
+    expect(mine.lastTs).toBe(1_800_000_010_000);
+    // The session with the later event time is first, although its late event arrived after the other session's event.
+    expect(sessions.map((s) => s.sessionRef)).toEqual([ref, "cccccccccccccccc"]);
   });
   it("gives an event with no session ref a row of its own", () => {
     const sessions = groupSessions([tailEvent({ event_id: "n1", session_ref: null }), tailEvent({ event_id: "n2", session_ref: null })]);

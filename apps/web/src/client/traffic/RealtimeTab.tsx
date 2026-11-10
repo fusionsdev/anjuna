@@ -57,7 +57,7 @@ function Kpi({ report, id, label, hint }: { report: Report; id: KpiKey; label: s
     <div className="cell rt-kpi" data-kpi={id}>
       <p className="k">{label}</p>
       <p className="v num">{kpiValue(report, id)}</p>
-      <p className={`rt-delta ${bad ? "rt-bad" : ""}`}>{deltaText(delta)} <span className="hint">เทียบช่วงก่อนหน้า</span></p>
+      <p className={`rt-delta ${bad ? "rt-bad" : ""}`}><span className="num">{deltaText(delta)}</span> <span className="hint">เทียบช่วงก่อนหน้า</span></p>
       {hint && <p className="hint">{hint}</p>}
     </div>
   );
@@ -141,12 +141,14 @@ export function RealtimeTab() {
   }, [period, scopeKey, attempt, refreshTick, nothingVisible]);
 
   const [adsbotLive, setAdsbotLive] = useState<AdsbotVisit | null>(null);
+  // A visit seen under one scope is dropped when the scope changes: it could belong to a brand the new scope hides.
+  useEffect(() => { setAdsbotLive(null); }, [scopeKey]);
   const tail = useTrafficTail({
     brandIds: scopedIds,
     enabled: !nothingVisible,
     onRefresh: () => setRefreshTick((n) => n + 1),
     onAdsbot: (event) => {
-      setAdsbotLive({ brandLabel: event.domain, url: event.url, httpStatus: event.http_status, responseMs: event.response_ms, gatePassed: event.gate_passed, at: event.ts, sessionRef: event.session_ref });
+      setAdsbotLive({ brand: event.brand, brandLabel: event.domain, url: event.url, httpStatus: event.http_status, responseMs: event.response_ms, gatePassed: event.gate_passed, at: event.ts, sessionRef: event.session_ref });
       sound.beep();
     },
   });
@@ -154,9 +156,10 @@ export function RealtimeTab() {
   const report = load && "report" in load ? load.report : null;
   // The newest AdsBot visit: the one that just arrived on the stream, else the latest one in the report.
   const adsbotVisit = useMemo<AdsbotVisit | null>(() => {
-    if (adsbotLive) return adsbotLive;
+    // The live visit counts only while its brand is in scope; the report is already asked for the scoped brands.
+    if (adsbotLive && inScopeId(adsbotLive.brand)) return adsbotLive;
     const latest = report?.adsbot_last.filter((hit) => inScopeId(hit.brand)).sort((a, b) => b.at.localeCompare(a.at))[0];
-    return latest ? { brandLabel: labelOf(latest.brand), url: latest.url, httpStatus: latest.http_status, responseMs: latest.response_ms, gatePassed: latest.gate_passed, at: Date.parse(latest.at), sessionRef: null } : null;
+    return latest ? { brand: latest.brand, brandLabel: labelOf(latest.brand), url: latest.url, httpStatus: latest.http_status, responseMs: latest.response_ms, gatePassed: latest.gate_passed, at: Date.parse(latest.at), sessionRef: null } : null;
   }, [adsbotLive, report, inScopeId, labelOf]);
 
   const showSession = (ref: string) => {
@@ -187,6 +190,7 @@ export function RealtimeTab() {
       <div className="rt-stack">
         <p className="rt-info" role="note"><Info aria-hidden="true" size={18} />ตัวเลขด้านล่างโหลดใหม่เองเมื่อมีเหตุการณ์เข้ามา ส่วนฟีดสดแสดงเฉพาะเหตุการณ์ที่เข้ามาหลังเปิดหน้านี้</p>
         <ConnectionStrip status={tail.status} lastEventAt={tail.lastEventAt} perMinute={tail.perMinute} sound={sound.enabled} onSound={sound.setEnabled} />
+        {sound.saveFailed && <p className="hint" role="status">บันทึกการตั้งค่าเสียงเตือนไม่สำเร็จ ใช้ค่านี้ได้เฉพาะในหน้านี้</p>}
         {adsbotVisit && <AdsbotBanner visit={adsbotVisit} onShowSession={showSession} />}
         {nothingVisible && <EmptyState title="ขอบเขตแบรนด์ไม่มีแบรนด์ที่แสดง" hint="แก้ขอบเขตแบรนด์เพื่อดูทราฟฟิก" />}
         {!nothingVisible && !load && <Spinner />}
@@ -205,7 +209,8 @@ export function RealtimeTab() {
             <BotsNow bots={report.bots_now} />
           </>
         )}
-        {!nothingVisible && <LiveStream events={tail.events} labelOf={labelOf} />}
+        {/* Keyed by the scope: a new scope starts the feed over, so a paused feed or a brand filter never keeps what the old scope showed. */}
+        {!nothingVisible && <LiveStream key={scopeKey} events={tail.events} labelOf={labelOf} />}
         {report && (
           <>
             <section className="panel" aria-label="แนวโน้ม">

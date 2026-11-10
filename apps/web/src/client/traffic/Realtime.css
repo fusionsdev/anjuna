@@ -99,3 +99,5 @@
   .rt-filters select { min-width: 0; width: 100%; }
   .rt-filters label { flex: 1 1 100%; }
 }
+.rt-idle { color: var(--muted); }
+.rt-idle .rt-dot { background: var(--muted); }

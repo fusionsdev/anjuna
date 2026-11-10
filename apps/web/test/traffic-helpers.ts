@@ -12,6 +12,8 @@ export class MockEventSource {
 
   readonly url: string;
   closed = false;
+  /** 0 connecting, 1 open, 2 closed, as EventSource.readyState. A test may set it to stage a stream the browser reports as dead. */
+  readyState = 0;
   onopen: ((event: Event) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   private listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
@@ -24,9 +26,9 @@ export class MockEventSource {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
   removeEventListener() { /* not used */ }
-  close() { this.closed = true; }
+  close() { this.closed = true; this.readyState = 2; }
 
-  open() { this.onopen?.(new Event("open")); }
+  open() { this.readyState = 1; this.onopen?.(new Event("open")); }
   error() { this.onerror?.(new Event("error")); }
   emit(type: string, data: unknown) { this.emitRaw(type, JSON.stringify(data)); }
   emitRaw(type: string, data: string) {

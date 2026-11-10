@@ -1,6 +1,7 @@
 import type { LifecycleBrandSummary } from "@anjuna/contracts";
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
+import { updatePrefs } from "./prefs-manager";
 import { DEFAULT_SCOPE, type BrandScope, type ScopeBrand, type ScopeGroup, groupOfBrand, inScope, scopeFromPrefs, scopeFromSearch, scopeToPrefs, toScopeBrand } from "./brand-scope";
 
 /** One brand as the scope popover lists it. */
@@ -48,8 +49,6 @@ function useScopeState(persist: boolean): BrandScopeState {
   const reading = useRef<Promise<boolean> | null>(null);
   const decidedByUser = useRef(false);
   const latest = useRef<BrandScope>(scope);
-  // Writes run one after another, so two quick changes can never reach the server out of order.
-  const writes = useRef<Promise<void>>(Promise.resolve());
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -94,18 +93,14 @@ function useScopeState(persist: boolean): BrandScopeState {
       window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
     }
     if (!persist) return;
-    writes.current = writes.current.then(async () => {
-      const target = latest.current;
-      // Wait for the saved views. If they cannot be read, writing would erase them, so nothing is written and the user is told.
-      if (!(await readPrefs())) { if (mounted.current) setSaveFailed(true); return; }
-      try {
-        await api.saveMePrefs({ brand_scope: scopeToPrefs(target), saved_views: savedViews.current ?? {} });
-        if (mounted.current && latest.current === target) setSaveFailed(false);
-      } catch {
-        if (mounted.current) setSaveFailed(true);
-      }
+    // The prefs manager reads the saved prefs fresh, changes only brand_scope and writes in one queue shared with the other prefs writers
+    // (the Realtime sound switch), so none of them can erase another's change. A failed read writes nothing and the user is told.
+    void updatePrefs((cur) => ({ ...cur, brand_scope: scopeToPrefs(latest.current) })).then((saved) => {
+      if (!mounted.current) return;
+      if (saved === null) setSaveFailed(true);
+      else if (latest.current === next) setSaveFailed(false);
     });
-  }, [persist, readPrefs]);
+  }, [persist]);
 
   return useMemo(() => {
     const isVisible = (brand: ScopeBrand) => inScope(scope, brand);

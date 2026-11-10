@@ -3,6 +3,8 @@ import { clock } from "./live";
 
 /** What the banner shows of one AdsBot visit. A live event carries a session ref; a visit from the report does not. */
 export interface AdsbotVisit {
+  /** The brand id, so the page can drop a visit that the brand scope hides. */
+  brand: string;
   brandLabel: string;
   url: string;
   httpStatus: number | null;

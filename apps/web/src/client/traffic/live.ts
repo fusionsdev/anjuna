@@ -50,17 +50,27 @@ export interface LiveSession {
 
 export const MAX_SESSIONS = 40;
 
-/** Groups events by session ref, newest session first, at most MAX_SESSIONS. `events` is newest first, as the stream keeps it. */
+/**
+ * Groups events by session ref, newest session first, at most MAX_SESSIONS. `events` is in arrival order, newest arrival first, as the stream keeps it.
+ * An event that arrives late still lands in its place: each session's chain is sorted by event time, and the session's `lastTs`
+ * is its highest event time, found before the sessions are ordered.
+ */
 export function groupSessions(events: readonly TrafficTailEvent[]): LiveSession[] {
   const byId = new Map<string, LiveSession>();
   for (const event of events) {
     const id = event.session_ref ?? `event-${event.event_id}`;
     const found = byId.get(id);
     if (found) {
-      found.events.unshift(event);
+      found.events.push(event);
+      found.lastTs = Math.max(found.lastTs, event.ts);
       continue;
     }
     byId.set(id, { id, sessionRef: event.session_ref, domain: event.domain, brand: event.brand, device: event.device_type, browser: event.browser, family: event.user_agent_family, events: [event], lastTs: event.ts });
+  }
+  for (const session of byId.values()) {
+    // Arrival order is newest first, so reversing puts the oldest arrival first and the stable sort keeps that order for equal times.
+    session.events.reverse();
+    session.events.sort((a, b) => a.ts - b.ts);
   }
   return [...byId.values()].sort((a, b) => b.lastTs - a.lastTs).slice(0, MAX_SESSIONS);
 }

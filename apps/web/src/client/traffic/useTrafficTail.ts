@@ -3,7 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Wait this long before opening the stream again after an error or a silent stream. */
 export const RECONNECT_MS = 3_000;
-/** A stream that sends neither an event nor a ping for this long is closed and opened again. Core pings every 25 seconds or so. */
+/**
+ * Liveness probe, as in the port source (realtime-client.js): a stream that sent neither an event nor a ping for this long is checked.
+ * One that is still OPEN stays live and the probe arms again, because Cloudflare may deliver keepalives unevenly.
+ * One that is CONNECTING or CLOSED is closed and opened again.
+ */
 export const SILENCE_MS = 150_000;
 /** The report refresh waits for this long after the last event, so a burst of events asks once. */
 export const REFRESH_DEBOUNCE_MS = 500;
@@ -14,8 +18,11 @@ export const MAX_EVENTS = 400;
 /** Event ids remembered for the duplicate check. A reconnect replays recent events, so this must outlast one replay. */
 const SEEN_LIMIT = 2_000;
 const RATE_WINDOW_MS = 60_000;
+/** EventSource.OPEN. */
+const OPEN = 1;
 
-export type TailStatus = "connecting" | "live" | "reconnecting";
+/** `idle`: no stream is open because no brand is in scope. */
+export type TailStatus = "idle" | "connecting" | "live" | "reconnecting";
 
 export interface TrafficTail {
   status: TailStatus;
@@ -27,6 +34,9 @@ export interface TrafficTail {
   perMinute: number;
 }
 
+const EMPTY: TrafficTail = { status: "connecting", events: [], lastEventAt: null, perMinute: 0 };
+const IDLE: TrafficTail = { ...EMPTY, status: "idle" };
+
 export function tailUrl(brandIds: readonly string[]): string {
   return brandIds.length > 0 ? `/api/traffic/tail?${new URLSearchParams({ brand: brandIds.join(",") })}` : "/api/traffic/tail";
 }
@@ -34,7 +44,8 @@ export function tailUrl(brandIds: readonly string[]): string {
 /**
  * The live event stream of the Traffic page: one EventSource on `/api/traffic/tail`.
  * - An error closes the stream and opens a new one after RECONNECT_MS. The new stream replays recent events, which the duplicate check drops.
- * - A stream that is silent for SILENCE_MS is treated as dead and opened again the same way.
+ * - A stream that is silent for SILENCE_MS gets a liveness probe: still OPEN means it stays live and the probe arms again, anything else opens a new stream.
+ * - The state belongs to one list of brands. A new list shows nothing of the old one, and a disabled hook reports `idle` with no events.
  * - Every event goes through the TrafficTailEvent schema; a frame that does not parse is skipped.
  * - `onRefresh` is called REFRESH_DEBOUNCE_MS after a connect or after the last event of a burst, and at least every REFRESH_MAX_WAIT_MS while events keep coming.
  * - `onAdsbot` is called once for each new AdsBot event.
@@ -42,13 +53,19 @@ export function tailUrl(brandIds: readonly string[]): string {
  */
 export function useTrafficTail(options: { brandIds: readonly string[]; enabled?: boolean; onRefresh?: () => void; onAdsbot?: (event: TrafficTailEvent) => void }): TrafficTail {
   const { brandIds, enabled = true } = options;
-  const [state, setState] = useState<TrafficTail>({ status: "connecting", events: [], lastEventAt: null, perMinute: 0 });
+  const [held, setHeld] = useState<{ key: string; enabled: boolean; tail: TrafficTail }>({ key: "", enabled, tail: EMPTY });
   const refreshRef = useRef(options.onRefresh);
   const adsbotRef = useRef(options.onAdsbot);
   refreshRef.current = options.onRefresh;
   adsbotRef.current = options.onAdsbot;
   const arrivals = useRef<number[]>([]);
   const key = brandIds.join(",");
+  const keyRef = useRef(key);
+  keyRef.current = key;
+  /** Writes to the held state only while it belongs to the list of brands on screen. */
+  const setState = useCallback((update: TrafficTail | ((cur: TrafficTail) => TrafficTail)) => {
+    setHeld((cur) => (cur.key === keyRef.current ? { ...cur, tail: typeof update === "function" ? update(cur.tail) : update } : cur));
+  }, []);
 
   const rate = useCallback((now: number) => {
     arrivals.current = arrivals.current.filter((at) => now - at < RATE_WINDOW_MS);
@@ -56,7 +73,12 @@ export function useTrafficTail(options: { brandIds: readonly string[]; enabled?:
   }, []);
 
   useEffect(() => {
-    if (!enabled || typeof EventSource === "undefined") return;
+    arrivals.current = [];
+    if (!enabled || typeof EventSource === "undefined") {
+      // No stream: nothing of an earlier one stays on screen, and the status does not claim a connection.
+      setHeld({ key, enabled, tail: IDLE });
+      return;
+    }
     let closed = false;
     let source: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -64,8 +86,7 @@ export function useTrafficTail(options: { brandIds: readonly string[]; enabled?:
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     let burstStart: number | null = null;
     const seen = new Set<string>();
-    arrivals.current = [];
-    setState({ status: "connecting", events: [], lastEventAt: null, perMinute: 0 });
+    setHeld({ key, enabled, tail: EMPTY });
 
     const runRefresh = () => {
       refreshTimer = undefined;
@@ -82,7 +103,11 @@ export function useTrafficTail(options: { brandIds: readonly string[]; enabled?:
 
     const armSilence = () => {
       if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => reconnect(), SILENCE_MS);
+      silenceTimer = setTimeout(() => {
+        // Liveness probe: a quiet stream that is still OPEN is healthy, so it stays live and the probe arms again.
+        if (!closed && source?.readyState === OPEN) { armSilence(); return; }
+        reconnect();
+      }, SILENCE_MS);
     };
 
     function reconnect() {
@@ -149,5 +174,6 @@ export function useTrafficTail(options: { brandIds: readonly string[]; enabled?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled]);
 
-  return state;
+  // State written for another list of brands, or before this one was set up, is never shown.
+  return held.key === key && held.enabled === enabled ? held.tail : enabled ? EMPTY : IDLE;
 }

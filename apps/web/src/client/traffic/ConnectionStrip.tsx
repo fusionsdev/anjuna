@@ -2,7 +2,7 @@ import { Volume2, VolumeX, Wifi, WifiOff } from "lucide-react";
 import type { TailStatus } from "./useTrafficTail";
 import { clock } from "./live";
 
-const STATUS_TEXT: Record<TailStatus, string> = { connecting: "กำลังเชื่อมต่อ", live: "เชื่อมต่อแล้ว", reconnecting: "หลุดการเชื่อมต่อ กำลังต่อใหม่" };
+const STATUS_TEXT: Record<TailStatus, string> = { idle: "ไม่ได้เชื่อมต่อ ไม่มีแบรนด์ในขอบเขต", connecting: "กำลังเชื่อมต่อ", live: "เชื่อมต่อแล้ว", reconnecting: "หลุดการเชื่อมต่อ กำลังต่อใหม่" };
 
 /**
  * The strip above the live feed: the state of the stream, the time of the last event (UTC), events in the last minute,

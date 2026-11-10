@@ -1,34 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-
-const KEY = "anjuna.traffic.sound";
-
-function read(): boolean {
-  try {
-    return window.localStorage.getItem(KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-function write(on: boolean): void {
-  try {
-    window.localStorage.setItem(KEY, on ? "1" : "0");
-  } catch { /* the switch still works for this visit */ }
-}
+import { SOUND_VIEW_KEY, readPrefs, updatePrefs } from "../prefs-manager";
 
 type AudioContextCtor = typeof AudioContext;
 const contextClass = (): AudioContextCtor | undefined =>
   typeof window === "undefined" ? undefined : window.AudioContext ?? (window as unknown as { webkitAudioContext?: AudioContextCtor }).webkitAudioContext;
 
 /**
- * The AdsBot beep and its on/off switch. The switch is kept on this device (localStorage): the user prefs API stores the brand scope
- * and saved views as one document, and a save from here could overwrite a scope change made at the same time.
+ * The AdsBot beep and its on/off switch. The switch is saved with the user's prefs (`saved_views.realtime_sound` in `/api/me/prefs`),
+ * so it follows the user to another device. The save goes through the prefs manager, which keeps the brand scope and the other saved views intact.
+ * It starts off and turns on when the saved value is read, unless the user already clicked. A failed read or save leaves it as the user set it on this page and reports `saveFailed`.
  * Nothing is played, and no AudioContext is made, while the switch is off. Turning it on is a click, which browsers need before they allow sound.
  */
-export function useAdsbotSound(): { enabled: boolean; setEnabled: (on: boolean) => void; beep: () => void } {
-  const [enabled, setEnabledState] = useState(read);
+export function useAdsbotSound(): { enabled: boolean; setEnabled: (on: boolean) => void; beep: () => void; saveFailed: boolean } {
+  const [enabled, setEnabledState] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const touched = useRef(false);
+  const mounted = useRef(true);
   const enabledRef = useRef(enabled);
   const contextRef = useRef<AudioContext | null>(null);
   enabledRef.current = enabled;
+  useEffect(() => {
+    mounted.current = true;
+    void readPrefs().then((prefs) => {
+      // A click made before the answer arrived wins over the saved value.
+      if (!mounted.current || touched.current || !prefs) return;
+      const saved = prefs.saved_views[SOUND_VIEW_KEY] === true;
+      enabledRef.current = saved;
+      setEnabledState(saved);
+    });
+    return () => { mounted.current = false; };
+  }, []);
 
   const context = useCallback((): AudioContext | null => {
     if (contextRef.current) return contextRef.current;
@@ -45,7 +46,10 @@ export function useAdsbotSound(): { enabled: boolean; setEnabled: (on: boolean) 
   const setEnabled = useCallback((on: boolean) => {
     enabledRef.current = on;
     setEnabledState(on);
-    write(on);
+    touched.current = true;
+    void updatePrefs((cur) => ({ ...cur, saved_views: { ...cur.saved_views, [SOUND_VIEW_KEY]: on } })).then((saved) => {
+      if (mounted.current) setSaveFailed(saved === null);
+    });
     if (on) void context()?.resume?.();
   }, [context]);
 
@@ -69,5 +73,5 @@ export function useAdsbotSound(): { enabled: boolean; setEnabled: (on: boolean) 
   }, [context]);
 
   useEffect(() => () => { void contextRef.current?.close?.(); contextRef.current = null; }, []);
-  return { enabled, setEnabled, beep };
+  return { enabled, setEnabled, beep, saveFailed };
 }

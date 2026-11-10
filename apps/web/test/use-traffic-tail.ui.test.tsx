@@ -86,7 +86,7 @@ describe("useTrafficTail", () => {
     expect(result.current.status).toBe("live");
   });
 
-  it("opens a new stream when nothing, not even a ping, arrives for 150 seconds", () => {
+  it("opens a new stream when nothing, not even a ping, arrives for 150 seconds and the browser reports it dead", () => {
     const { result } = mount();
     act(() => MockEventSource.last().open());
     tick(SILENCE_MS - 1000);
@@ -94,10 +94,75 @@ describe("useTrafficTail", () => {
     tick(SILENCE_MS - 1000);
     // The ping moved the deadline, so the stream is still the first one.
     expect(MockEventSource.instances).toHaveLength(1);
+    // The probe finds the stream no longer OPEN (the browser gave up on it), so it is opened again.
+    MockEventSource.instances[0]!.readyState = 2;
     tick(1000);
     expect(result.current.status).toBe("reconnecting");
     expect(MockEventSource.instances[0]!.closed).toBe(true);
     tick(RECONNECT_MS);
+    expect(MockEventSource.instances).toHaveLength(2);
+  });
+
+  it("keeps a silent stream that is still OPEN live and probes it again 150 seconds later", () => {
+    const { result } = mount();
+    act(() => MockEventSource.last().open());
+    expect(MockEventSource.last().readyState).toBe(1);
+    // Nothing arrives for three probe periods. Each probe sees readyState OPEN, so no reconnect, no status change, no second stream.
+    for (let n = 0; n < 3; n += 1) {
+      tick(SILENCE_MS);
+      expect(result.current.status).toBe("live");
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(MockEventSource.instances[0]!.closed).toBe(false);
+    }
+    // An event still arrives on that same stream.
+    act(() => MockEventSource.last().emit("event", tailEvent({ event_id: "late" })));
+    expect(result.current.events.map((e) => e.event_id)).toEqual(["late"]);
+    // When a probe finds the stream CONNECTING or CLOSED, the usual reconnect runs.
+    MockEventSource.last().readyState = 0;
+    tick(SILENCE_MS);
+    expect(result.current.status).toBe("reconnecting");
+    expect(MockEventSource.instances[0]!.closed).toBe(true);
+    tick(RECONNECT_MS);
+    expect(MockEventSource.instances).toHaveLength(2);
+  });
+
+  it("shows nothing of the old brands after the list changes, opens a stream for the new list and ignores the old stream", () => {
+    const { result, rerender } = mount({ brandIds: ["brand-a", "brand-b"] });
+    act(() => MockEventSource.last().open());
+    const old = MockEventSource.last();
+    act(() => old.emit("event", tailEvent({ event_id: "a1", brand: "brand-a" })));
+    act(() => old.emit("event", tailEvent({ event_id: "b1", brand: "brand-b" })));
+    expect(result.current.events).toHaveLength(2);
+    rerender({ brandIds: ["brand-a"] });
+    expect(result.current.events).toEqual([]);
+    expect(result.current.lastEventAt).toBeNull();
+    expect(result.current.status).toBe("connecting");
+    expect(old.closed).toBe(true);
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.last().url).toBe("/api/traffic/tail?brand=brand-a");
+    // A late frame from the closed stream changes nothing.
+    act(() => old.emit("event", tailEvent({ event_id: "b2", brand: "brand-b" })));
+    expect(result.current.events).toEqual([]);
+    act(() => MockEventSource.last().open());
+    act(() => MockEventSource.last().emit("event", tailEvent({ event_id: "a2", brand: "brand-a" })));
+    expect(result.current.events.map((e) => e.event_id)).toEqual(["a2"]);
+  });
+
+  it("resets to idle with no events when it is disabled, and starts again when it is enabled", () => {
+    const { result, rerender } = mount({ brandIds: ["brand-a"] });
+    act(() => MockEventSource.last().open());
+    act(() => MockEventSource.last().emit("event", tailEvent({ event_id: "a1", brand: "brand-a" })));
+    expect(result.current.status).toBe("live");
+    expect(result.current.events).toHaveLength(1);
+    const first = MockEventSource.last();
+    rerender({ brandIds: ["brand-a"], enabled: false });
+    expect(first.closed).toBe(true);
+    expect(result.current).toEqual({ status: "idle", events: [], lastEventAt: null, perMinute: 0 });
+    tick(RECONNECT_MS + SILENCE_MS);
+    expect(MockEventSource.instances).toHaveLength(1);
+    rerender({ brandIds: ["brand-a"], enabled: true });
+    expect(result.current.status).toBe("connecting");
+    expect(result.current.events).toEqual([]);
     expect(MockEventSource.instances).toHaveLength(2);
   });
 
