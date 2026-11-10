@@ -1,4 +1,4 @@
-import { CONVERSION_STALLED_HOURS, spendPeriodRange, type AlertsReportResponse, type ConversionsReportResponse, type FunnelReportResponse, type LifecycleBrandSummary, type PanelSpendReportResponse } from "@anjuna/contracts";
+import { CONVERSION_STALLED_HOURS, spendPeriodRange, type AlertsReportResponse, type BrandSummary, type ConversionsReportResponse, type FunnelReportResponse, type LifecycleBrandSummary, type PanelSpendReportResponse, type TrafficBreakdownResponse } from "@anjuna/contracts";
 import { useEffect, useMemo, useState } from "react";
 import { api, type BrandChecklists, type Me } from "../api";
 import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars";
@@ -7,6 +7,7 @@ import { Chip } from "../components/Chip";
 import { isDemoBrand } from "../brand-health";
 import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals, spendWindowThb } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
+import { buildBrandLabels } from "../brand-labels";
 import { useAdsCampaigns, useNoGclid, useUploadFacts } from "../brand-facts";
 import { conversionsPath } from "./Conversions";
 import { BrandRows } from "./home/BrandRows";
@@ -125,6 +126,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const { inScopeId, hidesBrands } = useBrandScope();
   const [funnelRaw, setFunnelRaw] = useState<FunnelReportResponse | null | undefined>(undefined);
   const [previousRaw, setPreviousRaw] = useState<FunnelReportResponse | null | undefined>(undefined);
+  // The form-view count comes from the traffic breakdown (measured from form_started events), not the funnel report (its events source is not wired).
+  const [trafficRaw, setTrafficRaw] = useState<TrafficBreakdownResponse | null | undefined>(undefined);
   const [alerts, setAlerts] = useState<AlertsReportResponse | null | undefined>(undefined);
   const [conversions, setConversions] = useState<ConversionsReportResponse | null | undefined>(undefined);
   const [daily, setDaily] = useState<DailyCount[] | null | undefined>(undefined);
@@ -134,6 +137,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [brands, setBrands] = useState<LifecycleBrandSummary[] | null | undefined>(undefined);
   const [checklists, setChecklists] = useState<BrandChecklists | null | undefined>(undefined);
   const [paused, setPaused] = useState<ReadonlySet<string> | null | undefined>(undefined);
+  // The core brand list (with hostnames) feeds the fix-list domain map alongside the factory list, like the Alerts screen.
+  const [runtimeBrands, setRuntimeBrands] = useState<BrandSummary[] | null | undefined>(undefined);
   // The whole reports feed the brand rows; the totals above feed the tiles. Both come from the same answer.
   const [spendRaw, setSpendRaw] = useState<PanelSpendReportResponse | null | undefined>(undefined);
   // For the spend change: yesterday for "today"; the 30 day report for "7 days" (its daily rows hold the 7 days before). 30 days has no earlier window.
@@ -154,7 +159,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     setSpendBeforeRaw(owner && period !== "30d" ? undefined : null);
     setConversions(undefined);
     setDaily(undefined);
+    setTrafficRaw(undefined);
     api.conversions({ period }).then((report) => current && setConversions(report), () => current && setConversions(null));
+    // Measured form-view counts by brand for this period, scoped on read. /go has no event, so it stays unmeasured.
+    api.trafficBreakdown(period, "source").then((report) => current && setTrafficRaw(report), () => current && setTrafficRaw(null));
     // One bar pair per UTC day. `today` would be a single bar, so the chart shows the last 7 days.
     const days = spendPeriodRange(period === "today" ? "7d" : period);
     api.leadAggregates(days).then((report) => current && setDaily(dailySeries(report, days.from, days.to)), () => current && setDaily(null));
@@ -186,7 +194,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     api.lifecycleBrands().then(({ brands: list }) => current && setBrands(list), () => current && setBrands(null));
     api.checklists().then((batch) => current && setChecklists(batch), () => current && setChecklists(null));
     // Core pauses a brand while its factory status still reads live, so the paused set comes from core's brand list like on the Brands screen.
-    api.brands().then((list) => current && setPaused(new Set(list.brands.filter((b) => b.status === "paused").map((b) => b.brand_id))), () => current && setPaused(null));
+    api.brands().then(
+      (list) => { if (current) { setRuntimeBrands(list.brands); setPaused(new Set(list.brands.filter((b) => b.status === "paused").map((b) => b.brand_id))); } },
+      () => { if (current) { setRuntimeBrands(null); setPaused(null); } },
+    );
     return () => { current = false; };
   }, [reloadKey, owner]);
 
@@ -198,6 +209,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   // The daily series has no brand, so a scope that hides brands shows no line.
   const spendDays = spendRaw && !hidesBrands ? spendSeries(spendRaw) : null;
   const scopedBrands = brands ? brands.filter((brand) => inScopeId(brand.brand_id)) : brands;
+  // brand_id to domain for the fix list, built from the brand list already loaded (no extra fetch). Empty until it loads; unknown ids read as themselves.
+  const brandDomains = useMemo(() => buildBrandLabels(brands ?? null, runtimeBrands ?? null), [brands, runtimeBrands]);
   // Exact per brand, never read off a page of 200 rows that other brands may fill. The Google Ads chip reads the campaigns API.
   const scopedIds = useMemo(() => (scopedBrands ?? []).map((brand) => brand.brand_id), [scopedBrands]);
   const uploadFacts = useUploadFacts(scopedIds, reloadKey);
@@ -232,11 +245,16 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   // Core sends value_totals to the owner only; the card still checks the role so no other session shows it.
   const uploadedValue = owner && conversions ? conversions.value_totals?.uploaded : undefined;
 
+  // Form-views are measured (form_started events) and summed in the traffic breakdown, scoped like the funnel. /go has no
+  // event in the telemetry vocabulary, so it stays unmeasured ("—") like the Funnel screen. The funnel report's own go/form
+  // columns are always 0 (its events source is not wired), so they are not read here.
+  const formViews: Value = trafficRaw === undefined ? undefined : trafficRaw === null ? null
+    : trafficRaw.brands.filter((b) => inScopeId(b.brand_id)).reduce((sum, b) => sum + b.form_views, 0);
   const stages: Stage[] = [
     ...(owner ? [{ label: "คลิกที่จ่าย", value: spend === undefined ? undefined : spend?.clicks ?? null, paid: true }] : []),
     { label: "ถึงเว็บ", value: field((f) => f.clicks) },
-    { label: "ถึง /go", value: field((f) => f.go) },
-    { label: "เปิดฟอร์ม", value: field((f) => f.form) },
+    { label: "ถึง /go", value: null },
+    { label: "เปิดฟอร์ม", value: formViews },
     { label: "ลีด", value: field((f) => f.leads) },
     { label: "ขายได้", value: field((f) => f.sold) },
   ];
@@ -317,7 +335,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
       <div className="home-stack">
         <IncidentBanner urgent={urgent} clickLoss={clickLoss} onQueue={() => navigate(allPath)} onAlerts={go("alerts")} />
         <div className="home-grid2">
-          <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} onAlerts={go("alerts")} />
+          <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} domains={brandDomains} onAlerts={go("alerts")} />
           <HumanTasks tasks={tasks} />
         </div>
         <div className="ledger kpi-row" role="group" aria-label="สรุปตัวเลข">
@@ -362,6 +380,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
           <div className="home-drops" style={{ ["--stages" as string]: stages.length }}>
             {stages.map((stage, i) => (i ? <span key={stage.label} className={i === leak ? "amb" : ""}>{dropText(stages[i - 1]!.value, stage.value)}</span> : <span key={stage.label} />))}
           </div>
+          <p className="hint">/go ยังไม่มีข้อมูลการวัด</p>
           {note && (
             <p className="note">
               {note}

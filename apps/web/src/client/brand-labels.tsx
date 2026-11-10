@@ -6,9 +6,9 @@ type Source = Pick<LifecycleBrandSummary, "brand_id" | "hostnames">[] | null;
 
 export function buildBrandLabels(lifecycle: Source, runtime: Pick<BrandSummary, "brand_id" | "hostnames">[] | null): Map<string, string> {
   const map = new Map<string, string>();
-  for (const b of runtime ?? []) if (b.hostnames[0]) map.set(b.brand_id, b.hostnames[0]);
+  for (const b of runtime ?? []) if (b.hostnames?.[0]) map.set(b.brand_id, b.hostnames[0]);
   // The factory domain wins over the runtime hostname.
-  for (const b of lifecycle ?? []) if (b.hostnames[0]) map.set(b.brand_id, b.hostnames[0]);
+  for (const b of lifecycle ?? []) if (b.hostnames?.[0]) map.set(b.brand_id, b.hostnames[0]);
   return map;
 }
 

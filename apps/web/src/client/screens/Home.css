@@ -21,7 +21,7 @@
 .home-l { margin: 0; font-size: 13px; color: var(--muted); }
 .home-item { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
 .home-item:first-of-type { border-top: 0; }
-.home-item .t { flex: 1; min-width: 0; }
+.home-item .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .home-item .t span { display: block; color: var(--muted); font-size: 13px; }
 /* The conversions card sits alone on the first row; the fix list and the to-do list keep their 1.6 : 1 split below it. */
 .home-conv { grid-column: 1 / -1; }
