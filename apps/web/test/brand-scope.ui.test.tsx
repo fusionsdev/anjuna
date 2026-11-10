@@ -41,6 +41,7 @@ beforeEach(() => {
     if (input === "/api/brands") return json({ brands: rows.map((row) => runtime(row.brand_id)), generated_at: "2026-11-10T00:00:00Z" });
     if (input === "/api/upgrade-all/latest") return json({ upgrade: null });
     if (input.startsWith("/api/funnel?")) return json({ from: "2026-11-03", to: "2026-11-10", rows: [] });
+    if (input.startsWith("/api/traffic/breakdown")) return json({ period: "today", by: "source", from: "2026-11-03T00:00:00.000Z", to: "2026-11-10T00:00:00.000Z", timezone: "America/New_York", rows: [], brands: [] });
     if (/^\/api\/brands\/[^/]+\/(checklist|installs|revisions)$/.test(input)) return json({ checklist: [], installs: [], revisions: [], current_revision_id: null, rollback_target_revision_id: null });
     throw new Error(`Unexpected test HTTP request: ${input}`);
   }));
@@ -328,11 +329,12 @@ describe("scope on Home work items and the all-brand labels", () => {
     const alerts = { ...alertsFixture, brands_without_postbacks: { state: "warn", detail: { window_hours: 24, brands: [{ brand: "brand-cg", leads: 5 }, { brand: "brand-al", leads: 7 }] } } };
     vi.mocked(api.alerts).mockResolvedValue(alerts as never);
     render(<App />);
-    await waitFor(() => expect(fixList().getByText("brand-cg")).toBeTruthy());
+    // The fix list shows the brand's domain, like the Alerts screen.
+    await waitFor(() => expect(fixList().getByText("creditsgene.test")).toBeTruthy());
     // brand-al is paused in core, so the default scope hides it.
-    expect(fixList().queryByText("brand-al")).toBeNull();
+    expect(fixList().queryByText("alpha.test")).toBeNull();
     await showInactive();
-    await waitFor(() => expect(fixList().getByText("brand-al")).toBeTruthy());
+    await waitFor(() => expect(fixList().getByText("alpha.test")).toBeTruthy());
   });
 
   it("counts Test sold only for brands in scope and batches only those", async () => {
