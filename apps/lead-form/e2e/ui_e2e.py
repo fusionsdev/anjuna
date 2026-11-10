@@ -57,12 +57,16 @@ def run(browser, base, number, cpu_rate):
     try:
         gclid = "UI-" + uuid.uuid4().hex[:8]
         page.goto(f"{base}/?keyword=bear%20cash%20loans&gclid={gclid}")
-        expect(page.locator("h1")).to_have_text("Bear Cash Loans")
+        # The ad keyword is recorded, never shown: the landing H1 holds the brand name.
+        expect(page.locator("h1")).to_have_text("Example Brand")
+        expect(page.locator("body")).not_to_contain_text("Bear Cash Loans")
         page.select_option("select[name=requested_amount]", "3250")
         page.fill("input[name=zip]", "90210")
         page.get_by_role("button", name="Continue", exact=True).click()
         page.wait_for_url("**/request?**")
-        expect(page.locator("header h1")).to_have_text("Bear Cash Loans")
+        # The local brand has no keyword_default, so the form header is the brand name.
+        expect(page.locator("header h1")).to_have_text("Example Brand")
+        expect(page.locator("body")).not_to_contain_text("Bear Cash Loans")
         expect(page.get_by_placeholder("e.g. 10001", exact=True)).to_have_value("90210")
         page.locator("button[type=submit]").click()
 

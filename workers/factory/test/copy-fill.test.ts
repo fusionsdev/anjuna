@@ -67,6 +67,11 @@ describe("fillCopy", () => {
     expect(result.issues).toContainEqual(expect.objectContaining({ field: "h1", code: "keyword_slot" }));
   });
 
+  it("counts the brand name in the h1 length: the marker becomes the brand name on the page", async () => {
+    const long = { brand_name: "Maple", keyword_default: "K" + "k".repeat(59), copy: { h1: `${"a".repeat(100)} {{keyword}}`, cta: "Continue", sub: "Explore options." } };
+    expect(await fillCopy(long)).toEqual({ copy: long.copy, issues: [] });
+  });
+
   it("validates fallback values too", async () => {
     const result = await fillCopy({ ...draft, brand_name: "Aurum" });
     expect(result.copy).toEqual({ h1: "", cta: "", sub: "" });

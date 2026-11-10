@@ -263,7 +263,9 @@ describe("GET /api/wizard/preview/:id", () => {
     expect(html).toContain('content="See your options in minutes."');
     expect(html).toContain('<meta property="og:title" content="Maple Cash | Quick Funding">');
     expect(html).toMatch(/<header data-brand>Maple Cash<\/header>/);
-    expect(html).toContain("<h1><span data-kw>Quick Loan</span> When You Need It</h1>");
+    // The H1 slot is baked with the brand name, not the keyword.
+    expect(html).toContain("<h1><span data-kw>Maple Cash</span> When You Need It</h1>");
+    expect(html).not.toContain("Quick Loan</span>");
     expect(html).not.toContain("Harbor");
   });
 
@@ -320,7 +322,7 @@ describe("GET /api/wizard/preview/:id", () => {
 
     // The preview drops scripts (the JSON-LD block is the only one) and image sources missing from the archive.
     expect(previewed).toBe(served.replace(/<script type="application\/ld\+json">.*?<\/script>/, "").replace(' src="/logo.png"', ""));
-    expect(previewed).toContain("<h1><span data-kw>Loan Options</span> Options in Minutes</h1>");
+    expect(previewed).toContain("<h1><span data-kw>Wizard Demo</span> Options in Minutes</h1>");
     expect(previewed).toContain('href="tel:+15550100199"');
     expect(previewed).toContain("+1 (555) 010-0199");
     expect(previewed).toContain("<title>Wizard Demo | Loan Options</title>");

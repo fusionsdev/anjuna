@@ -24,6 +24,13 @@ describe("runtime config (BR-5)", () => {
     });
   });
 
+  it("parses label like keyword: trimmed, capped at 60, absent when empty or not a string", () => {
+    expect(parseRuntimeConfig({ label: " Vet Payment Plans " }).label).toBe("Vet Payment Plans");
+    expect(parseRuntimeConfig({ label: "x".repeat(200) }).label).toHaveLength(60);
+    for (const bad of [null, "", "   ", 7, ["a"]]) expect("label" in parseRuntimeConfig({ label: bad })).toBe(false);
+    expect("label" in parseRuntimeConfig({ keyword: "Fast Cash" })).toBe(false);
+  });
+
   it("drops unknown fields such as brand_id or secrets", () => {
     const cfg = parseRuntimeConfig({ brand: "B", brand_id: "b_123", token: "secret" }) as Record<string, unknown>;
     expect(cfg).toEqual({ brand: "B" });

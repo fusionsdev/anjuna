@@ -202,7 +202,7 @@ describe("brand theme", () => {
     const { get, core } = site({ theme_vars: VARS }, LANDING);
     core.settings = live({ theme: THEME });
     const html = await (await get("/")).text();
-    expect(html).toContain("<h1><span data-kw>Fast Cash Loans</span></h1>");
+    expect(html).toContain("<h1><span data-kw>Brand A</span></h1>");
     expect(html).not.toContain("brand-theme");
   });
 });

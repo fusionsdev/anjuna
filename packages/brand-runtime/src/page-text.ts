@@ -15,7 +15,7 @@ export interface PageTextData {
   brand_name: string;
   /** The template's own brand name: text_defaults.brand_name, else the template display name. */
   template_brand?: string | null;
-  /** Default text of the H1 [data-kw] slot. Required when profile.copy.h1 is set. */
+  /** The brand's keyword: checked as a clean keyword when profile.copy.h1 is set. The H1 slot shows brand_name; this fills it only when brand_name is empty. */
   keyword_default?: string | null;
   profile?: BrandProfile;
 }
@@ -52,13 +52,13 @@ function phoneDigits(value: string): string {
 }
 
 /** The copy fields the employee filled. A filled field that breaks the copy rules throws PageCopyError. */
-function filledCopy(profile: BrandProfile, keywordDefault: string): Partial<BrandCopy> {
+function filledCopy(profile: BrandProfile, keywordDefault: string, slotText: string): Partial<BrandCopy> {
   const copy = profile.copy ?? {};
   const filled: Partial<BrandCopy> = {};
   for (const field of ["h1", "cta", "sub"] as const) if (copy[field]?.trim()) filled[field] = copy[field]!.trim();
   // Empty fields keep the template text; they get known-valid stand-ins so validateCopy judges only the filled ones.
   const probe: BrandCopy = { h1: filled.h1 ?? COPY_KEYWORD_MARKER, cta: filled.cta ?? "Continue", sub: filled.sub ?? "Check your options." };
-  const issues = validateCopy(probe, keywordDefault)
+  const issues = validateCopy(probe, keywordDefault, slotText)
     .filter((issue) => issue.field === "keyword_default" ? filled.h1 !== undefined : filled[issue.field as CopyField] !== undefined);
   if (issues.length) throw new PageCopyError(`Page copy is invalid: ${issues.map((issue) => issue.message).join(" ")}`);
   return filled;
@@ -87,7 +87,9 @@ async function templateContacts(pages: ReadonlyMap<string, string>): Promise<{ p
 /**
  * Rewrite every HTML page of a template with the revision's page text. Pages with nothing to change come back as
  * the same string. Throws PageCopyError when filled copy breaks the copy rules.
- *   index page: <h1> gets profile.copy.h1 through renderCopyH1 (the [data-kw] slot keeps keyword_default); the CTA
+ *   index page: <h1> gets profile.copy.h1 through renderCopyH1 (the [data-kw] slot gets the brand name, as the brand
+ *     Worker writes it on every request; keyword_default only when the name is empty). Without copy.h1 the template's
+ *     [data-kw] slot still gets the brand name (an empty name leaves the template text); the CTA
  *     form's submit button gets copy.cta; the first <p> after the H1 and before the CTA form gets copy.sub.
  *   every page: [data-contact="phone|email|address"] gets the profile value (an <a> slot gets a tel:/mailto: href);
  *     tel:/mailto: links get the profile phone/email; any phone number in the text of a tel: link, and the template's
@@ -97,12 +99,14 @@ async function templateContacts(pages: ReadonlyMap<string, string>): Promise<{ p
  */
 export async function renderPageText(pages: ReadonlyMap<string, string>, data: PageTextData): Promise<Map<string, string>> {
   const profile = BrandProfile.parse(data.profile ?? {});
-  const copy = filledCopy(profile, data.keyword_default ?? "");
-  const h1Html = copy.h1 === undefined ? null : renderCopyH1(copy.h1, data.keyword_default ?? "");
+  const brand = data.brand_name.trim();
+  const keywordDefault = data.keyword_default ?? "";
+  const slotText = brand || keywordDefault;
+  const copy = filledCopy(profile, keywordDefault, slotText);
+  const h1Html = copy.h1 === undefined ? null : renderCopyH1(copy.h1, keywordDefault, slotText);
   const contact = profile.contact ?? {};
   const template = await templateContacts(pages);
   const from = data.template_brand?.trim() || null;
-  const brand = data.brand_name.trim();
   const renameBrand = from !== null && brand !== "" && from !== brand;
   const brandSpan = renameBrand ? brandSourceReplacer(from, `<span data-brand>${escapeText(brand)}</span>`) : null;
   const brandText = renameBrand ? brandSourceReplacer(from, escapeText(brand)) : null;
@@ -132,7 +136,9 @@ export async function renderPageText(pages: ReadonlyMap<string, string>, data: P
     const index = INDEX_PAGE.test(path);
     const pageCopy = index && (copy.h1 !== undefined || copy.cta !== undefined || copy.sub !== undefined);
     const pageContact = (phoneHtml !== null || emailHtml !== null || contact.address !== undefined) && /tel:|mailto:|data-contact/i.test(html);
-    if (!pageCopy && !pageContact && !renameBrand) {
+    // No copy.h1: the template's H1 text stays, but its [data-kw] slot shows the brand name, as the brand Worker writes it.
+    const slotFill = index && h1Html === null && brand !== "" && /data-kw/i.test(html);
+    if (!pageCopy && !slotFill && !pageContact && !renameBrand) {
       out.set(path, html);
       continue;
     }
@@ -165,6 +171,7 @@ export async function renderPageText(pages: ReadonlyMap<string, string>, data: P
       .on("script, style, title", track("skip"))
       .on("textarea, svg, [data-brand]", track("plain"));
     if (index) {
+      if (h1Html === null && brand !== "") rewriter = rewriter.on("[data-kw]", { element(element) { element.setInnerContent(brand); } });
       rewriter = rewriter
         .on("h1", { element(element) {
           if (h1Seen) return;

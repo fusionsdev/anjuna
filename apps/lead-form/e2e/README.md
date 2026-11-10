@@ -23,8 +23,8 @@ python e2e/ui_e2e.py http://127.0.0.1:8799 --runs 8 --channel msedge
 python e2e/ui_e2e.py http://127.0.0.1:8799 --runs 8 --channel msedge --cpu-rate 4
 ```
 
-Each run gets a fresh browser context. The test checks the landing and form keyword,
-prefilled ZIP, all 3 steps, consent, accepted lead response, provider hop, and the
+Each run gets a fresh browser context. The test checks the landing and form headers (the brand name,
+never the ad keyword), prefilled ZIP, all 3 steps, consent, accepted lead response, provider hop, and the
 amount/name/nonempty click ID in the prepop URL. Assertions fail the process.
 The test accepts only a loopback origin. It reads the local provider response with
 `max_redirects=0` and replaces it before the browser can follow the external URL.

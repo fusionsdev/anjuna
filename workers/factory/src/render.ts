@@ -14,7 +14,7 @@ export interface LegalRenderData {
   profile?: BrandProfile;
   /** The template's own brand name (text_defaults.brand_name, else the template display name). */
   template_brand?: string | null;
-  /** Default text of the H1 [data-kw] slot; needed when profile.copy.h1 is set. */
+  /** The brand's keyword, checked when profile.copy.h1 is set. The H1 [data-kw] slot shows brand_name; this fills it only when brand_name is empty. */
   keyword_default?: string | null;
 }
 

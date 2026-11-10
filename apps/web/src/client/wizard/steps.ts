@@ -107,6 +107,9 @@ function profileErrors(profile: BrandProfile): FieldErrors {
 
 const COPY_FIELD_NAMES = Object.keys(COPY_LIMITS) as CopyField[];
 
+/** What the h1's {{keyword}} marker becomes on the page: the site name (the install's brand_name, else the brand name), else the keyword. */
+const slotTextOf = (f: WizardForm): string => f.brand_name.trim() || f.name.trim() || (cleanKeyword(f.keyword) ?? "");
+
 /**
  * The page copy rules (validateCopy, the same check the install runs) for the h1, cta and sub the employee filled in.
  * An empty field is allowed: it is filled at Generate. A field with several findings shows them together.
@@ -114,7 +117,7 @@ const COPY_FIELD_NAMES = Object.keys(COPY_LIMITS) as CopyField[];
 export function copyFieldErrors(f: WizardForm): FieldErrors {
   const errors: FieldErrors = {};
   const messages: Partial<Record<CopyField, string[]>> = {};
-  const issues = validateCopy({ h1: f.h1, cta: f.cta, sub: f.sub }, cleanKeyword(f.keyword) ?? "");
+  const issues = validateCopy({ h1: f.h1, cta: f.cta, sub: f.sub }, cleanKeyword(f.keyword) ?? "", slotTextOf(f));
   for (const issue of issues) {
     if (issue.field === "keyword_default" || issue.field === "adapter" || issue.code === "required" || f[issue.field].trim() === "") continue;
     (messages[issue.field] ??= []).push(describeCopyIssue(issue.field, issue));
@@ -123,10 +126,10 @@ export function copyFieldErrors(f: WizardForm): FieldErrors {
   return errors;
 }
 
-/** Characters a visitor sees: the h1's {{keyword}} marker counts as the keyword it becomes. */
+/** Characters a visitor sees: the h1's {{keyword}} marker counts as the site name it becomes. */
 export function visibleCopyLength(f: WizardForm, field: CopyField): number {
   const value = f[field].trim();
-  return field === "h1" ? value.replaceAll(COPY_KEYWORD_MARKER, cleanKeyword(f.keyword) ?? "").length : value.length;
+  return field === "h1" ? value.replaceAll(COPY_KEYWORD_MARKER, slotTextOf(f)).length : value.length;
 }
 
 export interface ValidateContext {

@@ -180,8 +180,6 @@ const TOTAL_STEPS = STEPS.length;
 
 // Translations matching high-converting lead-gen standards with formal USA Financial terminology
 const TRANSLATIONS = {
-  disclaimerBar: (brand: string) =>
-    `${brand} is a secure credit-matching technology platform and is not a direct lender. Subject to underwriting approval and state-specific regulatory criteria.`,
   progress: "Application Progress",
   changesSaved: "securely encrypted & saved",
   stepOf: "Section {current} of {total}",
@@ -538,6 +536,10 @@ export interface AppProps {
 
 export default function App({ embedded = false }: AppProps = {}) {
   const brandName = resolveBrandName();
+  // The tab title shows the brand's own keyword when the ad link carried a keyword; otherwise the page keeps its title.
+  useEffect(() => {
+    if (RUNTIME_CONFIG.label) document.title = RUNTIME_CONFIG.label;
+  }, []);
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [activeField, setActiveField] = useState<string | null>(null);
   const [showStickyBar, setShowStickyBar] = useState<boolean>(false);
@@ -2139,16 +2141,6 @@ export default function App({ embedded = false }: AppProps = {}) {
       data-embedded={embedded ? "" : undefined}
       className={embedded ? "w-full select-none" : "min-h-screen flex flex-col justify-between bg-zinc-50/20 select-none"}
     >
-      {/* Dynamic Compliant Disclaimer Bar at the absolute top of the screen (host page owns this when embedded) */}
-      {!embedded && (
-      <div className="w-full bg-zinc-900 text-zinc-100 py-2.5 px-4 text-center text-[10px] md:text-xs select-text font-medium border-b border-zinc-800">
-        <div className="max-w-2xl mx-auto flex items-center justify-center gap-2">
-          <Shield className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-          <span>{TRANSLATIONS.disclaimerBar(brandName)}</span>
-        </div>
-      </div>
-      )}
-
       <div className={embedded ? "w-full" : `flex-grow flex flex-col justify-center px-4 transition-all duration-300 ${stickyBarActive ? "pt-6 md:pt-12 pb-28 md:pb-36" : "py-6 md:py-12"}`}>
         {/* Brand Header (host page owns its own header when embedded) */}
         {!embedded && (
@@ -2157,10 +2149,10 @@ export default function App({ embedded = false }: AppProps = {}) {
             <svg className="w-7 h-7 text-zinc-800" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
             </svg>
-            <span className="font-display font-bold text-lg md:text-xl tracking-[0.15em] text-zinc-900 uppercase">{brandName}</span>
+            {/* The page's only h1. It shows the brand's own keyword when the ad link had one, else the brand name; never the ad's keyword. */}
+            <h1 className="font-display font-bold text-lg md:text-xl tracking-[0.15em] text-zinc-900 uppercase">{RUNTIME_CONFIG.label || brandName}</h1>
           </div>
           <p className="font-display text-[9px] tracking-widest text-zinc-500 uppercase font-bold mb-1">CREDIT-MATCHING SERVICE · NOT A LENDER</p>
-          <h1 className="font-display text-sm md:text-base font-medium text-zinc-600 tracking-tight"><span data-kw>{RUNTIME_CONFIG.keyword || "Secure Request Form"}</span></h1>
         </header>
         )}
 

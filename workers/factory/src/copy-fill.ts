@@ -24,13 +24,15 @@ export interface CopyFillResult { copy: BrandCopy; issues: CopyIssue[] }
  * silently fall back. Reject the whole proposed fill on validation failure; retain employee bytes.
  */
 export async function fillCopy(draft: CopyDraft, deps: CopyFillDeps = {}): Promise<CopyFillResult> {
+  // The h1 marker becomes the brand name on the page, so the length rule counts it, as the wizard and the render do.
+  const slotText = draft.brand_name.trim() || draft.keyword_default;
   const original: BrandCopy = {
     h1: draft.copy?.h1 ?? "",
     cta: draft.copy?.cta ?? "",
     sub: draft.copy?.sub ?? "",
   };
   const fields = (Object.keys(original) as CopyField[]).filter((field) => !original[field].trim());
-  if (!fields.length) return { copy: original, issues: validateCopy(original, draft.keyword_default) };
+  if (!fields.length) return { copy: original, issues: validateCopy(original, draft.keyword_default, slotText) };
 
   let generated: unknown;
   try {
@@ -45,7 +47,7 @@ export async function fillCopy(draft: CopyDraft, deps: CopyFillDeps = {}): Promi
   } catch {
     return { copy: original, issues: [
       { field: "adapter", code: "adapter_failed", message: "Copy generation failed. Retry or fill the empty fields yourself." },
-      ...validateCopy(original, draft.keyword_default),
+      ...validateCopy(original, draft.keyword_default, slotText),
     ] };
   }
 
@@ -55,6 +57,6 @@ export async function fillCopy(draft: CopyDraft, deps: CopyFillDeps = {}): Promi
   for (const field of fields) {
     if (Object.hasOwn(values, field) && typeof values[field] === "string") candidate[field] = values[field];
   }
-  const issues = validateCopy(candidate, draft.keyword_default);
+  const issues = validateCopy(candidate, draft.keyword_default, slotText);
   return { copy: issues.length ? original : candidate, issues };
 }

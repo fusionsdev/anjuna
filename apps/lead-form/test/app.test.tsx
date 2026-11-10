@@ -1,6 +1,6 @@
 // User-visible parity with V1 lite_v1 (3 steps: amount + ZIP prefilled, contact details,
 // review & agreement), driven the same way spike/ui_e2e.py drives it, plus the T4 changes:
-// brand and keyword from the runtime config, variant from cfg.variant, no gate-interest call.
+// brand and label from the runtime config (the ad keyword is never shown), variant from cfg.variant, no gate-interest call.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -49,20 +49,68 @@ afterEach(() => {
 });
 
 describe("form app", () => {
-  it("shows the brand and keyword from the runtime config in the header", async () => {
+  it("shows the brand name as the page's only h1 when the config has no label", async () => {
     setConfig({ brand: "Example Brand", keyword: "Bear Cash Loans", amount: 3250, zip: "90210", variant: "lite_v1" });
     const App = await loadApp();
     const { container } = render(<App />);
-    const kw = container.querySelector("header h1 span[data-kw]");
-    expect(kw?.textContent).toBe("Bear Cash Loans");
+    const h1s = container.querySelectorAll("h1");
+    expect(h1s).toHaveLength(1);
+    expect(h1s[0]?.textContent).toBe("Example Brand");
     expect(container.querySelector("header")?.textContent).toContain("Example Brand");
+    expect(container.querySelector("[data-kw]")).toBeNull();
   });
 
-  it("falls back to neutral defaults when the config is empty", async () => {
+  it("shows the label in the header and brandName in the footer and consent text when the config has a label", async () => {
+    setConfig({ brand: "Example Brand", keyword: "Bear Cash Loans", label: "Vet Payment Plans", amount: 3250, zip: "90210", variant: "lite_v1" });
+    const App = await loadApp();
+    const { container } = render(<App />);
+    expect(container.querySelector("header h1")?.textContent).toBe("Vet Payment Plans");
+    expect(container.querySelector("header")?.textContent).not.toContain("Example Brand");
+    expect(container.querySelector("footer")?.textContent).toContain("Example Brand");
+    expect(container.querySelector("footer")?.textContent).not.toContain("Vet Payment Plans");
+    expect(container.textContent).not.toContain("Bear Cash Loans");
+  });
+
+  it("has no disclosure bar above the header", async () => {
+    setConfig({ brand: "Example Brand", amount: 3250, zip: "90210", variant: "lite_v1" });
+    const App = await loadApp();
+    const { container } = render(<App />);
+    expect(container.textContent).not.toContain("secure credit-matching technology platform");
+    expect(container.querySelector(".bg-zinc-900.text-zinc-100")).toBeNull();
+    // Nothing precedes the brand header: it sits in the first block of the page.
+    expect(container.firstElementChild?.firstElementChild?.querySelector("header")).not.toBeNull();
+  });
+
+  it("sets document.title to the label once on mount, and leaves the title alone without one", async () => {
+    // setConfig rewrites <head>, so the title is set after it.
+    setConfig({ brand: "Example Brand", keyword: "Bear Cash", amount: 3250, zip: "90210", variant: "lite_v1" });
+    document.title = "Secure Request";
+    let App = await loadApp();
+    const first = render(<App />);
+    expect(document.title).toBe("Secure Request");
+    first.unmount();
+
+    setConfig({ brand: "Example Brand", keyword: "Bear Cash", label: "Vet Payment Plans", amount: 3250, zip: "90210", variant: "lite_v1" });
+    document.title = "Secure Request";
+    App = await loadApp();
+    render(<App />);
+    expect(document.title).toBe("Vet Payment Plans");
+  });
+
+  it("never renders the URL keyword or cfg.keyword anywhere in the DOM", async () => {
+    setConfig({ brand: "Example Brand", keyword: "Bear Cash Loans", label: "Vet Payment Plans", amount: 3250, zip: "90210", variant: "lite_v1" });
+    const App = await loadApp();
+    const { container } = render(<App />);
+    const text = container.textContent?.toLowerCase() ?? "";
+    expect(text).not.toContain("bear cash");
+    expect(container.innerHTML.toLowerCase()).not.toContain("bear cash");
+  });
+
+  it("falls back to the neutral brand when the config is empty", async () => {
     setConfig({});
     const App = await loadApp();
     const { container } = render(<App />);
-    expect(container.querySelector("header h1 span[data-kw]")?.textContent).toBe("Secure Request Form");
+    expect(container.querySelector("header h1")?.textContent).toBe("Secure Request");
     expect(container.textContent?.toLowerCase()).not.toContain("aurum");
   });
 

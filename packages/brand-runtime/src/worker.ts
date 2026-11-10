@@ -32,6 +32,16 @@ function keywordFor(url: URL, settings: BrandSettings): string | null {
   return keyword && Keyword.safeParse(keyword).success && isBrandClean(keyword) ? keyword : null;
 }
 
+/**
+ * The brand's own keyword, shown in the page title, meta description and form header when the ad link carried a
+ * keyword. It is never the URL keyword: the URL decides only whether it is shown, so no ad text reaches the page.
+ */
+function labelFor(url: URL, settings: BrandSettings): string | null {
+  if (cleanKeyword(url.searchParams.get("keyword")) === null) return null;
+  const label = cleanKeyword(settings.keyword_default);
+  return label && Keyword.safeParse(label).success && isBrandClean(label) ? label : null;
+}
+
 function paramHandoff(url: URL, settings: BrandSettings): { amount: number; zip: string } | null {
   const raw = url.searchParams.get("requested_amount") ?? "";
   const amount = Number(raw);
@@ -98,14 +108,18 @@ const TEMPLATE_PAGE = /^\/([a-z0-9][a-z0-9-]{0,62})\/?$/;
 /** One-segment paths the Worker owns; a template page may never take them. */
 const RESERVED_PAGES = new Set(["go", "apply", "api", "assets", "index", "admin", "rpc"]);
 
-async function serveHtml(url: URL, config: BrandWorkerConfig, assetPath: string, keyword: string | null,
-  extra: { cfg?: RuntimeConfig; cta?: ClickParams; site?: { text: EffectiveSiteText; page: "index" | "other" }; theme?: string } = {}): Promise<Response> {
+async function serveHtml(url: URL, config: BrandWorkerConfig, assetPath: string,
+  extra: { cfg?: RuntimeConfig; cta?: ClickParams; site?: { text: EffectiveSiteText; page: "index" | "other"; label?: string | null }; theme?: string } = {}): Promise<Response> {
   // Do not forward visitor headers or query strings to static assets (UA/IP/referrer parity).
   const asset = await config.assets.fetch(new Request(new URL(assetPath, url.origin)));
   if (!asset.ok) { await asset.body?.cancel(); return notFound(); }
   let rewriter = new HTMLRewriter();
-  if (keyword) rewriter = rewriter.on("[data-kw]", { element(element) { element.setInnerContent(keyword); } });
-  if (extra.site) rewriter = applySiteText(rewriter, extra.site.text, extra.site.page);
+  // The H1 slot holds the brand name on every request. The ad keyword is never displayed.
+  if (extra.site?.page === "index") {
+    const name = extra.site.text.brand;
+    rewriter = rewriter.on("[data-kw]", { element(element) { element.setInnerContent(name); } });
+  }
+  if (extra.site) rewriter = applySiteText(rewriter, extra.site.text, extra.site.page, extra.site.label ?? null);
   if (extra.cfg) {
     const payload = encodeRuntimeConfig(extra.cfg);
     rewriter = rewriter.on('script[type="application/json"]#cfg', { element(element) { element.setInnerContent(payload, { html: true }); } });
@@ -227,8 +241,8 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
   // Depends only on settings: every visitor gets the same block (AGENTS.md hard rule 3). Undefined = no block.
   const css = themeCss(settings.theme, settings.theme_vars);
   const theme = css === null ? undefined : themeStyleTag(css);
-  if (legal) return serveHtml(url, config, `${legal}/index.html`, null, { site: { text: site, page: "other" }, theme });
-  if (page) return serveHtml(url, config, `/${page}/index.html`, null, { site: { text: site, page: "other" }, theme });
+  if (legal) return serveHtml(url, config, `${legal}/index.html`, { site: { text: site, page: "other" }, theme });
+  if (page) return serveHtml(url, config, `/${page}/index.html`, { site: { text: site, page: "other" }, theme });
   if (path === "/api/health") return json({ ok: true });
   if (proxy) {
     try {
@@ -282,10 +296,9 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
     if (assignment.setCookie) response.headers.append("set-cookie", assignment.setCookie);
     return response;
   };
-  const keyword = keywordFor(url, settings);
   if (path === "/") {
     const [response, clickCookie] = await Promise.all([
-      serveHtml(url, config, "/index.html", keyword, { cta: adParams(url), site: { text: site, page: "index" }, theme }),
+      serveHtml(url, config, "/index.html", { cta: adParams(url), site: { text: site, page: "index", label: labelFor(url, settings) }, theme }),
       captureClick(request, url, config, settings, assignment),
     ]);
     if (clickCookie) response.headers.append("set-cookie", clickCookie);
@@ -316,8 +329,8 @@ async function handle(request: Request, config: BrandWorkerConfig, settings: Bra
       } catch (error) { if (!fallback(config, "verifyHandoff", error)) return gateFail(url); }
     }
     if (!handoff) return gateFail(url);
-    return finish(await serveHtml(url, config, "/_f/index.html", keyword, {
-      cfg: { brand: site.brand, amount: handoff.amount, zip: handoff.zip, keyword,
+    return finish(await serveHtml(url, config, "/_f/index.html", {
+      cfg: { brand: site.brand, amount: handoff.amount, zip: handoff.zip, keyword: keywordFor(url, settings), label: labelFor(url, settings),
         formRoute: settings.formRoute, variant: assignment.variant, proxies: settings.proxies },
       site: { text: site, page: "other" },
     }));
