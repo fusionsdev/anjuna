@@ -288,7 +288,7 @@ describe("scope on the other pages", () => {
   });
 
   it("shows the scope chip with the แก้ไข button on every page that shows brand data", async () => {
-    for (const path of ["/", "/brands", "/campaigns", "/traffic", "/funnel", "/leads", "/conversions", "/alerts"]) {
+    for (const path of ["/", "/brands", "/campaigns", "/realtime", "/traffic", "/funnel", "/leads", "/conversions", "/alerts"]) {
       window.history.replaceState(null, "", path);
       const view = render(<App />);
       expect(await screen.findByText("แสดง 2 จาก 5 แบรนด์ · ซ่อนที่ไม่ได้ใช้ 3"), path).toBeTruthy();

@@ -4,7 +4,7 @@ import { AlertStateRow, NotificationLogRow } from "@anjuna/contracts";
 import { z } from "zod";
 import { ALERT_STATES_PAGE_MAX, AlertStatesResponse, BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
-import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
+import { ClientErrorsResponse, TrafficRealtimeResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, TerminalJobResponse, TerminalRunResponse, type CampaignJobCreateRequest, type TerminalRunRequest } from "@anjuna/contracts";
 import { AdAllocationAssignResponse, AdAllocationResponse, type AdAllocationAssignRequest } from "@anjuna/contracts";
 import { BrandEditState } from "../shared/brand-edit";
@@ -377,6 +377,9 @@ export const api = {
   brandNoGclid: (brandId: string) =>
     request<unknown>("GET", `/api/traffic/realtime?${new URLSearchParams({ period: "24h", brand: brandId })}`)
       .then((body) => z.looseObject({ kpis: z.looseObject({ landing_views: z.number(), no_gclid_landings: z.looseObject({ count: z.number(), pct: z.number() }) }) }).parse(body).kpis),
+  /** The realtime report. `brandIds` limits it to those brands (a brand scope that hides some); omitted means every brand. */
+  trafficRealtime: (period: TrafficLogPeriod, brandIds?: string[]) =>
+    request<unknown>("GET", `/api/traffic/realtime?${new URLSearchParams({ period, ...(brandIds && brandIds.length > 0 ? { brand: brandIds.join(",") } : {}) })}`).then((body) => TrafficRealtimeResponse.parse(body)),
   // spec traffic
   trafficReport: (period: TrafficLogPeriod) =>
     request<unknown>("GET", `/api/traffic/report?${new URLSearchParams({ period })}`).then((body) => TrafficReportResponse.parse(body)),

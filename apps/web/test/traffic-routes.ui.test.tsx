@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/client/App";
 import { api, type Me } from "../src/client/api";
 import { parseRoute, routePath } from "../src/client/router";
+import { realtimeReport } from "./traffic-helpers";
 
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
 const employee: Me = { id: "u2", email: "staff@example.test", role: "employee" };
@@ -25,6 +26,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const url = new URL(input, window.location.origin);
     if (url.pathname === "/api/traffic/report") return json(trafficFixture);
+    if (url.pathname === "/api/traffic/realtime") return json(realtimeReport());
     if (url.pathname === "/api/client-errors") return json(errorsFixture);
     if (url.pathname === "/api/lifecycle/brands") return json({ brands: [] });
     if (url.pathname === "/api/brands") return json({ brands: [], generated_at: "2026-10-23T00:00:00.000Z" });
@@ -42,6 +44,8 @@ afterEach(() => {
 
 describe("Traffic and Client errors routes", () => {
   it("parseRoute reads /traffic and /errors, and routePath writes them back", () => {
+    expect(parseRoute("/realtime")).toEqual({ view: "realtime" });
+    expect(routePath({ view: "realtime" })).toBe("/realtime");
     expect(parseRoute("/traffic")).toEqual({ view: "traffic" });
     expect(parseRoute("/errors")).toEqual({ view: "errors" });
     expect(parseRoute("/traffic/")).toEqual({ view: "traffic" });
@@ -54,16 +58,30 @@ describe("Traffic and Client errors routes", () => {
     const me = vi.spyOn(api, "me").mockResolvedValue(owner);
     const { unmount } = render(<App />);
     await screen.findByRole("navigation", { name: "หมวดย่อย" });
-    expect(tabLabels()).toEqual([TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
-    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("href")).toBe("/traffic");
+    expect(tabLabels()).toEqual(["เรียลไทม์", TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
+    // The menu item opens the default tab, เรียลไทม์; every tab keeps its own URL.
+    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("href")).toBe("/realtime");
+    expect(tabs().getByRole("link", { name: "เรียลไทม์" }).getAttribute("href")).toBe("/realtime");
     expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("href")).toBe("/traffic");
+    expect(tabs().getByRole("link", { name: "ฟันเนล" }).getAttribute("href")).toBe("/funnel");
     expect(tabs().getByRole("link", { name: ERRORS_TAB }).getAttribute("href")).toBe("/errors");
     unmount();
 
     me.mockResolvedValue(employee);
     render(<App />);
     await waitFor(() => expect(menu().getByRole("link", { name: TRAFFIC_TAB })).toBeTruthy());
-    expect(tabLabels()).toEqual([TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
+    expect(tabLabels()).toEqual(["เรียลไทม์", TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
+  });
+
+  it("opening /realtime renders the live tab with its page title, selected in the menu and in the tabs", async () => {
+    vi.spyOn(api, "me").mockResolvedValue(employee);
+    window.history.replaceState(null, "", "/realtime");
+    render(<App />);
+    expect(await screen.findByRole("heading", { level: 1, name: "เรียลไทม์" })).toBeTruthy();
+    await waitFor(() => expect(document.title).toBe("เรียลไทม์ · Control Panel"));
+    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
+    expect(tabs().getByRole("link", { name: "เรียลไทม์" }).getAttribute("aria-current")).toBe("page");
+    expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBeNull();
   });
 
   it("opening /traffic renders the Traffic screen with its page title", async () => {

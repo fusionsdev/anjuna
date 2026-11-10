@@ -22,6 +22,7 @@ import { UsersScreen } from "./screens/Users";
 import { SettingsScreen } from "./screens/Settings";
 import { AdAllocationScreen } from "./screens/AdAllocation";
 import { TrafficScreen } from "./screens/Traffic"; // spec traffic
+import { RealtimeTab } from "./traffic/RealtimeTab";
 import { ClientErrorsScreen } from "./screens/ClientErrors"; // spec traffic
 import { roleAtLeast } from "@anjuna/contracts";
 import { PANEL_ROLE_TABLE } from "../server/panel-roles";
@@ -37,7 +38,7 @@ import { BrandScopeProvider } from "./useBrandScope";
 import { ScopeSubtitle } from "./components/ScopeSubtitle";
 
 /** The pages that show brand data. Each carries the scope chip, and each filters its rows by the scope (PLAN A9). */
-const SCOPED_VIEWS: ReadonlySet<string> = new Set(["home", "brands", "campaigns", "traffic", "funnel", "leads", "conversions", "alerts"]);
+const SCOPED_VIEWS: ReadonlySet<string> = new Set(["home", "brands", "campaigns", "realtime", "traffic", "funnel", "leads", "conversions", "alerts"]);
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -155,6 +156,7 @@ export function App() {
       {view === "builder-keys" && <BuilderKeysScreen me={me} />}
       {view === "funnel" && <FunnelScreen />}
       {/* spec traffic */}
+      {view === "realtime" && <RealtimeTab />}
       {view === "traffic" && <TrafficScreen />}
       {view === "errors" && <ClientErrorsScreen me={me} />}
       {view === "conversions" && <ConversionsScreen me={me} />}

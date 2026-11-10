@@ -13,7 +13,7 @@ export const pageTitle: Record<View, string> = {
   "notify-settings": "ช่องทางแจ้งเตือน",
   "ad-allocation": "จัดสรรค่าโฆษณา",
   "brand-timeline": "ไทม์ไลน์แบรนด์", // spec timeline
-  traffic: "ทราฟฟิก", errors: "ข้อผิดพลาดฝั่งเว็บ", // spec traffic
+  realtime: "เรียลไทม์", traffic: "ทราฟฟิก", errors: "ข้อผิดพลาดฝั่งเว็บ", // spec traffic
   campaigns: "แคมเปญ", // T13 Part B
   "adkit-terminal": "AdKit Terminal", // T13-6
   "not-found": "ไม่พบหน้านี้",
