@@ -30,12 +30,15 @@ describe("factory bundle", () => {
     try {
       const landing = await mf.dispatchFetch("https://brand-a.example/?keyword=quick+cash");
       expect(landing.status).toBe(200);
-      expect(await landing.text()).toContain("Quick Cash");
+      // The H1 slot holds the brand name; the URL keyword is never written into the page.
+      const landingHtml = await landing.text();
+      expect(landingHtml).toContain("<h1 data-kw>Brand A</h1>");
+      expect(landingHtml).not.toMatch(/quick cash/i);
       for (const keyword of ["Anjuna", "AURUM"]) {
         const response = await mf.dispatchFetch(`https://brand-a.example/?keyword=${keyword}`);
         expect(response.status).toBe(200);
         const html = await response.text();
-        expect(html).toContain("Default Heading");
+        expect(html).toContain("<h1 data-kw>Brand A</h1>");
         expect(isBrandClean(html)).toBe(true);
       }
       for (const path of ["/index.html", "/_f/index.html", "/_f/assets/missing.js", "/unknown"]) {

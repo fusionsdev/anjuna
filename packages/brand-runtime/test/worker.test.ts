@@ -178,12 +178,28 @@ describe("keyword and runtime config", () => {
     expect(RuntimeConfig.safeParse(config).success).toBe(true);
     expect(config.keyword?.length ?? 0).toBeLessThanOrEqual(60);
   });
-  it("text-only title case matches cfg.keyword; absent keyword preserves template text", async () => {
-    const { get } = setup();
-    expect(await (await get("/?keyword=fast+%26+EASY+cash")).text()).toContain('<span data-kw>Fast &amp; Easy Cash</span>');
+  it("cfg.keyword is the title-cased URL keyword, else keyword_default; no page shows it", async () => {
+    const { get } = setup({ keyword_default: "Loan Options" });
     expect(await cfg(await get(`/request?${HANDOFF}&keyword=fast+%26+EASY+cash`))).toMatchObject({ keyword: "Fast & Easy Cash" });
-    expect(await (await get("/")).text()).toContain("Default Heading");
-    expect(await cfg(await get(`/request?${HANDOFF}`))).toMatchObject({ keyword: null });
+    expect(await cfg(await get(`/request?${HANDOFF}`))).toMatchObject({ keyword: "Loan Options" });
+    expect(await cfg(await setup().get(`/request?${HANDOFF}`))).toMatchObject({ keyword: null });
+    const landing = await (await get("/?keyword=fast+%26+EASY+cash")).text();
+    expect(landing).not.toMatch(/Fast &amp; Easy Cash/i);
+    expect(landing).not.toContain("Default Heading");
+  });
+  it("the landing H1 slot holds the brand name, as text, with or without a URL keyword", async () => {
+    const { get } = setup();
+    expect(await (await get("/")).text()).toContain("<h1><span data-kw>Brand A</span></h1>");
+    expect(await (await get("/?keyword=fast+cash")).text()).toContain("<h1><span data-kw>Brand A</span></h1>");
+    const tricky = await (await setup({ brand: "Tom <b>&</b> Co" }).get("/?keyword=fast+cash")).text();
+    expect(tricky).toContain("<h1><span data-kw>Tom &lt;b&gt;&amp;&lt;/b&gt; Co</span></h1>");
+    expect(tricky).not.toContain("<b>");
+  });
+  it("the form route has no [data-kw] rewrite", async () => {
+    const { get } = setup({ keyword_default: "Loan Options" });
+    for (const path of [`/request?${HANDOFF}`, `/request?${HANDOFF}&keyword=fast+cash`]) {
+      expect(await (await get(path)).text()).toContain("<h1><span data-kw>Default Heading</span></h1>");
+    }
   });
   it("escapes less-than in config and quotes in CTA inputs", async () => {
     const { get } = setup({ brand: "Safe </script><script>" });
@@ -199,6 +215,83 @@ describe("keyword and runtime config", () => {
     for (const path of ["/", `/request?${HANDOFF}`, `/?keyword=${value}&utm_campaign=${value}`, `/request?${HANDOFF}&keyword=${value}`]) {
       expect(await (await get(path)).text()).not.toMatch(/anjuna|aurum/i);
     }
+  });
+});
+
+describe("ad keyword attribution and label", () => {
+  const KEYWORD_DEFAULT = "Vet Payment Plans";
+  it("recordClick params and cfg.keyword are the same with and without ?keyword=", async () => {
+    const without = setup({ keyword_default: KEYWORD_DEFAULT });
+    await without.get("/?gclid=g1");
+    expect(without.core.calls.recordClick[0]).toMatchObject({ params: { gclid: "g1", keyword: KEYWORD_DEFAULT } });
+    expect(await cfg(await without.get(`/request?${HANDOFF}&gclid=g1`))).toMatchObject({ keyword: KEYWORD_DEFAULT });
+
+    const withKeyword = setup({ keyword_default: KEYWORD_DEFAULT });
+    await withKeyword.get("/?gclid=g1&keyword=scratchpay");
+    expect(withKeyword.core.calls.recordClick[0]).toMatchObject({ params: { gclid: "g1", keyword: "Scratchpay" } });
+    expect(await cfg(await withKeyword.get(`/request?${HANDOFF}&gclid=g1&keyword=scratchpay`))).toMatchObject({ keyword: "Scratchpay" });
+
+    const none = setup();
+    await none.get("/?gclid=g1");
+    expect(none.core.calls.recordClick[0]!.params).toEqual({ gclid: "g1" });
+  });
+  // keywordFor is unchanged by FUS-387: an empty or blank keyword param is a present param, so `??` does not fall back to
+  // keyword_default. The click records no keyword and cfg.keyword is null, as on main, and no label is set.
+  it.each(["keyword=", "keyword=%20%20"])("?%s records and configures the keyword exactly as before the label existed", async (query) => {
+    const { get, core } = setup({ keyword_default: KEYWORD_DEFAULT });
+    await get(`/?gclid=g1&${query}`);
+    expect(core.calls.recordClick[0]!.params).toEqual({ gclid: "g1" });
+    const config = await cfg(await get(`/request?${HANDOFF}&gclid=g1&${query}`));
+    expect(config.keyword).toBeNull();
+    expect(config.label ?? null).toBeNull();
+    const absent = await cfg(await setup({ keyword_default: KEYWORD_DEFAULT }).get(`/request?${HANDOFF}&gclid=g1`));
+    expect(absent.keyword).toBe(KEYWORD_DEFAULT);
+  });
+  it("the CTA form still carries the raw keyword to /go, which redirects with it", async () => {
+    const { get } = setup({ keyword_default: KEYWORD_DEFAULT });
+    expect(await (await get("/?keyword=scratchpay")).text()).toContain('<input type="hidden" name="keyword" value="scratchpay">');
+    expect((await get(`/go?${HANDOFF}&keyword=scratchpay`)).headers.get("location")).toBe(`/request?${HANDOFF}&keyword=scratchpay`);
+  });
+  it("cfg.label is keyword_default, set only when the URL carries a usable keyword", async () => {
+    const { get } = setup({ keyword_default: KEYWORD_DEFAULT });
+    expect(await cfg(await get(`/request?${HANDOFF}`))).toMatchObject({ label: null });
+    expect(await cfg(await get(`/request?${HANDOFF}&keyword=scratchpay`))).toMatchObject({ label: KEYWORD_DEFAULT, keyword: "Scratchpay" });
+    expect(await cfg(await get(`/request?${HANDOFF}&keyword=!!!`))).toMatchObject({ label: null });
+    expect(await cfg(await get(`/request?${HANDOFF}&keyword=`))).toMatchObject({ label: null });
+    expect(await cfg(await setup().get(`/request?${HANDOFF}&keyword=scratchpay`))).toMatchObject({ label: null, keyword: "Scratchpay" });
+  });
+  it("cfg.label never holds the URL keyword and always parses as RuntimeConfig", async () => {
+    const { get } = setup({ keyword_default: KEYWORD_DEFAULT });
+    for (const keyword of ["scratchpay", "<script>", "a".repeat(100), "ß".repeat(60)]) {
+      const config = await cfg(await get(`/request?${HANDOFF}&${new URLSearchParams({ keyword })}`));
+      expect(RuntimeConfig.safeParse(config).success).toBe(true);
+      expect(config.label).toBe(KEYWORD_DEFAULT);
+    }
+  });
+  it("a forbidden keyword_default is never a label", async () => {
+    const { get } = setup({ keyword_default: "Anjuna" });
+    expect((await cfg(await get(`/request?${HANDOFF}&keyword=scratchpay`))).label).toBeNull();
+  });
+  it("the ad keyword appears nowhere a visitor reads: landing body, title, meta, or form HTML outside #cfg", async () => {
+    const landingAsset = '<!doctype html><html><head><title>Template</title><meta name="description" content="Template text."><meta property="og:title" content="Template"><meta property="og:description" content="Template text."></head><body><h1><span data-kw>Default Heading</span></h1><form data-cta action="/go"><input name="zip"><button>Continue</button></form></body></html>';
+    const base = setup().assets;
+    const { get } = setup({ keyword_default: KEYWORD_DEFAULT, assets: { fetch: (request) => new URL(request.url).pathname === "/index.html"
+      ? Promise.resolve(new Response(landingAsset, { headers: { "content-type": "text/html" } })) : base.fetch(request) } });
+
+    const landing = await (await get("/?keyword=Scratchpay&gclid=g1")).text();
+    // The one place it rides is the CTA form's hidden keyword input, so /go can carry it to the form for attribution.
+    // Only that input is removed before the check: every other hidden input and every other byte is still searched.
+    const keywordInputs = landing.match(/<input type="hidden" name="keyword"[^>]*>/g);
+    expect(keywordInputs).toEqual(['<input type="hidden" name="keyword" value="Scratchpay">']);
+    expect(landing.replace(keywordInputs![0]!, "")).not.toMatch(/scratchpay/i);
+    expect(landing).toContain(`<title>${KEYWORD_DEFAULT} | Brand A</title>`);
+    expect(landing).toContain(`<meta name="description" content="${KEYWORD_DEFAULT}. Template text.">`);
+    expect(landing).toContain("<h1><span data-kw>Brand A</span></h1>");
+
+    const formHtml = await (await get(`/request?${HANDOFF}&keyword=Scratchpay`)).text();
+    const config = JSON.parse(formHtml.match(/<script type="application\/json" id="cfg">(.*?)<\/script>/s)![1]!);
+    expect(config.keyword).toBe("Scratchpay");
+    expect(formHtml.replace(/<script type="application\/json" id="cfg">.*?<\/script>/s, "")).not.toMatch(/scratchpay/i);
   });
 });
 

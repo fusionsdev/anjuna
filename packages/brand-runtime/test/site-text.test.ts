@@ -212,3 +212,119 @@ describe("site text", () => {
     expect(decodeURIComponent(submitRequest.headers.get("x-consent-brand")!)).toBe("Quick Funds Å");
   });
 });
+
+describe("label: the brand's own keyword in the title and description", () => {
+  const LABEL = "Vet Payment Plans";
+  const NO_LABEL_HTML = '<!doctype html><html><head><title>Brand A | Funding Options</title><meta name="description" content="Harbor helps you compare."><meta property="og:title" content="Brand A | Funding Options"><meta property="og:description" content="Harbor helps you compare."></head><body><header><a href="/" data-brand>Brand A</a></header><h1><span data-kw>Brand A</span></h1><form data-cta method="get" action="/go"><input name="zip"></form><footer><span data-brand>Brand A</span></footer></body></html>';
+  // The URL keyword rides in exactly one place, the CTA form's hidden keyword input (so /go can carry it to the form).
+  // The helper asserts that input is the only one, then removes only it: any other byte holding the keyword stays in the HTML.
+  const withoutKeywordInput = (html: string, urlKeyword: string | null) => {
+    const inputs = html.match(/<input type="hidden" name="keyword"[^>]*>/g) ?? [];
+    expect(inputs).toEqual(urlKeyword === null ? [] : [`<input type="hidden" name="keyword" value="${urlKeyword}">`]);
+    return inputs.length ? html.replace(inputs[0]!, "") : html;
+  };
+  const page = (head: string) => `<!doctype html><html><head>${head}</head><body><h1><span data-kw>Funding Options</span></h1></body></html>`;
+  const withIndex = (html: string, overrides: Partial<BrandWorkerConfig> = {}) =>
+    site({ keyword_default: LABEL, assets: { fetch: async (request: Request) => new URL(request.url).pathname === "/index.html"
+      ? new Response(html, { headers: { "content-type": "text/html" } }) : new Response("missing", { status: 404 }) }, ...overrides });
+
+  it("without a URL keyword the page is byte-identical to the page before labels existed", async () => {
+    expect(await (await site({ keyword_default: LABEL }).get("/")).text()).toBe(NO_LABEL_HTML);
+  });
+
+  it.each<[string, string | null]>([["/?keyword=", null], ["/?keyword=!!!", "!!!"], ["/?keyword=%20%20", null]])("an unusable URL keyword (%s) leaves the page byte-identical", async (path, inputValue) => {
+    expect(withoutKeywordInput(await (await site({ keyword_default: LABEL }).get(path)).text(), inputValue)).toBe(NO_LABEL_HTML);
+  });
+
+  it("a brand with no keyword_default has no label even when the URL has a keyword", async () => {
+    expect(withoutKeywordInput(await (await site({ keyword_default: null }).get("/?keyword=scratchpay")).text(), "scratchpay")).toBe(NO_LABEL_HTML);
+  });
+
+  it("with a URL keyword the title and meta description lead with the label; og tags keep their text", async () => {
+    const html = await (await site({ keyword_default: LABEL }).get("/?keyword=scratchpay")).text();
+    expect(html).toContain(`<title>${LABEL} | Brand A</title>`);
+    expect(html).toContain(`<meta name="description" content="${LABEL}. Harbor helps you compare.">`);
+    expect(html).toContain('<meta property="og:title" content="Brand A | Funding Options">');
+    expect(html).toContain('<meta property="og:description" content="Harbor helps you compare.">');
+    expect(html).toContain("<h1><span data-kw>Brand A</span></h1>");
+    expect(withoutKeywordInput(html, "scratchpay")).not.toMatch(/scratchpay/i);
+  });
+
+  it("the label comes from keyword_default whatever the URL keyword is", async () => {
+    const a = await (await site({ keyword_default: LABEL }).get("/?keyword=scratchpay")).text();
+    const b = await (await site({ keyword_default: LABEL }).get("/?keyword=carecredit")).text();
+    expect(withoutKeywordInput(a, "scratchpay")).toBe(withoutKeywordInput(b, "carecredit"));
+  });
+
+  it("builds the title from the edited brand name and the description from the edited text", async () => {
+    const { get, core } = site({ keyword_default: LABEL });
+    core.settings = { ...live({ brand_name: "Quick Funds", site_title: "Quick Funds Official", site_description: "Fast & fair options." }), keyword_default: "Pet Loans" };
+    const html = await (await get("/?keyword=scratchpay")).text();
+    expect(html).toContain("<title>Pet Loans | Quick Funds</title>");
+    expect(html).toContain('<meta name="description" content="Pet Loans. Fast &amp; fair options.">');
+    expect(html).toContain('<meta property="og:title" content="Quick Funds Official">');
+    expect(html).toContain('<meta property="og:description" content="Fast &amp; fair options.">');
+    expect(await (await get("/")).text()).toContain("<title>Quick Funds Official</title>");
+  });
+
+  it("writes the brand name as text in the title", async () => {
+    const html = await (await site({ keyword_default: LABEL, brand: "Tom <b> & Co" }).get("/?keyword=x")).text();
+    expect(html).toContain(`<title>${LABEL} | Tom &lt;b&gt; &amp; Co</title>`);
+  });
+
+  it("cuts the title to 70 characters and the description to 160", async () => {
+    const label = "Aaaaaaaa ".repeat(6).trim();
+    const long = "Word ".repeat(60).trim();
+    const html = await (await withIndex(page(`<title>T</title><meta name="description" content="${long}">`), { keyword_default: label, brand: "Longer Brand Name Here" }).get("/?keyword=x")).text();
+    const title = html.match(/<title>(.*?)<\/title>/)![1]!;
+    const description = html.match(/<meta name="description" content="(.*?)">/)![1]!;
+    expect(title).toBe(`${label} | Longer Brand Name Here`.slice(0, 70));
+    expect(title).toHaveLength(70);
+    expect(description).toBe(`${label}. ${long}`.slice(0, 160));
+    expect(description).toHaveLength(160);
+  });
+
+  it("never leaves half a character reference at the description cut", async () => {
+    // The label prefix is 19 characters, so 141 more fill the 160; the reference after them is dropped whole.
+    const template = `${"a".repeat(141)}&amp; tail`;
+    const html = await (await withIndex(page(`<title>T</title><meta name="description" content="${template}">`)).get("/?keyword=x")).text();
+    expect(html).toContain(`<meta name="description" content="${LABEL}. ${"a".repeat(141)}">`);
+  });
+
+  it("counts a character reference as one character in the description cut", async () => {
+    const descriptionOf = async (source: string) => (await (await withIndex(page(`<title>T</title><meta name="description" content="${source}">`)).get("/?keyword=x")).text())
+      .match(/<meta name="description" content="(.*?)">/)![1]!;
+    // 19 prefix characters + 30 references is 49 counted characters: no cut, although the source is 169 long.
+    const short = "&amp;".repeat(30);
+    expect(await descriptionOf(short)).toBe(`${LABEL}. ${short}`);
+    // 200 references are cut to 160 counted characters: the prefix and 141 whole references.
+    const cut = await descriptionOf("&amp;".repeat(200));
+    expect(cut).toBe(`${LABEL}. ${"&amp;".repeat(141)}`);
+    expect(cut.endsWith("&amp;")).toBe(true);
+    expect(cut.replace(/&(?:amp|#39|#x27|quot);/g, "&")).toHaveLength(160);
+    // Numeric references count as one too, and the cut never lands inside one.
+    const numeric = await descriptionOf("&#39;".repeat(10) + "&#x27;".repeat(10) + "&quot;".repeat(200));
+    expect(numeric).toBe(`${LABEL}. ${"&#39;".repeat(10)}${"&#x27;".repeat(10)}${"&quot;".repeat(121)}`);
+  });
+
+  it("adds no description tag when the template has none", async () => {
+    const html = await (await withIndex(page("<title>T</title>")).get("/?keyword=x")).text();
+    expect(html).toContain(`<title>${LABEL} | Brand A</title>`);
+    expect(html).not.toContain("<meta");
+  });
+
+  it("changes only the index page: other pages and the form are untouched", async () => {
+    const { get } = site({ keyword_default: LABEL });
+    expect(await (await get("/privacy?keyword=scratchpay")).text()).toBe(await (await get("/privacy")).text());
+    expect((await (await get(`/request?${HANDOFF}&keyword=scratchpay`)).text()).match(/<title>(.*?)<\/title>/)![1]).toBe("Request");
+  });
+
+  it("serves identical HTML to every visitor that sends the same URL", async () => {
+    const { get } = site({ keyword_default: LABEL });
+    const bodies = new Set<string>();
+    for (const headers of [{ "user-agent": "Mozilla/5.0" }, { "user-agent": "AdsBot-Google", "cf-connecting-ip": "66.249.66.1" }, { referer: "https://www.google.com/" }] as Record<string, string>[]) {
+      bodies.add(await (await get("/?keyword=scratchpay", { headers })).text());
+    }
+    expect(bodies.size).toBe(1);
+  });
+});

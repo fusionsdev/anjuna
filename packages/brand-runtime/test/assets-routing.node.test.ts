@@ -37,7 +37,8 @@ it("asset router runs the Worker for gated HTML and falls back to uniform 404 on
   const landing = await mf.dispatchFetch("https://example.com/?keyword=quick+cash");
   const body = await landing.text();
   expect(landing.headers.get("x-runtime-invoked"), `${landing.status}: ${body}`).toBe("yes");
-  expect(body).toContain("Quick Cash");
+  expect(body).toContain("<span data-kw>Example Brand</span>");
+  expect(body).not.toContain("Quick Cash");
   for (const route of ["/index.html", "/_f/index.html", "/_f/assets/missing.js", "/api/postback"]) {
     const response = await mf.dispatchFetch(`https://example.com${route}`);
     expect(response.status).toBe(404);

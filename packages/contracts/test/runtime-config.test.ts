@@ -40,6 +40,25 @@ describe("brand runtime config (#cfg)", () => {
     expect(RuntimeConfig.safeParse({ ...ok, keyword: "<script>alert(1)</script>" }).success).toBe(false);
   });
 
+  it("label is optional, nullable, and the output of cleanKeyword like keyword", () => {
+    const ok = fixture<Record<string, unknown>>("runtime-config/cfg.valid.json");
+    expect("label" in ok).toBe(false);
+    expect(RuntimeConfig.safeParse(ok).success).toBe(true);
+    expect(RuntimeConfig.safeParse({ ...ok, label: null }).success).toBe(true);
+    expect(RuntimeConfig.safeParse({ ...ok, label: "Vet Payment Plans" })).toMatchObject({ success: true, data: { label: "Vet Payment Plans" } });
+    for (const bad of ["vet payment plans", "<b>Vet</b>", "A".repeat(61), "", 5]) {
+      expect(RuntimeConfig.safeParse({ ...ok, label: bad }).success).toBe(false);
+    }
+  });
+
+  it("encode carries label and keeps the payload without one unchanged", () => {
+    const ok = RuntimeConfig.parse(fixture("runtime-config/cfg.valid.json"));
+    const text = encodeRuntimeConfig({ ...ok, label: "Vet Payment Plans" });
+    expect(JSON.parse(text)).toMatchObject({ label: "Vet Payment Plans" });
+    expect(parseRuntimeConfig(text)?.label).toBe("Vet Payment Plans");
+    expect(JSON.parse(encodeRuntimeConfig(ok))).not.toHaveProperty("label");
+  });
+
   it("cleanKeyword matches the spike e2e expectations", () => {
     expect(cleanKeyword("fast cash loans")).toBe("Fast Cash Loans");
     expect(cleanKeyword("<script>alert(1)</script>")).toBe("Script Alert 1 Script");

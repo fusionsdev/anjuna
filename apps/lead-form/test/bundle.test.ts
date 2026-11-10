@@ -68,8 +68,8 @@ describe("built bundle", () => {
     expect(html).not.toMatch(/array\.js|posthog/i);
   });
 
-  it("renders the keyword slot and reads the runtime config", () => {
-    expect(js).toContain("data-kw");
+  it("reads the runtime config and renders no keyword slot", () => {
+    expect(js).not.toContain("data-kw");
     expect(js).toContain('getElementById("cfg")');
   });
 

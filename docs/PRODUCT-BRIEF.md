@@ -18,7 +18,7 @@ Anjuna is a Cloudflare-native lead-generation platform for US consumer-finance t
 **A shared core Worker** on `core.aduplift.ai` owns all data and the money path:
 
 ```
-ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core (D1)
+ad click → landing (brand name in H1) → /go → Anjuna Form → submit → core (D1)
 → provider hop → LeadsGate prepop redirect → LeadsGate postback → conversion_uploads
 → pending/ack → external VPS drain → AdKit → Google Ads offline conversion
 
@@ -34,7 +34,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 2. A new brand goes live from Template + Domain + Keyword, with no code changes.
 3. The proven V1 money path stays unchanged, and the drain contract stays byte-identical.
 4. Nothing visibly links brands to each other: no host map in any bundle, no back-office routes on brand domains, no shared identifiers.
-5. The landing H1 and the form header match the ad keyword (message match).
+5. The landing H1 and the form header show the brand name. When the ad link carries a keyword, the page title, the meta description and the form header name show the brand's configured keyword. The ad's own keyword is recorded for reporting and never displayed to the visitor; it is still carried in a hidden form field and the form config.
 6. Each brand can A/B test form variants with a configurable traffic split.
 7. Operators can run many brands: bulk upgrade, pause, rollback, alerts and a funnel report.
 8. The platform can be reinstalled in another Cloudflare account (the maimax installation) and operated from the same CI.
@@ -61,7 +61,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 
 ## 5\. User stories
 
-1. As a **visitor**, I click an ad for "fast cash loans". The landing H1 reads "Fast Cash Loans — …". I pick an amount and ZIP and continue to a form whose header shows the same keyword.
+1. As a **visitor**, I click an ad for "fast cash loans". The landing H1 shows the brand name, and the page title and description lead with the brand's configured keyword (for example "Loan Options"). I pick an amount and ZIP and continue to a form whose header shows that configured keyword. The words from the ad are never displayed on either page.
 2. As a **visitor**, after I submit I land on the LeadsGate form with my details already filled in.
 3. As the **owner**, when LeadsGate reports a sale with payout > 0, a conversion is queued with the original gclid, brand and hostname, and the drain uploads it through AdKit.
 4. As an **employee**, I enter Domain + Keyword, pick a sealed template and click Install. The brand goes live after automatic smoke tests pass, or rolls back automatically if they fail.
@@ -78,8 +78,8 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 | BR-1 | **Routing.** Set `run_worker_first = true` for every path. Allowlist: `/`, legal pages, `/go`, `<formRoute>`, `<formRoute>/provider`, `<formRoute>/complete`, `/apply` (also `/apply/`, GET/HEAD only), `/_f/*`, `/api/{leads,zip,telemetry,errors,health}`, and the PostHog/Sentry proxy paths. Every other path returns the same 404. Admin, postback and drain routes never exist on brand domains. |
 | BR-2 | **Flow gate,** `param` **mode (default).** `/go` checks that `requested_amount` is one of the brand's buckets and `zip` is 5 digits, then returns 302 to `<formRoute>` carrying amount, ZIP, ad params (`gclid`, `gbraid`, `wbraid`, `msclkid`, `utm_*`) and `keyword`. An invalid request, or direct access to the form route, returns 302 to `/` with the ad params kept. Every visitor gets the same response. |
 | BR-3 | **Flow gate,** `signed_cookie` **mode.** Built but turned off. Core issues and verifies an HMAC handoff cookie that lasts 30 minutes. If core is unreachable, the gate fails open to `param` mode and an alert fires. A bad or expired signature returns 302 to `/`. The mode can be switched per brand without a redeploy. |
-| BR-4 | **Keyword insertion.** Clean `keyword`: text only, safe character set, title case, at most 60 characters. Replace the text of `[data-kw]` with HTMLRewriter and also write it to the runtime config JSON. When the param is missing, keep the default text. |
-| BR-5 | **Runtime config.** `<script type="application/json" id="cfg">` holds only brand name, amount, ZIP, keyword, formRoute, A/B variant and proxy paths. It never holds secrets, `brand_id` or data about other brands. |
+| BR-4 | **Keyword handling.** Clean `keyword`: text only, safe character set, title case, at most 60 characters. The cleaned ad keyword is recorded for click attribution and written to the runtime config JSON as `keyword`. It is never displayed to the visitor; it still rides in the CTA form's hidden `keyword` field (so `/go` can carry it to the form) and in the runtime config for reporting. HTMLRewriter replaces the text of `[data-kw]` with the brand display name on every request. When the ad link carries a keyword, the index `<title>` and meta description lead with the brand's configured keyword, and the runtime config carries that word as `label`. When the param is missing, `keyword` falls back to the configured keyword and `label` is null. |
+| BR-5 | **Runtime config.** `<script type="application/json" id="cfg">` holds only brand name, amount, ZIP, keyword, label, formRoute, A/B variant and proxy paths. It never holds secrets, `brand_id` or data about other brands. |
 | BR-6 | **Click capture.** On landing navigation and on `/go`, record the click in core (V1 `click_sessions` behavior) and set an HttpOnly first-party cookie with a neutral name. If click capture fails, the page still loads. |
 | BR-7 | **Lead submit.** `/api/leads` forwards the V1 form payload to core. The brand Worker sets `brand_id` and `hostname` from its own environment; the client never supplies them. It returns `{status, lead_id, redirect_url}` with `redirect_url = <formRoute>/provider?c=<continuation>`. |
 | BR-8 | **Provider hop.** Resolve the continuation in core, then return 302 to the LeadsGate prepop URL with `Referrer-Policy: no-referrer`. An unknown token returns 302 to `/`. |
@@ -105,7 +105,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 | ID | Requirement |
 | --- | --- |
 | FO-1 | Port `aurum-form/src@8ba11d3`: lite_v1 with 3 steps; keep the full variant for A/B tests. |
-| FO-2 | Delete `BRAND_BY_HOST`; the brand comes from the runtime config. The header shows `<span data-kw>`, filled from `cfg.keyword`. |
+| FO-2 | Delete `BRAND_BY_HOST`; the brand comes from the runtime config. The header shows `cfg.label` when it is set, else the brand name. It never shows `cfg.keyword`. |
 | FO-3 | Build with Vite `base: "/_f/"`. Read the A/B variant from `cfg.variant`. Remove the gtag `ads-conversion` code and `gate-interest`. Send PostHog and Sentry through the proxies. |
 | FO-4 | The bundle contains no brand domain, no "anjuna" or "aurum" strings, and no PostHog key or Sentry DSN. CI builds it once per version and stores it in R2 as `form@sha` with a SHA-256 manifest. |
 
@@ -142,7 +142,7 @@ ad click → landing (keyword in H1) → /go → Anjuna Form → submit → core
 **Visitor**
 
 1. Ad URL `…/?keyword=fast%20cash%20loans&gclid=…`.
-2. Brand Worker records the click and inserts the keyword into the H1.
+2. Brand Worker records the click with the ad keyword and writes the brand name into the H1.
 3. CTA → `/go` (validate) → 302 to `/request?...`.
 4. Anjuna Form, 3 steps.
 5. `POST /api/leads` → core commits the lead → returns `redirect_url`.

@@ -10,7 +10,9 @@ const render = async (data: PageTextData, pages: Record<string, string> = { "ind
 describe("renderPageText", () => {
   it("applies the wizard copy, contact and brand name to the Willow Lake pattern", async () => {
     const { "index.html": index, "terms/index.html": terms } = await render(WIZARD_DEMO);
-    expect(index).toContain("<h1><span data-kw>Loan Options</span> Options in Minutes</h1>");
+    // The H1 slot is baked with the brand name, not keyword_default ("Loan Options").
+    expect(index).toContain("<h1><span data-kw>Wizard Demo</span> Options in Minutes</h1>");
+    expect(index).not.toContain("<span data-kw>Loan Options</span> Options in Minutes");
     expect(index).toContain("<p>Answer two questions to see your options.</p>");
     expect(index).toContain('<button type="submit">Check My Options</button>');
     expect(index).toContain('<a class="call" href="tel:+15550100199"><svg aria-hidden="true"><title>Phone</title></svg>+1 (555) 010-0199</a>');
@@ -36,12 +38,24 @@ describe("renderPageText", () => {
 
   it("keeps template text for empty copy fields and leaves pages byte-identical when nothing applies", async () => {
     const { "index.html": index } = await render({ ...WIZARD_DEMO, profile: { copy: { cta: "Check My Options" } } });
-    expect(index).toContain("<h1><span data-kw>Loan Options</span> from <span data-brand>Wizard Demo</span></h1>");
+    // No copy.h1: the H1 text stays the template's, and its [data-kw] slot shows the brand name.
+    expect(index).toContain("<h1><span data-kw>Wizard Demo</span> from <span data-brand>Wizard Demo</span></h1>");
     expect(index).toContain("<p><span data-brand>Wizard Demo</span> connects you with lenders in minutes.</p>");
     expect(index).toContain('href="tel:+18337103200"');
-    const untouched = await render({ brand_name: "Wizard Demo", template_brand: null });
+    const untouched = await render({ brand_name: "", template_brand: null });
     expect(untouched["index.html"]).toBe(WILLOW_INDEX);
     expect(untouched["terms/index.html"]).toBe(WILLOW_TERMS);
+  });
+
+  it("writes the brand name into the [data-kw] slot when copy.h1 is empty, as text, on the index page only", async () => {
+    const page = '<h1><span data-kw class="kw">Quick Loan</span></h1>';
+    const data = { brand_name: " Maple Cash ", keyword_default: "Quick Loan" };
+    expect((await render(data, { "index.html": page }))["index.html"]).toBe('<h1><span data-kw class="kw">Maple Cash</span></h1>');
+    expect((await render({ ...data, profile: { copy: { cta: "Check My Options" } } }, { "index.html": page }))["index.html"]).toBe('<h1><span data-kw class="kw">Maple Cash</span></h1>');
+    expect((await render({ ...data, brand_name: "Smith & Sons <Co>" }, { "index.html": page }))["index.html"]).toBe('<h1><span data-kw class="kw">Smith &amp; Sons &lt;Co&gt;</span></h1>');
+    // An empty brand name leaves the template text; other pages are not touched.
+    expect((await render({ ...data, brand_name: "  " }, { "index.html": page }))["index.html"]).toBe(page);
+    expect((await render(data, { "about/index.html": page }))["about/index.html"]).toBe(page);
   });
 
   it("fills explicit data-contact slots", async () => {
@@ -58,6 +72,32 @@ describe("renderPageText", () => {
   it("refuses copy that breaks the copy rules, as the install does", async () => {
     await expect(render({ ...WIZARD_DEMO, profile: { copy: { h1: "No keyword slot here" } } })).rejects.toBeInstanceOf(PageCopyError);
     await expect(render({ ...WIZARD_DEMO, profile: { copy: { cta: "Get Personal Loans" } } })).rejects.toThrow(/personal loan/);
+  });
+
+  it("bakes the brand name into the H1 slot, escaped, and a brand that is no clean keyword still renders", async () => {
+    const copy = { copy: { h1: "{{keyword}} | Compare Options" } };
+    const { "index.html": index } = await render({ ...WIZARD_DEMO, brand_name: " Smith & Sons, LLC ", profile: copy });
+    expect(index).toContain("<h1><span data-kw>Smith &amp; Sons, LLC</span> | Compare Options</h1>");
+    expect(index).not.toContain("Loan Options</span> | Compare");
+  });
+
+  it("falls back to keyword_default in the H1 slot when the brand name is empty", async () => {
+    const { "index.html": index } = await render({ ...WIZARD_DEMO, brand_name: "  ", profile: { copy: { h1: "{{keyword}} | Compare Options" } } });
+    expect(index).toContain("<h1><span data-kw>Loan Options</span> | Compare Options</h1>");
+  });
+
+  it("counts the brand name, not keyword_default, toward the 140 character H1 limit", async () => {
+    const brand = "B".repeat(60);
+    const room = 140 - brand.length;
+    const fits = { copy: { h1: `${"a".repeat(room - 1)} {{keyword}}` } };
+    await expect(render({ ...WIZARD_DEMO, brand_name: brand, profile: fits })).resolves.toBeDefined();
+    await expect(render({ ...WIZARD_DEMO, brand_name: brand, profile: { copy: { h1: `${"a".repeat(room)} {{keyword}}` } } })).rejects.toThrow(/140/);
+    // A short brand name leaves room that a long keyword_default would have used up.
+    await expect(render({ ...WIZARD_DEMO, brand_name: "Wizard Demo", keyword_default: `K${"k".repeat(59)}`, profile: { copy: { h1: `${"a".repeat(100)} {{keyword}}` } } })).resolves.toBeDefined();
+  });
+
+  it("still requires keyword_default to be a clean keyword when the H1 is filled", async () => {
+    await expect(render({ ...WIZARD_DEMO, keyword_default: "not clean!", profile: { copy: { h1: "{{keyword}} | Compare Options" } } })).rejects.toBeInstanceOf(PageCopyError);
   });
 
   describe("phone text in tel: links", () => {
@@ -108,8 +148,12 @@ describe("rendered page text served by the brand Worker", () => {
     const html = await (await worker.fetch(new Request("https://brand-a.example/"))).text();
     expect(html).toContain("<h3>What is <span data-brand>Quick Funds</span>?</h3>");
     expect(html).toContain("<title>Quick Funds | Loan Options</title>");
-    // The runtime keyword still reaches the copy H1 slot.
-    expect(html).toContain("<h1><span data-kw>Fast Cash Loans</span> Options in Minutes</h1>");
+    // The H1 slot holds the live brand name, with or without an ad keyword.
+    expect(html).toContain("<h1><span data-kw>Quick Funds</span> Options in Minutes</h1>");
+    const withKeyword = await (await worker.fetch(new Request("https://brand-a.example/?keyword=scratchpay"))).text();
+    expect(withKeyword).toContain("<h1><span data-kw>Quick Funds</span> Options in Minutes</h1>");
+    // Only the CTA form's hidden input carries the ad keyword.
+    expect(withKeyword.replace(/<input type="hidden"[^>]*>/g, "")).not.toMatch(/scratchpay/i);
     // Attributes, meta content and JSON-LD keep the name from install time until the next install.
     expect(html).toContain('alt="Wizard Demo logo"');
     expect(html).not.toContain("Willow Lake");

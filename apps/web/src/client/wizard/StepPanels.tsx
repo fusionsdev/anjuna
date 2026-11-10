@@ -74,7 +74,7 @@ export function BrandPanel({ form, errors, set, hasDraft, zone, onCheckZone }: F
         <button type="button" className="btn" onClick={onCheckZone} disabled={zone.state === "checking" || !form.domain.trim()} aria-label="ตรวจโซน Cloudflare">ตรวจโซน Cloudflare</button>
       </div>
       <div style={{ gridColumn: "1 / -1" }}><ZoneStatus zone={zone} /></div>
-      <Field field="keyword" {...common} required placeholder="Fast cash" hint="คีย์เวิร์ดเริ่มต้นของโฆษณา" />
+      <Field field="keyword" {...common} required placeholder="Fast cash" hint="คำนี้แสดงในชื่อหน้า คำอธิบายเว็บ และหัวฟอร์ม เมื่อลิงก์โฆษณามีคีย์เวิร์ด" />
       <Field field="phone" {...common} required type="tel" placeholder="+1 (555) 010-0199" />
       <Field field="address" {...common} required placeholder="12 Main St, Austin, TX 78701" />
       <Field field="email" {...common} required type="email" placeholder="help@example.com" />
@@ -128,7 +128,7 @@ export function CopyPanel({ form, errors, set, templateText }: FieldsProps & { t
       {COPY_FIELDS.map(({ field, max, source }) => {
         const fallback = field === "brand_name" ? form.name.trim() || templateText?.brand_name : source ? templateText?.[source] : null;
         const count = isPageCopy(field) ? `${visibleCopyLength(form, field)}/${COPY_LIMITS[field]}` : `${form[field].trim().length}/${max}`;
-        const slot = field === "h1" ? ` · ใส่ ${COPY_KEYWORD_MARKER} หนึ่งครั้ง` : "";
+        const slot = field === "h1" ? ` · ใส่ ${COPY_KEYWORD_MARKER} หนึ่งครั้ง (ตำแหน่งนี้แสดงชื่อเว็บไซต์)` : "";
         return <Field key={field} field={field} form={form} errors={shown} set={set} maxLength={max} placeholder={fallback ?? undefined} hint={`${count}${slot}${fallback ? ` · ค่าเริ่มต้น: ${fallback}` : ""}`} />;
       })}
     </div>

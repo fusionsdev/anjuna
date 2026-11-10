@@ -322,6 +322,8 @@ describe("resume", () => {
     expect(text("ชื่อแบรนด์").value).toBe("Maple Cash");
     expect(text("โดเมน").value).toBe("maple.test");
     expect(text("คีย์เวิร์ด").value).toBe("Quick Loan");
+    // The keyword is shown only in the page title, meta description and form header, and only when the ad link has a keyword.
+    expect(screen.getByText("คำนี้แสดงในชื่อหน้า คำอธิบายเว็บ และหัวฟอร์ม เมื่อลิงก์โฆษณามีคีย์เวิร์ด")).toBeTruthy();
     next();
     await screen.findAllByRole("alert");
     expect(requests.some((r) => r.method === "POST")).toBe(false);
@@ -344,6 +346,8 @@ describe("resume", () => {
     next();
     await heading("ข้อความ");
     expect(screen.queryByRole("alert")).toBeNull();
+    // The {{keyword}} slot becomes the site name on the page.
+    expect(screen.getByText(/ใส่ \{\{keyword\}\} หนึ่งครั้ง \(ตำแหน่งนี้แสดงชื่อเว็บไซต์\)/)).toBeTruthy();
     fill("หัวข้อหลัก H1", "Fast cash for you");
     expect((await screen.findByRole("alert")).textContent).toMatch(/หนึ่งครั้งพอดี/);
     fill("ปุ่ม CTA", 'Say "hi"');

@@ -32,6 +32,24 @@ describe("validateCopy", () => {
     }
   });
 
+  it("counts slot text literally: $& in a brand name is 2 characters, not the marker", () => {
+    // 136 + space + 2 = 139 visible. A replacement pattern would insert the 11-character marker and give 148.
+    expect(validateCopy({ ...copy, h1: "a".repeat(136) + " {{keyword}}" }, "Maple", "$&")).toEqual([]);
+    // 138 + space + 2 = 141 is one over the 140 limit.
+    expect(validateCopy({ ...copy, h1: "a".repeat(138) + " {{keyword}}" }, "Maple", "$&")).toContainEqual(expect.objectContaining({ field: "h1", code: "length" }));
+  });
+
+  it("slotText is what the marker becomes: it sets the visible length and the markup, keyword_default is still checked on its own", () => {
+    const brand = "Harbor & Sons, LLC";
+    expect(renderCopyH1(copy.h1, keyword, brand)).toBe("Harbor &amp; Sons, LLC | Check Your Options".replace(/^(.*?) \| /, '<span data-kw>$1</span> | '));
+    const h1 = COPY_KEYWORD_MARKER + "x".repeat(COPY_LIMITS.h1 - brand.length);
+    expect(validateCopy({ ...copy, h1 }, keyword, brand)).toEqual([]);
+    expect(validateCopy({ ...copy, h1: h1 + "x" }, keyword, brand)).toContainEqual(expect.objectContaining({ field: "h1", code: "length" }));
+    expect(validateCopy({ ...copy, h1: "{{keyword}} | Anything" }, keyword, "Anjuna Cash")).toContainEqual(expect.objectContaining({ field: "h1", code: "brand_clean" }));
+    expect(validateCopy(copy, "not clean!", brand).some((issue) => issue.field === "keyword_default")).toBe(true);
+    expect(validateCopy(copy, keyword, brand).some((issue) => issue.field === "keyword_default")).toBe(false);
+  });
+
   it.each(["", "funding options", "<b>Funding</b>", "Personal Loans", "Anjuna", "A".repeat(61)])("rejects invalid keyword_default: %s", (value) => {
     expect(validateCopy(copy, value).some((issue) => issue.field === "keyword_default")).toBe(true);
   });

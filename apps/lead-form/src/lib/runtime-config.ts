@@ -2,8 +2,10 @@
 // (BR-5). It is the ONLY source of brand-specific data for this bundle: the bundle itself is
 // shared by every brand and must not contain any brand's name, domain or keys (FO-4).
 //
-// Allowed fields (BR-5): brand name, amount, ZIP, keyword, formRoute, A/B variant and the
+// Allowed fields (BR-5): brand name, amount, ZIP, keyword, label, formRoute, A/B variant and the
 // first-party proxy paths. Never secrets, never brand_id, never data about other brands.
+// `keyword` is the ad's keyword: sent with analytics and the lead, never rendered.
+// `label` is the brand's own keyword, set only when the ad link had one: the form header and the tab title.
 export interface RuntimeProxies {
   /** First-party PostHog proxy path, e.g. "/_ph". Absent = PostHog stays off. */
   posthog?: string;
@@ -15,6 +17,7 @@ export interface RuntimeConfig {
   amount?: number;
   zip?: string;
   keyword?: string | null;
+  label?: string | null;
   formRoute?: string;
   brand?: string;
   /** Server-assigned A/B arm (BR-9), e.g. "lite_v1" or "full_v1". */
@@ -53,6 +56,8 @@ export function parseRuntimeConfig(raw: unknown): RuntimeConfig {
   if (zip && /^\d{5}$/.test(zip)) out.zip = zip;
   const keyword = str(r.keyword, KEYWORD_MAX);
   if (keyword) out.keyword = keyword;
+  const label = str(r.label, KEYWORD_MAX);
+  if (label) out.label = label;
   const formRoute = sameOriginPath(r.formRoute);
   if (formRoute) out.formRoute = formRoute;
   const brand = str(r.brand, 80);

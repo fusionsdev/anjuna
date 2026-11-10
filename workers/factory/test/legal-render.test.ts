@@ -29,7 +29,9 @@ describe("renderBrand legal fill", () => {
       expect(output).not.toContain("Not provided");
     }
     expect(dec.decode(template.get("terms/index.html")!)).toBe(html);
-    expect(files.get("index.html")).toEqual(template.get("index.html"));
+    // The index page differs from the input only in the [data-kw] slot, which holds the brand name.
+    expect(dec.decode(template.get("index.html")!)).toBe('<h1><span data-kw>Funding Options</span></h1>');
+    expect(dec.decode(files.get("index.html")!)).toBe('<h1><span data-kw>Harbor &amp; Co.</span></h1>');
     expect(files.get("assets/site.css")).toEqual(template.get("assets/site.css"));
     expect(() => assertCleanBrandBytes(files, "brand-test")).not.toThrow();
   });

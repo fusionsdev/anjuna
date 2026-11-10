@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BrandProfile } from "@anjuna/contracts";
+import { BrandProfile, cleanKeyword } from "@anjuna/contracts";
+import { renderPageText } from "@anjuna/brand-runtime/page-text";
 import type { WizardDraft } from "../src/shared/wizard";
 import {
   STEPS, adsOf, contactOf, copyFieldErrors, copyOf, emptyForm, firstIncompleteStep, formFromDraft, stepOfField, validateStep, visibleCopyLength,
@@ -103,10 +104,27 @@ describe("validateStep template, copy and tracking", () => {
     expect(one({ cta: "a".repeat(41) }, "cta")).toContain("40");
     expect(one({ sub: "Powered by Anjuna" }, "sub")).not.toContain("Anjuna");
   });
-  it("counts the keyword in the h1 length, like the install does", () => {
-    expect(visibleCopyLength(valid({ h1: "{{keyword}} now" }), "h1")).toBe("Quick Loan now".length);
+  it("counts the site name in the h1 length, like the install does: the marker becomes the name on the page", () => {
+    // "Maple Cash" (10) against keyword "Quick Loan" (10) would hide a wrong count, so the lengths differ here.
+    expect(visibleCopyLength(valid({ name: "Maple Cash Lending", h1: "{{keyword}} now" }), "h1")).toBe("Maple Cash Lending now".length);
+    expect(visibleCopyLength(valid({ name: "Maple Cash Lending", brand_name: "Maple", h1: "{{keyword}} now" }), "h1")).toBe("Maple now".length);
+    expect(visibleCopyLength(valid({ name: "", brand_name: "", h1: "{{keyword}} now" }), "h1")).toBe("Quick Loan now".length);
     expect(visibleCopyLength(valid({ cta: " Go " }), "cta")).toBe(2);
-    expect(copyFieldErrors(valid({ h1: `${"a".repeat(131)} {{keyword}}` })).h1).toContain("140");
+    // "$&" is slot text, not a replacement pattern: the marker counts as 2 characters.
+    expect(visibleCopyLength(valid({ name: "Maple", brand_name: "$&", h1: "{{keyword}} now" }), "h1")).toBe("$& now".length);
+    expect(copyFieldErrors(valid({ name: "M".repeat(10), h1: `${"a".repeat(131)} {{keyword}}` })).h1).toContain("140");
+    expect(copyFieldErrors(valid({ name: "M".repeat(9), h1: `${"a".repeat(130)} {{keyword}}` }))).toEqual({});
+    // A long keyword no longer uses up h1 room: only the name is on the page.
+    expect(copyFieldErrors(valid({ name: "Maple", keyword: "K".repeat(60), h1: `${"a".repeat(100)} {{keyword}}` }))).toEqual({});
+  });
+  it("counts the brand name in the h1 length the same way in the wizard check and the page render", async () => {
+    // "a" x100 + " " + "Maple" is 106 visible characters. Counted with the 60-character keyword it would be 161 and refused.
+    const form = valid({ name: "Maple", keyword: "K".repeat(60), h1: `${"a".repeat(100)} {{keyword}}` });
+    expect(copyFieldErrors(form)).toEqual({});
+    const rendered = await renderPageText(new Map([["index.html", "<h1><span data-kw>Quick Loan</span></h1>"]]), {
+      brand_name: "Maple", keyword_default: cleanKeyword(form.keyword)!, profile: { copy: { h1: form.h1 } },
+    });
+    expect(rendered.get("index.html")).toBe(`<h1>${"a".repeat(100)} <span data-kw>Maple</span></h1>`);
   });
   it("does not report the keyword as a copy error: the Brand step owns it", () => {
     expect(copyFieldErrors(valid({ keyword: "", h1: "{{keyword}} in minutes" }))).toEqual({});

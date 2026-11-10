@@ -2,7 +2,7 @@
  * Brand runtime config (BR-5): the JSON inside `<script type="application/json" id="cfg">`
  * that the brand Worker writes into the form page and the form reads on boot.
  *
- * It holds only what the page needs to render: brand display name, amount, ZIP, keyword,
+ * It holds only what the page needs to render: brand display name, amount, ZIP, keyword, label,
  * formRoute, A/B variant and the first-party proxy paths. Strict: an unknown key (for example
  * `brand_id`, a token, a PostHog key, a DSN) fails validation, so it cannot leak by accident.
  */
@@ -62,8 +62,10 @@ export const RuntimeConfig = z.strictObject({
   /** Validated handoff amount (one of the brand's buckets). */
   amount: z.number().int().positive(),
   zip: Zip5,
-  /** Cleaned ad keyword, or null when the URL had none (header keeps its default). */
+  /** Cleaned ad keyword, or null when the URL had none. Reported to analytics and the lead; never displayed. */
   keyword: Keyword.nullable(),
+  /** The brand's own keyword (keyword_default), set only when the URL carried a keyword. Shown in the form header and tab title. */
+  label: Keyword.nullable().optional(),
   formRoute: FormRoute,
   /** A/B arm for this visitor (BR-9). A neutral slug, never a platform name. */
   variant: z.string().regex(/^[a-z0-9_-]{1,32}$/).refine(isBrandClean, "Contains a forbidden platform string"),

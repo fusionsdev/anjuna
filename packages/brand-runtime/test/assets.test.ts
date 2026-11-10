@@ -4,7 +4,10 @@ import { expect, it } from "vitest";
 it("real asset binding serves rewritten landing and form; internal HTML stays gated", async () => {
   const landing = await SELF.fetch("https://example.com/?keyword=quick+cash");
   expect(landing.status).toBe(200);
-  expect(await landing.text()).toContain("Quick Cash");
+  // The H1 slot holds the brand name; the ad keyword is not shown.
+  const body = await landing.text();
+  expect(body).toContain("<span data-kw>Example Brand</span>");
+  expect(body).not.toContain("Quick Cash");
   const form = await SELF.fetch("https://example.com/request?requested_amount=750&zip=60601");
   expect(form.status).toBe(200);
   expect(await form.text()).toContain('"amount":750');

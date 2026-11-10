@@ -77,29 +77,57 @@ function titleBrandHandler(replace: (source: string) => string): HTMLRewriterEle
   } };
 }
 
-export function applySiteText(rewriter: HTMLRewriter, text: EffectiveSiteText, page: "index" | "other"): HTMLRewriter {
+/** Longest <title> and meta description the label-carrying landing page writes. */
+const LABELLED_TITLE_MAX = 70;
+const LABELLED_DESCRIPTION_MAX = 160;
+
+/** One unit of HTML source as a reader sees it: a whole character reference, else one code point. */
+const SOURCE_UNIT = new RegExp(`${ENTITY}|[\\s\\S]`, "gu");
+
+/** Cut HTML source to `max` characters as read: a character reference (&amp;, &#39;) counts as one and is never split. */
+function cutSource(source: string, max: number): string {
+  const units = source.match(SOURCE_UNIT) ?? [];
+  return units.length <= max ? source : units.slice(0, max).join("");
+}
+
+/**
+ * `label` is the brand's own keyword, set only when the ad link carried a keyword. Index page only: <title> becomes
+ * "<label> | <brand>" and the meta description starts with "<label>. ". og:title and og:description keep their text.
+ * A null label leaves every byte as it was.
+ */
+export function applySiteText(rewriter: HTMLRewriter, text: EffectiveSiteText, page: "index" | "other", label: string | null = null): HTMLRewriter {
   let next = rewriter.on("[data-brand]", { element(element) { element.setInnerContent(text.brand); } });
   const from = text.templateBrand;
   const replace = from && from !== text.brand ? brandReplacer(from, text.brand) : null;
   // Ruling C9: only the document title and head meta tags. An inline SVG <title> in the body is an icon label.
   if (page === "index") {
     const { title, description } = text;
+    const labelled = label || null;
     if (title !== null) {
-      next = next
-        .on("head > title", { element(element) { element.setInnerContent(title); } })
-        .on('head > meta[property="og:title"]', { element(element) { element.setAttribute("content", attributeValue(title)); } });
+      next = next.on('head > meta[property="og:title"]', { element(element) { element.setAttribute("content", attributeValue(title)); } });
+      if (labelled === null) next = next.on("head > title", { element(element) { element.setInnerContent(title); } });
     } else if (replace) {
-      next = next
-        .on("head > title", titleBrandHandler(replace))
-        .on('head > meta[property="og:title"]', { element(element) {
-          const content = element.getAttribute("content");
-          if (content !== null) element.setAttribute("content", replace(content));
-        } });
+      next = next.on('head > meta[property="og:title"]', { element(element) {
+        const content = element.getAttribute("content");
+        if (content !== null) element.setAttribute("content", replace(content));
+      } });
+      if (labelled === null) next = next.on("head > title", titleBrandHandler(replace));
+    }
+    if (labelled !== null) {
+      const labelTitle = [...`${labelled} | ${text.brand}`].slice(0, LABELLED_TITLE_MAX).join("");
+      next = next.on("head > title", { element(element) { element.setInnerContent(labelTitle); } });
     }
     if (description !== null) {
-      next = next
-        .on('head > meta[name="description"]', { element(element) { element.setAttribute("content", attributeValue(description)); } })
-        .on('head > meta[property="og:description"]', { element(element) { element.setAttribute("content", attributeValue(description)); } });
+      next = next.on('head > meta[property="og:description"]', { element(element) { element.setAttribute("content", attributeValue(description)); } });
+      if (labelled === null) next = next.on('head > meta[name="description"]', { element(element) { element.setAttribute("content", attributeValue(description)); } });
+    }
+    if (labelled !== null) {
+      // The attribute is read and written as HTML source; the edited text is plain, so its ampersands are escaped.
+      next = next.on('head > meta[name="description"]', { element(element) {
+        const current = description !== null ? attributeValue(description) : element.getAttribute("content");
+        const head = attributeValue(labelled);
+        element.setAttribute("content", cutSource(current ? `${head}. ${current}` : head, LABELLED_DESCRIPTION_MAX));
+      } });
     }
     return next;
   }
