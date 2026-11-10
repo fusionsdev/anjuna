@@ -183,10 +183,12 @@ describe("Home screen, owner", () => {
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
 
     const stages = [...document.querySelectorAll(".home-stage")].map((s) => s.textContent);
-    expect(stages).toEqual(["402คลิกที่จ่าย", "283ถึงเว็บ", "131ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
-    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ลีด");
-    expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หลุด 82%");
-    expect(document.querySelector(".note")!.textContent).toContain('หลุดมากที่สุดที่ขั้น "เปิดฟอร์ม" ไป "ลีด": จาก 94 เหลือ 17 (82%)');
+    // /go and form-view are unmeasured (FA-6 not built), so they read "—"; the biggest measured leak is ลีด -> ขายได้ (76%).
+    expect(stages).toEqual(["402คลิกที่จ่าย", "283ถึงเว็บ", "—ถึง /go", "—เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("4ขายได้");
+    expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หลุด 76%");
+    expect(document.querySelector(".note")!.textContent).toContain('หลุดมากที่สุดที่ขั้น "ลีด" ไป "ขายได้": จาก 17 เหลือ 4 (76%)');
+    expect(screen.getByText("/go และ เปิดฟอร์ม ยังไม่มีข้อมูลการวัด")).toBeTruthy();
 
     const fixes = within(screen.getByRole("region", { name: "ต้องแก้" }));
     expect(await fixes.findByText("demo06")).toBeTruthy();
@@ -199,6 +201,15 @@ describe("Home screen, owner", () => {
     expect(todo.getByText("ยืนยัน Test sold")).toBeTruthy();
     expect(todo.getByText("2 รายการ")).toBeTruthy();
     expect(todo.getByText("1 ร่าง")).toBeTruthy();
+  });
+
+  it("shows the domain for a fix-list brand id, like the Alerts screen", async () => {
+    // "cg" is a live brand (creditgenie.test); the fix list must show the domain, not the raw brand id.
+    alertsBody = { ...alertsReport, brands_without_postbacks: { state: "warn", detail: { window_hours: 24, brands: [{ brand: "cg", leads: 3 }] } } };
+    render(<HomeScreen me={owner} />);
+    const fixes = within(screen.getByRole("region", { name: "ต้องแก้" }));
+    expect(await fixes.findByText("creditgenie.test")).toBeTruthy();
+    expect(fixes.queryByText("cg")).toBeNull();
   });
 
   it("shows spend and cost per lead in baht with the server's USD spend under it, and profit in USD", async () => {
@@ -645,7 +656,8 @@ describe("Home screen, owner", () => {
     expect(ledgerValue("รายได้").text).toBe("$410");
     await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
     await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันส่งไม่ได้ 4 รายการ"));
-    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ลีด");
+    // /go and form unmeasured, so the biggest measured leak is ลีด -> ขายได้.
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("4ขายได้");
   });
 
   it("shows the empty state when the window has no leads", async () => {
@@ -692,7 +704,7 @@ describe("Home screen, employee", () => {
     expect(screen.queryByText("รายได้")).toBeNull();
     expect(screen.queryByText("กำไร/ขาดทุน")).toBeNull();
     expect(screen.queryByText("คลิกที่จ่าย")).toBeNull();
-    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283ถึงเว็บ", "131ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
+    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283ถึงเว็บ", "—ถึง /go", "—เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
     // Only the owner can approve a template.
     expect(screen.queryByText("อนุมัติเทมเพลต")).toBeNull();
     expect(await within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).findByText("1 แบรนด์")).toBeTruthy();

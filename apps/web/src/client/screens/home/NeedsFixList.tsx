@@ -54,10 +54,12 @@ export function fixItems(alerts: AlertsReportResponse | null | undefined, conver
 }
 
 /** The top 4 things to fix. A source that is still loading or failed says so on its own line and never reads as "nothing to fix". */
-export function NeedsFixList({ alerts, conversions, fixes, onAlerts }: {
+export function NeedsFixList({ alerts, conversions, fixes, domains, onAlerts }: {
   alerts: AlertsReportResponse | null | undefined;
   conversions: ConversionsReportResponse | null | undefined;
   fixes: FixItem[];
+  /** brand_id to domain, so a row shows the domain like the Alerts screen. A non-id label (e.g. "ทุกแบรนด์") is absent and reads as itself. */
+  domains: Map<string, string>;
   onAlerts: () => void;
 }) {
   return (
@@ -76,7 +78,7 @@ export function NeedsFixList({ alerts, conversions, fixes, onAlerts }: {
       {fixes.slice(0, 4).map((item) => (
         <div className="home-item" key={item.id}>
           <span className="dot" style={{ background: item.level === "bad" ? "var(--bad)" : "var(--leak)" }} aria-hidden="true" />
-          <div className="t"><b style={{ fontWeight: 500 }}>{item.brand}</b><span>{item.message}</span></div>
+          <div className="t"><b style={{ fontWeight: 500 }} title={item.brand}>{domains.get(item.brand) ?? item.brand}</b><span>{item.message}</span></div>
           {item.path
             ? <a className="btn" href={item.path} onClick={inApp(item.path)}>{FIX_LABEL[item.kind ?? "details"]}</a>
             : <button type="button" className="btn" onClick={item.onAct ?? onAlerts}>{FIX_LABEL[item.kind ?? "details"]}</button>}

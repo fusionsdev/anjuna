@@ -7,6 +7,7 @@ import { Chip } from "../components/Chip";
 import { isDemoBrand } from "../brand-health";
 import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals, spendWindowThb } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
+import { buildBrandLabels } from "../brand-labels";
 import { useAdsCampaigns, useNoGclid, useUploadFacts } from "../brand-facts";
 import { conversionsPath } from "./Conversions";
 import { BrandRows } from "./home/BrandRows";
@@ -198,6 +199,8 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   // The daily series has no brand, so a scope that hides brands shows no line.
   const spendDays = spendRaw && !hidesBrands ? spendSeries(spendRaw) : null;
   const scopedBrands = brands ? brands.filter((brand) => inScopeId(brand.brand_id)) : brands;
+  // brand_id to domain for the fix list, built from the brand list already loaded (no extra fetch). Empty until it loads; unknown ids read as themselves.
+  const brandDomains = useMemo(() => buildBrandLabels(brands ?? null, null), [brands]);
   // Exact per brand, never read off a page of 200 rows that other brands may fill. The Google Ads chip reads the campaigns API.
   const scopedIds = useMemo(() => (scopedBrands ?? []).map((brand) => brand.brand_id), [scopedBrands]);
   const uploadFacts = useUploadFacts(scopedIds, reloadKey);
@@ -235,8 +238,10 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const stages: Stage[] = [
     ...(owner ? [{ label: "คลิกที่จ่าย", value: spend === undefined ? undefined : spend?.clicks ?? null, paid: true }] : []),
     { label: "ถึงเว็บ", value: field((f) => f.clicks) },
-    { label: "ถึง /go", value: field((f) => f.go) },
-    { label: "เปิดฟอร์ม", value: field((f) => f.form) },
+    // /go and form-view are not measured yet: core serves the funnel with an empty events source (FA-6 Analytics Engine
+    // is not built), so these counts are always 0. Show them as unmeasured ("—"), not a misleading 0, like the Funnel screen.
+    { label: "ถึง /go", value: null },
+    { label: "เปิดฟอร์ม", value: null },
     { label: "ลีด", value: field((f) => f.leads) },
     { label: "ขายได้", value: field((f) => f.sold) },
   ];
@@ -317,7 +322,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
       <div className="home-stack">
         <IncidentBanner urgent={urgent} clickLoss={clickLoss} onQueue={() => navigate(allPath)} onAlerts={go("alerts")} />
         <div className="home-grid2">
-          <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} onAlerts={go("alerts")} />
+          <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} domains={brandDomains} onAlerts={go("alerts")} />
           <HumanTasks tasks={tasks} />
         </div>
         <div className="ledger kpi-row" role="group" aria-label="สรุปตัวเลข">
@@ -362,6 +367,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
           <div className="home-drops" style={{ ["--stages" as string]: stages.length }}>
             {stages.map((stage, i) => (i ? <span key={stage.label} className={i === leak ? "amb" : ""}>{dropText(stages[i - 1]!.value, stage.value)}</span> : <span key={stage.label} />))}
           </div>
+          <p className="hint">/go และ เปิดฟอร์ม ยังไม่มีข้อมูลการวัด</p>
           {note && (
             <p className="note">
               {note}
