@@ -65,6 +65,38 @@ it("employee acknowledgement drops the navigation badge through the state API", 
   expect((await call("/api/alerts/adsbot%3Abrand-a/ack", { ...options, method: "POST" })).status).toBe(200);
   expect(await (await call("/api/nav/counts", options)).json()).toEqual({ brands_need_fix: 0, templates_awaiting: 0, alerts_open: 0 });
 });
+it("a fresh read after an ack and a close lists both stored states through GET /api/alerts/state", async () => {
+  const at = "2026-11-10T02:00:00.000Z";
+  const stored = new Map<string, Record<string, unknown>>();
+  const binding = { async fetch(request: Request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/admin/alerts/state") return Response.json({ rows: [...stored.values()] });
+    const action = /^\/admin\/alerts\/([^/]+)\/(ack|close)$/.exec(path);
+    if (request.method === "POST" && action) {
+      const key = decodeURIComponent(action[1]!);
+      const row = { alert_key: key, state: "warn", first_seen: at, last_sent: null, acknowledged_by: action[2] === "ack" ? "employee" : null,
+        acknowledged_at: action[2] === "ack" ? at : null, closed_at: action[2] === "close" ? at : null, updated_at: at };
+      stored.set(key, row);
+      return Response.json(row);
+    }
+    return new Response("unexpected", { status: 500 });
+  } } as unknown as Fetcher;
+  const options = { cookie: employee, env: makeEnv({ CORE: binding, CORE_LIFECYCLE: binding, MOCK_CORE: "0" }) };
+  expect(await (await call("/api/alerts/state", options)).json()).toEqual({ rows: [] });
+  expect((await call("/api/alerts/adsbot%3Abrand-a/ack", { ...options, method: "POST" })).status).toBe(200);
+  expect((await call("/api/alerts/reject_rate%3Abrand-b/close", { ...options, method: "POST" })).status).toBe(200);
+  // A new page load is a new GET: both rows come back from the stored copy.
+  const fresh = await call("/api/alerts/state", options);
+  expect(fresh.status).toBe(200);
+  const body = (await fresh.json()) as { rows: Array<{ alert_key: string; acknowledged_at: string | null; closed_at: string | null }> };
+  expect(body.rows.map((r) => [r.alert_key, r.acknowledged_at, r.closed_at])).toEqual([["adsbot:brand-a", at, null], ["reject_rate:brand-b", null, at]]);
+  expect((await call("/api/alerts/state")).status).toBe(401);
+});
+it("answers 502 when core returns a state list that breaks the contract", async () => {
+  const binding = { async fetch() { return Response.json({ rows: [{ alert_key: "", state: "nope" }] }); } } as unknown as Fetcher;
+  const response = await call("/api/alerts/state", { cookie: employee, env: makeEnv({ CORE: binding, CORE_LIFECYCLE: binding, MOCK_CORE: "0" }) });
+  expect(response.status).toBe(502);
+});
 it("navigation counts reuse brand health and count only unarchived certified templates", async () => {
   const at = "2026-11-10T02:00:00.000Z";
   await env.FACTORY.batch([

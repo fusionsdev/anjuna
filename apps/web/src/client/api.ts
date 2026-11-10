@@ -2,7 +2,7 @@ import { TrafficBreakdownResponse, type TemplateThemeVars, type TrafficPeriod, t
 import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contracts";
 import { AlertStateRow, NotificationLogRow } from "@anjuna/contracts";
 import { z } from "zod";
-import { BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
+import { AlertStatesResponse, BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, TerminalJobResponse, TerminalRunResponse, type CampaignJobCreateRequest, type TerminalRunRequest } from "@anjuna/contracts";
@@ -326,6 +326,8 @@ export const api = {
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
   /** The last sends of the Telegram notifier, newest first. Core caps the limit at 100. */
   alertsLog: (limit = 100) => request<unknown>("GET", `/api/alerts/log?limit=${limit}`).then((body) => z.object({ rows: z.array(NotificationLogRow) }).parse(body).rows),
+  /** Every alert state with an acknowledge or a close on it, as core stored them. */
+  alertStates: () => request<unknown>("GET", "/api/alerts/state").then((body) => AlertStatesResponse.parse(body).rows),
   /** Acknowledge or close one alert. The key is `<rule>:<brand>`. Core answers 404 when the alert is no longer active. */
   alertAction: (key: string, action: "ack" | "close") => request<unknown>("POST", `/api/alerts/${encodeURIComponent(key)}/${action}`, {}).then((body) => AlertStateRow.parse(body)),
   /** Send a failed notification again. Owner only. */

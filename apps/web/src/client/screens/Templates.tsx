@@ -235,7 +235,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
           </div>
           <section className="tpl-card" aria-label="รายการเทมเพลต">
             {owner && checkedItems.length > 0 && (
-              <BulkBar items={checkedItems} all={templates ?? []} categories={categories} busy={busy} onMove={(categoryId) => void moveMany(checkedItems, categoryId)}
+              <BulkBar items={checkedItems} categories={categories} busy={busy} onMove={(categoryId) => void moveMany(checkedItems, categoryId)}
                 onArchive={() => void archiveMany(checkedItems)} onDelete={() => void removeMany(checkedItems)} onClear={() => setChecked(new Set())} />
             )}
             {!templates ? <p className="tpl-empty">กำลังโหลด…</p> : templates.length === 0 ? <p className="tpl-empty">ยังไม่มีเทมเพลต</p> : visibleTemplates.length === 0 ? (

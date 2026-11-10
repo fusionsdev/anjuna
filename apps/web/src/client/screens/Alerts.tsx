@@ -3,7 +3,7 @@ import { Bell, BellRing, Coins, MousePointerBan, RotateCcw, ThumbsDown, Timer, W
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
-import { recordAlertState, useAlertSession } from "../alerts-session";
+import { hydrateAlertStates, recordAlertState, useAlertSession } from "../alerts-session";
 import { Chip, type ChipTone } from "../components/Chip";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
@@ -120,7 +120,7 @@ function RulesCard({ report }: { report: AlertsReportResponse }) {
 const FILTERS: Array<[Filter, string]> = [["open", "เปิดอยู่"], ["closed", "ปิดแล้ว"], ["all", "ทั้งหมด"]];
 
 const KEYLESS_REASON = "รายงานไม่ระบุแบรนด์ของการแจ้งเตือนนี้ จึงไม่มีรหัสที่ใช้บันทึกสถานะ รับทราบหรือปิดจากหน้านี้ไม่ได้";
-const SESSION_NOTE = "การรับทราบและการปิดบันทึกที่ระบบแล้ว แต่ยังไม่มีรายการสถานะให้โหลดกลับ รายการที่ทำในรอบนี้จึงแสดงต่อจนกว่าจะโหลดหน้าใหม่ หลังโหลดใหม่จะเห็นรายงานล่าสุดอีกครั้ง";
+const STATES_ERROR = "โหลดสถานะรับทราบและปิดที่บันทึกไว้ไม่ได้ แถวที่เคยรับทราบหรือปิดแล้วอาจแสดงเป็นเปิดอยู่";
 
 /** A row on screen: an open or healthy incident from the report, or a state closed by a successful close call. */
 interface Entry { id: string; rule: RuleId | null; level: Level; key: string | null; brand: string | null; detail: string; group: "open" | "closed" | "healthy"; acknowledged: boolean; closedAt: string | null }
@@ -219,7 +219,6 @@ function AlertList({ report, domains, onChanged }: { report: AlertsReportRespons
             })}
           </ul>
         )}
-        <p className="hint alert-session-note">{SESSION_NOTE}</p>
         <p className="hint">ข้อมูล ณ {when(report.generated_at)}</p>
       </section>
     </>
@@ -306,10 +305,17 @@ export function AlertsScreen({ me, onChanged }: { me?: Me; onChanged?: () => voi
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("alerts");
   const domains = useBrandDomains();
+  // The stored acknowledge and close states are read from core each time the screen starts, so a fresh page shows what was done.
+  // The first read holds the list back (a row must not flash as open); a failed read shows a notice with a retry and keeps the report.
+  const [states, setStates] = useState<"loading" | "ready" | "error">("loading");
+  const loadStates = useCallback(() => {
+    api.alertStates().then((rows) => { hydrateAlertStates(rows); setStates("ready"); }, () => setStates("error"));
+  }, []);
 
   useEffect(() => {
     api.alerts().then(setReport, (e) => setError(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ"));
-  }, []);
+    loadStates();
+  }, [loadStates]);
 
   return (
     <>
@@ -324,10 +330,13 @@ export function AlertsScreen({ me, onChanged }: { me?: Me; onChanged?: () => voi
       </nav>
       {tab === "history" ? <History me={me} domains={domains} /> : error ? (
         <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{error}</div>
-      ) : !report ? (
+      ) : !report || states === "loading" ? (
         <div className="hint" role="status"><BellRing aria-hidden="true" className="alert-icon" /> กำลังโหลด…</div>
       ) : (
         <div className="alert-stack">
+          {states === "error" && (
+            <p className="alert-notice err" role="alert">{STATES_ERROR} <button type="button" className="btn" onClick={loadStates}>ลองใหม่</button></p>
+          )}
           <AlertList report={report} domains={domains} onChanged={onChanged} />
           <RulesCard report={report} />
         </div>

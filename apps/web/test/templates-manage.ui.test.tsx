@@ -10,7 +10,7 @@ const LIST = "GET /api/templates?include_archived=1";
 const summary = (id: string, name: string, over: Record<string, unknown> = {}) => ({
   // A template that was never approved by default, so the delete rule only blocks what a test sets up.
   template_version_id: `tv-${id}`, template_id: `tpl-${id}`, name, version: 1, status: "awaiting_approval",
-  submitted_by_label: "Somchai", created_at: STAMP, sealed_at: null, thumbnail_url: null, brands_using: 0, archived: false, category_id: null, ...over,
+  submitted_by_label: "Somchai", created_at: STAMP, sealed_at: null, thumbnail_url: null, brands_using: 0, archived: false, category_id: null, was_approved: false, ...over,
 });
 const categories = [{ id: "cat-loan", name: "เงินกู้", sort: 1 }, { id: "cat-card", name: "บัตรเครดิต", sort: 2 }];
 
@@ -182,9 +182,9 @@ describe("template manager: bulk bar, archive and delete", () => {
 
   it("disables delete for an approved version with no brand, and for a draft whose sibling version was approved", async () => {
     templates = [
-      summary("a", "Alpha", { status: "approved", sealed_at: STAMP }),
-      summary("b", "Bravo"),
-      summary("b2", "Bravo", { template_id: "tpl-b", version: 2, status: "approved", sealed_at: STAMP }),
+      summary("a", "Alpha", { status: "approved", sealed_at: STAMP, was_approved: true }),
+      summary("b", "Bravo", { was_approved: true }),
+      summary("b2", "Bravo", { template_id: "tpl-b", version: 2, status: "approved", sealed_at: STAMP, was_approved: true }),
       summary("d", "Delta"),
     ];
     render(<TemplatesScreen me={owner} />);
@@ -204,6 +204,23 @@ describe("template manager: bulk bar, archive and delete", () => {
     expect(del().disabled).toBe(true);
     expect(bulk().getByText("มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
     expect((bulk().getByRole("button", { name: "เก็บถาวร" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables delete for a draft whose approved version is not in the loaded list, and not for a draft the server says was never approved", async () => {
+    // The list holds the newest 200 versions. Here the approved version of tpl-b is cut from it: only its was_approved flag says so.
+    templates = [summary("b", "Bravo", { was_approved: true }), summary("d", "Delta")];
+    expect(templates.some((t) => t.status === "approved" || t.sealed_at !== null)).toBe(false);
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Bravo");
+    const del = () => bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement;
+    check("เลือก Delta v1");
+    expect(del().disabled).toBe(false);
+    check("เลือก Bravo v1");
+    expect(del().disabled).toBe(true);
+    expect(bulk().getByText("มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    check("เลือก Delta v1");
+    expect(del().disabled).toBe(true);
+    expect(calls("DELETE", "/api/templates/tpl-b")).toHaveLength(0);
   });
 
   it("names both reasons when a selected template is in use and was approved", async () => {

@@ -1,4 +1,4 @@
-import { AlertStateRow, NotificationLogRow, type AdminRequestContext } from "@anjuna/contracts";
+import { ALERT_STATES_MAX_ROWS, AlertStateRow, NotificationLogRow, type AdminRequestContext } from "@anjuna/contracts";
 import { InMemorySubmitErrorCounts, formatDigest, formatNotice, loadReportNotices, runAlerts, type Notice, type NotificationMessage } from "@anjuna/insights";
 import type { Env } from "../env.js";
 import { createNotifier } from "../traffic-tail/alerts.js";
@@ -32,6 +32,12 @@ export async function handleAlertStateRoute(request: Request, env: Env, ctx: Adm
     const [notices, states] = await Promise.all([currentNotices(env), env.LEADS.prepare("SELECT alert_key,acknowledged_at,closed_at FROM alert_state").all<{ alert_key: string; acknowledged_at: string | null; closed_at: string | null }>()]);
     const hidden = new Set(states.results.filter(row => row.acknowledged_at || row.closed_at).map(row => row.alert_key));
     return json({ alerts_open: notices.filter(n => !hidden.has(n.key)).length });
+  }
+  if (path === "/admin/alerts/state" && request.method === "GET") {
+    // Every state an owner or employee acknowledged or closed, so a fresh page load shows what was already done. Newest first.
+    const { results } = await env.LEADS.prepare("SELECT * FROM alert_state WHERE acknowledged_at IS NOT NULL OR closed_at IS NOT NULL ORDER BY updated_at DESC, alert_key LIMIT ?1")
+      .bind(ALERT_STATES_MAX_ROWS).all();
+    return json({ rows: results.flatMap(row => { const parsed = AlertStateRow.safeParse(row); return parsed.success ? [parsed.data] : []; }) });
   }
   if (path === "/admin/alerts/log" && request.method === "GET") {
     const raw = url.searchParams.get("limit") ?? "100";

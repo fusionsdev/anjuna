@@ -11,3 +11,8 @@ export const AlertStateRow = z.strictObject({
   updated_at: z.iso.datetime(),
 });
 export type AlertStateRow = z.infer<typeof AlertStateRow>;
+
+/** Every alert state with an acknowledge or a close on it, newest update first. Core caps the list at ALERT_STATES_MAX_ROWS. */
+export const ALERT_STATES_MAX_ROWS = 500;
+export const AlertStatesResponse = z.strictObject({ rows: z.array(AlertStateRow).max(ALERT_STATES_MAX_ROWS) });
+export type AlertStatesResponse = z.infer<typeof AlertStatesResponse>;

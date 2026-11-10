@@ -75,6 +75,8 @@ export const TemplateVersionSummary = z.strictObject({
   /** templates.archived_at is set: hidden from the brand picker, existing brands keep running. */
   archived: z.boolean().default(false),
   category_id: z.string().nullable().default(null),
+  /** Any version of this template was ever sealed, read from the whole version history, not from the rows of one list page. Delete is refused while it is true. */
+  was_approved: z.boolean().default(false),
 });
 export type TemplateVersionSummary = z.infer<typeof TemplateVersionSummary>;
 

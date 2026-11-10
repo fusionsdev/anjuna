@@ -39,6 +39,22 @@ it("close hides the alert; unknown keys do not create state", async () => {
   expect((await h.admin("/admin/alerts/unknown/ack", owner, { method: "POST" })).status).toBe(404);
   expect(await h.db.prepare("SELECT COUNT(*) AS n FROM alert_state WHERE alert_key='unknown'").first("n")).toBe(0);
 });
+it("state lists every acknowledged or closed row, newest first, and none that nobody touched", async () => {
+  const at = new Date().toISOString();
+  expect(await (await h.admin("/admin/alerts/state", employee)).json()).toEqual({ rows: [] });
+  await h.db.prepare("INSERT INTO alert_state(alert_key,state,first_seen,updated_at) VALUES ('reject_rate:brand-b','warn',?1,?1)").bind(at).run();
+  expect((await h.admin("/admin/alerts/adsbot%3Abrand-a/ack", employee, { method: "POST" })).status).toBe(200);
+  const response = await h.admin("/admin/alerts/state", employee);
+  expect(response.status).toBe(200);
+  const rows = ((await response.json()) as { rows: unknown[] }).rows;
+  // brand-b was never touched, so it is not listed. The acknowledged brand-a row is.
+  expect(rows.map(row => AlertStateRow.parse(row).alert_key)).toEqual(["adsbot:brand-a"]);
+  expect(rows[0]).toMatchObject({ acknowledged_by: "employee", closed_at: null });
+  expect((await h.admin("/admin/alerts/adsbot%3Abrand-a/close", owner, { method: "POST" })).status).toBe(200);
+  const closed = ((await (await h.admin("/admin/alerts/state", owner)).json()) as { rows: Array<{ closed_at: string | null }> }).rows;
+  expect(closed).toHaveLength(1);
+  expect(closed[0]!.closed_at).not.toBeNull();
+});
 it("log lists newest first with a bounded limit", async () => {
   for (const [id, sent] of [["old","2026-11-09T01:00:00.000Z"],["new","2026-11-10T01:00:00.000Z"]]) {
     await h.db.prepare("INSERT INTO notification_log VALUES (?1,'telegram','123','adsbot:brand-a','failed',503,?2,?3)").bind(id, "a".repeat(64), sent).run();

@@ -20,14 +20,12 @@ export const REFUSAL_TEXT: Record<string, string> = {
 
 /**
  * Why the bulk bar refuses delete before it asks the server. The live rule is the server's: a template can be deleted only when no
- * brand uses any version of it and no version was ever approved. `all` is every loaded version, so a selected draft is also blocked
- * when a sibling version of the same template is in use or was approved.
+ * brand uses any version of it and no version was ever approved. Both facts come per template from the list call (`brands_using`
+ * counts every version, `was_approved` reads the whole version history), so an approved version outside the loaded rows still blocks.
  */
-export function deleteBlockReason(items: TemplateVersionSummary[], all: TemplateVersionSummary[] = items): string | null {
-  const ids = new Set(items.map((t) => t.template_id));
-  const versions = all.filter((t) => ids.has(t.template_id));
-  const inUse = versions.some((t) => t.brands_using > 0);
-  const approved = versions.some((t) => t.status === "approved" || t.sealed_at !== null);
+export function deleteBlockReason(items: TemplateVersionSummary[]): string | null {
+  const inUse = items.some((t) => t.brands_using > 0);
+  const approved = items.some((t) => t.was_approved || t.status === "approved" || t.sealed_at !== null);
   if (inUse && approved) return "มีแบรนด์ใช้อยู่และเคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน";
   if (inUse) return "มีเทมเพลตที่แบรนด์ใช้อยู่ ลบไม่ได้ ใช้เก็บถาวรแทน";
   if (approved) return "มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน";
@@ -35,10 +33,8 @@ export function deleteBlockReason(items: TemplateVersionSummary[], all: Template
 }
 
 /** Dark bar above the table while rows are checked. Owner only: the server refuses these writes for an employee. */
-export function BulkBar({ items, all, categories, busy, onMove, onArchive, onDelete, onClear }: {
+export function BulkBar({ items, categories, busy, onMove, onArchive, onDelete, onClear }: {
   items: TemplateVersionSummary[];
-  /** Every loaded version, for the delete rule that looks at the other versions of a selected template. */
-  all: TemplateVersionSummary[];
   categories: TemplateCategory[];
   busy: boolean;
   /** `null` clears the category. */
@@ -47,7 +43,7 @@ export function BulkBar({ items, all, categories, busy, onMove, onArchive, onDel
   onDelete: () => void;
   onClear: () => void;
 }) {
-  const reason = deleteBlockReason(items, all);
+  const reason = deleteBlockReason(items);
   const allArchived = items.every((t) => t.archived);
   return (
     <div className="tpl-bulk" role="toolbar" aria-label="จัดการเทมเพลตที่เลือก">
