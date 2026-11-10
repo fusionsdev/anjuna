@@ -195,7 +195,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: 
     <section className="panel" aria-label="ตัวกรองลีด (Lead filters)">
       <FilterBar label="ตัวกรองลีด (Lead filters)" activeCount={[filter.brand, filter.status, filter.q].filter(Boolean).length + rangeActive}>
       <div className="leads-filters">
-      <div className="filter-chips" role="group" aria-label="สถานะ (Status)">
+      <div className="filter-chips" role="group" aria-label="สถานะ">
         {([["", "ทั้งหมด"], ...outcomes.map(([value, label]) => [value, label.replace(/ \(.*\)$/, "")] as [string, string])] as Array<[LeadOutcome | "", string]>).map(([value, label]) => {
           const shown = page ? page.rows.filter((r) => inScopeId(r.brand)) : null;
           // The server filters by status, so only the loaded rows can be counted: the exact count of an open chip, the loaded rows of "ทั้งหมด" by outcome.
@@ -237,10 +237,10 @@ export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: 
       <p className="hint">ช่วงวันที่เป็น UTC ค่าเริ่มต้นคือ 30 วันล่าสุด · ค้นด้วยรหัสลีดหรือ click id เท่านั้น ไม่ค้นด้วยอีเมลหรือเบอร์โทร (Dates are UTC; search matches lead ID or click ID only)</p>
     </section>
     <div className={selectedId ? "leads-layout has-panel" : "leads-layout"}>
-    <section className="panel" aria-label="รายการลีด (Lead list)">
+    <section className="panel" aria-label="รายการลีด">
       {!valid ? <p className="hint">แก้ตัวกรองด้านบนก่อนจึงจะโหลดรายการได้ (Fix the filter above to load the list)</p>
         : error ? <p role="alert">{error}</p> : !page ? <Spinner /> : <>
-        <DataTable label="รายการลีด (Lead list)" columns={columns} rows={page.rows.filter((r) => inScopeId(r.brand))} rowKey={(r) => r.lead_id} empty={empty} />
+        <DataTable label="รายการลีด" columns={columns} rows={page.rows.filter((r) => inScopeId(r.brand))} rowKey={(r) => r.lead_id} empty={empty} />
         {page.next_cursor && <div style={{ marginTop: 10 }}><button type="button" className="btn" onClick={() => setCursor(page.next_cursor)}>ถัดไป (Next)</button></div>}
       </>}
     </section>

@@ -103,6 +103,31 @@ describe("Notification channels", () => {
     expect((screen.getByRole("button", { name: "บันทึก" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("locks every control while the save runs and keeps the saved document on screen when the response arrives", async () => {
+    let release: (() => void) | undefined;
+    // A slow server: the PUT answers only when the test lets it.
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === "/api/settings/notify" && init?.method === "PUT") await new Promise<void>((resolve) => { release = resolve; });
+      return realFetch(input, init);
+    }));
+    await open();
+    fireEvent.click(screen.getByLabelText("ส่ง แบรนด์ไม่มี postback ผ่าน Telegram"));
+    fireEvent.click(screen.getByRole("button", { name: "บันทึก" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "กำลังบันทึก…" })).toBeTruthy());
+    const telegram = screen.getByLabelText("เปิดแจ้งเตือนผ่าน Telegram") as HTMLInputElement;
+    const digest = screen.getByLabelText("เปิดสรุปรายวัน") as HTMLInputElement;
+    for (const control of [telegram, digest, screen.getByLabelText("ส่ง แบรนด์ไม่มี postback ผ่าน Telegram"), screen.getByLabelText("chat id ใหม่")]) expect(control.matches(":disabled")).toBe(true);
+    release?.();
+    expect(await screen.findByText("บันทึกแล้ว")).toBeTruthy();
+    expect(telegram.checked).toBe(true);
+    expect(screen.queryByText("มีการแก้ไขที่ยังไม่บันทึก")).toBeNull();
+    expect(puts()).toHaveLength(1);
+    expect((puts()[0]!.body as NotifySettings).telegram.enabled).toBe(true);
+    // The controls open again after the response.
+    expect(telegram.matches(":disabled")).toBe(false);
+  });
+
   it("clears a quiet window to null and changes the digest time and switch in the same save", async () => {
     await open();
     fireEvent.click(screen.getByLabelText("ตั้งช่วงเงียบของ คลิกที่จ่ายไม่มี gclid"));

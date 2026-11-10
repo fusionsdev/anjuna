@@ -85,9 +85,12 @@ export function NotifySettingsScreen() {
     setSaving(true);
     setSaveState(null);
     try {
-      const next = await api.putNotifySettings(draft!);
+      const sent = draft!;
+      const next = await api.putNotifySettings(sent);
       setSaved(next);
-      setDraft(next);
+      // The response replaces the draft only while the draft is still what was sent. A change made after the request left stays
+      // in the draft and shows as unsaved against the new saved copy. The controls are also locked while saving.
+      setDraft((current) => (current && same(current, sent) ? next : current));
       setTest(null);
       setSaveState({ kind: "ok", text: "บันทึกแล้ว" });
     } catch (e) {
@@ -116,6 +119,8 @@ export function NotifySettingsScreen() {
   return (
     <div className="notify-page">
       <NotifyHead />
+      {/* Every control is locked while the save runs, so no edit can be lost to the response. */}
+      <fieldset className="notify-fields" disabled={saving}>
 
       <section className="panel notify-card" aria-label="Telegram">
         <header className="notify-card-head">
@@ -225,6 +230,7 @@ export function NotifySettingsScreen() {
         </div>
         <p className="hint">ส่งค่าโฆษณา ลีด ต้นทุนต่อลีด ขายได้ กำไร และเรื่องที่ต้องแก้ ตามเวลากรุงเทพ</p>
       </section>
+      </fieldset>
 
       <div className="notify-save">
         <button type="button" className="btn pri" disabled={!dirty || saving} onClick={() => void save()}><Save aria-hidden="true" size={16} />{saving ? "กำลังบันทึก…" : "บันทึก"}</button>

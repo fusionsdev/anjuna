@@ -219,6 +219,15 @@ describe("Conversions page: details", () => {
     expect(within(ledger).getByText("ค้างเกิน 6 ชม. 1").className).toContain("p-warn");
   });
 
+  it("sets every number in the stat boxes in the mono face with the num class, counts and values", async () => {
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    const ledger = screen.getByRole("group", { name: "สรุปคอนเวอร์ชัน" });
+    for (const label of ["ค้างส่ง", "กำลังส่ง", "ส่งแล้ว", "ส่งไม่ได้"]) expect(within(ledger).getByText(label).nextElementSibling?.classList.contains("num"), label).toBe(true);
+    // The owner also sees the two value totals, and they carry num too.
+    for (const label of ["มูลค่าที่ส่งแล้ว", "มูลค่าที่ส่งไม่ได้"]) expect(within(ledger).getByText(label).nextElementSibling?.classList.contains("num"), label).toBe(true);
+  });
+
   it("maps each status to its badge tone", async () => {
     render(<ConversionsScreen me={owner} />);
     const grid = await table();
@@ -379,7 +388,7 @@ describe("Conversions page: load more", () => {
     expect(screen.queryByText(/ซึ่งเป็นจำนวนสูงสุด/)).toBeNull();
     expect(screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" })).toBeTruthy();
     await act(async () => { release!(json({ ...report, truncated: true })); });
-    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง (Narrow the filters)`)).toBeTruthy();
+    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง`)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
   }, 20000);
 
@@ -458,7 +467,7 @@ describe("Conversions page: load more", () => {
       fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
       await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe(limit));
     }
-    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง (Narrow the filters)`)).toBeTruthy();
+    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง`)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
   }, 20000);
 

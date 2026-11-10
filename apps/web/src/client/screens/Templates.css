@@ -96,3 +96,8 @@
   .tpl-drawer { animation: tpl-slide .16s ease-out; }
   @keyframes tpl-slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 }
+
+/* A failed detail load, inside the drawer. */
+.tpl-drawer-error { display: grid; gap: 12px; justify-items: start; padding: 16px; border-radius: var(--radius-control); background: var(--bad-bg); color: var(--bad); }
+.tpl-drawer-error p { margin: 0; }
+.tpl-drawer-error .btn { min-height: 44px; background: var(--card); color: var(--ink); }

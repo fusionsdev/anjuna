@@ -150,8 +150,8 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
 
   const close = <button type="button" className="btn lead-close" onClick={onBack} aria-label="ปิดรายละเอียด">ปิด</button>;
   if (missing) return panel
-    ? <aside className="lead-panel" aria-label="รายละเอียดลีด"><div className="lead-panel-sec"><p role="status">ไม่พบลีดนี้ (Lead not found)</p><p className="hint"><code>{leadId}</code></p>{close}</div></aside>
-    : <NotFound title="ไม่พบลีดนี้ (Lead not found)" hint={leadId} />;
+    ? <aside className="lead-panel" aria-label="รายละเอียดลีด"><div className="lead-panel-sec"><p role="status">ไม่พบลีดนี้</p><p className="hint"><code>{leadId}</code></p>{close}</div></aside>
+    : <NotFound title="ไม่พบลีดนี้" hint={leadId} />;
 
   const back = <button type="button" className="btn" onClick={onBack}>← กลับรายการลีด (Back to leads)</button>;
   if (error) return panel ? <aside className="lead-panel" aria-label="รายละเอียดลีด"><div className="lead-panel-sec"><p role="alert">{error}</p>{close}</div></aside> : <><p role="alert">{error}</p>{back}</>;
@@ -185,14 +185,14 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
   const pageHead = panel ? (
     <div className="lead-panel-head">
       <div>
-        <h2>รายละเอียดลีด (Lead detail)</h2>
+        <h2>รายละเอียดลีด</h2>
         <p className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "4px 0 0" }}>
           <BrandLabel brandId={lead.brand_id} domain={lead.hostname} />
           <StatusBadge tone={outcome.tone} label={outcome.label} />
         </p>
         <p className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "4px 0 0" }}>
           <code>{lead.lead_id}</code>
-          <button type="button" className="btn" onClick={() => { void copy(); }}>{copied ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}</button>
+          <button type="button" className="btn" onClick={() => { void copy(); }}>{copied ? "คัดลอกแล้ว" : "คัดลอก"}</button>
         </p>
       </div>
       {close}
@@ -200,12 +200,12 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
   ) : (
     <div className="head" style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
       <div>
-        <h1>รายละเอียดลีด (Lead detail)</h1>
+        <h1>รายละเอียดลีด</h1>
         <p className="sub" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <BrandLabel brandId={lead.brand_id} domain={lead.hostname} />
           <StatusBadge tone={outcome.tone} label={outcome.label} />
           <code>{lead.lead_id}</code>
-          <button type="button" className="btn" onClick={() => { void copy(); }}>{copied ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}</button>
+          <button type="button" className="btn" onClick={() => { void copy(); }}>{copied ? "คัดลอกแล้ว" : "คัดลอก"}</button>
         </p>
       </div>
       {back}
@@ -213,7 +213,7 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
   );
 
   const body = <>
-    <section className={sec} style={secStyle} aria-label="ลีด (Lead)">
+    <section className={sec} style={secStyle} aria-label="ลีด">
       <Fields label="ลีด (Lead)" rows={[
         ["สร้างเมื่อ (Created)", fmt(lead.created_at)],
         ["อัปเดตเมื่อ (Updated)", fmt(lead.updated_at)],

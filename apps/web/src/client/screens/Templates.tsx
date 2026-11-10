@@ -7,16 +7,9 @@ import { ApiError, api, type Me } from "../api";
 import { Chip } from "../components/Chip";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CategoryList, type CategoryFilter } from "./TemplateCategories";
-import { BulkBar, TemplateTable, statusLabel, statusTone } from "./TemplateTable";
+import { BulkBar, REFUSAL_TEXT, TemplateTable, statusLabel, statusTone } from "./TemplateTable";
 import { TemplateZipImport } from "./TemplateZipImport";
 import "./Templates.css";
-
-/** Why the server refused a template manager action. */
-const REFUSAL_TEXT: Record<string, string> = {
-  template_in_use: "ลบไม่ได้ เพราะมีแบรนด์ใช้เทมเพลตนี้อยู่",
-  template_was_approved: "ลบไม่ได้ เพราะเทมเพลตนี้เคยอนุมัติแล้ว",
-  category_exists: "มีหมวดชื่อนี้อยู่แล้ว",
-};
 
 const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? REFUSAL_TEXT[e.body?.error ?? ""] ?? e.thai) : "ไม่สำเร็จ");
 
@@ -35,6 +28,8 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
   const selected = onSelect ? (selectedId ?? null) : ownSelected;
   const select = (id: string | null) => (onSelect ? onSelect(id) : setOwnSelected(id));
   const [detail, setDetail] = useState<TemplateDetailResponse | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailTry, setDetailTry] = useState(0);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [form, setForm] = useState({ url: "", template_name: "" });
   const [imported, setImported] = useState<TemplateSubmitResult | null>(null);
@@ -66,8 +61,10 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
   useEffect(() => void load(), [load]);
   useEffect(() => {
     setDetail(null);
-    if (selected) void api.template(selected).then(setDetail, (e) => setMsg({ kind: "err", text: errorText(e) }));
-  }, [selected]);
+    setDetailError(null);
+    // A failed load shows its error inside the drawer, because the drawer and its scrim cover the page notice.
+    if (selected) void api.template(selected).then(setDetail, (e) => setDetailError(e instanceof ApiError && e.status === 404 ? "ไม่พบเทมเพลตนี้ อาจถูกลบไปแล้ว" : errorText(e)));
+  }, [selected, detailTry]);
   // Escape closes the upload dialog first, then the drawer. The confirm dialog stops its own Escape.
   useEffect(() => {
     if (!uploadOpen && !selected) return;
@@ -238,10 +235,10 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
           </div>
           <section className="tpl-card" aria-label="รายการเทมเพลต">
             {owner && checkedItems.length > 0 && (
-              <BulkBar items={checkedItems} categories={categories} busy={busy} onMove={(categoryId) => void moveMany(checkedItems, categoryId)}
+              <BulkBar items={checkedItems} all={templates ?? []} categories={categories} busy={busy} onMove={(categoryId) => void moveMany(checkedItems, categoryId)}
                 onArchive={() => void archiveMany(checkedItems)} onDelete={() => void removeMany(checkedItems)} onClear={() => setChecked(new Set())} />
             )}
-            {!templates ? <p className="tpl-empty">กำลังโหลด…</p> : templates.length === 0 ? <p className="tpl-empty">ยังไม่มีเทมเพลต (No templates yet)</p> : visibleTemplates.length === 0 ? (
+            {!templates ? <p className="tpl-empty">กำลังโหลด…</p> : templates.length === 0 ? <p className="tpl-empty">ยังไม่มีเทมเพลต</p> : visibleTemplates.length === 0 ? (
               <div className="tpl-empty"><b>ไม่มีเทมเพลตในมุมมองนี้</b><span>ลองเลือกหมวดหรือสถานะอื่น</span></div>
             ) : (
               <TemplateTable items={visibleTemplates} categories={categories} owner={owner} busy={busy} checked={checked} openId={selected}
@@ -269,7 +266,12 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
               const fresh = await api.template(id);
               // The owner may have opened another template while the reload ran.
               setDetail((cur) => (cur?.template.template_version_id === id ? fresh : cur));
-            }} /> : <p className="hint">กำลังโหลดรายละเอียด…</p>}
+            }} /> : detailError ? (
+              <div className="tpl-drawer-error" role="alert">
+                <p>{detailError}</p>
+                <button type="button" className="btn" onClick={() => setDetailTry((n) => n + 1)}>ลองใหม่</button>
+              </div>
+            ) : <p className="hint">กำลังโหลดรายละเอียด…</p>}
           </aside>
         </div>
       )}
@@ -420,7 +422,7 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
   const warnings = detail.checks.flatMap((c) => checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn"));
   const importWarnings = detail.checks.flatMap((c) => checkWarnings(c.details, "import_warnings"));
   return (
-    <section className="tpl-detail" aria-label="รายละเอียดเทมเพลต (Template detail)">
+    <section className="tpl-detail" aria-label="รายละเอียดเทมเพลต">
       <div className="tpl-detail-head">
         <h2>{`${t.name} · v${t.version}`}</h2>
         <Chip tone={statusTone[t.status]} dot>{statusLabel[t.status]}</Chip>

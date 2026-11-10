@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me, type NavCounts } from "./api";
+import { resetAlertSession } from "./alerts-session";
 import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
@@ -47,6 +48,10 @@ export function App() {
   // Sidebar badge counts. A count the panel could not read is null and shows no badge.
   const [counts, setCounts] = useState<Record<SidebarBadge, number | null>>({ brands_need_fix: null, templates_awaiting: null, alerts_open: null });
 
+  // The Alerts screen bumps this after an acknowledge or close, so the badge reads the count again without a page change.
+  const [countsTick, setCountsTick] = useState(0);
+  const refreshCounts = useCallback(() => setCountsTick((tick) => tick + 1), []);
+
   const refresh = useCallback(async () => {
     try {
       setMe(await api.me());
@@ -75,7 +80,7 @@ export function App() {
         set({ ...unknown, alerts_open: alerts });
       }).catch(() => set(unknown))); // An unavailable report must not look like zero active alerts.
     return () => { cancelled = true; };
-  }, [me, view]);
+  }, [me, view, countsTick]);
   useEffect(() => { document.title = me ? `${pageTitle[view]} · Control Panel` : "Control Panel"; }, [me, view]);
 
   if (loading) return <div className="center"><Spinner /></div>;
@@ -113,6 +118,7 @@ export function App() {
       me={me}
       onSignOut={async () => {
         await api.signOut().catch(() => undefined);
+        resetAlertSession();
         setMe(null);
       }}
       nav={<SidebarNav items={items} current={view} onOpen={open} />}
@@ -152,7 +158,7 @@ export function App() {
       {view === "traffic" && <TrafficScreen />}
       {view === "errors" && <ClientErrorsScreen me={me} />}
       {view === "conversions" && <ConversionsScreen me={me} />}
-      {view === "alerts" && <AlertsScreen me={me} />}
+      {view === "alerts" && <AlertsScreen me={me} onChanged={refreshCounts} />}
       {view === "mailing" && <MailingScreen />}
       {/* spec leads */}
       {/* The list stays mounted and holds its filter while a lead is open in the right panel. The filter query string stays in the URL. */}

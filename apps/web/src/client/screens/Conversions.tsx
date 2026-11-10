@@ -215,15 +215,15 @@ export function ConversionsScreen({ me }: { me: Me }) {
           <AllBrandsNote>ยอดสรุปด้านล่างนับทุกแบรนด์ ส่วนตารางตามขอบเขตแบรนด์</AllBrandsNote>
           <div className="ledger conv-stats" role="group" aria-label="สรุปคอนเวอร์ชัน">
             {COUNT_CELLS.map(([key, label]) => (
-              <div className="cell" key={key}><p className="k">{label}</p><p className={key === "dead" && report.totals.dead > 0 ? "v neg" : "v"}>{count(report.totals[key])}</p></div>
+              <div className="cell" key={key}><p className="k">{label}</p><p className={key === "dead" && report.totals.dead > 0 ? "v num neg" : "v num"}>{count(report.totals[key])}</p></div>
             ))}
             {report.stalled > 0 && (
               <div className="cell"><p className="k">ติดค้างนาน</p><p className="v"><StatusBadge tone="warn" label={`ค้างเกิน ${CONVERSION_STALLED_HOURS} ชม. ${count(report.stalled)}`} /></p></div>
             )}
             {owner && (
               <>
-                <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v">{report.value_totals ? usd(report.value_totals.uploaded) : "—"}</p></div>
-                <div className="cell"><p className="k">มูลค่าที่ส่งไม่ได้</p><p className="v">{report.value_totals ? usd(report.value_totals.dead) : "—"}</p></div>
+                <div className="cell"><p className="k">มูลค่าที่ส่งแล้ว</p><p className="v num">{report.value_totals ? usd(report.value_totals.uploaded) : "—"}</p></div>
+                <div className="cell"><p className="k">มูลค่าที่ส่งไม่ได้</p><p className="v num">{report.value_totals ? usd(report.value_totals.dead) : "—"}</p></div>
               </>
             )}
           </div>
@@ -245,7 +245,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
               empty={<EmptyState title="ยังไม่มีคอนเวอร์ชันในช่วงนี้" />}
             />
             {loadMoreError && <p role="alert">{loadMoreError}</p>}
-            <LoadMore shown={visibleRows.length} hasMore={report.truncated} atMax={shownLimit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง (Narrow the filters)" />
+            <LoadMore shown={visibleRows.length} hasMore={report.truncated} atMax={shownLimit >= CONVERSIONS_MAX_LIMIT} loading={loadingMore} onMore={loadMore} narrowHint="กรุณากรองให้แคบลง" />
           </section>
         </div>
       )}

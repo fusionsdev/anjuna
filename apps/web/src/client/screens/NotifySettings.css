@@ -48,3 +48,6 @@
   .notify-rules td::before { content: attr(data-label); font-size: var(--text-sm); color: var(--sub); flex-shrink: 0; }
   .notify-quiet { justify-content: flex-end; }
 }
+
+/* The fieldset only groups the controls so they lock together while a save runs. */
+.notify-fields { display: grid; gap: var(--space-4); min-width: 0; margin: 0; padding: 0; border: 0; }

@@ -232,7 +232,7 @@ describe("Lead detail screen", () => {
   it("renders NotFound when the lead does not exist", async () => {
     answer = { status: 404, body: { error: "not_found" } };
     render(<LeadDetailScreen me={owner} leadId={LEAD_ID} onBack={() => {}} />);
-    expect(await screen.findByText("ไม่พบลีดนี้ (Lead not found)")).toBeTruthy();
+    expect(await screen.findByText("ไม่พบลีดนี้")).toBeTruthy();
     expect(screen.getByText("กลับหน้าแรก (Back to Home)")).toBeTruthy();
     expect(screen.queryByText("Postback Inspector")).toBeNull();
   });
@@ -258,7 +258,7 @@ describe("Lead detail timeline and panel", () => {
     const onBack = vi.fn();
     const view = render(<LeadDetailScreen me={owner} leadId={LEAD_ID} onBack={onBack} panel />);
     await screen.findByText("Postback Inspector");
-    expect(screen.getByRole("heading", { level: 2, name: "รายละเอียดลีด (Lead detail)" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "รายละเอียดลีด" })).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     expect(view.container.querySelector("aside.lead-panel")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "ปิดรายละเอียด" }));

@@ -1,7 +1,8 @@
 import type { AlertsReportResponse } from "@anjuna/contracts";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/client/App";
+import { resetAlertSession } from "../src/client/alerts-session";
 import { api } from "../src/client/api";
 import { Chip } from "../src/client/components/Chip";
 import { SourceChip } from "../src/client/components/SourceChip";
@@ -31,6 +32,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  resetAlertSession();
   vi.restoreAllMocks();
 });
 
@@ -87,6 +89,21 @@ describe("sidebar", () => {
     render(<App />);
     expect((await screen.findByLabelText("1 รายการที่ต้องจัดการ")).textContent).toBe("1");
     expect(screen.queryByLabelText(/แบรนด์ที่ต้องแก้/)).toBeNull();
+  });
+
+  it("reads the alerts badge again after an acknowledge or close, without leaving the page", async () => {
+    window.history.replaceState(null, "", "/alerts");
+    vi.mocked(api.alerts).mockResolvedValue({ ...healthy, brands_without_postbacks: { state: "alert", detail: { window_hours: 24, brands: [{ brand: "brand-a", leads: 4 }] } } });
+    vi.mocked(api.navCounts).mockResolvedValueOnce({ brands_need_fix: 3, templates_awaiting: 4, alerts_open: 1 }).mockResolvedValue({ brands_need_fix: 3, templates_awaiting: 4, alerts_open: 0 });
+    const action = vi.spyOn(api, "alertAction").mockResolvedValue({ alert_key: "brands_without_postbacks:brand-a", state: "alert", first_seen: "2026-11-10T00:00:00.000Z", last_sent: null, acknowledged_by: null, acknowledged_at: null, closed_at: "2026-11-10T01:00:00.000Z", updated_at: "2026-11-10T01:00:00.000Z" });
+    render(<App />);
+    expect((await screen.findByLabelText("1 รายการที่ต้องจัดการ")).textContent).toBe("1");
+    fireEvent.click(await screen.findByRole("button", { name: /^ปิด แบรนด์ไม่มีโพสต์แบ็ก/ }));
+    await waitFor(() => expect(action).toHaveBeenCalledWith("brands_without_postbacks:brand-a", "close"));
+    // The badge goes away with the count of 0, on the same page.
+    await waitFor(() => expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull());
+    expect(window.location.pathname).toBe("/alerts");
+    expect(api.navCounts).toHaveBeenCalledTimes(2);
   });
 
   it("links the logo to Home", async () => {

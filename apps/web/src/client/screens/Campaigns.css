@@ -28,7 +28,7 @@
 .campaigns-page td { height: var(--row-h); padding: 8px 10px; border-bottom: 1px solid var(--c-line); white-space: nowrap; vertical-align: middle; }
 .campaigns-page .num { font-family: var(--mono); text-align: right; }
 .campaigns-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.campaigns-page .btn { min-height: 36px; }
+.campaigns-page .btn { min-height: 44px; }
 .campaigns-page .btn.pri { background: var(--c-accent); border-color: var(--c-accent); color: #FFFFFF; }
 .campaigns-page .btn:disabled { opacity: .5; cursor: not-allowed; }
 .campaigns-split { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }

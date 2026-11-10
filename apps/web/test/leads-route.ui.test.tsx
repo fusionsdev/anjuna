@@ -53,7 +53,7 @@ afterEach(() => {
 
 describe("Leads and Suppressions routes", () => {
   const CLOSE = "ปิดรายละเอียด";
-  const PANEL = "รายละเอียดลีด (Lead detail)";
+  const PANEL = "รายละเอียดลีด";
 
   it("deep links /leads/<id> to the list with the detail panel open and close returns to the list", async () => {
     vi.spyOn(api, "me").mockResolvedValue(owner);
@@ -66,7 +66,7 @@ describe("Leads and Suppressions routes", () => {
     expect(container.textContent).toContain(APPLICANT_EMAIL);
     // The list stays beside the panel.
     expect(screen.getByRole("heading", { level: 1, name: LEADS_NAV })).toBeTruthy();
-    expect(container.querySelector("table[aria-label='รายการลีด (Lead list)']")).toBeTruthy();
+    expect(container.querySelector("table[aria-label='รายการลีด']")).toBeTruthy();
     expect(screen.getByTitle(LEAD_ID).getAttribute("aria-current")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: CLOSE }));

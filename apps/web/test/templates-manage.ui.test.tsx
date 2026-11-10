@@ -8,8 +8,9 @@ const STAMP = "2026-11-01T00:00:00.000Z";
 const LIST = "GET /api/templates?include_archived=1";
 
 const summary = (id: string, name: string, over: Record<string, unknown> = {}) => ({
-  template_version_id: `tv-${id}`, template_id: `tpl-${id}`, name, version: 1, status: "approved",
-  submitted_by_label: "Somchai", created_at: STAMP, sealed_at: STAMP, thumbnail_url: null, brands_using: 0, archived: false, category_id: null, ...over,
+  // A template that was never approved by default, so the delete rule only blocks what a test sets up.
+  template_version_id: `tv-${id}`, template_id: `tpl-${id}`, name, version: 1, status: "awaiting_approval",
+  submitted_by_label: "Somchai", created_at: STAMP, sealed_at: null, thumbnail_url: null, brands_using: 0, archived: false, category_id: null, ...over,
 });
 const categories = [{ id: "cat-loan", name: "เงินกู้", sort: 1 }, { id: "cat-card", name: "บัตรเครดิต", sort: 2 }];
 
@@ -177,6 +178,41 @@ describe("template manager: bulk bar, archive and delete", () => {
     expect((bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement).disabled).toBe(true);
     expect(bulk().getByText("มีเทมเพลตที่แบรนด์ใช้อยู่ ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
     expect((bulk().getByRole("button", { name: "เก็บถาวร" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables delete for an approved version with no brand, and for a draft whose sibling version was approved", async () => {
+    templates = [
+      summary("a", "Alpha", { status: "approved", sealed_at: STAMP }),
+      summary("b", "Bravo"),
+      summary("b2", "Bravo", { template_id: "tpl-b", version: 2, status: "approved", sealed_at: STAMP }),
+      summary("d", "Delta"),
+    ];
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Alpha");
+    const del = () => bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement;
+    // A never approved template with no brand can go.
+    check("เลือก Delta v1");
+    expect(del().disabled).toBe(false);
+    // An approved version with zero brands is blocked, with the live reason.
+    check("เลือก Alpha v1");
+    expect(del().disabled).toBe(true);
+    expect(bulk().getByText("มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    check("เลือก Alpha v1");
+    expect(del().disabled).toBe(false);
+    // Bravo v1 was never approved itself, but version 2 of the same template was: delete removes every version, so it is blocked.
+    check("เลือก Bravo v1");
+    expect(del().disabled).toBe(true);
+    expect(bulk().getByText("มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    expect((bulk().getByRole("button", { name: "เก็บถาวร" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("names both reasons when a selected template is in use and was approved", async () => {
+    templates = [summary("a", "Alpha", { status: "approved", sealed_at: STAMP, brands_using: 1 }), summary("b", "Bravo")];
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Alpha");
+    check("เลือก Alpha v1");
+    expect(bulk().getByText("มีแบรนด์ใช้อยู่และเคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    expect((bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it.each([

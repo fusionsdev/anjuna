@@ -3,6 +3,7 @@ import { Bell, BellRing, Coins, MousePointerBan, RotateCcw, ThumbsDown, Timer, W
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
+import { recordAlertState, useAlertSession } from "../alerts-session";
 import { Chip, type ChipTone } from "../components/Chip";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
@@ -46,7 +47,7 @@ interface Incident { id: string; rule: RuleId; level: Level; key: string | null;
 /**
  * Turns the alerts report into rows. Core keys an alert as `<rule>:<brand>` and the report names the brand for three rules, so
  * those rows can be acknowledged. The stalled-conversion row has no brand in the report and a click risk row has a hostname, so
- * a hostname that matches a brand domain uses that brand and the rest cannot be acknowledged from here.
+ * a hostname that matches a brand domain uses that brand and the rest has no key: its buttons show disabled with the reason.
  */
 export function incidentsOf(report: AlertsReportResponse, brandOfHostname: (hostname: string) => string | null): Incident[] {
   const rows: Incident[] = [];
@@ -70,7 +71,8 @@ export function incidentsOf(report: AlertsReportResponse, brandOfHostname: (host
   if (risk.hostnames.length === 0) rows.push({ id: "click_risk", rule: "click_risk", level: report.click_risk.state, key: null, brand: null, detail: `ไม่มีโดเมนที่คนเข้าเว็บได้คะแนนเสี่ยงสูงเกิน ${Math.round(risk.alert_at * 100)}% ใน ${risk.window_hours} ชม.` });
   for (const h of risk.hostnames) {
     const brand = brandOfHostname(h.hostname);
-    rows.push({ id: `click_risk:${h.hostname}`, rule: "click_risk", level: "alert", key: `click_risk:${brand ?? h.hostname}`, brand: null, detail: `${h.hostname}: ${Math.round(h.rate * 100)}% ของคนเข้าเว็บได้คะแนนเสี่ยงสูง` });
+    // Core keys a click risk alert by brand. A hostname that matches no brand domain has no key, so its buttons stay disabled.
+    rows.push({ id: `click_risk:${h.hostname}`, rule: "click_risk", level: "alert", key: brand ? `click_risk:${brand}` : null, brand: null, detail: `${h.hostname} · เสี่ยงสูง ${h.high_risk} จาก ${h.visits} คน (${Math.round(h.rate * 100)}%)` });
   }
   const spend = report.ad_spend_unallocated;
   if (spend) {
@@ -117,10 +119,15 @@ function RulesCard({ report }: { report: AlertsReportResponse }) {
 
 const FILTERS: Array<[Filter, string]> = [["open", "เปิดอยู่"], ["closed", "ปิดแล้ว"], ["all", "ทั้งหมด"]];
 
-function AlertList({ report, domains }: { report: AlertsReportResponse; domains: Map<string, string> }) {
+const KEYLESS_REASON = "รายงานไม่ระบุแบรนด์ของการแจ้งเตือนนี้ จึงไม่มีรหัสที่ใช้บันทึกสถานะ รับทราบหรือปิดจากหน้านี้ไม่ได้";
+const SESSION_NOTE = "การรับทราบและการปิดบันทึกที่ระบบแล้ว แต่ยังไม่มีรายการสถานะให้โหลดกลับ รายการที่ทำในรอบนี้จึงแสดงต่อจนกว่าจะโหลดหน้าใหม่ หลังโหลดใหม่จะเห็นรายงานล่าสุดอีกครั้ง";
+
+/** A row on screen: an open or healthy incident from the report, or a state closed by a successful close call. */
+interface Entry { id: string; rule: RuleId | null; level: Level; key: string | null; brand: string | null; detail: string; group: "open" | "closed" | "healthy"; acknowledged: boolean; closedAt: string | null }
+
+function AlertList({ report, domains, onChanged }: { report: AlertsReportResponse; domains: Map<string, string>; onChanged?: () => void }) {
   const [filter, setFilter] = useState<Filter>("open");
-  // What this session did. Core keeps the state but has no call that lists it, so a reload shows the report again.
-  const [done, setDone] = useState<Record<string, "ack" | "close">>({});
+  const states = useAlertSession();
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const brandOfHostname = useCallback((hostname: string) => {
@@ -129,18 +136,41 @@ function AlertList({ report, domains }: { report: AlertsReportResponse; domains:
     return null;
   }, [domains]);
   const incidents = useMemo(() => incidentsOf(report, brandOfHostname), [report, brandOfHostname]);
-  const isOpen = (i: Incident) => i.level !== "ok" && !(i.key && done[i.key]);
-  const counts: Record<Filter, number> = { all: incidents.length, open: incidents.filter(isOpen).length, closed: incidents.filter((i) => !isOpen(i)).length };
-  const visible = incidents.filter((i) => filter === "all" || (filter === "open") === isOpen(i));
+  const entries = useMemo(() => {
+    const open: Entry[] = [];
+    const healthy: Entry[] = [];
+    const closed: Entry[] = [];
+    for (const i of incidents) {
+      const state = i.key ? states.get(i.key) : undefined;
+      if (i.level === "ok") healthy.push({ ...i, group: "healthy", acknowledged: false, closedAt: null });
+      else if (state?.closed_at) continue;
+      else open.push({ ...i, group: "open", acknowledged: state?.acknowledged_at != null, closedAt: null });
+    }
+    // Closed is only what a close call returned with closed_at set. The healthy report never makes a row closed.
+    for (const state of states.values()) {
+      if (!state.closed_at) continue;
+      const match = incidents.find((i) => i.key === state.alert_key);
+      const described = describeKey(state.alert_key);
+      const rule = state.alert_key.split(":")[0] ?? "";
+      closed.push({
+        id: `closed:${state.alert_key}`, rule: rule in RULE_TITLE ? (rule as RuleId) : null, level: match?.level ?? state.state, key: state.alert_key,
+        brand: match?.brand ?? described.brand, detail: match?.detail ?? described.title, group: "closed", acknowledged: state.acknowledged_at != null, closedAt: state.closed_at,
+      });
+    }
+    return { open, closed, healthy };
+  }, [incidents, states]);
+  const counts: Record<Filter, number> = { open: entries.open.length, closed: entries.closed.length, all: entries.open.length + entries.closed.length + entries.healthy.length };
+  const visible = filter === "open" ? entries.open : filter === "closed" ? entries.closed : [...entries.open, ...entries.closed, ...entries.healthy];
 
-  async function act(incident: Incident, action: "ack" | "close") {
-    if (!incident.key) return;
+  async function act(entry: Entry, action: "ack" | "close") {
+    if (!entry.key) return;
     setNotice(null);
-    setBusyKey(incident.key);
+    setBusyKey(entry.key);
     try {
-      await api.alertAction(incident.key, action);
-      setDone((prev) => ({ ...prev, [incident.key!]: action }));
+      recordAlertState(await api.alertAction(entry.key, action));
       setNotice({ kind: "ok", text: action === "ack" ? "รับทราบการแจ้งเตือนแล้ว" : "ปิดการแจ้งเตือนแล้ว" });
+      // The sidebar badge counts open alerts, so it reads again after every successful call.
+      onChanged?.();
     } catch (e) {
       setNotice({ kind: "err", text: e instanceof ApiError && e.status === 404 ? "ไม่พบการแจ้งเตือนนี้ อาจกลับเป็นปกติแล้ว ลองโหลดหน้าใหม่" : e instanceof ApiError ? e.thai : "ไม่สำเร็จ" });
     } finally {
@@ -161,22 +191,27 @@ function AlertList({ report, domains }: { report: AlertsReportResponse; domains:
         {visible.length === 0 ? <EmptyState title="ไม่มีการแจ้งเตือนในมุมมองนี้" /> : (
           <ul className="alert-list">
             {visible.map((i) => {
-              const Icon = RULE_ICON[i.rule];
-              const state = i.key ? done[i.key] : undefined;
+              const Icon = i.rule ? RULE_ICON[i.rule] : Bell;
+              const title = i.rule ? RULE_TITLE[i.rule] : describeKey(i.key ?? "").title;
+              const label = `${title}${i.brand ? ` ${domains.get(i.brand) ?? i.brand}` : ""}`;
+              const busy = i.key !== null && busyKey === i.key;
               return (
-                <li key={i.id} className={state ? "alert-row is-done" : "alert-row"}>
+                <li key={i.id} className={i.group === "closed" ? "alert-row is-done" : "alert-row"}>
                   <span className="alert-dot" aria-hidden="true" style={{ background: DOT_COLOR[i.level] }} />
                   <Icon aria-hidden="true" className="alert-icon" />
                   <div className="alert-main">
-                    <p className="alert-title">{RULE_TITLE[i.rule]}{i.brand && <> · <BrandLabel brandId={i.brand} domain={domains.get(i.brand)} /></>}</p>
-                    <p className="hint">{i.detail}</p>
+                    <p className="alert-title">{title}{i.brand && <> · <BrandLabel brandId={i.brand} domain={domains.get(i.brand)} /></>}</p>
+                    <p className="hint">{i.detail}{i.closedAt ? ` · ปิดเมื่อ ${when(i.closedAt)}` : ""}</p>
                   </div>
                   <Chip tone={LEVEL_TONE[i.level]}>{LEVEL_LABEL[i.level]}</Chip>
-                  {state && <Chip tone="neutral">{state === "ack" ? "รับทราบแล้ว" : "ปิดแล้ว"}</Chip>}
-                  {isOpen(i) && i.key && (
+                  {i.group === "closed" && <Chip tone="neutral">ปิดแล้ว</Chip>}
+                  {i.group === "open" && i.acknowledged && <Chip tone="neutral">รับทราบแล้ว</Chip>}
+                  {i.group === "open" && (
                     <span className="alert-actions">
-                      <button type="button" className="btn" disabled={busyKey === i.key} aria-label={`รับทราบ ${RULE_TITLE[i.rule]}${i.brand ? ` ${domains.get(i.brand) ?? i.brand}` : ""}`} onClick={() => void act(i, "ack")}>รับทราบ</button>
-                      <button type="button" className="btn" disabled={busyKey === i.key} aria-label={`ปิด ${RULE_TITLE[i.rule]}${i.brand ? ` ${domains.get(i.brand) ?? i.brand}` : ""}`} onClick={() => void act(i, "close")}>ปิด</button>
+                      {!i.acknowledged && (
+                        <button type="button" className="btn" disabled={i.key === null || busy} title={i.key === null ? KEYLESS_REASON : undefined} aria-label={`รับทราบ ${label}`} onClick={() => void act(i, "ack")}>รับทราบ</button>
+                      )}
+                      <button type="button" className="btn" disabled={i.key === null || busy} title={i.key === null ? KEYLESS_REASON : undefined} aria-label={`ปิด ${label}`} onClick={() => void act(i, "close")}>ปิด</button>
                     </span>
                   )}
                 </li>
@@ -184,6 +219,7 @@ function AlertList({ report, domains }: { report: AlertsReportResponse; domains:
             })}
           </ul>
         )}
+        <p className="hint alert-session-note">{SESSION_NOTE}</p>
         <p className="hint">ข้อมูล ณ {when(report.generated_at)}</p>
       </section>
     </>
@@ -262,7 +298,7 @@ function History({ me, domains }: { me?: Me; domains: Map<string, string> }) {
   );
 }
 
-export function AlertsScreen({ me }: { me?: Me } = {}) {
+export function AlertsScreen({ me, onChanged }: { me?: Me; onChanged?: () => void } = {}) {
   const [raw, setReport] = useState<AlertsReportResponse | null>(null);
   // The brand lists follow the scope. The alert states come from core and cover every brand.
   const { inScopeId, hidesBrands } = useBrandScope();
@@ -278,7 +314,7 @@ export function AlertsScreen({ me }: { me?: Me } = {}) {
   return (
     <>
       <div style={{ marginBottom: 18 }}>
-        <h1 aria-label="การแจ้งเตือน (Alerts)">การแจ้งเตือน</h1>
+        <h1>การแจ้งเตือน</h1>
         <p className="hint">เรื่องที่ระบบตรวจพบและยังไม่ปิด{hidesBrands ? " · สถานะแจ้งเตือนนับทุกแบรนด์ รายชื่อแบรนด์ตามขอบเขต" : ""}</p>
       </div>
       <nav className="alert-tabs" aria-label="มุมมองการแจ้งเตือน">
@@ -292,7 +328,7 @@ export function AlertsScreen({ me }: { me?: Me } = {}) {
         <div className="hint" role="status"><BellRing aria-hidden="true" className="alert-icon" /> กำลังโหลด…</div>
       ) : (
         <div className="alert-stack">
-          <AlertList report={report} domains={domains} />
+          <AlertList report={report} domains={domains} onChanged={onChanged} />
           <RulesCard report={report} />
         </div>
       )}

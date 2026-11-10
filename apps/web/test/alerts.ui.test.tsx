@@ -3,6 +3,7 @@ import type { AlertsReportResponse } from "@anjuna/contracts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, type Me } from "../src/client/api";
+import { resetAlertSession } from "../src/client/alerts-session";
 import { AlertsScreen } from "../src/client/screens/Alerts";
 
 const healthy = alertsReport as AlertsReportResponse;
@@ -14,6 +15,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  resetAlertSession();
   vi.restoreAllMocks();
 });
 
@@ -43,7 +45,8 @@ describe("Alerts click_risk", () => {
       },
     });
     render(<AlertsScreen />);
-    expect(await screen.findByText("floatsme.com: 31% ของคนเข้าเว็บได้คะแนนเสี่ยงสูง")).toBeTruthy();
+    // The numbers the page showed before the redesign: high-risk visitors out of all visitors.
+    expect(await screen.findByText("floatsme.com · เสี่ยงสูง 62 จาก 200 คน (31%)")).toBeTruthy();
   });
 
   it("says no hostname crossed the threshold when the report is healthy", async () => {
@@ -70,7 +73,7 @@ describe("Alerts list", () => {
     render(<AlertsScreen />);
     const list = await screen.findByRole("region", { name: "รายการแจ้งเตือน" });
     const rows = within(list).getAllByRole("listitem");
-    // Two open rows (postbacks, rejects). The healthy rules are closed.
+    // Two open rows (postbacks, rejects). The healthy rules sit only under ทั้งหมด.
     expect(rows).toHaveLength(2);
     expect(within(rows[0]!).getByText("แบรนด์ไม่มีโพสต์แบ็ก", { exact: false })).toBeTruthy();
     expect(within(rows[0]!).getByText("ผิดปกติ")).toBeTruthy();
@@ -78,22 +81,121 @@ describe("Alerts list", () => {
     const chip = (name: string) => screen.getByRole("button", { name }).textContent!;
     expect(chip("เปิดอยู่")).toContain("2");
     expect(Number(chip("ทั้งหมด").replace(/\D/g, ""))).toBeGreaterThan(2);
+    // Nothing was closed by anyone, so ปิดแล้ว is empty: a healthy rule is not a closed alert.
+    expect(chip("ปิดแล้ว")).toContain("0");
     fireEvent.click(screen.getByRole("button", { name: "ปิดแล้ว" }));
-    const closed = within(screen.getByRole("region", { name: "รายการแจ้งเตือน" })).getAllByRole("listitem");
-    expect(closed.length).toBeGreaterThan(0);
-    expect(closed.every((li) => li.textContent!.includes("ปกติ"))).toBe(true);
+    expect(screen.getByText("ไม่มีการแจ้งเตือนในมุมมองนี้")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "ทั้งหมด" }));
+    const all = within(screen.getByRole("region", { name: "รายการแจ้งเตือน" })).getAllByRole("listitem");
+    expect(all.length).toBeGreaterThan(2);
+    expect(all.slice(2).every((li) => li.textContent!.includes("ปกติ") && !li.textContent!.includes("ปิดแล้ว"))).toBe(true);
   });
 
-  it("acknowledges a row, calls core with the rule and brand key and moves the row out of the open list", async () => {
+  it("shows a healthy report as zero open and zero closed", async () => {
+    vi.spyOn(api, "alerts").mockResolvedValue(healthy);
+    render(<AlertsScreen />);
+    await screen.findByRole("region", { name: "รายการแจ้งเตือน" });
+    expect(screen.getByRole("button", { name: "เปิดอยู่" }).textContent).toContain("0");
+    expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("0");
+  });
+
+  const stateRow = (key: string, over: Record<string, string | null> = {}) => ({
+    alert_key: key, state: "alert" as const, first_seen: "2026-10-23T00:00:00.000Z", last_sent: null, acknowledged_by: null, acknowledged_at: null, closed_at: null, updated_at: "2026-10-23T00:00:00.000Z", ...over,
+  });
+  const ackedRow = (key: string) => stateRow(key, { acknowledged_by: "u1", acknowledged_at: "2026-10-23T01:00:00.000Z" });
+  const closedRow = (key: string) => stateRow(key, { closed_at: "2026-10-23T02:00:00.000Z" });
+  const ackName = /^รับทราบ แบรนด์ไม่มีโพสต์แบ็ก/;
+  const closeName = /^ปิด แบรนด์ไม่มีโพสต์แบ็ก/;
+
+  it("acknowledges a row, calls core with the rule and brand key and keeps the row open with a รับทราบแล้ว chip and a working ปิด", async () => {
     vi.spyOn(api, "alerts").mockResolvedValue(noisy());
-    const action = vi.spyOn(api, "alertAction").mockResolvedValue({ alert_key: "brands_without_postbacks:brand-a", state: "alert", first_seen: "2026-10-23T00:00:00.000Z", last_sent: null, acknowledged_by: "u1", acknowledged_at: "2026-10-23T01:00:00.000Z", closed_at: null, updated_at: "2026-10-23T01:00:00.000Z" });
-    render(<AlertsScreen me={owner} />);
-    const ack = await screen.findByRole("button", { name: /^รับทราบ แบรนด์ไม่มีโพสต์แบ็ก/ });
-    fireEvent.click(ack);
+    const action = vi.spyOn(api, "alertAction").mockResolvedValue(ackedRow("brands_without_postbacks:brand-a"));
+    const changed = vi.fn();
+    render(<AlertsScreen me={owner} onChanged={changed} />);
+    fireEvent.click(await screen.findByRole("button", { name: ackName }));
     await waitFor(() => expect(action).toHaveBeenCalledWith("brands_without_postbacks:brand-a", "ack"));
     expect(await screen.findByText("รับทราบการแจ้งเตือนแล้ว")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^รับทราบ แบรนด์ไม่มีโพสต์แบ็ก/ })).toBeNull();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: ackName })).toBeNull();
+    const row = screen.getByRole("button", { name: closeName }).closest("li")!;
+    expect(within(row).getByText("รับทราบแล้ว")).toBeTruthy();
+    // Acknowledged is not closed: the row stays under เปิดอยู่ and ปิดแล้ว stays empty.
+    expect(screen.getByRole("button", { name: "เปิดอยู่" }).textContent).toContain("2");
+    expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("0");
+  });
+
+  it("closes a row with POST close, moves it to ปิดแล้ว with its close time and refreshes the counts", async () => {
+    vi.spyOn(api, "alerts").mockResolvedValue(noisy());
+    const action = vi.spyOn(api, "alertAction").mockResolvedValue(closedRow("brands_without_postbacks:brand-a"));
+    const changed = vi.fn();
+    render(<AlertsScreen me={owner} onChanged={changed} />);
+    fireEvent.click(await screen.findByRole("button", { name: closeName }));
+    await waitFor(() => expect(action).toHaveBeenCalledWith("brands_without_postbacks:brand-a", "close"));
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "เปิดอยู่" }).textContent).toContain("1");
+    expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("1");
+    fireEvent.click(screen.getByRole("button", { name: "ปิดแล้ว" }));
+    const closed = within(screen.getByRole("region", { name: "รายการแจ้งเตือน" })).getAllByRole("listitem");
+    expect(closed).toHaveLength(1);
+    expect(closed[0]!.textContent).toContain("แบรนด์ไม่มีโพสต์แบ็ก");
+    expect(closed[0]!.textContent).toContain("ปิดเมื่อ");
+    expect(within(closed[0]!).queryByRole("button")).toBeNull();
+  });
+
+  it("keeps what the owner did after a switch to ประวัติการส่ง and after the screen mounts again", async () => {
+    vi.spyOn(api, "alerts").mockResolvedValue(noisy());
+    vi.spyOn(api, "alertsLog").mockResolvedValue([]);
+    vi.spyOn(api, "alertAction").mockImplementation(async (key, act) => (act === "ack" ? ackedRow(key) : closedRow(key)));
+    const first = render(<AlertsScreen me={owner} />);
+    fireEvent.click(await screen.findByRole("button", { name: ackName }));
+    await screen.findByText("รับทราบการแจ้งเตือนแล้ว");
+    fireEvent.click(screen.getByRole("button", { name: /^ปิด อัตราปฏิเสธ/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("1"));
+    // Tab round trip.
+    fireEvent.click(screen.getByRole("button", { name: "ประวัติการส่ง" }));
+    await screen.findByText("ยังไม่มีการส่งแจ้งเตือน");
+    fireEvent.click(screen.getByRole("button", { name: "การแจ้งเตือน" }));
+    expect((await screen.findByRole("button", { name: closeName })).closest("li")!.textContent).toContain("รับทราบแล้ว");
+    expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("1");
+    // A new mount of the screen.
+    first.unmount();
+    render(<AlertsScreen me={owner} />);
+    expect((await screen.findByRole("button", { name: closeName })).closest("li")!.textContent).toContain("รับทราบแล้ว");
+    expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("1");
+  });
+
+  it("says that a reload shows the report again, and why", async () => {
+    vi.spyOn(api, "alerts").mockResolvedValue(noisy());
+    render(<AlertsScreen me={owner} />);
+    const note = await screen.findByText(/ยังไม่มีรายการสถานะให้โหลดกลับ/);
+    expect(note.textContent).toContain("หลังโหลดใหม่จะเห็นรายงานล่าสุดอีกครั้ง");
+  });
+
+  it("shows disabled รับทราบ and ปิด with the reason on a row the report gives no brand for, and keeps a matched hostname enabled", async () => {
+    vi.spyOn(api, "alerts").mockResolvedValue({
+      ...healthy,
+      conversion_stalled: { state: "alert", detail: { max_hours: 6, stuck_count: 5, oldest_created_at: "2026-10-22T00:00:00.000Z" } },
+      click_risk: {
+        state: "alert",
+        detail: { window_hours: 24, alert_at: 0.2, min_visits: 50, hostnames: [{ hostname: "unknown.example", visits: 100, high_risk: 40, rate: 0.4 }, { hostname: "lead.example", visits: 80, high_risk: 30, rate: 0.375 }] },
+      },
+    });
+    const action = vi.spyOn(api, "alertAction").mockResolvedValue(ackedRow("click_risk:brand-a"));
+    render(<AlertsScreen me={owner} />);
+    const list = await screen.findByRole("region", { name: "รายการแจ้งเตือน" });
+    const stalled = within(list).getByText("คอนเวอร์ชันค้าง", { selector: "p.alert-title" }).closest("li")!;
+    for (const name of [/^รับทราบ คอนเวอร์ชันค้าง/, /^ปิด คอนเวอร์ชันค้าง/]) {
+      const button = within(stalled).getByRole("button", { name }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.title).toContain("รายงานไม่ระบุแบรนด์");
+    }
+    const unknown = screen.getByText(/^unknown\.example/).closest("li")!;
+    expect((within(unknown).getByRole("button", { name: /^รับทราบ/ }) as HTMLButtonElement).disabled).toBe(true);
+    const matched = screen.getByText(/^lead\.example/).closest("li")!;
+    const enabled = within(matched).getByRole("button", { name: /^รับทราบ/ }) as HTMLButtonElement;
+    expect(enabled.disabled).toBe(false);
+    fireEvent.click(enabled);
+    await waitFor(() => expect(action).toHaveBeenCalledWith("click_risk:brand-a", "ack"));
   });
 
   it("keeps the row open and says so when core no longer knows the alert", async () => {

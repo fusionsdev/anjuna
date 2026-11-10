@@ -60,7 +60,7 @@ describe("Templates screen", () => {
 
   it("lists the template as a table row with thumbnail, id, status, version and brands using", async () => {
     render(<TemplatesScreen me={owner} />);
-    expect(await screen.findByRole("img", { name: "ตัวอย่าง Bolt Harbor (Template preview)" })).toBeTruthy();
+    expect(await screen.findByRole("img", { name: "ตัวอย่าง Bolt Harbor" })).toBeTruthy();
     const row = screen.getByText("Bolt Harbor").closest("tr")!;
     expect(within(row).getByText("tpl-bolt").tagName).toBe("CODE");
     expect(within(row).getByText(/Somchai \(bolt.new\)/)).toBeTruthy();
@@ -91,6 +91,23 @@ describe("Templates screen", () => {
     await screen.findByRole("dialog", { name: "เทมเพลตที่เลือก" });
     fireEvent.click(screen.getByTestId("template-scrim"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "เทมเพลตที่เลือก" })).toBeNull());
+  });
+
+  it.each([
+    [404, "ไม่พบเทมเพลตนี้ อาจถูกลบไปแล้ว"],
+    [500, "เกิดข้อผิดพลาด (500)"],
+  ])("shows a %s detail failure inside the drawer with a retry button that loads it again", async (status, text) => {
+    let failures = 1;
+    routes.set("GET /api/templates/tv-bolt-1", () => (failures-- > 0 ? json({ error: "request_failed" }, status) : json(detail)));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    const drawer = await screen.findByRole("dialog", { name: "เทมเพลตที่เลือก" });
+    const alert = await within(drawer).findByRole("alert");
+    expect(alert.textContent).toContain(text);
+    expect(within(drawer).queryByText("กำลังโหลดรายละเอียด…")).toBeNull();
+    fireEvent.click(within(drawer).getByRole("button", { name: "ลองใหม่" }));
+    expect(await within(drawer).findByText("Harbor | Funding")).toBeTruthy();
+    expect(within(drawer).queryByRole("alert")).toBeNull();
   });
 
   it("holds the zip and URL imports in a dialog behind the upload button", async () => {
