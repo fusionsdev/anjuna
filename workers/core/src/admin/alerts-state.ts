@@ -1,4 +1,4 @@
-import { ALERT_STATES_MAX_ROWS, AlertStateRow, NotificationLogRow, type AdminRequestContext } from "@anjuna/contracts";
+import { ALERT_STATES_PAGE_DEFAULT, ALERT_STATES_PAGE_MAX, AlertStateRow, NotificationLogRow, type AdminRequestContext } from "@anjuna/contracts";
 import { InMemorySubmitErrorCounts, formatDigest, formatNotice, loadReportNotices, runAlerts, type Notice, type NotificationMessage } from "@anjuna/insights";
 import type { Env } from "../env.js";
 import { createNotifier } from "../traffic-tail/alerts.js";
@@ -34,10 +34,31 @@ export async function handleAlertStateRoute(request: Request, env: Env, ctx: Adm
     return json({ alerts_open: notices.filter(n => !hidden.has(n.key)).length });
   }
   if (path === "/admin/alerts/state" && request.method === "GET") {
-    // Every state an owner or employee acknowledged or closed, so a fresh page load shows what was already done. Newest first.
-    const { results } = await env.LEADS.prepare("SELECT * FROM alert_state WHERE acknowledged_at IS NOT NULL OR closed_at IS NOT NULL ORDER BY updated_at DESC, alert_key LIMIT ?1")
-      .bind(ALERT_STATES_MAX_ROWS).all();
-    return json({ rows: results.flatMap(row => { const parsed = AlertStateRow.safeParse(row); return parsed.success ? [parsed.data] : []; }) });
+    // Every state an owner or employee acknowledged or closed, so a fresh page load shows what was already done.
+    // Keyset pages, newest update first: the cursor holds the updated_at and alert_key of the last row of the page before.
+    const raw = url.searchParams.get("limit") ?? String(ALERT_STATES_PAGE_DEFAULT);
+    if (!/^[0-9]+$/.test(raw) || Number(raw) < 1 || Number(raw) > ALERT_STATES_PAGE_MAX) return json({ error: "invalid" }, 422);
+    const limit = Number(raw);
+    let after: [string, string] | null = null;
+    const cursor = url.searchParams.get("cursor");
+    if (cursor !== null) {
+      try {
+        const value: unknown = JSON.parse(cursor);
+        if (Array.isArray(value) && value.length === 2 && typeof value[0] === "string" && typeof value[1] === "string") after = [value[0], value[1]];
+      } catch { /* answered below */ }
+      if (!after) return json({ error: "invalid" }, 422);
+    }
+    const touched = "(acknowledged_at IS NOT NULL OR closed_at IS NOT NULL)";
+    const statement = after
+      ? env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} AND (updated_at < ?1 OR (updated_at = ?1 AND alert_key > ?2)) ORDER BY updated_at DESC, alert_key ASC LIMIT ?3`).bind(after[0], after[1], limit + 1)
+      : env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} ORDER BY updated_at DESC, alert_key ASC LIMIT ?1`).bind(limit + 1);
+    const { results } = await statement.all<{ updated_at: string; alert_key: string }>();
+    const page = results.slice(0, limit);
+    const last = page[page.length - 1];
+    return json({
+      rows: page.flatMap(row => { const parsed = AlertStateRow.safeParse(row); return parsed.success ? [parsed.data] : []; }),
+      next_cursor: results.length > limit && last ? JSON.stringify([last.updated_at, last.alert_key]) : null,
+    });
   }
   if (path === "/admin/alerts/log" && request.method === "GET") {
     const raw = url.searchParams.get("limit") ?? "100";

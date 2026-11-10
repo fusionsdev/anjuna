@@ -170,7 +170,9 @@ describe("Alerts list", () => {
     // A fake core: POST ack/close store a row under the key, GET /api/alerts/state lists every stored row. The real api client runs.
     let stored: Map<string, ReturnType<typeof stateRow>>;
     let requests: string[];
+    let pageRequests: string[];
     beforeEach(() => {
+      pageRequests = [];
       (api.alertStates as unknown as { mockRestore: () => void }).mockRestore();
       stored = new Map();
       requests = [];
@@ -178,7 +180,15 @@ describe("Alerts list", () => {
         const method = init?.method ?? "GET";
         requests.push(`${method} ${input}`);
         const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-        if (method === "GET" && input === "/api/alerts/state") return ok({ rows: [...stored.values()] });
+        if (method === "GET" && input.startsWith("/api/alerts/state")) {
+          const query = new URL(input, "http://panel.test").searchParams;
+          pageRequests.push(input);
+          const ordered = [...stored.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.alert_key.localeCompare(b.alert_key));
+          const from = query.get("cursor") === null ? 0 : Number(query.get("cursor"));
+          const size = Number(query.get("limit") ?? "200");
+          const rows = ordered.slice(from, from + size);
+          return ok({ rows, next_cursor: from + size < ordered.length ? String(from + size) : null });
+        }
         const action = /^\/api\/alerts\/([^/]+)\/(ack|close)$/.exec(input);
         if (method === "POST" && action) {
           const key = decodeURIComponent(action[1]!);
@@ -208,7 +218,7 @@ describe("Alerts list", () => {
       expect(screen.getByRole("button", { name: "เปิดอยู่" }).textContent).toContain("2");
       expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("0");
       // One read per page load: the first page and the fresh one.
-      expect(requests.filter((r) => r === "GET /api/alerts/state")).toHaveLength(2);
+      expect(requests.filter((r) => r.startsWith("GET /api/alerts/state"))).toHaveLength(2);
     });
 
     it("keeps a closed alert in ปิดแล้ว with its close time after it was POSTed and the page loaded fresh", async () => {
@@ -228,6 +238,49 @@ describe("Alerts list", () => {
       expect(closed).toHaveLength(1);
       expect(closed[0]!.textContent).toContain("แบรนด์ไม่มีโพสต์แบ็ก");
       expect(closed[0]!.textContent).toContain("ปิดเมื่อ");
+    });
+
+    it("reads every page of stored states: with 501 states the oldest acknowledge and close come back after a store reset and a reload", async () => {
+      // 501 stored states. The two the screen needs (an acknowledge and a close) are the OLDEST two, so they sit on the second page.
+      const oldest = "2026-01-01T00:00:00.000Z";
+      stored.set("brands_without_postbacks:brand-a", { ...ackedRow("brands_without_postbacks:brand-a"), updated_at: oldest });
+      stored.set("reject_rate:brand-a", { ...closedRow("reject_rate:brand-a"), updated_at: "2026-01-01T00:00:01.000Z" });
+      for (let i = 0; i < 499; i += 1) {
+        const key = `click_risk:brand-${String(i).padStart(3, "0")}`;
+        stored.set(key, { ...closedRow(key), updated_at: new Date(Date.UTC(2026, 5, 1, 0, 0, i)).toISOString() });
+      }
+      expect(stored.size).toBe(501);
+      vi.spyOn(api, "alerts").mockResolvedValue(noisy());
+      const first = render(<AlertsScreen me={owner} />);
+      await screen.findByRole("region", { name: "รายการแจ้งเตือน" });
+      // Reload: the unmount and an empty store, then a fresh read.
+      reload(first);
+      pageRequests = [];
+      render(<AlertsScreen me={owner} />);
+      const postbackRow = (await screen.findByRole("button", { name: closeName })).closest("li")!;
+      // The 501st state (the oldest, an acknowledge) is back: รับทราบแล้ว shows and the ack button is gone.
+      expect(within(postbackRow).getByText("รับทราบแล้ว")).toBeTruthy();
+      expect(within(postbackRow).queryByRole("button", { name: ackName })).toBeNull();
+      // The second oldest, a close, is back too: the reject rate row left เปิดอยู่, so one open row stays.
+      expect(screen.getByRole("button", { name: "เปิดอยู่" }).textContent).toContain("1");
+      // 499 other closed rows plus the reject-rate close: 500 under ปิดแล้ว (click_risk rows have no incident in this report).
+      expect(screen.getByRole("button", { name: "ปิดแล้ว" }).textContent).toContain("500");
+      // Two requests: the first page (500 rows) and the one the cursor pointed to (1 row).
+      expect(pageRequests).toHaveLength(2);
+      expect(pageRequests[0]).toBe("/api/alerts/state?limit=500");
+      expect(pageRequests[1]).toBe("/api/alerts/state?limit=500&cursor=500");
+    });
+
+    it("says the stored states could not load when core keeps returning the same cursor", async () => {
+      vi.spyOn(api, "alerts").mockResolvedValue(noisy());
+      vi.mocked(fetch).mockImplementation((async (input: string) => {
+        if (input.startsWith("/api/alerts/state")) return new Response(JSON.stringify({ rows: [], next_cursor: "stuck" }), { status: 200, headers: { "content-type": "application/json" } });
+        throw new Error("Unexpected test HTTP request: " + input);
+      }) as typeof fetch);
+      render(<AlertsScreen me={owner} />);
+      expect((await screen.findByRole("alert")).textContent).toContain("โหลดสถานะรับทราบและปิดที่บันทึกไว้ไม่ได้");
+      // The report still shows, with its two open rows.
+      expect(screen.getByRole("button", { name: "เปิดอยู่" }).textContent).toContain("2");
     });
 
     it("holds the list back until the stored states arrive, so an acknowledged row never flashes as open", async () => {

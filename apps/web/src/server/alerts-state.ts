@@ -11,7 +11,7 @@ export async function coreNotificationRequest(env: Env, ctx: AdminRequestContext
     if (!env.CORE) throw new Error("unavailable");
     const response = await env.CORE.fetch(new Request("https://core.internal" + path, { method, headers: adminContextToHeaders(ctx) }));
     if (!response.ok) return Response.json({ error: "request_failed" }, { status: [403,404,409,422].includes(response.status) ? response.status : 502 });
-    const schema = path.includes("/open-count") ? Count : path === "/admin/alerts/state" ? AlertStatesResponse : method === "GET" ? Log : /\/(ack|close)$/.test(path) ? AlertStateRow : Delivery;
+    const schema = path.includes("/open-count") ? Count : path.startsWith("/admin/alerts/state") ? AlertStatesResponse : method === "GET" ? Log : /\/(ack|close)$/.test(path) ? AlertStateRow : Delivery;
     return Response.json(schema.parse(await response.json()), { headers: { "cache-control": "no-store" } });
   } catch { return Response.json({ error: "unavailable" }, { status: 502 }); }
 }
@@ -19,7 +19,7 @@ export async function handleAlertStateRoute(request: Request, env: Env, url: URL
   if (request.method === "GET" && path === "/api/alerts/state") {
     // Same gate as the alerts report the screen reads next to it: every panel role may read it, the stored rows carry no PII.
     if (!authorize("alertsReport", ctx.actor_role).ok) return Response.json({ error: "forbidden" }, { status: 403 });
-    return coreNotificationRequest(env, ctx, "/admin/alerts/state");
+    return coreNotificationRequest(env, ctx, "/admin/alerts/state" + url.search);
   }
   if (request.method === "GET" && path === "/api/alerts/log") return coreNotificationRequest(env, ctx, "/admin/alerts/log" + url.search);
   if (request.method !== "POST") return undefined;

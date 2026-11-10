@@ -41,7 +41,7 @@ it("close hides the alert; unknown keys do not create state", async () => {
 });
 it("state lists every acknowledged or closed row, newest first, and none that nobody touched", async () => {
   const at = new Date().toISOString();
-  expect(await (await h.admin("/admin/alerts/state", employee)).json()).toEqual({ rows: [] });
+  expect(await (await h.admin("/admin/alerts/state", employee)).json()).toEqual({ rows: [], next_cursor: null });
   await h.db.prepare("INSERT INTO alert_state(alert_key,state,first_seen,updated_at) VALUES ('reject_rate:brand-b','warn',?1,?1)").bind(at).run();
   expect((await h.admin("/admin/alerts/adsbot%3Abrand-a/ack", employee, { method: "POST" })).status).toBe(200);
   const response = await h.admin("/admin/alerts/state", employee);
@@ -54,6 +54,43 @@ it("state lists every acknowledged or closed row, newest first, and none that no
   const closed = ((await (await h.admin("/admin/alerts/state", owner)).json()) as { rows: Array<{ closed_at: string | null }> }).rows;
   expect(closed).toHaveLength(1);
   expect(closed[0]!.closed_at).not.toBeNull();
+});
+it("state pages with a cursor: 501 stored states come back in full, the oldest acknowledge and close included", async () => {
+  // 501 keys from 101 brands x 5 rules. The first (the oldest update) is an acknowledge, the second (next oldest) a close, the rest closes.
+  await h.db.prepare("DELETE FROM alert_state").run();
+  const rules = ["conversion_stalled", "brands_without_postbacks", "submit_error_rate", "reject_rate", "click_risk"];
+  const keys = Array.from({ length: 501 }, (_, i) => `${rules[i % 5]}:brand-${String(Math.floor(i / 5)).padStart(3, "0")}`);
+  const stamp = (i: number) => new Date(Date.UTC(2026, 5, 1, 0, 0, 0) + i * 1000).toISOString();
+  await h.db.batch(keys.map((key, i) => h.db.prepare("INSERT INTO alert_state(alert_key,state,first_seen,acknowledged_by,acknowledged_at,closed_at,updated_at) VALUES (?1,'alert',?2,?3,?4,?5,?2)")
+    .bind(key, stamp(i), i === 0 ? "owner" : null, i === 0 ? stamp(i) : null, i === 0 ? null : stamp(i))));
+  // One untouched row never counts, whatever its age.
+  await h.db.prepare("INSERT INTO alert_state(alert_key,state,first_seen,updated_at) VALUES ('digest:never-touched','warn','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z')").run();
+  expect(Number(await h.db.prepare("SELECT COUNT(*) AS n FROM alert_state WHERE acknowledged_at IS NOT NULL OR closed_at IS NOT NULL").first("n"))).toBe(501);
+
+  type Page = { rows: Array<{ alert_key: string; acknowledged_at: string | null; closed_at: string | null; updated_at: string }>; next_cursor: string | null };
+  const seen: string[] = [];
+  const sizes: number[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 10; page += 1) {
+    const query: string = `limit=200${cursor === null ? "" : "&cursor=" + encodeURIComponent(cursor)}`;
+    const response = await h.admin("/admin/alerts/state?" + query, employee);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Page;
+    sizes.push(body.rows.length);
+    seen.push(...body.rows.map(row => row.alert_key));
+    cursor = body.next_cursor;
+    if (cursor === null) break;
+  }
+  expect(sizes).toEqual([200, 200, 101]);
+  expect(seen).toHaveLength(501);
+  expect(new Set(seen).size).toBe(501);
+  // Newest first, so the oldest states are the last rows read: the close (second oldest), then the acknowledge (oldest).
+  expect(seen.slice(-2)).toEqual([keys[1], keys[0]]);
+  expect(seen).not.toContain("digest:never-touched");
+  // The default page (200) and the cap (500) are bounded.
+  expect(((await (await h.admin("/admin/alerts/state", employee)).json()) as Page).rows).toHaveLength(200);
+  expect(((await (await h.admin("/admin/alerts/state?limit=500", employee)).json()) as Page).next_cursor).not.toBeNull();
+  for (const bad of ["limit=0", "limit=501", "limit=x", "cursor=nope", "cursor=%5B1%2C2%5D", "cursor=%7B%7D"]) expect((await h.admin("/admin/alerts/state?" + bad, employee)).status).toBe(422);
 });
 it("log lists newest first with a bounded limit", async () => {
   for (const [id, sent] of [["old","2026-11-09T01:00:00.000Z"],["new","2026-11-10T01:00:00.000Z"]]) {

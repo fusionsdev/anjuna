@@ -2,7 +2,7 @@ import { TrafficBreakdownResponse, type TemplateThemeVars, type TrafficPeriod, t
 import { BrandThemeVarsResponse, TemplateThemeVarsResponse } from "@anjuna/contracts";
 import { AlertStateRow, NotificationLogRow } from "@anjuna/contracts";
 import { z } from "zod";
-import { AlertStatesResponse, BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
+import { ALERT_STATES_PAGE_MAX, AlertStatesResponse, BrandAssetKind, BrandAssetListResponse, BrandAssetSummary, BrandRevisionsResponse, BuilderKeyCreateResponse, DeployHistoryResponse, type DeployHistoryQuery, BuilderKeyListResponse, BuilderKeySummary, LatestUpgradeResponse, SealedTemplatesResponse, SiteTextDefaultsResponse, TemplateApproveResponse, TemplateArchiveResponse, TemplateCategoryAssignResponse, TemplateCategoryCreateResponse, TemplateDetailResponse, TemplateListResponse, TemplateSubmitResult, TrafficRiskResponse, UpdateBrandDraftResponse, type RiskPeriod } from "@anjuna/contracts";
 import { AddSuppressionResponse, GetLeadResponse, LeadsResponse, RemoveSuppressionResponse, SuppressionsResponse, type LeadOutcome, type SuppressionReason, type SuppressionSource } from "@anjuna/contracts";
 import { ClientErrorsResponse, TrafficReportResponse, type TrafficLogPeriod } from "@anjuna/contracts"; // spec traffic
 import { AdkitDirectoryResponse, AdkitJobCreateResponse, ConversionSetupStateResponse, PanelCampaignsResponse, TerminalJobResponse, TerminalRunResponse, type CampaignJobCreateRequest, type TerminalRunRequest } from "@anjuna/contracts";
@@ -73,6 +73,9 @@ export interface BrandChecklists {
 }
 
 /** GET /api/nav/counts: what the sidebar badges show. */
+/** Most pages of alert states one load reads: 100 pages of 500 rows. */
+const ALERT_STATES_MAX_PAGES = 100;
+
 export interface NavCounts { brands_need_fix: number; templates_awaiting: number; alerts_open: number }
 
 /** GET/PUT /api/me/prefs. Saved views are kept as the server sent them and written back unchanged. */
@@ -326,8 +329,24 @@ export const api = {
   alerts: () => request<AlertsReportResponse>("GET", "/api/alerts"),
   /** The last sends of the Telegram notifier, newest first. Core caps the limit at 100. */
   alertsLog: (limit = 100) => request<unknown>("GET", `/api/alerts/log?limit=${limit}`).then((body) => z.object({ rows: z.array(NotificationLogRow) }).parse(body).rows),
-  /** Every alert state with an acknowledge or a close on it, as core stored them. */
-  alertStates: () => request<unknown>("GET", "/api/alerts/state").then((body) => AlertStatesResponse.parse(body).rows),
+  /**
+   * Every alert state with an acknowledge or a close on it, as core stored them. Core answers in pages, so this follows the cursor to the end.
+   * A cursor that repeats, or more than ALERT_STATES_MAX_PAGES pages, is an error: the list is not complete and the screen says so.
+   */
+  alertStates: async (): Promise<AlertStateRow[]> => {
+    const rows: AlertStateRow[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < ALERT_STATES_MAX_PAGES; page += 1) {
+      const query = new URLSearchParams({ limit: String(ALERT_STATES_PAGE_MAX) });
+      if (cursor !== null) query.set("cursor", cursor);
+      const body = AlertStatesResponse.parse(await request<unknown>("GET", `/api/alerts/state?${query}`));
+      rows.push(...body.rows);
+      if (body.next_cursor === null) return rows;
+      if (body.next_cursor === cursor) throw new Error("alert state cursor did not move");
+      cursor = body.next_cursor;
+    }
+    throw new Error("alert states have more pages than the screen reads");
+  },
   /** Acknowledge or close one alert. The key is `<rule>:<brand>`. Core answers 404 when the alert is no longer active. */
   alertAction: (key: string, action: "ack" | "close") => request<unknown>("POST", `/api/alerts/${encodeURIComponent(key)}/${action}`, {}).then((body) => AlertStateRow.parse(body)),
   /** Send a failed notification again. Owner only. */
