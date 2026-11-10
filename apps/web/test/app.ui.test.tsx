@@ -32,6 +32,7 @@ vi.mock("../src/client/screens/Mailing", () => ({ MailingScreen: () => <h1>Maili
 vi.mock("../src/client/screens/Audit", () => ({ AuditScreen: () => <h1>Audit screen</h1> }));
 vi.mock("../src/client/screens/Users", () => ({ UsersScreen: () => <h1>Users screen</h1> }));
 vi.mock("../src/client/screens/BuilderKeys", () => ({ BuilderKeysScreen: () => <h1>Builder keys screen</h1> }));
+vi.mock("../src/client/traffic/RealtimeTab", () => ({ RealtimeTab: () => <h1>Realtime screen</h1> }));
 vi.mock("../src/client/screens/Traffic", () => ({ TrafficScreen: () => <h1>Traffic screen</h1> }));
 vi.mock("../src/client/screens/ClientErrors", () => ({ ClientErrorsScreen: () => <h1>Client errors screen</h1> }));
 vi.mock("../src/client/screens/Leads", () => ({ LeadsScreen: () => <h1>Leads screen</h1> }));
@@ -98,7 +99,7 @@ describe("Console rail", () => {
     ["แบรนด์", "Brands screen: 0 -", "/brands"],
     ["เทมเพลต", "Templates screen -", "/templates"],
     ["แคมเปญ", "Campaigns screen owner", "/campaigns"],
-    ["ทราฟฟิก", "Traffic screen", "/traffic"],
+    ["ทราฟฟิก", "Realtime screen", "/realtime"],
     ["ลีดและคอนเวอร์ชัน", "Leads screen", "/leads"],
     ["การแจ้งเตือน", "Alerts screen", "/alerts"],
     ["ตั้งค่า", "Settings screen", "/settings"],
@@ -118,6 +119,7 @@ describe("Console rail", () => {
 
   it.each([
     ["/deploys", "ประวัติการติดตั้ง", "Deploys screen"],
+    ["/realtime", "ทราฟฟิก", "Traffic screen"],
     ["/traffic", "ฟันเนล", "Funnel screen"],
     ["/funnel", "ข้อผิดพลาดฝั่งเว็บ", "Client errors screen"],
     ["/errors", "ทราฟฟิก", "Traffic screen"],
@@ -236,6 +238,7 @@ describe("Console rail", () => {
     ["/brands/brand_abc/timeline", "Timeline screen brand_abc", "แบรนด์"],
     ["/deploys", "Deploys screen", "แบรนด์"],
     ["/templates/tv-1", "Templates screen tv-1", "เทมเพลต"],
+    ["/realtime", "Realtime screen", "ทราฟฟิก"],
     ["/traffic", "Traffic screen", "ทราฟฟิก"],
     ["/funnel", "Funnel screen", "ทราฟฟิก"],
     ["/errors", "Client errors screen", "ทราฟฟิก"],
@@ -312,8 +315,8 @@ describe("Console rail", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
     fireEvent.click(screen.getByRole("link", { name: "ทราฟฟิก" }));
-    expect(window.location.pathname).toBe("/traffic");
-    expect(await screen.findByRole("heading", { name: "Traffic screen" })).toBeTruthy();
+    expect(window.location.pathname).toBe("/realtime");
+    expect(await screen.findByRole("heading", { name: "Realtime screen" })).toBeTruthy();
     fireEvent.click(screen.getByRole("link", { name: "ฟันเนล" }));
     expect(window.location.pathname).toBe("/funnel");
     expect(await screen.findByRole("heading", { name: "Funnel screen" })).toBeTruthy();
@@ -321,7 +324,7 @@ describe("Console rail", () => {
       window.history.back();
       await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));
     });
-    expect(await screen.findByRole("heading", { name: "Traffic screen" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Realtime screen" })).toBeTruthy();
     await act(async () => {
       window.history.back();
       await new Promise((resolve) => window.addEventListener("popstate", resolve, { once: true }));

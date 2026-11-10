@@ -25,6 +25,7 @@ export type Route =
   // spec timeline
   | { view: "brand-timeline"; brandId: string }
   // spec traffic
+  | { view: "realtime" }
   | { view: "traffic" }
   | { view: "errors" }
   // T13 Part B
@@ -56,6 +57,7 @@ const STATIC: Record<string, Route> = {
   "/notify-settings": { view: "notify-settings" },
   "/ad-allocation": { view: "ad-allocation" },
   // spec traffic
+  "/realtime": { view: "realtime" },
   "/traffic": { view: "traffic" },
   "/errors": { view: "errors" },
   // T13 Part B

@@ -26,7 +26,7 @@ export const NAV_GROUPS: Record<NavGroupId, NavGroup> = {
   traffic: {
     id: "traffic",
     label: "ทราฟฟิก",
-    tabs: [{ id: "traffic", label: "ทราฟฟิก" }, { id: "funnel", label: "ฟันเนล" }, { id: "errors", label: "ข้อผิดพลาดฝั่งเว็บ" }],
+    tabs: [{ id: "realtime", label: "เรียลไทม์" }, { id: "traffic", label: "ทราฟฟิก" }, { id: "funnel", label: "ฟันเนล" }, { id: "errors", label: "ข้อผิดพลาดฝั่งเว็บ" }],
   },
   leads: {
     id: "leads",
@@ -82,7 +82,7 @@ export const SIDEBAR_ENTRIES: SidebarEntry[] = [
   { id: "brands", label: "แบรนด์", icon: Store, section: "work", group: "brands", badge: "brands_need_fix" },
   { id: "templates", label: "เทมเพลต", icon: LayoutTemplate, section: "work", badge: "templates_awaiting" },
   { id: "campaigns", label: "แคมเปญ", icon: Megaphone, section: "work" },
-  { id: "traffic", label: "ทราฟฟิก", icon: Activity, section: "watch", group: "traffic" },
+  { id: "realtime", label: "ทราฟฟิก", icon: Activity, section: "watch", group: "traffic" },
   { id: "leads", label: "ลีดและคอนเวอร์ชัน", icon: Target, section: "watch", group: "leads" },
   { id: "alerts", label: "การแจ้งเตือน", icon: Bell, section: "watch", badge: "alerts_open" },
   { id: "adkit-terminal", label: "AdKit Terminal", icon: Terminal, section: "owner", minRole: PANEL_ROLE_TABLE.useTerminal, tag: "owner" },

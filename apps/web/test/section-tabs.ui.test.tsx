@@ -54,7 +54,7 @@ describe("nav groups", () => {
 
   it("lists the tab sets of the brief for an owner", () => {
     expect(labels("brands", "owner")).toEqual(["แบรนด์", "ประวัติการติดตั้ง"]);
-    expect(labels("traffic", "owner")).toEqual(["ทราฟฟิก", "ฟันเนล", "ข้อผิดพลาดฝั่งเว็บ"]);
+    expect(labels("traffic", "owner")).toEqual(["เรียลไทม์", "ทราฟฟิก", "ฟันเนล", "ข้อผิดพลาดฝั่งเว็บ"]);
     expect(labels("leads", "owner")).toEqual(["ลีด", "คอนเวอร์ชัน"]);
     expect(labels("settings", "owner")).toEqual(["ทั่วไป", "ช่องทางแจ้งเตือน", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
@@ -69,7 +69,7 @@ describe("nav groups", () => {
     const grouped: Record<View, string | null> = {
       home: null, templates: null, alerts: null, campaigns: null, "adkit-terminal": null, "not-found": null,
       brands: "brands", "new-brand": "brands", "brand-timeline": "brands", deploys: "brands",
-      traffic: "traffic", funnel: "traffic", errors: "traffic",
+      realtime: "traffic", traffic: "traffic", funnel: "traffic", errors: "traffic",
       leads: "leads", conversions: "leads",
       settings: "settings", "notify-settings": "settings", "ad-allocation": "settings", users: "settings", mailing: "settings", suppressions: "settings", audit: "settings", "builder-keys": "settings",
     };
@@ -91,7 +91,7 @@ describe("nav groups", () => {
   });
 
   it("makes the sidebar item current on every view of its group", () => {
-    expect(groupViews(NAV_GROUPS.traffic)).toEqual(["traffic", "funnel", "errors"]);
+    expect(groupViews(NAV_GROUPS.traffic)).toEqual(["realtime", "traffic", "funnel", "errors"]);
     expect(groupViews(NAV_GROUPS.leads)).toEqual(["leads", "conversions"]);
     expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "deploys", "new-brand"]);
     expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["ad-allocation", "audit", "builder-keys", "mailing", "notify-settings", "settings", "suppressions", "users"]);
