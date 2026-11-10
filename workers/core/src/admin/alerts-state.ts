@@ -1,4 +1,4 @@
-import { AlertStateRow, NotificationLogRow, type AdminRequestContext } from "@anjuna/contracts";
+import { ALERT_STATES_PAGE_DEFAULT, ALERT_STATES_PAGE_MAX, AlertStateRow, NotificationLogRow, type AdminRequestContext } from "@anjuna/contracts";
 import { InMemorySubmitErrorCounts, formatDigest, formatNotice, loadReportNotices, runAlerts, type Notice, type NotificationMessage } from "@anjuna/insights";
 import type { Env } from "../env.js";
 import { createNotifier } from "../traffic-tail/alerts.js";
@@ -32,6 +32,28 @@ export async function handleAlertStateRoute(request: Request, env: Env, ctx: Adm
     const [notices, states] = await Promise.all([currentNotices(env), env.LEADS.prepare("SELECT alert_key,acknowledged_at,closed_at FROM alert_state").all<{ alert_key: string; acknowledged_at: string | null; closed_at: string | null }>()]);
     const hidden = new Set(states.results.filter(row => row.acknowledged_at || row.closed_at).map(row => row.alert_key));
     return json({ alerts_open: notices.filter(n => !hidden.has(n.key)).length });
+  }
+  if (path === "/admin/alerts/state" && request.method === "GET") {
+    // Every state an owner or employee acknowledged or closed, so a fresh page load shows what was already done.
+    // Pages by alert_key, ascending, and the cursor is the last alert_key of the page before. alert_key never changes, unlike updated_at:
+    // MultiNotifier.process rewrites updated_at on every cron tick, so a cursor on updated_at lets a row that is not read yet jump past it
+    // and be skipped while the reader sees the end. The reader sorts after the last page.
+    const raw = url.searchParams.get("limit") ?? String(ALERT_STATES_PAGE_DEFAULT);
+    if (!/^[0-9]+$/.test(raw) || Number(raw) < 1 || Number(raw) > ALERT_STATES_PAGE_MAX) return json({ error: "invalid" }, 422);
+    const limit = Number(raw);
+    const after = url.searchParams.get("cursor");
+    if (after !== null && (after.length < 1 || after.length > 200)) return json({ error: "invalid" }, 422);
+    const touched = "(acknowledged_at IS NOT NULL OR closed_at IS NOT NULL)";
+    const statement = after !== null
+      ? env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} AND alert_key > ?1 ORDER BY alert_key ASC LIMIT ?2`).bind(after, limit + 1)
+      : env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} ORDER BY alert_key ASC LIMIT ?1`).bind(limit + 1);
+    const { results } = await statement.all<{ alert_key: string }>();
+    const page = results.slice(0, limit);
+    const last = page[page.length - 1];
+    return json({
+      rows: page.flatMap(row => { const parsed = AlertStateRow.safeParse(row); return parsed.success ? [parsed.data] : []; }),
+      next_cursor: results.length > limit && last ? last.alert_key : null,
+    });
   }
   if (path === "/admin/alerts/log" && request.method === "GET") {
     const raw = url.searchParams.get("limit") ?? "100";

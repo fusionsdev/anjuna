@@ -1,0 +1,34 @@
+/* Leads and lead detail panel. Shared classes (.panel .head .sub .hint .btn .tw .pill .chip) come from styles.css. */
+.leads-filters { display: flex; flex-direction: column; gap: 12px; }
+.leads-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.filter-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.filter-chips button { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: var(--radius-chip); background: var(--card); color: var(--ink); font-size: var(--text-body); }
+.filter-chips button:hover { background: var(--canvas); }
+.filter-chips button[aria-pressed="true"] { background: var(--brand-tint); border-color: var(--brand-tint); color: var(--brand-ink); font-weight: 500; }
+.filter-chips .num { font-size: var(--text-xs); }
+.range-toggle { display: inline-flex; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); }
+.range-toggle button { min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--sub); font-size: var(--text-body); }
+.range-toggle button[aria-pressed="true"] { background: var(--ink); color: var(--on); font-weight: 500; }
+.leads-layout { display: grid; gap: 20px; align-items: start; margin-top: 16px; }
+.leads-layout.has-panel { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1280px) { .leads-layout.has-panel { grid-template-columns: minmax(0, 1fr) 380px; } }
+.leads-layout .panel { margin-top: 0; }
+.leads-layout table tr:has(a[aria-current="true"]) { background: color-mix(in srgb, var(--brand-tint) 45%, transparent); }
+.lead-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-1); overflow: hidden; }
+@media (min-width: 1280px) { .lead-panel { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; } }
+.lead-panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.lead-panel-head h2 { font-size: var(--text-card-title); }
+.lead-panel-head code { font-size: var(--text-xs); overflow-wrap: anywhere; }
+.lead-panel-sec { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.lead-panel-sec:last-child { border-bottom: 0; }
+.lead-panel-sec h3 { font-size: var(--text-body); font-weight: 600; }
+.lead-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; }
+.lead-timeline { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 12px; }
+.lead-timeline li { display: flex; gap: 12px; }
+.lead-timeline .tl-dot { flex: 0 0 8px; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; background: var(--info); }
+.lead-timeline .tl-dot[data-tone="success"] { background: var(--ok); }
+.lead-timeline .tl-dot[data-tone="danger"] { background: var(--bad); }
+.lead-timeline .tl-dot[data-tone="warning"] { background: var(--warn); }
+.lead-timeline p { margin: 0; }
+.lead-timeline .tl-time { font-size: var(--text-xs); color: var(--sub); }
+.lead-close { min-width: 44px; min-height: 44px; }

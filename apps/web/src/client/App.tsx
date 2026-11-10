@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Me, type NavCounts } from "./api";
+import { resetAlertSession } from "./alerts-session";
 import { AlertsScreen } from "./screens/Alerts";
 import { AuditScreen } from "./screens/Audit";
 import { BrandLifecycle } from "./screens/BrandLifecycle";
@@ -10,7 +11,6 @@ import { CampaignsScreen } from "./screens/Campaigns";
 import { AdkitTerminalScreen } from "./screens/AdkitTerminal";
 import { FunnelScreen } from "./screens/Funnel";
 import { HomeScreen } from "./screens/Home";
-import { LeadDetailScreen } from "./screens/LeadDetail";
 import { LeadsScreen } from "./screens/Leads";
 import { MailingScreen } from "./screens/Mailing";
 import { SuppressionsScreen } from "./screens/Suppressions";
@@ -29,6 +29,8 @@ import { navigate, parseRoute, routePath, useRoute, viewPath, type View } from "
 import { AppShell, pageTitle } from "./components/AppShell";
 import { SidebarNav, type NavItem } from "./components/SidebarNav";
 import { SectionTabs } from "./components/SectionTabs";
+import { SettingsSections } from "./components/SettingsSections";
+import { NotifySettingsScreen } from "./screens/NotifySettings";
 import { Spinner } from "./components/Spinner";
 import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, groupViews, visibleTabs, type SidebarBadge } from "./nav-groups";
 import { BrandScopeProvider } from "./useBrandScope";
@@ -45,6 +47,10 @@ export function App() {
   const view = route.view;
   // Sidebar badge counts. A count the panel could not read is null and shows no badge.
   const [counts, setCounts] = useState<Record<SidebarBadge, number | null>>({ brands_need_fix: null, templates_awaiting: null, alerts_open: null });
+
+  // The Alerts screen bumps this after an acknowledge or close, so the badge reads the count again without a page change.
+  const [countsTick, setCountsTick] = useState(0);
+  const refreshCounts = useCallback(() => setCountsTick((tick) => tick + 1), []);
 
   const refresh = useCallback(async () => {
     try {
@@ -74,7 +80,7 @@ export function App() {
         set({ ...unknown, alerts_open: alerts });
       }).catch(() => set(unknown))); // An unavailable report must not look like zero active alerts.
     return () => { cancelled = true; };
-  }, [me, view]);
+  }, [me, view, countsTick]);
   useEffect(() => { document.title = me ? `${pageTitle[view]} · Control Panel` : "Control Panel"; }, [me, view]);
 
   if (loading) return <div className="center"><Spinner /></div>;
@@ -112,11 +118,15 @@ export function App() {
       me={me}
       onSignOut={async () => {
         await api.signOut().catch(() => undefined);
+        resetAlertSession();
         setMe(null);
       }}
       nav={<SidebarNav items={items} current={view} onOpen={open} />}
     >
-      {group && <SectionTabs tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />}
+      <div className={group?.id === "settings" ? "settings-shell" : "page-body"}>
+      {group && (group.id === "settings"
+        ? <SettingsSections tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />
+        : <SectionTabs tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />)}
       {SCOPED_VIEWS.has(view) && <div className="scope-bar"><ScopeSubtitle /></div>}
       {view === "home" && <HomeScreen me={me} onGo={open} />}
       {(view === "brands" || view === "new-brand") && (
@@ -148,21 +158,18 @@ export function App() {
       {view === "traffic" && <TrafficScreen />}
       {view === "errors" && <ClientErrorsScreen me={me} />}
       {view === "conversions" && <ConversionsScreen me={me} />}
-      {view === "alerts" && <AlertsScreen />}
+      {view === "alerts" && <AlertsScreen me={me} onChanged={refreshCounts} />}
       {view === "mailing" && <MailingScreen />}
       {/* spec leads */}
-      {/* The detail entry's history state keeps the list's filter query string for the Back button. */}
-      {route.view === "leads" && (route.leadId
-        ? <LeadDetailScreen me={me} leadId={route.leadId} onBack={() => {
-            const search = (window.history.state as { leadsSearch?: unknown } | null)?.leadsSearch;
-            navigate(routePath({ view: "leads", leadId: null }) + (typeof search === "string" && search.startsWith("?") ? search : ""));
-          }} />
-        : <LeadsScreen me={me} selectedId={null} onSelect={(id) => {
-            const leadsSearch = window.location.search;
-            const path = routePath({ view: "leads", leadId: id });
-            navigate(path);
-            window.history.replaceState({ leadsSearch }, "", path);
-          }} />)}
+      {/* The list stays mounted and holds its filter while a lead is open in the right panel. The filter query string stays in the URL. */}
+      {route.view === "leads" && (
+        <LeadsScreen
+          me={me}
+          selectedId={route.leadId}
+          onSelect={(id) => navigate(routePath({ view: "leads", leadId: id }) + window.location.search)}
+          onClose={() => navigate(routePath({ view: "leads", leadId: null }) + window.location.search)}
+        />
+      )}
       {view === "suppressions" && <SuppressionsScreen me={me} />}
       {view === "audit" && <AuditScreen me={me} />}
       {view === "users" && (me.role === "owner"
@@ -176,7 +183,12 @@ export function App() {
       {view === "ad-allocation" && (roleAtLeast(me.role, PANEL_ROLE_TABLE.adAllocation)
         ? <AdAllocationScreen />
         : <NotFound title="สำหรับ Owner เท่านั้น" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้" />)}
+      {/* Owner only: the section is not in the list for an employee, and the server answers 403 to one as well. */}
+      {view === "notify-settings" && (roleAtLeast(me.role, PANEL_ROLE_TABLE.viewSettings)
+        ? <NotifySettingsScreen />
+        : <NotFound title="สำหรับ Owner เท่านั้น" hint="บัญชีพนักงานเปิดหน้านี้ไม่ได้" />)}
       {view === "not-found" && <NotFound title="ไม่พบหน้านี้ (Page not found)" hint={route.view === "not-found" ? route.path : undefined} />}
+      </div>
     </AppShell>
     </BrandScopeProvider>
   );

@@ -252,6 +252,28 @@ describe("guarded template delete", () => {
     expect(await snapshot(templateId, versionIds)).toEqual([1, 1, 1, 1, 0]);
   });
 
+  it("lists was_approved for a draft whose sealed version is cut from the 200 newest rows, and the delete is refused", async () => {
+    const { templateId, versionIds } = await seedTemplate(["certified", "certified"]);
+    const [sealedId, draftId] = versionIds as [string, string];
+    // The sealed version is the oldest of 201 versions, so the list (newest 200) does not return it.
+    await env.FACTORY.prepare("UPDATE template_versions SET created_at = ?2 WHERE template_version_id = ?1").bind(sealedId, EARLIER).run();
+    await env.FACTORY.prepare("UPDATE template_versions SET created_at = ?2 WHERE template_version_id = ?1").bind(draftId, "2026-11-02T00:00:00.000Z").run();
+    // A sealed version cannot be edited, so it is sealed after its created_at is set.
+    await seal(sealedId);
+    await env.FACTORY.prepare("INSERT INTO templates (template_id, name, framework, created_by, created_at) VALUES ('tpl-filler', 'Filler', 'react_spa', 'u', ?1)").bind(NOW).run();
+    const fillers = Array.from({ length: 199 }, (_, i) => env.FACTORY.prepare(`INSERT INTO template_versions (template_version_id, template_id, version, sha256, r2_key, status, created_by, created_at)
+      VALUES (?1, 'tpl-filler', ?2, ?3, ?4, 'certified', 'u', ?5)`).bind(`tv-filler-${i}`, i + 1, `f${i}`.padStart(64, "0"), `templates/tv-filler-${i}.zip`, NOW));
+    await env.FACTORY.batch(fillers);
+
+    const rows = (await list(owner)).templates;
+    expect(rows).toHaveLength(200);
+    expect(rows.some((t) => t.template_version_id === sealedId)).toBe(false);
+    const draft = rows.find((t) => t.template_version_id === draftId)!;
+    expect(draft).toMatchObject({ status: "awaiting_approval", sealed_at: null, was_approved: true });
+    expect(rows.filter((t) => t.template_id === "tpl-filler").every((t) => !t.was_approved)).toBe(true);
+    expect(await (await del(owner, templateId)).json()).toEqual({ error: "template_was_approved" });
+  });
+
   it("refuses a template whose older version was sealed, while its newest version never was", async () => {
     const { templateId, versionIds } = await seedTemplate(["sealed", "certified"]);
     expect(await (await del(owner, templateId)).json()).toEqual({ error: "template_was_approved" });

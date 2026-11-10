@@ -52,72 +52,80 @@ afterEach(() => {
 });
 
 describe("Leads and Suppressions routes", () => {
-  it("deep links /leads/<id> to the detail screen and back returns to the list", async () => {
+  const CLOSE = "ปิดรายละเอียด";
+  const PANEL = "รายละเอียดลีด";
+
+  it("deep links /leads/<id> to the list with the detail panel open and close returns to the list", async () => {
     vi.spyOn(api, "me").mockResolvedValue(owner);
-    window.history.replaceState(null, "", "/funnel");
-    window.history.pushState(null, "", "/leads");
-    window.history.pushState(null, "", `/leads/${LEAD_ID}`);
+    window.history.replaceState(null, "", `/leads/${LEAD_ID}`);
     const { container } = render(<App />);
 
-    expect(await screen.findByRole("heading", { level: 1, name: "รายละเอียดลีด (Lead detail)" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 2, name: PANEL })).toBeTruthy();
     await screen.findByText("Postback Inspector");
     expect(requests).toContain(`/api/leads/${LEAD_ID}`);
     expect(container.textContent).toContain(APPLICANT_EMAIL);
-    expect(container.textContent).toContain(LEAD_ID);
+    // The list stays beside the panel.
+    expect(screen.getByRole("heading", { level: 1, name: LEADS_NAV })).toBeTruthy();
+    expect(container.querySelector("table[aria-label='รายการลีด']")).toBeTruthy();
+    expect(screen.getByTitle(LEAD_ID).getAttribute("aria-current")).toBe("true");
 
-    await back();
+    fireEvent.click(screen.getByRole("button", { name: CLOSE }));
     expect(window.location.pathname).toBe("/leads");
-    expect(await screen.findByRole("heading", { level: 1, name: LEADS_NAV })).toBeTruthy();
-    await screen.findByTitle(LEAD_ID);
-    expect(screen.queryByRole("heading", { name: "รายละเอียดลีด (Lead detail)" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: PANEL })).toBeNull());
     expect(container.textContent).not.toContain(APPLICANT_EMAIL);
     expect(menu().getByRole("link", { name: LEADS_MENU }).getAttribute("aria-current")).toBe("page");
     expect(tabs().getByRole("link", { name: LEADS_TAB }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("opens the detail from a list row and the Back button returns to the list", async () => {
+  it("opens the panel from a list row and the close button returns to the list", async () => {
     vi.spyOn(api, "me").mockResolvedValue(owner);
     window.history.replaceState(null, "", "/leads");
     render(<App />);
     fireEvent.click(await screen.findByTitle(LEAD_ID));
     expect(window.location.pathname).toBe(`/leads/${LEAD_ID}`);
     await screen.findByText("Postback Inspector");
-    fireEvent.click(screen.getByRole("button", { name: "← กลับรายการลีด (Back to leads)" }));
+    const listRequests = requests.filter((r) => r.startsWith("/api/leads?")).length;
+    fireEvent.click(screen.getByRole("button", { name: CLOSE }));
     expect(window.location.pathname).toBe("/leads");
-    await screen.findByTitle(LEAD_ID);
-    expect(screen.queryByText("Postback Inspector")).toBeNull();
+    await waitFor(() => expect(screen.queryByText("Postback Inspector")).toBeNull());
+    expect(screen.getByTitle(LEAD_ID)).toBeTruthy();
+    // Opening and closing a lead never reloads the list.
+    expect(requests.filter((r) => r.startsWith("/api/leads?")).length).toBe(listRequests);
   });
 
-  it("keeps the list's filter query string when the Back button returns to the list", async () => {
+  it("keeps the list's filter query string while the panel opens and closes", async () => {
     vi.spyOn(api, "me").mockResolvedValue(owner);
     window.history.replaceState(null, "", "/leads?status=sold");
     render(<App />);
     fireEvent.click(await screen.findByTitle(LEAD_ID));
     expect(window.location.pathname).toBe(`/leads/${LEAD_ID}`);
+    expect(window.location.search).toBe("?status=sold");
     await screen.findByText("Postback Inspector");
-    fireEvent.click(screen.getByRole("button", { name: "← กลับรายการลีด (Back to leads)" }));
+    fireEvent.click(screen.getByRole("button", { name: CLOSE }));
     expect(window.location.pathname).toBe("/leads");
     expect(window.location.search).toBe("?status=sold");
-    await screen.findByTitle(LEAD_ID);
-    expect(screen.queryByText("Postback Inspector")).toBeNull();
+    await waitFor(() => expect(screen.queryByText("Postback Inspector")).toBeNull());
+    expect(screen.getByTitle(LEAD_ID)).toBeTruthy();
   });
 
   it("shows the Leads menu item to both roles and the Suppressions tab only to an owner", async () => {
     window.history.replaceState(null, "", "/suppressions");
     const me = vi.spyOn(api, "me").mockResolvedValue(owner);
     const { unmount } = render(<App />);
-    await screen.findByRole("navigation", { name: "หมวดย่อย" });
-    const ownerTabs = tabLabels();
+    // Suppressions sits in the Settings section list.
+    const sections = () => within(screen.getByRole("navigation", { name: "หมวดตั้งค่า" }));
+    const sectionLabels = () => sections().getAllByRole("link").map((a) => a.textContent);
+    await screen.findByRole("navigation", { name: "หมวดตั้งค่า" });
+    const ownerTabs = sectionLabels();
     expect(ownerTabs.indexOf(SUPPRESSIONS_TAB)).toBe(ownerTabs.indexOf("รายชื่ออีเมล") + 1);
-    expect(tabs().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("href")).toBe("/suppressions");
-    expect(tabs().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("aria-current")).toBe("page");
+    expect(sections().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("href")).toBe("/suppressions");
+    expect(sections().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("aria-current")).toBe("page");
     expect(menu().getByRole("link", { name: LEADS_MENU }).getAttribute("href")).toBe("/leads");
     unmount();
 
     me.mockResolvedValue(employee);
     render(<App />);
     await waitFor(() => expect(menu().getByRole("link", { name: LEADS_MENU })).toBeTruthy());
-    expect(tabLabels()).not.toContain(SUPPRESSIONS_TAB);
     expect(screen.queryByRole("link", { name: SUPPRESSIONS_TAB })).toBeNull();
   });
 

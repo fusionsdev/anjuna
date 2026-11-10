@@ -157,7 +157,7 @@ describe("Conversions page", () => {
   it("shows the value column and value totals to the owner only", async () => {
     const view = render(<ConversionsScreen me={owner} />);
     await table();
-    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(9);
     expect(screen.getByRole("columnheader", { name: "มูลค่า (Value)" })).toBeTruthy();
     expect(screen.getByText("$412.50")).toBeTruthy();
     expect(screen.getByText("$170.00")).toBeTruthy();
@@ -217,6 +217,15 @@ describe("Conversions page: details", () => {
     expect(count("ส่งแล้ว")).toBe("5");
     expect(count("ส่งไม่ได้")).toBe("4");
     expect(within(ledger).getByText("ค้างเกิน 6 ชม. 1").className).toContain("p-warn");
+  });
+
+  it("sets every number in the stat boxes in the mono face with the num class, counts and values", async () => {
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    const ledger = screen.getByRole("group", { name: "สรุปคอนเวอร์ชัน" });
+    for (const label of ["ค้างส่ง", "กำลังส่ง", "ส่งแล้ว", "ส่งไม่ได้"]) expect(within(ledger).getByText(label).nextElementSibling?.classList.contains("num"), label).toBe(true);
+    // The owner also sees the two value totals, and they carry num too.
+    for (const label of ["มูลค่าที่ส่งแล้ว", "มูลค่าที่ส่งไม่ได้"]) expect(within(ledger).getByText(label).nextElementSibling?.classList.contains("num"), label).toBe(true);
   });
 
   it("maps each status to its badge tone", async () => {
@@ -379,7 +388,7 @@ describe("Conversions page: load more", () => {
     expect(screen.queryByText(/ซึ่งเป็นจำนวนสูงสุด/)).toBeNull();
     expect(screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" })).toBeTruthy();
     await act(async () => { release!(json({ ...report, truncated: true })); });
-    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง (Narrow the filters)`)).toBeTruthy();
+    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง`)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
   }, 20000);
 
@@ -458,7 +467,7 @@ describe("Conversions page: load more", () => {
       fireEvent.click(await screen.findByRole("button", { name: "โหลดเพิ่ม (Load more)" }));
       await waitFor(() => expect(lastCall().searchParams.get("limit")).toBe(limit));
     }
-    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง (Narrow the filters)`)).toBeTruthy();
+    expect(await screen.findByText(`แสดง ${report.rows.length} รายการ ซึ่งเป็นจำนวนสูงสุด กรุณากรองให้แคบลง`)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "โหลดเพิ่ม (Load more)" })).toBeNull();
   }, 20000);
 
@@ -497,5 +506,43 @@ describe("readConversionFilters and conversionsPath", () => {
     expect(conversionsPath({ period: "7d", status: "all", brand: null })).toBe("/conversions");
     expect(conversionsPath({ period: "30d", status: "dead", brand: null })).toBe("/conversions?period=30d&status=dead");
     expect(conversionsPath({ period: "7d", status: "dead", brand: "brand-a" })).toBe("/conversions?status=dead&brand=brand-a");
+  });
+});
+
+describe("Conversions page: v9 table, counts and bulk bar", () => {
+  it("shows the count of each status on its chip from the report totals", async () => {
+    render(<ConversionsScreen me={owner} />);
+    await table();
+    const t = report.totals;
+    const chip = (name: string) => screen.getByRole("button", { name }).textContent;
+    expect(chip("ทั้งหมด")).toContain(String(t.pending + t.processing + t.uploaded + t.dead));
+    expect(chip("ค้างส่ง (pending)")).toContain(String(t.pending));
+    expect(chip("ส่งแล้ว (uploaded)")).toContain(String(t.uploaded));
+    expect(chip("ส่งไม่ได้ (dead)")).toContain(String(t.dead));
+    expect(screen.getByRole("heading", { name: "คิวคอนเวอร์ชัน" })).toBeTruthy();
+  });
+
+  it("lets an owner pick dead rows only, shows the bulk bar and keeps ส่งใหม่ off while no retry route exists", async () => {
+    render(<ConversionsScreen me={owner} />);
+    const tbl = await table();
+    const dead = report.rows.filter((row) => row.status === "dead");
+    expect(dead.length).toBeGreaterThan(0);
+    const boxes = within(tbl).getAllByRole("checkbox").filter((box) => !(box as HTMLInputElement).getAttribute("aria-label")?.startsWith("เลือกทุกรายการ"));
+    expect(boxes).toHaveLength(dead.length);
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    fireEvent.click(boxes[0]!);
+    const bar = screen.getByRole("toolbar", { name: "จัดการรายการที่เลือก" });
+    expect(within(bar).getByText("เลือก 1 รายการ")).toBeTruthy();
+    expect((within(bar).getByRole("button", { name: "ส่งใหม่ 1 รายการ" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(tbl).getByRole("checkbox", { name: "เลือกทุกรายการที่ส่งไม่ได้" }));
+    expect(within(screen.getByRole("toolbar")).getByText(`เลือก ${dead.length} รายการ`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "ล้างการเลือก" }));
+    expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  it("gives an employee no pick column", async () => {
+    render(<ConversionsScreen me={employee} />);
+    const tbl = await table();
+    expect(within(tbl).queryAllByRole("checkbox")).toHaveLength(0);
   });
 });

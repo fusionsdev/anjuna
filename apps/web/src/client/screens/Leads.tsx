@@ -10,6 +10,8 @@ import { Spinner } from "../components/Spinner";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
 import { isPlainLeftClick, navigate, routePath } from "../router";
 import { useBrandScope } from "../useBrandScope";
+import { LeadDetailScreen } from "./LeadDetail";
+import "./Leads.css";
 
 // spec leads
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -42,11 +44,20 @@ function filterFromUrl(search: string): LeadFilterState {
   };
 }
 
-function writeFilter(filter: LeadFilterState): void {
+/** The filter goes to the query string; an open lead stays in the path so the panel stays open. */
+function writeFilter(filter: LeadFilterState, leadId: string | null): void {
   const params = new URLSearchParams();
   for (const key of ["from", "to", "brand", "status", "q"] as const) if (filter[key]) params.set(key, filter[key]);
   const query = params.toString();
-  navigate(query ? `/leads?${query}` : "/leads", { replace: true });
+  const path = routePath({ view: "leads", leadId });
+  navigate(query ? `${path}?${query}` : path, { replace: true });
+}
+
+const RANGES: Array<[number, string]> = [[1, "วันนี้"], [7, "7 วัน"], [30, "30 วัน"]];
+/** The window of the last `days` days in UTC, ending today. */
+function windowOf(days: number, now = new Date()): { from: string; to: string } {
+  const to = now.toISOString().slice(0, 10);
+  return { to, from: new Date(Date.parse(to) - (days - 1) * 86_400_000).toISOString().slice(0, 10) };
 }
 
 /** Why core would refuse this filter, checked with the contract's own LeadsQuery. Empty when the filter is valid. */
@@ -73,7 +84,7 @@ function Reconciliation({ row }: { row: LeadListRow }) {
   return <StatusBadge tone="blue" label="มี postback (Postback received)" />;
 }
 
-export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selectedId?: string | null; onSelect: (id: string) => void }) {
+export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: Me; selectedId?: string | null; onSelect: (id: string) => void; onClose?: () => void }) {
   const [filter, setFilter] = useState<LeadFilterState>(() => filterFromUrl(window.location.search));
   const [qDraft, setQDraft] = useState(filter.q);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -110,7 +121,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
     const next = { ...filter, ...patch };
     setFilter(next);
     setCursor(null);
-    writeFilter(next);
+    writeFilter(next, selectedId);
   };
   const search = (e: FormEvent) => { e.preventDefault(); if (qDraft !== filter.q) update({ q: qDraft }); };
 
@@ -156,6 +167,12 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
           onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); onSelect(r.lead_id); }}>{r.lead_id.slice(0, 8)}…</a>
       ),
     },
+    {
+      key: "open",
+      header: <span className="sr-only">ดูรายละเอียด</span>,
+      label: "",
+      cell: (r) => <button type="button" className="btn" aria-label={`ดูรายละเอียดลีด ${r.lead_id.slice(0, 8)}`} onClick={() => onSelect(r.lead_id)}>ดูรายละเอียด</button>,
+    },
   ];
 
   const filtered = Boolean(filter.brand || filter.status || filter.q);
@@ -177,7 +194,20 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
     </div>
     <section className="panel" aria-label="ตัวกรองลีด (Lead filters)">
       <FilterBar label="ตัวกรองลีด (Lead filters)" activeCount={[filter.brand, filter.status, filter.q].filter(Boolean).length + rangeActive}>
-      <form onSubmit={search} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+      <div className="leads-filters">
+      <div className="filter-chips" role="group" aria-label="สถานะ">
+        {([["", "ทั้งหมด"], ...outcomes.map(([value, label]) => [value, label.replace(/ \(.*\)$/, "")] as [string, string])] as Array<[LeadOutcome | "", string]>).map(([value, label]) => {
+          const shown = page ? page.rows.filter((r) => inScopeId(r.brand)) : null;
+          // The server filters by status, so only the loaded rows can be counted: the exact count of an open chip, the loaded rows of "ทั้งหมด" by outcome.
+          const n = shown ? (filter.status === "" ? (value === "" ? shown.length : shown.filter((r) => r.outcome === value).length) : value === filter.status ? shown.length : null) : null;
+          return (
+            <button key={value || "all"} type="button" aria-pressed={filter.status === value} onClick={() => update({ status: value })}>
+              {label}{n !== null && <span className="num">{n}{page?.next_cursor && (filter.status === "" || value === filter.status) ? "+" : ""}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <form onSubmit={search} className="leads-toolbar">
         <label>แบรนด์ (Brand)
           <select value={filter.brand} onChange={(e) => update({ brand: e.target.value })}>
             <option value="">ทุกแบรนด์ (All brands)</option>
@@ -190,28 +220,32 @@ export function LeadsScreen({ me, selectedId = null, onSelect }: { me: Me; selec
         <label>ถึง (To)
           <input type="date" value={filter.to} onChange={(e) => update({ to: e.target.value || defaultWindow().to })} />
         </label>
-        <label>สถานะ (Status)
-          <select value={filter.status} onChange={(e) => update({ status: e.target.value as LeadOutcome | "" })}>
-            <option value="">ทุกสถานะ (All)</option>
-            {outcomes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
         <label>ค้นหา (Search)
           <input type="search" value={qDraft} placeholder="รหัสลีด 4 ตัวขึ้นไป (Lead ID prefix)" onChange={(e) => setQDraft(e.target.value)} />
         </label>
         <button type="submit" className="btn" style={{ marginBottom: 8 }}>ค้นหา (Search)</button>
+        <div className="range-toggle" role="group" aria-label="ช่วงเวลา">
+          {RANGES.map(([days, label]) => {
+            const w = windowOf(days);
+            return <button key={days} type="button" aria-pressed={filter.from === w.from && filter.to === w.to} onClick={() => update(w)}>{label}</button>;
+          })}
+        </div>
       </form>
+      </div>
       </FilterBar>
       {problems.map((problem) => <p key={problem} role="alert" className="hint">{problem}</p>)}
       <p className="hint">ช่วงวันที่เป็น UTC ค่าเริ่มต้นคือ 30 วันล่าสุด · ค้นด้วยรหัสลีดหรือ click id เท่านั้น ไม่ค้นด้วยอีเมลหรือเบอร์โทร (Dates are UTC; search matches lead ID or click ID only)</p>
     </section>
-    <section className="panel" style={{ marginTop: 16 }} aria-label="รายการลีด (Lead list)">
+    <div className={selectedId ? "leads-layout has-panel" : "leads-layout"}>
+    <section className="panel" aria-label="รายการลีด">
       {!valid ? <p className="hint">แก้ตัวกรองด้านบนก่อนจึงจะโหลดรายการได้ (Fix the filter above to load the list)</p>
         : error ? <p role="alert">{error}</p> : !page ? <Spinner /> : <>
-        <DataTable label="รายการลีด (Lead list)" columns={columns} rows={page.rows.filter((r) => inScopeId(r.brand))} rowKey={(r) => r.lead_id} empty={empty} />
+        <DataTable label="รายการลีด" columns={columns} rows={page.rows.filter((r) => inScopeId(r.brand))} rowKey={(r) => r.lead_id} empty={empty} />
         {page.next_cursor && <div style={{ marginTop: 10 }}><button type="button" className="btn" onClick={() => setCursor(page.next_cursor)}>ถัดไป (Next)</button></div>}
       </>}
     </section>
+    {selectedId && <LeadDetailScreen key={selectedId} me={me} leadId={selectedId} panel onBack={() => (onClose ?? (() => undefined))()} />}
+    </div>
     {confirmDialog}
   </>;
 }

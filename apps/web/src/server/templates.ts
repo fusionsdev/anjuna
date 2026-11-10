@@ -54,6 +54,7 @@ interface VersionRow {
   brands_using: number;
   archived: number;
   category_id: string | null;
+  was_approved: number;
 }
 
 const SUMMARY_COLUMNS = `v.template_version_id, v.template_id, t.name, v.version, v.status, v.submitted_by_label, v.created_at, v.sealed_at,
@@ -64,7 +65,8 @@ const SUMMARY_COLUMNS = `v.template_version_id, v.template_id, t.name, v.version
     JOIN template_versions used ON used.template_version_id = r.template_version_id
     WHERE b.status != 'retired' AND used.template_id = v.template_id) AS brands_using,
   (t.archived_at IS NOT NULL) AS archived,
-  (SELECT m.category_id FROM template_category_map m WHERE m.template_id = v.template_id) AS category_id`;
+  (SELECT m.category_id FROM template_category_map m WHERE m.template_id = v.template_id) AS category_id,
+  EXISTS(SELECT 1 FROM template_versions s WHERE s.template_id = v.template_id AND s.status = 'sealed') AS was_approved`;
 
 const summary = (row: VersionRow) => ({
   template_version_id: row.template_version_id,
@@ -79,6 +81,7 @@ const summary = (row: VersionRow) => ({
   brands_using: row.brands_using,
   archived: row.archived === 1,
   category_id: row.category_id,
+  was_approved: row.was_approved === 1,
 });
 
 /**

@@ -1,98 +1,345 @@
-import type { AlertsReportResponse } from "@anjuna/contracts";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ApiError, api } from "../api";
-import { BrandLabel, useBrandLabels } from "../brand-labels";
+import type { AlertsReportResponse, NotificationLogRow } from "@anjuna/contracts";
+import { Bell, BellRing, Coins, MousePointerBan, RotateCcw, ThumbsDown, Timer, Webhook, XCircle, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ApiError, api, type Me } from "../api";
+import { BrandLabel, useBrandDomains } from "../brand-labels";
+import { hydrateAlertStates, recordAlertState, useAlertSession } from "../alerts-session";
+import { Chip, type ChipTone } from "../components/Chip";
+import { EmptyState } from "../components/EmptyState";
+import { Spinner } from "../components/Spinner";
 import { scopeAlerts } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
+import "./Leads.css";
+import "./Alerts.css";
 
-const LABEL: Record<string, string> = {
-  ok: "ปกติ",
-  warn: "เตือน",
-  alert: "ผิดปกติ",
+type RuleId = "conversion_stalled" | "brands_without_postbacks" | "submit_error_rate" | "reject_rate" | "click_risk" | "ad_spend_unallocated";
+type Level = "ok" | "warn" | "alert";
+type Filter = "open" | "closed" | "all";
+type Tab = "alerts" | "history";
+
+const RULE_TITLE: Record<RuleId, string> = {
+  conversion_stalled: "คอนเวอร์ชันค้าง",
+  brands_without_postbacks: "แบรนด์ไม่มีโพสต์แบ็ก",
+  submit_error_rate: "อัตราส่งฟอร์มผิดพลาด",
+  reject_rate: "อัตราปฏิเสธ",
+  click_risk: "คลิกเสี่ยงสูง",
+  ad_spend_unallocated: "ค่าโฆษณายังไม่จัดสรร",
 };
+const RULE_ICON: Record<RuleId, LucideIcon> = {
+  conversion_stalled: Timer,
+  brands_without_postbacks: Webhook,
+  submit_error_rate: XCircle,
+  reject_rate: ThumbsDown,
+  click_risk: MousePointerBan,
+  ad_spend_unallocated: Coins,
+};
+const LEVEL_LABEL: Record<Level, string> = { ok: "ปกติ", warn: "เตือน", alert: "ผิดปกติ" };
+const LEVEL_TONE: Record<Level, ChipTone> = { ok: "success", warn: "warning", alert: "danger" };
+const DOT_COLOR: Record<Level, string> = { ok: "var(--ok)", warn: "var(--warn)", alert: "var(--bad)" };
+const ORDER: Record<Level, number> = { alert: 0, warn: 1, ok: 2 };
 
-const STATE_STYLE = { ok: "p-live", warn: "p-warn", alert: "p-bad" };
-const STATE_COLOR = { ok: "var(--money)", warn: "var(--leak)", alert: "var(--bad)" };
+const pct = (rate: number, digits = 0) => (rate * 100).toLocaleString("th-TH", { maximumFractionDigits: digits });
+const when = (iso: string) => new Date(iso).toLocaleString("th-TH", { hour12: false });
 
-function AlertRow({ state, title, detail, children }: { state: "ok" | "warn" | "alert"; title: string; detail: string; children: ReactNode }) {
+/** One row of the alert list. `key` is the `<rule>:<brand>` key core stores ack and close under, or null when it cannot be known here. */
+interface Incident { id: string; rule: RuleId; level: Level; key: string | null; brand: string | null; detail: string }
+
+/**
+ * Turns the alerts report into rows. Core keys an alert as `<rule>:<brand>` and the report names the brand for three rules, so
+ * those rows can be acknowledged. The stalled-conversion row has no brand in the report and a click risk row has a hostname, so
+ * a hostname that matches a brand domain uses that brand and the rest has no key: its buttons show disabled with the reason.
+ */
+export function incidentsOf(report: AlertsReportResponse, brandOfHostname: (hostname: string) => string | null): Incident[] {
+  const rows: Incident[] = [];
+  const stalled = report.conversion_stalled;
+  rows.push({
+    id: "conversion_stalled", rule: "conversion_stalled", level: stalled.state, key: null, brand: null,
+    detail: stalled.state === "ok"
+      ? `ไม่มีรายการค้างเกิน ${stalled.detail.max_hours} ชม.`
+      : `ค้าง ${stalled.detail.stuck_count} รายการ เกิน ${stalled.detail.max_hours} ชม.${stalled.detail.oldest_created_at ? ` · เก่าสุด ${when(stalled.detail.oldest_created_at)}` : ""}`,
+  });
+  const nobody = report.brands_without_postbacks.detail;
+  if (nobody.brands.length === 0) rows.push({ id: "brands_without_postbacks", rule: "brands_without_postbacks", level: report.brands_without_postbacks.state, key: null, brand: null, detail: "ไม่มีแบรนด์เกินเกณฑ์" });
+  for (const b of nobody.brands) rows.push({ id: `brands_without_postbacks:${b.brand}`, rule: "brands_without_postbacks", level: "alert", key: `brands_without_postbacks:${b.brand}`, brand: b.brand, detail: `${b.leads} ลีด ไม่มีโพสต์แบ็กใน ${nobody.window_hours} ชม.` });
+  const errors = report.submit_error_rate.detail;
+  if (errors.samples.length === 0) rows.push({ id: "submit_error_rate", rule: "submit_error_rate", level: report.submit_error_rate.state, key: null, brand: null, detail: "ไม่มีแบรนด์เกินเกณฑ์" });
+  for (const b of errors.samples) rows.push({ id: `submit_error_rate:${b.brand}`, rule: "submit_error_rate", level: b.rate >= errors.alert_at ? "alert" : "warn", key: `submit_error_rate:${b.brand}`, brand: b.brand, detail: `ผิดพลาด ${b.errors} · ส่งฟอร์ม ${b.submits} · ${pct(b.rate, 1)}%` });
+  const rejects = report.reject_rate.detail;
+  if (rejects.brands.length === 0) rows.push({ id: "reject_rate", rule: "reject_rate", level: report.reject_rate.state, key: null, brand: null, detail: "ไม่มีแบรนด์เกินเกณฑ์" });
+  for (const b of rejects.brands) rows.push({ id: `reject_rate:${b.brand}`, rule: "reject_rate", level: b.rate >= rejects.alert_at ? "alert" : "warn", key: `reject_rate:${b.brand}`, brand: b.brand, detail: `ปฏิเสธ ${b.rejected} จาก ${b.decided} · ${pct(b.rate, 1)}%` });
+  const risk = report.click_risk.detail;
+  if (risk.hostnames.length === 0) rows.push({ id: "click_risk", rule: "click_risk", level: report.click_risk.state, key: null, brand: null, detail: `ไม่มีโดเมนที่คนเข้าเว็บได้คะแนนเสี่ยงสูงเกิน ${Math.round(risk.alert_at * 100)}% ใน ${risk.window_hours} ชม.` });
+  for (const h of risk.hostnames) {
+    const brand = brandOfHostname(h.hostname);
+    // Core keys a click risk alert by brand. A hostname that matches no brand domain has no key, so its buttons stay disabled.
+    rows.push({ id: `click_risk:${h.hostname}`, rule: "click_risk", level: "alert", key: brand ? `click_risk:${brand}` : null, brand: null, detail: `${h.hostname} · เสี่ยงสูง ${h.high_risk} จาก ${h.visits} คน (${Math.round(h.rate * 100)}%)` });
+  }
+  const spend = report.ad_spend_unallocated;
+  if (spend) {
+    if (spend.detail.accounts.length === 0) rows.push({ id: "ad_spend_unallocated", rule: "ad_spend_unallocated", level: spend.state, key: null, brand: null, detail: `ไม่มีบัญชีที่แคมเปญยังไม่จัดสรรเกิน ${Math.round(spend.detail.alert_at * 100)}% ของค่าโฆษณา ${spend.detail.window_days} วัน` });
+    for (const a of spend.detail.accounts) rows.push({ id: `ad_spend_unallocated:${a.account}:${a.currency}`, rule: "ad_spend_unallocated", level: spend.state === "ok" ? "warn" : spend.state, key: null, brand: null, detail: `บัญชี ${a.account.slice(0, 3)}-${a.account.slice(3, 6)}-${a.account.slice(6)} · ${a.currency} · ยังไม่จัดสรร ${(a.share * 100).toLocaleString("th-TH", { maximumFractionDigits: 1 })}%` });
+  }
+  return rows.sort((a, b) => ORDER[a.level] - ORDER[b.level]);
+}
+
+function Rule({ rule, level, text }: { rule: RuleId; level: Level; text: string }) {
+  const Icon = RULE_ICON[rule];
   return (
-    <div className="row" style={{ flexWrap: "wrap" }}>
-      <span className="dot" aria-hidden="true" style={{ background: STATE_COLOR[state] }} />
-      <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-        <h3>{title}</h3>
-        <p className="hint">{detail}</p>
+    <li className="alert-rule">
+      <Icon aria-hidden="true" className="alert-icon" />
+      <div className="alert-main">
+        <p className="alert-title">{RULE_TITLE[rule]}</p>
+        <p className="hint">{text}</p>
       </div>
-      <span className={`pill ${STATE_STYLE[state]}`}>{LABEL[state]}</span>
-      <details style={{ maxWidth: "100%" }}>
-        <summary className="btn" aria-label={`ดูรายละเอียด: ${title}`} style={{ cursor: "pointer" }}>ดูรายละเอียด</summary>
-        <div className="hint" style={{ marginTop: 8, overflowWrap: "anywhere" }}>{children}</div>
-      </details>
-    </div>
+      <Chip tone={LEVEL_TONE[level]}>{LEVEL_LABEL[level]}</Chip>
+      <button type="button" role="switch" aria-checked="true" disabled className="alert-switch" aria-label={`เปิดหรือปิดกฎ ${RULE_TITLE[rule]}`} title="ตั้งเปิดหรือปิดกฎไม่ได้จากหน้านี้ ยังไม่มี API กฎการแจ้งเตือน">
+        <span aria-hidden="true" />
+      </button>
+    </li>
   );
 }
 
-export function AlertsScreen() {
+function RulesCard({ report }: { report: AlertsReportResponse }) {
+  const spend = report.ad_spend_unallocated;
+  return (
+    <section className="panel" aria-label="กฎการแจ้งเตือน">
+      <h2>กฎการแจ้งเตือน</h2>
+      <p className="hint">ค่าปัจจุบันของระบบ อ่านอย่างเดียว ปุ่มเปิดปิดใช้ไม่ได้จนกว่าจะมี API กฎ</p>
+      <ul className="alert-rules">
+        <Rule rule="conversion_stalled" level={report.conversion_stalled.state} text={`คอนเวอร์ชันค้างส่ง Google เกิน ${report.conversion_stalled.detail.max_hours} ชั่วโมง`} />
+        <Rule rule="brands_without_postbacks" level={report.brands_without_postbacks.state} text={`แบรนด์ที่มีลีดแต่ไม่มีโพสต์แบ็กใน ${report.brands_without_postbacks.detail.window_hours} ชั่วโมง`} />
+        <Rule rule="submit_error_rate" level={report.submit_error_rate.state} text={`เตือนที่ ${pct(report.submit_error_rate.detail.warn_at)}% ผิดปกติที่ ${pct(report.submit_error_rate.detail.alert_at)}% ใน ${report.submit_error_rate.detail.window_hours} ชั่วโมง`} />
+        <Rule rule="reject_rate" level={report.reject_rate.state} text={`เตือนที่ ${pct(report.reject_rate.detail.warn_at)}% ผิดปกติที่ ${pct(report.reject_rate.detail.alert_at)}% ใน ${report.reject_rate.detail.window_hours} ชั่วโมง`} />
+        <Rule rule="click_risk" level={report.click_risk.state} text={`โดเมนที่คนเข้าเว็บได้คะแนนเสี่ยงสูงเกิน ${Math.round(report.click_risk.detail.alert_at * 100)}% (อย่างน้อย ${report.click_risk.detail.min_visits} คน) ใน ${report.click_risk.detail.window_hours} ชั่วโมง`} />
+        {spend && <Rule rule="ad_spend_unallocated" level={spend.state} text={`แคมเปญที่ยังไม่จัดสรรเกิน ${Math.round(spend.detail.alert_at * 100)}% ของค่าโฆษณา ${spend.detail.window_days} วัน`} />}
+      </ul>
+    </section>
+  );
+}
+
+const FILTERS: Array<[Filter, string]> = [["open", "เปิดอยู่"], ["closed", "ปิดแล้ว"], ["all", "ทั้งหมด"]];
+
+const KEYLESS_REASON = "รายงานไม่ระบุแบรนด์ของการแจ้งเตือนนี้ จึงไม่มีรหัสที่ใช้บันทึกสถานะ รับทราบหรือปิดจากหน้านี้ไม่ได้";
+const STATES_ERROR = "โหลดสถานะรับทราบและปิดที่บันทึกไว้ไม่ได้ แถวที่เคยรับทราบหรือปิดแล้วอาจแสดงเป็นเปิดอยู่";
+
+/** A row on screen: an open or healthy incident from the report, or a state closed by a successful close call. */
+interface Entry { id: string; rule: RuleId | null; level: Level; key: string | null; brand: string | null; detail: string; group: "open" | "closed" | "healthy"; acknowledged: boolean; closedAt: string | null }
+
+function AlertList({ report, domains, onChanged }: { report: AlertsReportResponse; domains: Map<string, string>; onChanged?: () => void }) {
+  const [filter, setFilter] = useState<Filter>("open");
+  const states = useAlertSession();
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const brandOfHostname = useCallback((hostname: string) => {
+    const host = hostname.toLowerCase().replace(/^www\./, "");
+    for (const [id, domain] of domains) if (domain.toLowerCase().replace(/^www\./, "") === host) return id;
+    return null;
+  }, [domains]);
+  const incidents = useMemo(() => incidentsOf(report, brandOfHostname), [report, brandOfHostname]);
+  const entries = useMemo(() => {
+    const open: Entry[] = [];
+    const healthy: Entry[] = [];
+    const closed: Entry[] = [];
+    for (const i of incidents) {
+      const state = i.key ? states.get(i.key) : undefined;
+      if (i.level === "ok") healthy.push({ ...i, group: "healthy", acknowledged: false, closedAt: null });
+      else if (state?.closed_at) continue;
+      else open.push({ ...i, group: "open", acknowledged: state?.acknowledged_at != null, closedAt: null });
+    }
+    // Closed is only what a close call returned with closed_at set. The healthy report never makes a row closed.
+    for (const state of states.values()) {
+      if (!state.closed_at) continue;
+      const match = incidents.find((i) => i.key === state.alert_key);
+      const described = describeKey(state.alert_key);
+      const rule = state.alert_key.split(":")[0] ?? "";
+      closed.push({
+        id: `closed:${state.alert_key}`, rule: rule in RULE_TITLE ? (rule as RuleId) : null, level: match?.level ?? state.state, key: state.alert_key,
+        brand: match?.brand ?? described.brand, detail: match?.detail ?? described.title, group: "closed", acknowledged: state.acknowledged_at != null, closedAt: state.closed_at,
+      });
+    }
+    return { open, closed, healthy };
+  }, [incidents, states]);
+  const counts: Record<Filter, number> = { open: entries.open.length, closed: entries.closed.length, all: entries.open.length + entries.closed.length + entries.healthy.length };
+  const visible = filter === "open" ? entries.open : filter === "closed" ? entries.closed : [...entries.open, ...entries.closed, ...entries.healthy];
+
+  async function act(entry: Entry, action: "ack" | "close") {
+    if (!entry.key) return;
+    setNotice(null);
+    setBusyKey(entry.key);
+    try {
+      recordAlertState(await api.alertAction(entry.key, action));
+      setNotice({ kind: "ok", text: action === "ack" ? "รับทราบการแจ้งเตือนแล้ว" : "ปิดการแจ้งเตือนแล้ว" });
+      // The sidebar badge counts open alerts, so it reads again after every successful call.
+      onChanged?.();
+    } catch (e) {
+      setNotice({ kind: "err", text: e instanceof ApiError && e.status === 404 ? "ไม่พบการแจ้งเตือนนี้ อาจกลับเป็นปกติแล้ว ลองโหลดหน้าใหม่" : e instanceof ApiError ? e.thai : "ไม่สำเร็จ" });
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  return (
+    <>
+      <div className="filter-chips" role="group" aria-label="กรองการแจ้งเตือน">
+        {FILTERS.map(([id, label]) => (
+          <button key={id} type="button" aria-pressed={filter === id} aria-label={label} onClick={() => setFilter(id)}>{label}<span className="num">{counts[id]}</span></button>
+        ))}
+      </div>
+      {notice && <p className={notice.kind === "ok" ? "alert-notice" : "alert-notice err"} role={notice.kind === "ok" ? "status" : "alert"}>{notice.text}</p>}
+      <section className="panel" aria-label="รายการแจ้งเตือน">
+        <h2>การแจ้งเตือน</h2>
+        {visible.length === 0 ? <EmptyState title="ไม่มีการแจ้งเตือนในมุมมองนี้" /> : (
+          <ul className="alert-list">
+            {visible.map((i) => {
+              const Icon = i.rule ? RULE_ICON[i.rule] : Bell;
+              const title = i.rule ? RULE_TITLE[i.rule] : describeKey(i.key ?? "").title;
+              const label = `${title}${i.brand ? ` ${domains.get(i.brand) ?? i.brand}` : ""}`;
+              const busy = i.key !== null && busyKey === i.key;
+              return (
+                <li key={i.id} className={i.group === "closed" ? "alert-row is-done" : "alert-row"}>
+                  <span className="alert-dot" aria-hidden="true" style={{ background: DOT_COLOR[i.level] }} />
+                  <Icon aria-hidden="true" className="alert-icon" />
+                  <div className="alert-main">
+                    <p className="alert-title">{title}{i.brand && <> · <BrandLabel brandId={i.brand} domain={domains.get(i.brand)} /></>}</p>
+                    <p className="hint">{i.detail}{i.closedAt ? ` · ปิดเมื่อ ${when(i.closedAt)}` : ""}</p>
+                  </div>
+                  <Chip tone={LEVEL_TONE[i.level]}>{LEVEL_LABEL[i.level]}</Chip>
+                  {i.group === "closed" && <Chip tone="neutral">ปิดแล้ว</Chip>}
+                  {i.group === "open" && i.acknowledged && <Chip tone="neutral">รับทราบแล้ว</Chip>}
+                  {i.group === "open" && (
+                    <span className="alert-actions">
+                      {!i.acknowledged && (
+                        <button type="button" className="btn" disabled={i.key === null || busy} title={i.key === null ? KEYLESS_REASON : undefined} aria-label={`รับทราบ ${label}`} onClick={() => void act(i, "ack")}>รับทราบ</button>
+                      )}
+                      <button type="button" className="btn" disabled={i.key === null || busy} title={i.key === null ? KEYLESS_REASON : undefined} aria-label={`ปิด ${label}`} onClick={() => void act(i, "close")}>ปิด</button>
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="hint">ข้อมูล ณ {when(report.generated_at)}</p>
+      </section>
+    </>
+  );
+}
+
+/** The rule and brand a notification key stands for. Keys are `<rule>:<brand>`, `digest:<day>`, `test:panel` or `adsbot:<brand>`. */
+function describeKey(key: string): { title: string; brand: string | null } {
+  const [rule, ...rest] = key.split(":");
+  const tail = rest.join(":");
+  if (rule === "digest") return { title: `สรุปรายวัน ${tail}`, brand: null };
+  if (rule === "test") return { title: "ทดสอบการแจ้งเตือน", brand: null };
+  if (rule === "adsbot") return { title: "AdsBot เข้าเว็บ", brand: tail || null };
+  if (rule && rule in RULE_TITLE) return { title: RULE_TITLE[rule as RuleId], brand: tail && tail !== "all" ? tail : null };
+  return { title: key, brand: null };
+}
+
+function History({ me, domains }: { me?: Me; domains: Map<string, string> }) {
+  const [rows, setRows] = useState<NotificationLogRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const owner = me?.role === "owner";
+  const load = useCallback(() => api.alertsLog().then(setRows, (e) => setError(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ")), []);
+  useEffect(() => { void load(); }, [load]);
+
+  async function retry(row: NotificationLogRow) {
+    setNotice(null);
+    setBusyId(row.id);
+    try {
+      const result = await api.retryAlertSend(row.id);
+      setNotice(result.status === "sent" ? { kind: "ok", text: "ส่งใหม่แล้ว" } : { kind: "err", text: `ส่งใหม่ไม่สำเร็จ${result.response_code ? ` (${result.response_code})` : ""}` });
+      await load();
+    } catch (e) {
+      const known: Record<string, string> = { not_configured: "ยังไม่ได้ตั้งค่า Telegram", already_sent: "ส่งสำเร็จไปแล้ว", alert_resolved: "การแจ้งเตือนนี้กลับเป็นปกติแล้ว ไม่ต้องส่งใหม่" };
+      setNotice({ kind: "err", text: e instanceof ApiError ? (known[e.body?.error ?? ""] ?? e.thai) : "ไม่สำเร็จ" });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (error) return <p className="alert-notice err" role="alert">{error}</p>;
+  if (!rows) return <Spinner />;
+  return (
+    <section className="panel" aria-label="ประวัติการส่ง">
+      <h2>ประวัติการส่ง</h2>
+      {notice && <p className={notice.kind === "ok" ? "alert-notice" : "alert-notice err"} role={notice.kind === "ok" ? "status" : "alert"}>{notice.text}</p>}
+      {rows.length === 0 ? <EmptyState title="ยังไม่มีการส่งแจ้งเตือน" /> : (
+        <div className="tw data-table">
+          <table aria-label="ประวัติการส่ง">
+            <thead><tr><th scope="col">เวลา</th><th scope="col">ช่องทาง</th><th scope="col">กฎ</th><th scope="col">แบรนด์</th><th scope="col">สถานะ</th><th scope="col"><span className="sr-only">ส่งใหม่</span></th></tr></thead>
+            <tbody>
+              {rows.map((row) => {
+                const key = describeKey(row.alert_key);
+                const failed = row.status === "failed";
+                return (
+                  <tr key={row.id}>
+                    <td data-label="เวลา">{when(row.sent_at)}</td>
+                    <td data-label="ช่องทาง"><Chip tone="info"><Bell aria-hidden="true" />Telegram</Chip></td>
+                    <td data-label="กฎ">{key.title}</td>
+                    <td data-label="แบรนด์">{key.brand ? <BrandLabel brandId={key.brand} domain={domains.get(key.brand)} /> : "—"}</td>
+                    <td data-label="สถานะ"><Chip tone={failed ? "danger" : "success"}>{failed ? `ล้มเหลว${row.response_code ? ` ${row.response_code}` : ""}` : "ส่งแล้ว"}</Chip></td>
+                    <td data-label="">
+                      {failed && owner && (
+                        <button type="button" className="btn" disabled={busyId === row.id} aria-label={`ส่งใหม่ ${key.title}`} onClick={() => void retry(row)}><RotateCcw aria-hidden="true" className="alert-retry-icon" />ส่งใหม่</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function AlertsScreen({ me, onChanged }: { me?: Me; onChanged?: () => void } = {}) {
   const [raw, setReport] = useState<AlertsReportResponse | null>(null);
   // The brand lists follow the scope. The alert states come from core and cover every brand.
   const { inScopeId, hidesBrands } = useBrandScope();
   const report = useMemo(() => (raw ? scopeAlerts(raw, inScopeId) : raw), [raw, inScopeId]);
   const [error, setError] = useState<string | null>(null);
-  const labelOf = useBrandLabels();
+  const [tab, setTab] = useState<Tab>("alerts");
+  const domains = useBrandDomains();
+  // The stored acknowledge and close states are read from core each time the screen starts, so a fresh page shows what was done.
+  // The first read holds the list back (a row must not flash as open); a failed read shows a notice with a retry and keeps the report.
+  const [states, setStates] = useState<"loading" | "ready" | "error">("loading");
+  const loadStates = useCallback(() => {
+    api.alertStates().then((rows) => { hydrateAlertStates(rows); setStates("ready"); }, () => setStates("error"));
+  }, []);
 
   useEffect(() => {
     api.alerts().then(setReport, (e) => setError(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ"));
-  }, []);
+    loadStates();
+  }, [loadStates]);
 
   return (
     <>
       <div style={{ marginBottom: 18 }}>
-        <h1 aria-label="การแจ้งเตือน (Alerts)">การแจ้งเตือน</h1>
-        <p className="hint">ตรวจสถานะและเรื่องที่ต้องจัดการ{hidesBrands ? " · สถานะแจ้งเตือนนับทุกแบรนด์ รายชื่อแบรนด์ตามขอบเขต" : ""}</p>
+        <h1>การแจ้งเตือน</h1>
+        <p className="hint">เรื่องที่ระบบตรวจพบและยังไม่ปิด{hidesBrands ? " · สถานะแจ้งเตือนนับทุกแบรนด์ รายชื่อแบรนด์ตามขอบเขต" : ""}</p>
       </div>
-      {error ? (
+      <nav className="alert-tabs" aria-label="มุมมองการแจ้งเตือน">
+        {([["alerts", "การแจ้งเตือน"], ["history", "ประวัติการส่ง"]] as const).map(([id, label]) => (
+          <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>
+        ))}
+      </nav>
+      {tab === "history" ? <History me={me} domains={domains} /> : error ? (
         <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }} role="alert">{error}</div>
-      ) : !report ? (
-        <div className="hint" role="status">กำลังโหลด…</div>
+      ) : !report || states === "loading" ? (
+        <div className="hint" role="status"><BellRing aria-hidden="true" className="alert-icon" /> กำลังโหลด…</div>
       ) : (
-        <>
-          <section className="panel" aria-label="รายการแจ้งเตือน">
-            <AlertRow state={report.conversion_stalled.state} title="คอนเวอร์ชันค้าง" detail={`ค้าง ${report.conversion_stalled.detail.stuck_count} รายการ เกิน ${report.conversion_stalled.detail.max_hours} ชม.`}>
-              {report.conversion_stalled.detail.oldest_created_at ? `รายการเก่าสุด ${new Date(report.conversion_stalled.detail.oldest_created_at).toLocaleString("th-TH", { hour12: false })}` : "ไม่มีรายการค้าง"}
-            </AlertRow>
-            <AlertRow state={report.brands_without_postbacks.state} title="แบรนด์ไม่มีโพสต์แบ็ก" detail={`${report.brands_without_postbacks.detail.brands.length} แบรนด์ ใน ${report.brands_without_postbacks.detail.window_hours} ชม.`}>
-              {report.brands_without_postbacks.detail.brands.length ? <ul>{report.brands_without_postbacks.detail.brands.map((b) => <li key={b.brand}><BrandLabel brandId={b.brand} domain={labelOf(b.brand)} /> · {b.leads} ลีด</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
-            </AlertRow>
-            <AlertRow state={report.submit_error_rate.state} title="อัตราส่งฟอร์มผิดพลาด" detail={`${report.submit_error_rate.detail.samples.length} แบรนด์เกินเกณฑ์`}>
-              {report.submit_error_rate.detail.samples.length ? <ul>{report.submit_error_rate.detail.samples.map((b) => <li key={b.brand}><BrandLabel brandId={b.brand} domain={labelOf(b.brand)} /> · ผิดพลาด {b.errors} · ส่งฟอร์ม {b.submits} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
-            </AlertRow>
-            <AlertRow state={report.reject_rate.state} title="อัตราปฏิเสธ" detail={`${report.reject_rate.detail.brands.length} แบรนด์เกินเกณฑ์`}>
-              {report.reject_rate.detail.brands.length ? <ul>{report.reject_rate.detail.brands.map((b) => <li key={b.brand}><BrandLabel brandId={b.brand} domain={labelOf(b.brand)} /> · ปฏิเสธ {b.rejected} จาก {b.decided} · {(b.rate * 100).toLocaleString("th-TH")}%</li>)}</ul> : "ไม่มีแบรนด์เกินเกณฑ์"}
-            </AlertRow>
-            <AlertRow state={report.click_risk.state} title="คลิกเสี่ยงสูง" detail={report.click_risk.detail.hostnames.length
-              ? report.click_risk.detail.hostnames.map((h) => `${h.hostname}: ${Math.round(h.rate * 100)}% ของคนเข้าเว็บได้คะแนนเสี่ยงสูง`).join(" · ")
-              : `ไม่มีโดเมนที่คนเข้าเว็บได้คะแนนเสี่ยงสูงเกิน ${Math.round(report.click_risk.detail.alert_at * 100)}% ใน ${report.click_risk.detail.window_hours} ชม.`}>
-              {report.click_risk.detail.hostnames.length ? <ul>{report.click_risk.detail.hostnames.map((h) => <li key={h.hostname}>{h.hostname} · เสี่ยงสูง {h.high_risk} จาก {h.visits} คน</li>)}</ul> : "ไม่มีโดเมนเกินเกณฑ์"}
-            </AlertRow>
-            {report.ad_spend_unallocated && <AlertRow state={report.ad_spend_unallocated.state} title="ค่าโฆษณายังไม่จัดสรร" detail={report.ad_spend_unallocated.detail.accounts.length
-              ? `${report.ad_spend_unallocated.detail.accounts.length} บัญชีมีแคมเปญที่ยังไม่จัดสรรเกิน ${Math.round(report.ad_spend_unallocated.detail.alert_at * 100)}% ของค่าโฆษณา ${report.ad_spend_unallocated.detail.window_days} วัน`
-              : `ไม่มีบัญชีที่แคมเปญยังไม่จัดสรรเกิน ${Math.round(report.ad_spend_unallocated.detail.alert_at * 100)}% ของค่าโฆษณา ${report.ad_spend_unallocated.detail.window_days} วัน`}>
-              {report.ad_spend_unallocated.detail.accounts.length
-                ? <ul>{report.ad_spend_unallocated.detail.accounts.map((a) => <li key={`${a.account}:${a.currency}`}>บัญชี {a.account.slice(0, 3)}-{a.account.slice(3, 6)}-{a.account.slice(6)} · {a.currency} · ยังไม่จัดสรร {(a.share * 100).toLocaleString("th-TH", { maximumFractionDigits: 1 })}%</li>)}</ul>
-                : "ไม่มีบัญชีเกินเกณฑ์"}
-            </AlertRow>}
-            <p className="hint">ข้อมูล ณ {new Date(report.generated_at).toLocaleString("th-TH", { hour12: false })}</p>
-          </section>
-          <section className="panel" style={{ marginTop: 16 }} aria-label="เกณฑ์แจ้งเตือน">
-            <h2>เกณฑ์แจ้งเตือน</h2>
-            <p className="hint">ค่าปัจจุบัน · อ่านอย่างเดียว</p>
-            <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 12, marginBottom: 0 }}>
-              <div><dt className="k">conversion ค้างส่ง Google เกิน (ชั่วโมง)</dt><dd style={{ margin: 0 }}>{report.conversion_stalled.detail.max_hours}</dd></div>
-              <div><dt className="k">แบรนด์ไม่มีโพสต์แบ็กในช่วง (ชั่วโมง)</dt><dd style={{ margin: 0 }}>{report.brands_without_postbacks.detail.window_hours}</dd></div>
-              <div><dt className="k">อัตราส่งฟอร์มผิดพลาด (%)</dt><dd style={{ margin: 0 }}>เตือน {(report.submit_error_rate.detail.warn_at * 100).toLocaleString("th-TH")}% · ผิดปกติ {(report.submit_error_rate.detail.alert_at * 100).toLocaleString("th-TH")}%</dd><dd className="hint" style={{ margin: 0 }}>ใน {report.submit_error_rate.detail.window_hours} ชั่วโมง</dd></div>
-              <div><dt className="k">อัตรา reject (%)</dt><dd style={{ margin: 0 }}>เตือน {(report.reject_rate.detail.warn_at * 100).toLocaleString("th-TH")}% · ผิดปกติ {(report.reject_rate.detail.alert_at * 100).toLocaleString("th-TH")}%</dd><dd className="hint" style={{ margin: 0 }}>ใน {report.reject_rate.detail.window_hours} ชั่วโมง</dd></div>
-            </dl>
-          </section>
-        </>
+        <div className="alert-stack">
+          {states === "error" && (
+            <p className="alert-notice err" role="alert">{STATES_ERROR} <button type="button" className="btn" onClick={loadStates}>ลองใหม่</button></p>
+          )}
+          <AlertList report={report} domains={domains} onChanged={onChanged} />
+          <RulesCard report={report} />
+        </div>
       )}
     </>
   );

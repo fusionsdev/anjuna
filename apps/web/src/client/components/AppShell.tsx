@@ -10,6 +10,7 @@ export const pageTitle: Record<View, string> = {
   conversions: "คอนเวอร์ชัน", alerts: "การแจ้งเตือน", deploys: "ประวัติการติดตั้ง", mailing: "รายชื่ออีเมล", audit: "ประวัติการแก้ไข", users: "ผู้ใช้",
   "builder-keys": "คีย์ Builder", leads: "ลีด", suppressions: "อีเมลที่บล็อก",
   settings: "ตั้งค่า",
+  "notify-settings": "ช่องทางแจ้งเตือน",
   "ad-allocation": "จัดสรรค่าโฆษณา",
   "brand-timeline": "ไทม์ไลน์แบรนด์", // spec timeline
   traffic: "ทราฟฟิก", errors: "ข้อผิดพลาดฝั่งเว็บ", // spec traffic

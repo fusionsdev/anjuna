@@ -2,7 +2,8 @@ import { roleAtLeast, type PanelCampaign, type PanelCampaignsResponse } from "@a
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
-import { StatusBadge, type Tone } from "../components/StatusBadge";
+import { Chip, type ChipTone } from "../components/Chip";
+import type { Tone } from "../components/StatusBadge";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
 import "./Campaigns.css";
 import { useBrandScope } from "../useBrandScope";
@@ -62,6 +63,22 @@ function thaiError(e: unknown): string {
 }
 
 type BrandInfo = { id: string; name: string; domain: string };
+
+const CHIP_TONE: Record<Tone, ChipTone> = { live: "success", warn: "warning", bad: "danger", mute: "neutral", blue: "info" };
+const StateChip = ({ state }: { state: State }) => <Chip tone={CHIP_TONE[STATE[state].tone]} dot>{STATE[state].label}</Chip>;
+
+/** Status chips above the table: each one groups the derived states the way the design names them. */
+type CampaignFilter = "all" | "draft" | "building" | "active" | "paused" | "failed" | "other";
+const FILTERS: Array<{ id: CampaignFilter; label: string; states: ReadonlySet<State> | null }> = [
+  { id: "all", label: "ทั้งหมด", states: null },
+  { id: "draft", label: "ร่าง", states: new Set<State>(["draft"]) },
+  { id: "building", label: "กำลังสร้าง", states: new Set<State>(["drafting", "enabling"]) },
+  { id: "active", label: "ทำงาน", states: new Set<State>(["enabled"]) },
+  { id: "paused", label: "หยุด", states: new Set<State>(["paused"]) },
+  { id: "failed", label: "ล้มเหลว", states: new Set<State>(["failed"]) },
+  { id: "other", label: "อื่น ๆ", states: new Set<State>(["unknown", "removed"]) },
+];
+const stamp = (iso: string) => iso.replace("T", " ").slice(0, 16);
 
 export function CampaignsScreen({ me }: { me: Me }) {
   // The server refuses these for a lower role whatever the UI shows; hiding the buttons only spares a 403.
@@ -160,29 +177,45 @@ export function CampaignsScreen({ me }: { me: Me }) {
   const { inScopeId } = useBrandScope();
   const shown = useMemo(() => (data?.campaigns ?? []).filter((c) => inScopeId(c.brand_id)), [data, inScopeId]);
   const capBrands = useMemo(() => [...new Set(shown.map((c) => c.brand_id))], [shown]);
+  const [filter, setFilter] = useState<CampaignFilter>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const countOf = (id: CampaignFilter) => { const states = FILTERS.find((f) => f.id === id)!.states; return states ? shown.filter((c) => states.has(c.state)).length : shown.length; };
+  const visible = useMemo(() => { const states = FILTERS.find((f) => f.id === filter)!.states; return states ? shown.filter((c) => states.has(c.state)) : shown; }, [shown, filter]);
+  const selected = shown.find((c) => c.draft_job_id === selectedId) ?? null;
 
   return (
     <div className="campaigns-page">
       <h1>แคมเปญ</h1>
+      <p className="campaigns-sub">แคมเปญ Google Ads ที่สร้างจาก Anjuna ผ่าน AdKit</p>
       <div className="campaigns-banner">
         <strong>แคมเปญที่สร้างจากหน้านี้เป็นร่างเสมอ ยังไม่ใช้เงิน</strong>
         <span>เฉพาะ owner เปิดใช้งานได้ ระบบตรวจเพดานงบทั้งตอนสร้างร่างและตอนเปิดใช้งาน</span>
       </div>
       {msg && <div className={`campaigns-msg ${msg.tone}`} role={msg.tone === "err" ? "alert" : "status"}>{msg.text}</div>}
 
+      <div className="campaigns-chips" role="group" aria-label="กรองสถานะแคมเปญ">
+        {FILTERS.filter((f) => f.id !== "other" || countOf("other") > 0).map((f) => (
+          <button key={f.id} type="button" className="campaigns-chip" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
+            {f.label}<span className="campaigns-chip-count">{countOf(f.id)}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="campaigns-main">
       <section className="campaigns-card">
         <h2>แคมเปญทั้งหมด</h2>
-        {!data ? <p className="campaigns-muted">กำลังโหลด</p> : shown.length === 0 ? <p className="campaigns-muted">ยังไม่มีแคมเปญจากหน้านี้</p> : (
+        {!data ? <p className="campaigns-muted">กำลังโหลด</p> : shown.length === 0 ? <p className="campaigns-muted">ยังไม่มีแคมเปญจากหน้านี้</p> : visible.length === 0 ? <p className="campaigns-muted">ไม่มีแคมเปญในสถานะนี้</p> : (
           <div className="campaigns-scroll"><table>
-            <thead><tr><th>แคมเปญ</th><th>แบรนด์</th><th>สถานะ</th><th className="num">งบต่อวัน</th><th>บัญชี</th><th /></tr></thead>
+            <thead><tr><th>แบรนด์</th><th>แคมเปญ</th><th>สถานะ</th><th className="num">งบต่อวัน</th><th>บัญชี</th><th>อัปเดต</th><th><span className="sr-only">การทำงาน</span></th></tr></thead>
             <tbody>
-              {shown.map((c) => (
-                <tr key={c.draft_job_id}>
-                  <td><strong>{c.name}</strong></td>
+              {visible.map((c) => (
+                <tr key={c.draft_job_id} className={c.draft_job_id === selectedId ? "sel" : undefined}>
                   <td>{brandOf(c.brand_id).name}</td>
-                  <td><StatusBadge tone={STATE[c.state].tone} label={STATE[c.state].label} /></td>
+                  <td><button type="button" className="campaigns-pick" aria-pressed={c.draft_job_id === selectedId} onClick={() => setSelectedId(c.draft_job_id === selectedId ? null : c.draft_job_id)}><strong>{c.name}</strong></button></td>
+                  <td><StateChip state={c.state} /></td>
                   <td className="num">{budgetText(c)}</td>
                   <td className="num">{account(c.account)}</td>
+                  <td className="campaigns-when">{stamp(c.updated_at)}</td>
                   <td className="campaigns-actions">
                     {canEnable && c.campaign_id && ENABLEABLE.has(c.state) && (
                       <button type="button" className="btn pri" disabled={busy !== null} aria-label={`ตรวจและเปิดใช้งาน ${c.name}`} onClick={() => void enable(c)}>ตรวจและเปิดใช้งาน</button>
@@ -200,6 +233,9 @@ export function CampaignsScreen({ me }: { me: Me }) {
           </table></div>
         )}
       </section>
+      <CampaignDetail key={selected?.draft_job_id ?? "none"} campaign={selected} data={data} brandName={selected ? brandOf(selected.brand_id).name : ""} canEditBudget={roleAtLeast(me.role, PANEL_ROLE_TABLE.updateCampaignBudget)} busy={busy !== null}
+        onSaveBudget={(c, amount) => run(c.campaign_id!, () => api.updateAdsCampaignBudget(c.campaign_id!, amount), "ส่งคำสั่งเปลี่ยนงบแล้ว ระบบตรวจเพดานอีกครั้งก่อน VPS รัน")} />
+      </div>
 
       <div className="campaigns-split">
         <DraftForm data={data} brands={brands} busy={busy !== null} onSubmit={(body) => run("draft", () => api.draftAdsCampaign(body), "ส่งร่างแล้ว รอ VPS สร้างร่างใน AdKit")} />
@@ -234,6 +270,70 @@ export function CampaignsScreen({ me }: { me: Me }) {
       </div>
       {confirmDialog}
     </div>
+  );
+}
+
+/**
+ * The selected campaign: budget (owner edits it through the budget job), keywords and the latest job. Core returns no keyword list
+ * and no job history on this read, so the panel shows only what the read holds: the derived state, its time and the draft job id.
+ */
+function CampaignDetail({ campaign, data, brandName, canEditBudget, busy, onSaveBudget }: {
+  campaign: PanelCampaign | null;
+  data: PanelCampaignsResponse | null;
+  brandName: string;
+  canEditBudget: boolean;
+  busy: boolean;
+  onSaveBudget: (campaign: PanelCampaign, amount: number) => Promise<boolean>;
+}) {
+  const [budget, setBudget] = useState(campaign ? String(campaign.daily_budget) : "");
+  if (!campaign) {
+    return <aside className="campaigns-card campaigns-detail" aria-label="รายละเอียดแคมเปญ"><h2>รายละเอียด</h2><p className="campaigns-muted">เลือกแคมเปญในตารางเพื่อดูงบ คีย์เวิร์ดและบันทึกงาน</p></aside>;
+  }
+  const amount = Number(budget);
+  // The budget job takes a positive number with at most two decimals.
+  const amountOk = budget.trim() !== "" && Number.isFinite(amount) && amount > 0 && Math.abs(amount * 100 - Math.round(amount * 100)) < 1e-6;
+  const info = data?.brands.find((b) => b.brand_id === campaign.brand_id);
+  const rate = campaign.currency === "THB" ? 1 : (info?.thb_per_unit ?? null);
+  const left = data ? capsFor(data, campaign.brand_id).left : null;
+  // The campaign's own budget is already inside the committed figure while it spends, so an edit may use that share again.
+  const own = campaign.state === "enabled" && campaign.daily_budget_thb !== null ? campaign.daily_budget_thb : 0;
+  const over = amountOk && rate !== null && left !== null && satang(amount * rate) > satang(left + own);
+  const changed = amountOk && amount !== campaign.daily_budget;
+  const editable = canEditBudget && campaign.campaign_id !== null && campaign.state !== "removed";
+  return (
+    <aside className="campaigns-card campaigns-detail" aria-label="รายละเอียดแคมเปญ">
+      <div className="campaigns-detail-head">
+        <div><p className="campaigns-muted">{brandName}</p><h2>{campaign.name}</h2></div>
+        <StateChip state={campaign.state} />
+      </div>
+      <div className="campaigns-detail-block">
+        <label htmlFor="cmp-detail-budget">งบต่อวัน{campaign.currency ? ` (${campaign.currency})` : ""}</label>
+        {editable ? (
+          <div className="campaigns-budget-row">
+            <input id="cmp-detail-budget" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} />
+            <button type="button" className="btn pri" disabled={busy || !changed || over} onClick={() => void onSaveBudget(campaign, amount)}>บันทึกงบ</button>
+          </div>
+        ) : (
+          <>
+            <output id="cmp-detail-budget" className="campaigns-budget-read">{budgetText(campaign)}</output>
+            <p className="campaigns-muted">{!canEditBudget ? "เฉพาะ owner แก้งบได้" : campaign.state === "removed" ? "แคมเปญนี้ถูกลบใน Google Ads แล้ว" : "แคมเปญยังไม่มีรหัสใน Google Ads แก้งบไม่ได้"}</p>
+          </>
+        )}
+        {over && <p className="campaigns-reason" role="note">{OVER_CAP}</p>}
+        {editable && <p className="campaigns-muted">งบใหม่ส่งเป็นงานไป AdKit ระบบตรวจเพดานอีกครั้งก่อนเปลี่ยน</p>}
+      </div>
+      <div className="campaigns-detail-block">
+        <h3>คีย์เวิร์ด</h3>
+        <p className="campaigns-muted">ระบบยังไม่ส่งรายการคีย์เวิร์ดกลับมาในหน้านี้ ดูใน Google Ads</p>
+      </div>
+      <div className="campaigns-detail-block">
+        <h3>บันทึกงาน</h3>
+        <ol className="campaigns-log">
+          <li><span className="campaigns-log-dot" aria-hidden="true" /><div><b>{STATE[campaign.state].label}</b><small>{stamp(campaign.updated_at)} · <code>{campaign.draft_job_id.slice(0, 8)}</code></small></div></li>
+        </ol>
+        <p className="campaigns-muted">Final URL: <code>{hostOf(campaign.final_url)}</code> · {geoText(campaign.geo)}</p>
+      </div>
+    </aside>
   );
 }
 

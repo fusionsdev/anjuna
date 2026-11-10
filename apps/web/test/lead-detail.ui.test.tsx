@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GetLeadResponse } from "@anjuna/contracts";
 import ownerFixture from "@anjuna/contracts/fixtures/admin/lead.get.response.json";
@@ -232,8 +232,36 @@ describe("Lead detail screen", () => {
   it("renders NotFound when the lead does not exist", async () => {
     answer = { status: 404, body: { error: "not_found" } };
     render(<LeadDetailScreen me={owner} leadId={LEAD_ID} onBack={() => {}} />);
-    expect(await screen.findByText("ไม่พบลีดนี้ (Lead not found)")).toBeTruthy();
+    expect(await screen.findByText("ไม่พบลีดนี้")).toBeTruthy();
     expect(screen.getByText("กลับหน้าแรก (Back to Home)")).toBeTruthy();
     expect(screen.queryByText("Postback Inspector")).toBeNull();
+  });
+});
+
+describe("Lead detail timeline and panel", () => {
+  it("lists the form, each postback and the upload in time order with the click id chip", async () => {
+    await renderScreen();
+    const items = within(screen.getByRole("list", { name: "ไทม์ไลน์ลีด" })).getAllByRole("listitem").map((li) => li.querySelector("p")!.textContent);
+    expect(items).toEqual(["ส่งฟอร์ม", "postback ลีดใหม่", "postback ขายได้", "สร้างรายการอัปโหลด", "อัปโหลดสำเร็จ"]);
+    expect(screen.getByText("มี click id (gclid)")).toBeTruthy();
+  });
+
+  it("shows a warning chip when the conversion carries no click id", async () => {
+    const lead = ownerLead();
+    lead.conversion = { ...lead.conversion!, click_type: "none" };
+    respondWith(lead);
+    await renderScreen();
+    expect(screen.getByText("ไม่มี click id")).toBeTruthy();
+  });
+
+  it("renders as a panel with a level 2 heading and a close button that calls onBack", async () => {
+    const onBack = vi.fn();
+    const view = render(<LeadDetailScreen me={owner} leadId={LEAD_ID} onBack={onBack} panel />);
+    await screen.findByText("Postback Inspector");
+    expect(screen.getByRole("heading", { level: 2, name: "รายละเอียดลีด" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(view.container.querySelector("aside.lead-panel")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "ปิดรายละเอียด" }));
+    expect(onBack).toHaveBeenCalledOnce();
   });
 });

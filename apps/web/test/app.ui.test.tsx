@@ -37,6 +37,7 @@ vi.mock("../src/client/screens/ClientErrors", () => ({ ClientErrorsScreen: () =>
 vi.mock("../src/client/screens/Leads", () => ({ LeadsScreen: () => <h1>Leads screen</h1> }));
 vi.mock("../src/client/screens/Suppressions", () => ({ SuppressionsScreen: () => <h1>Suppressions screen</h1> }));
 vi.mock("../src/client/screens/Settings", () => ({ SettingsScreen: () => <h1>Settings screen</h1> }));
+vi.mock("../src/client/screens/NotifySettings", () => ({ NotifySettingsScreen: () => <h1>Notify settings screen</h1> }));
 vi.mock("../src/client/screens/Deploys", () => ({ DeploysScreen: () => <h1>Deploys screen</h1> }));
 vi.mock("../src/client/screens/Campaigns", () => ({ CampaignsScreen: ({ me }: { me: { role: string } }) => <h1>Campaigns screen {me.role}</h1> }));
 vi.mock("../src/client/screens/BrandTimeline", () => ({ BrandTimelineScreen: ({ brandId }: { brandId: string }) => <h1>Timeline screen {brandId}</h1> }));
@@ -127,11 +128,12 @@ describe("Console rail", () => {
     ["/mailing", "อีเมลที่บล็อก", "Suppressions screen"],
     ["/suppressions", "ประวัติการแก้ไข", "Audit screen"],
     ["/audit", "คีย์ Builder", "Builder keys screen"],
-    ["/builder-keys", "ตั้งค่า", "Settings screen"],
+    ["/builder-keys", "ทั่วไป", "Settings screen"],
+    ["/settings", "ช่องทางแจ้งเตือน", "Notify settings screen"],
   ])("from %s the tab %s opens its screen and becomes the only selected tab", async (start, label, heading) => {
     window.history.replaceState(null, "", start);
     render(<App />);
-    const tabs = await screen.findByRole("navigation", { name: "หมวดย่อย" });
+    const tabs = await screen.findByRole("navigation", { name: /^หมวด(?:ย่อย|ตั้งค่า)$/ });
     fireEvent.click(within(tabs).getByRole("link", { name: label }));
     expect(await screen.findByRole("heading", { name: heading })).toBeTruthy();
     expect(within(tabs).getByRole("link", { name: label }).getAttribute("aria-current")).toBe("page");
@@ -208,15 +210,15 @@ describe("Console rail", () => {
     expect(screen.getByText("พนักงาน")).toBeTruthy();
     fireEvent.click(within(nav).getByRole("link", { name: "ตั้งค่า" }));
     expect(await screen.findByRole("heading", { name: "Mailing screen" })).toBeTruthy();
-    const tabs = screen.getByRole("navigation", { name: "หมวดย่อย" });
+    const tabs = screen.getByRole("navigation", { name: "หมวดตั้งค่า" });
     expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["รายชื่ออีเมล", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
-  it("shows an owner all seven Settings tabs in order", async () => {
+  it("shows an owner all eight Settings sections in order", async () => {
     window.history.replaceState(null, "", "/mailing");
     render(<App />);
-    const tabs = await screen.findByRole("navigation", { name: "หมวดย่อย" });
-    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["ตั้งค่า", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
+    const tabs = await screen.findByRole("navigation", { name: "หมวดตั้งค่า" });
+    expect(within(tabs).getAllByRole("link").map((a) => a.textContent)).toEqual(["ทั่วไป", "ช่องทางแจ้งเตือน", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
   it("preserves initial template deep links", async () => {

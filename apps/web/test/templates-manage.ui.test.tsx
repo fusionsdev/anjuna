@@ -8,8 +8,9 @@ const STAMP = "2026-11-01T00:00:00.000Z";
 const LIST = "GET /api/templates?include_archived=1";
 
 const summary = (id: string, name: string, over: Record<string, unknown> = {}) => ({
-  template_version_id: `tv-${id}`, template_id: `tpl-${id}`, name, version: 1, status: "approved",
-  submitted_by_label: "Somchai", created_at: STAMP, sealed_at: STAMP, thumbnail_url: null, brands_using: 0, archived: false, category_id: null, ...over,
+  // A template that was never approved by default, so the delete rule only blocks what a test sets up.
+  template_version_id: `tv-${id}`, template_id: `tpl-${id}`, name, version: 1, status: "awaiting_approval",
+  submitted_by_label: "Somchai", created_at: STAMP, sealed_at: null, thumbnail_url: null, brands_using: 0, archived: false, category_id: null, was_approved: false, ...over,
 });
 const categories = [{ id: "cat-loan", name: "เงินกู้", sort: 1 }, { id: "cat-card", name: "บัตรเครดิต", sort: 2 }];
 
@@ -38,6 +39,8 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+const bulk = () => within(screen.getByRole("toolbar", { name: "จัดการเทมเพลตที่เลือก" }));
+const check = (label: string) => fireEvent.click(screen.getByRole("checkbox", { name: label }));
 const confirmDialog = async (label: string) => fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: label }));
 
 describe("template manager: categories", () => {
@@ -47,17 +50,22 @@ describe("template manager: categories", () => {
     expect(screen.getByText("Bravo")).toBeTruthy();
     expect(screen.queryByText("Charlie")).toBeNull();
 
-    const group = screen.getByRole("group", { name: "กรองหมวดเทมเพลต" });
-    fireEvent.click(within(group).getByRole("button", { name: "เงินกู้" }));
+    const nav = screen.getByRole("navigation", { name: "หมวดเทมเพลต" });
+    expect(within(nav).getAllByRole("button").map((b) => b.textContent)).toEqual(["ทุกหมวด2", "เงินกู้1", "บัตรเครดิต1", "เพิ่มหมวด"]);
+    fireEvent.click(within(nav).getByRole("button", { name: /^เงินกู้/ }));
     expect(screen.getByText("Alpha")).toBeTruthy();
     expect(screen.queryByText("Bravo")).toBeNull();
 
-    fireEvent.click(within(group).getByRole("button", { name: "เก็บถาวร" }));
+    const chips = screen.getByRole("group", { name: "กรองสถานะเทมเพลต" });
+    fireEvent.click(within(chips).getByRole("button", { name: /^เก็บถาวร/ }));
+    expect(await screen.findByText("ไม่มีเทมเพลตในมุมมองนี้")).toBeTruthy();
+    fireEvent.click(within(nav).getByRole("button", { name: /^ทุกหมวด/ }));
     expect(screen.getByText("Charlie")).toBeTruthy();
     expect(screen.queryByText("Alpha")).toBeNull();
 
-    fireEvent.click(within(group).getByRole("button", { name: "ทุกหมวด" }));
+    fireEvent.click(within(chips).getByRole("button", { name: /^ทุกสถานะ/ }));
     expect(screen.getByText("Bravo")).toBeTruthy();
+    expect(screen.queryByText("Charlie")).toBeNull();
   });
 
   it("sends the chosen category for the template, then reloads", async () => {
@@ -105,25 +113,43 @@ describe("template manager: categories", () => {
     expect(await screen.findByText("Alpha")).toBeTruthy();
     expect(screen.queryByLabelText("หมวดของ Alpha")).toBeNull();
     expect(screen.queryByLabelText("ชื่อหมวดใหม่")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^เก็บถาวร Alpha/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^ลบ Alpha/ })).toBeNull();
-    // The category name is visible on the card as a label, besides the filter button.
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    // The category name is visible in the row as a label, besides the list entry.
     expect(screen.getAllByText("เงินกู้").length).toBe(2);
   });
 });
 
-describe("template manager: archive and delete", () => {
+describe("template manager: bulk bar, archive and delete", () => {
+  it("shows the bulk bar for checked rows and moves them to a category", async () => {
+    routes.set("PATCH /api/templates/tpl-a/category", () => json({ template_id: "tpl-a", category_id: "cat-card" }));
+    routes.set("PATCH /api/templates/tpl-b/category", () => json({ template_id: "tpl-b", category_id: "cat-card" }));
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Alpha");
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    check("เลือก Alpha v1");
+    check("เลือก Bravo v1");
+    expect(screen.getByText("เลือก 2 รายการ")).toBeTruthy();
+    fireEvent.change(bulk().getByLabelText("ย้ายไปหมวด"), { target: { value: "cat-card" } });
+    expect(await screen.findByText("ย้าย 2 รายการแล้ว")).toBeTruthy();
+    expect(calls("PATCH", "/api/templates/tpl-a/category")[0]!.body).toEqual({ category_id: "cat-card" });
+    expect(calls("PATCH", "/api/templates/tpl-b/category")).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
+  });
+
   it("archives only after the owner confirms", async () => {
     routes.set("POST /api/templates/tpl-a/archive", () => json({ ok: true, template_id: "tpl-a", archived_at: STAMP }));
     render(<TemplatesScreen me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "เก็บถาวร Alpha v1" }));
+    await screen.findByText("Alpha");
+    check("เลือก Alpha v1");
+    fireEvent.click(bulk().getByRole("button", { name: "เก็บถาวร" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText(/แบรนด์ที่ใช้อยู่ยังทำงานต่อ/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "ยกเลิก (Cancel)" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(calls("POST", "/api/templates/tpl-a/archive")).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "เก็บถาวร Alpha v1" }));
+    fireEvent.click(bulk().getByRole("button", { name: "เก็บถาวร" }));
     await confirmDialog("เก็บถาวร");
     expect(await screen.findByText("เก็บ Alpha เข้าคลังแล้ว")).toBeTruthy();
     expect(calls("POST", "/api/templates/tpl-a/archive")).toHaveLength(1);
@@ -132,12 +158,78 @@ describe("template manager: archive and delete", () => {
   it("deletes after confirmation and reloads the list", async () => {
     routes.set("DELETE /api/templates/tpl-a", () => new Response(null, { status: 204 }));
     render(<TemplatesScreen me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "ลบ Alpha v1" }));
+    await screen.findByText("Alpha");
+    check("เลือก Alpha v1");
+    fireEvent.click(bulk().getByRole("button", { name: "ลบ" }));
     expect(calls("DELETE", "/api/templates/tpl-a")).toHaveLength(0);
     await confirmDialog("ลบ");
     expect(await screen.findByText("ลบ Alpha แล้ว")).toBeTruthy();
     expect(calls("DELETE", "/api/templates/tpl-a")).toHaveLength(1);
     expect(calls("GET", "/api/templates?include_archived=1")).toHaveLength(2);
+  });
+
+  it("disables delete with the reason while a selected template is used by a brand", async () => {
+    templates = [summary("a", "Alpha", { brands_using: 2 }), summary("b", "Bravo")];
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Alpha");
+    check("เลือก Bravo v1");
+    expect((bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement).disabled).toBe(false);
+    check("เลือก Alpha v1");
+    expect((bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(bulk().getByText("มีเทมเพลตที่แบรนด์ใช้อยู่ ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    expect((bulk().getByRole("button", { name: "เก็บถาวร" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables delete for an approved version with no brand, and for a draft whose sibling version was approved", async () => {
+    templates = [
+      summary("a", "Alpha", { status: "approved", sealed_at: STAMP, was_approved: true }),
+      summary("b", "Bravo", { was_approved: true }),
+      summary("b2", "Bravo", { template_id: "tpl-b", version: 2, status: "approved", sealed_at: STAMP, was_approved: true }),
+      summary("d", "Delta"),
+    ];
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Alpha");
+    const del = () => bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement;
+    // A never approved template with no brand can go.
+    check("เลือก Delta v1");
+    expect(del().disabled).toBe(false);
+    // An approved version with zero brands is blocked, with the live reason.
+    check("เลือก Alpha v1");
+    expect(del().disabled).toBe(true);
+    expect(bulk().getByText("มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    check("เลือก Alpha v1");
+    expect(del().disabled).toBe(false);
+    // Bravo v1 was never approved itself, but version 2 of the same template was: delete removes every version, so it is blocked.
+    check("เลือก Bravo v1");
+    expect(del().disabled).toBe(true);
+    expect(bulk().getByText("มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    expect((bulk().getByRole("button", { name: "เก็บถาวร" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("disables delete for a draft whose approved version is not in the loaded list, and not for a draft the server says was never approved", async () => {
+    // The list holds the newest 200 versions. Here the approved version of tpl-b is cut from it: only its was_approved flag says so.
+    templates = [summary("b", "Bravo", { was_approved: true }), summary("d", "Delta")];
+    expect(templates.some((t) => t.status === "approved" || t.sealed_at !== null)).toBe(false);
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Bravo");
+    const del = () => bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement;
+    check("เลือก Delta v1");
+    expect(del().disabled).toBe(false);
+    check("เลือก Bravo v1");
+    expect(del().disabled).toBe(true);
+    expect(bulk().getByText("มีเทมเพลตที่เคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    check("เลือก Delta v1");
+    expect(del().disabled).toBe(true);
+    expect(calls("DELETE", "/api/templates/tpl-b")).toHaveLength(0);
+  });
+
+  it("names both reasons when a selected template is in use and was approved", async () => {
+    templates = [summary("a", "Alpha", { status: "approved", sealed_at: STAMP, brands_using: 1 }), summary("b", "Bravo")];
+    render(<TemplatesScreen me={owner} />);
+    await screen.findByText("Alpha");
+    check("เลือก Alpha v1");
+    expect(bulk().getByText("มีแบรนด์ใช้อยู่และเคยอนุมัติแล้ว ลบไม่ได้ ใช้เก็บถาวรแทน")).toBeTruthy();
+    expect((bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it.each([
@@ -147,7 +239,9 @@ describe("template manager: archive and delete", () => {
     routes.set("DELETE /api/templates/tpl-a", () => json({ error }, 409));
     routes.set("POST /api/templates/tpl-a/archive", () => json({ ok: true, template_id: "tpl-a", archived_at: STAMP }));
     render(<TemplatesScreen me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "ลบ Alpha v1" }));
+    await screen.findByText("Alpha");
+    check("เลือก Alpha v1");
+    fireEvent.click(bulk().getByRole("button", { name: "ลบ" }));
     await confirmDialog("ลบ");
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText(reason)).toBeTruthy();
@@ -160,11 +254,27 @@ describe("template manager: archive and delete", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("marks an archived template and gives it no archive button", async () => {
+  it("stops a bulk delete at the first refusal and keeps the rest checked", async () => {
+    routes.set("DELETE /api/templates/tpl-a", () => json({ error: "template_was_approved" }, 409));
+    routes.set("DELETE /api/templates/tpl-b", () => new Response(null, { status: 204 }));
     render(<TemplatesScreen me={owner} />);
-    fireEvent.click(await screen.findByRole("button", { name: "เก็บถาวร" }));
-    expect(await screen.findByText("Charlie")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "เก็บถาวร Charlie v1" })).toBeNull();
-    expect(screen.getByRole("button", { name: "ลบ Charlie v1" })).toBeTruthy();
+    await screen.findByText("Alpha");
+    check("เลือก Alpha v1");
+    check("เลือก Bravo v1");
+    fireEvent.click(bulk().getByRole("button", { name: "ลบ" }));
+    await confirmDialog("ลบ");
+    expect(await screen.findByText("ลบไม่ได้ เพราะเทมเพลตนี้เคยอนุมัติแล้ว")).toBeTruthy();
+    expect(calls("DELETE", "/api/templates/tpl-b")).toHaveLength(0);
+    expect(bulk().getByText("เลือก 2 รายการ")).toBeTruthy();
+  });
+
+  it("marks an archived template, lists it under the archive chip and gives it no archive in the bulk bar", async () => {
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(within(await screen.findByRole("group", { name: "กรองสถานะเทมเพลต" })).getByRole("button", { name: /^เก็บถาวร/ }));
+    const row = (await screen.findByText("Charlie")).closest("tr")!;
+    expect(within(row).getByText("เก็บถาวร")).toBeTruthy();
+    check("เลือก Charlie v1");
+    expect((bulk().getByRole("button", { name: "เก็บถาวร" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((bulk().getByRole("button", { name: "ลบ" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

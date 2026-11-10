@@ -6,7 +6,10 @@ import { type Column, DataTable } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
+import { Chip } from "../components/Chip";
 import { NotFound } from "./NotFound";
+import "./Leads.css";
+
 
 // spec leads
 type Postback = LeadDetail["postbacks"][number] & { index?: number };
@@ -38,6 +41,26 @@ function reconcile(postbacks: Postback[], conversion: LeadConversion | null): { 
   if (conversion?.status === "uploaded") return { text: "ส่งคอนเวอร์ชันแล้ว", tone: "live" };
   if (postbacks.length === 0) return { text: "ยังไม่มี postback จาก LeadsGate", tone: "warn" };
   return null;
+}
+
+type TimelineTone = "info" | "success" | "danger" | "warning";
+/** What happened to the lead, oldest first: the form, each LeadsGate postback and the conversion upload. */
+export function leadTimeline(lead: LeadDetail): Array<{ label: string; at: string; tone: TimelineTone }> {
+  const events: Array<{ label: string; at: string; tone: TimelineTone }> = [{ label: "ส่งฟอร์ม", at: lead.created_at, tone: "info" }];
+  for (const p of lead.postbacks) {
+    const type = p.event_type;
+    if (type === "soldLead") events.push({ label: "postback ขายได้", at: p.created_at, tone: "success" });
+    else if (type === "newLead") events.push({ label: "postback ลีดใหม่", at: p.created_at, tone: "info" });
+    else if (/reject/i.test(type)) events.push({ label: "postback ปฏิเสธ", at: p.created_at, tone: "danger" });
+    else events.push({ label: `postback ${type}`, at: p.created_at, tone: "info" });
+  }
+  const c = lead.conversion;
+  if (c) {
+    events.push({ label: "สร้างรายการอัปโหลด", at: c.created_at, tone: "info" });
+    if (c.status === "uploaded" && c.updated_at) events.push({ label: "อัปโหลดสำเร็จ", at: c.updated_at, tone: "success" });
+    if (c.status === "dead" && c.updated_at) events.push({ label: "อัปโหลดไม่สำเร็จ", at: c.updated_at, tone: "danger" });
+  }
+  return events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 function Fields({ label, rows }: { label: string; rows: Array<[string, ReactNode]> }) {
@@ -92,7 +115,11 @@ function Conversion({ conversion, owner }: { conversion: LeadConversion; owner: 
   return <Fields label="Conversion" rows={rows} />;
 }
 
-export function LeadDetailScreen({ me, leadId, onBack }: { me: Me; leadId: string; onBack: () => void }) {
+/**
+ * One lead. On its own it is a full screen with a back button. With `panel` it is the right-hand panel of the lead list:
+ * the same data in narrow sections, a heading of level 2 and a close button instead of the back button.
+ */
+export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me; leadId: string; onBack: () => void; panel?: boolean }) {
   const [lead, setLead] = useState<LeadDetail | null>(null);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,11 +148,16 @@ export function LeadDetailScreen({ me, leadId, onBack }: { me: Me; leadId: strin
     }
   };
 
-  if (missing) return <NotFound title="ไม่พบลีดนี้ (Lead not found)" hint={leadId} />;
+  const close = <button type="button" className="btn lead-close" onClick={onBack} aria-label="ปิดรายละเอียด">ปิด</button>;
+  if (missing) return panel
+    ? <aside className="lead-panel" aria-label="รายละเอียดลีด"><div className="lead-panel-sec"><p role="status">ไม่พบลีดนี้</p><p className="hint"><code>{leadId}</code></p>{close}</div></aside>
+    : <NotFound title="ไม่พบลีดนี้" hint={leadId} />;
 
   const back = <button type="button" className="btn" onClick={onBack}>← กลับรายการลีด (Back to leads)</button>;
-  if (error) return <><p role="alert">{error}</p>{back}</>;
-  if (!lead) return <Spinner />;
+  if (error) return panel ? <aside className="lead-panel" aria-label="รายละเอียดลีด"><div className="lead-panel-sec"><p role="alert">{error}</p>{close}</div></aside> : <><p role="alert">{error}</p>{back}</>;
+  if (!lead) return panel ? <aside className="lead-panel" aria-label="รายละเอียดลีด"><div className="lead-panel-sec"><Spinner /></div></aside> : <Spinner />;
+  const sec = panel ? "lead-panel-sec" : "panel";
+  const secStyle = panel ? undefined : { marginTop: 16 };
 
   const outcome = OUTCOME[lead.outcome];
   const showPayout = me.role === "owner";
@@ -136,21 +168,52 @@ export function LeadDetailScreen({ me, leadId, onBack }: { me: Me; leadId: strin
     { key: "received", header: "รับเมื่อ (Received)", cell: (p) => fmt(p.created_at) },
   ];
 
-  return <>
+  const events = leadTimeline(lead);
+  const click = lead.conversion ? (lead.conversion.click_type !== "none"
+    ? <Chip tone="success">มี click id ({CLICK_TYPE[lead.conversion.click_type]})</Chip>
+    : <Chip tone="warning">ไม่มี click id</Chip>) : null;
+  const timelineSection = (
+    <section className={sec} style={secStyle} aria-labelledby="lead-timeline">
+      <h3 id="lead-timeline">ไทม์ไลน์</h3>
+      {click && <p className="lead-chips">{click}</p>}
+      <ol className="lead-timeline" aria-label="ไทม์ไลน์ลีด">
+        {events.map((e, i) => <li key={`${e.label}|${e.at}|${i}`}><span className="tl-dot" data-tone={e.tone} aria-hidden="true" /><div><p>{e.label}</p><p className="tl-time">{fmt(e.at)}</p></div></li>)}
+      </ol>
+    </section>
+  );
+
+  const pageHead = panel ? (
+    <div className="lead-panel-head">
+      <div>
+        <h2>รายละเอียดลีด</h2>
+        <p className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "4px 0 0" }}>
+          <BrandLabel brandId={lead.brand_id} domain={lead.hostname} />
+          <StatusBadge tone={outcome.tone} label={outcome.label} />
+        </p>
+        <p className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "4px 0 0" }}>
+          <code>{lead.lead_id}</code>
+          <button type="button" className="btn" onClick={() => { void copy(); }}>{copied ? "คัดลอกแล้ว" : "คัดลอก"}</button>
+        </p>
+      </div>
+      {close}
+    </div>
+  ) : (
     <div className="head" style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
       <div>
-        <h1>รายละเอียดลีด (Lead detail)</h1>
+        <h1>รายละเอียดลีด</h1>
         <p className="sub" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <BrandLabel brandId={lead.brand_id} domain={lead.hostname} />
           <StatusBadge tone={outcome.tone} label={outcome.label} />
           <code>{lead.lead_id}</code>
-          <button type="button" className="btn" onClick={() => { void copy(); }}>{copied ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}</button>
+          <button type="button" className="btn" onClick={() => { void copy(); }}>{copied ? "คัดลอกแล้ว" : "คัดลอก"}</button>
         </p>
       </div>
       {back}
     </div>
+  );
 
-    <section className="panel" aria-label="ลีด (Lead)">
+  const body = <>
+    <section className={sec} style={secStyle} aria-label="ลีด">
       <Fields label="ลีด (Lead)" rows={[
         ["สร้างเมื่อ (Created)", fmt(lead.created_at)],
         ["อัปเดตเมื่อ (Updated)", fmt(lead.updated_at)],
@@ -164,12 +227,14 @@ export function LeadDetailScreen({ me, leadId, onBack }: { me: Me; leadId: strin
       ]} />
     </section>
 
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="lead-applicant">
+    {timelineSection}
+
+    <section className={sec} style={secStyle} aria-labelledby="lead-applicant">
       <h2 id="lead-applicant">ผู้สมัคร (Applicant)</h2>
       {lead.applicant ? <Applicant applicant={lead.applicant} /> : <p className="hint">ข้อมูลส่วนบุคคลสงวนสำหรับ Owner (Personal data is owner-only)</p>}
     </section>
 
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="lead-profile">
+    <section className={sec} style={secStyle} aria-labelledby="lead-profile">
       <h2 id="lead-profile">คุณสมบัติ (Profile)</h2>
       <Fields label="คุณสมบัติ (Profile)" rows={[
         ["รัฐ (State)", lead.profile.state],
@@ -186,7 +251,7 @@ export function LeadDetailScreen({ me, leadId, onBack }: { me: Me; leadId: strin
       ]} />
     </section>
 
-    <section className="panel" style={{ marginTop: 16 }} aria-labelledby="lead-inspector">
+    <section className={sec} style={secStyle} aria-labelledby="lead-inspector">
       <h2 id="lead-inspector">Postback Inspector</h2>
       {found && <p role="status" aria-label="ตรวจยอด (Reconciliation)"><StatusBadge tone={found.tone} label={found.text} /></p>}
       <DataTable label="Postback" columns={postbackColumns} rows={lead.postbacks.map((p, index) => ({ ...p, index }))} rowKey={(p) => `${p.event_type}|${p.created_at}|${p.index}`}
@@ -195,4 +260,5 @@ export function LeadDetailScreen({ me, leadId, onBack }: { me: Me; leadId: strin
       {lead.conversion ? <Conversion conversion={lead.conversion} owner={showPayout} /> : <p className="hint">ไม่มีรายการอัปโหลด (No conversion upload)</p>}
     </section>
   </>;
+  return panel ? <aside className="lead-panel" aria-label="รายละเอียดลีด">{pageHead}{body}</aside> : <>{pageHead}{body}</>;
 }

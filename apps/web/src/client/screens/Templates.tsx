@@ -1,28 +1,25 @@
 import { TemplateSubmitIssue, TemplateThemeVars, isEmptyThemeVars } from "@anjuna/contracts";
 import { ruleDisposition } from "@anjuna/template-cert/policy";
 import type { TemplateCategory, TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { Info, Upload, X } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
+import { Chip } from "../components/Chip";
 import { useConfirm } from "../components/ConfirmDialog";
-import { TemplateCategoryBar, TemplateCategoryPicker, type CategoryFilter } from "./TemplateCategories";
+import { CategoryList, type CategoryFilter } from "./TemplateCategories";
+import { BulkBar, REFUSAL_TEXT, TemplateTable, statusLabel, statusTone } from "./TemplateTable";
 import { TemplateZipImport } from "./TemplateZipImport";
-
-const statusLabel: Record<TemplateReviewStatus, string> = {
-  checking: "กำลังตรวจ",
-  rejected: "ไม่ผ่าน",
-  awaiting_approval: "รออนุมัติ",
-  approved: "ใช้ได้",
-};
-const statusPill: Record<TemplateReviewStatus, string> = { checking: "p-blue", rejected: "p-bad", awaiting_approval: "p-warn", approved: "p-live" };
-
-/** Why the server refused a template manager action. */
-const REFUSAL_TEXT: Record<string, string> = {
-  template_in_use: "ลบไม่ได้ เพราะมีแบรนด์ใช้เทมเพลตนี้อยู่",
-  template_was_approved: "ลบไม่ได้ เพราะเทมเพลตนี้เคยอนุมัติแล้ว",
-  category_exists: "มีหมวดชื่อนี้อยู่แล้ว",
-};
+import "./Templates.css";
 
 const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? REFUSAL_TEXT[e.body?.error ?? ""] ?? e.thai) : "ไม่สำเร็จ");
+
+type StatusFilter = TemplateReviewStatus | "all" | "archived";
+const STATUS_CHIPS: Array<[StatusFilter, string]> = [
+  ["all", "ทุกสถานะ"], ["approved", "ใช้ได้"], ["awaiting_approval", "รออนุมัติ"], ["rejected", "ไม่ผ่าน"], ["checking", "กำลังตรวจ"], ["archived", "เก็บถาวร"],
+];
+
+/** Distinct templates: a template with several versions is one archive or delete target. */
+const uniqueTemplates = (items: TemplateVersionSummary[]) => [...new Map(items.map((t) => [t.template_id, t])).values()];
 
 export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selectedId?: string | null; onSelect?: (id: string | null) => void }) {
   const [templates, setTemplates] = useState<TemplateVersionSummary[] | null>(null);
@@ -31,30 +28,57 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
   const selected = onSelect ? (selectedId ?? null) : ownSelected;
   const select = (id: string | null) => (onSelect ? onSelect(id) : setOwnSelected(id));
   const [detail, setDetail] = useState<TemplateDetailResponse | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailTry, setDetailTry] = useState(0);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [form, setForm] = useState({ url: "", template_name: "" });
   const [imported, setImported] = useState<TemplateSubmitResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
-  const [filter, setFilter] = useState<TemplateReviewStatus | "all">("all");
+  const [filter, setFilter] = useState<StatusFilter>("all");
   const [categories, setCategories] = useState<TemplateCategory[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  const [uploadOpen, setUploadOpen] = useState(false);
   // A refused delete keeps its reason on screen with an archive button, the safe alternative.
   const [refused, setRefused] = useState<{ templateId: string; name: string; reason: string } | null>(null);
   const owner = me.role === "owner";
-  const visibleTemplates = (templates ?? []).filter((t) =>
-    (filter === "all" || t.status === filter)
-    && (categoryFilter === "archived" ? t.archived : !t.archived && (categoryFilter === "all" || t.category_id === categoryFilter)));
+
+  const inCategory = (t: TemplateVersionSummary) => categoryFilter === "all" || t.category_id === categoryFilter;
+  const live = (templates ?? []).filter((t) => !t.archived);
+  const visibleTemplates = (templates ?? []).filter((t) => inCategory(t) && (filter === "archived" ? t.archived : !t.archived && (filter === "all" || t.status === filter)));
+  const chipCount = (id: StatusFilter) => (templates ?? []).filter((t) => inCategory(t) && (id === "archived" ? t.archived : !t.archived && (id === "all" || t.status === id))).length;
+  const categoryCounts = new Map<string, number>();
+  for (const t of live) if (t.category_id) categoryCounts.set(t.category_id, (categoryCounts.get(t.category_id) ?? 0) + 1);
+  const checkedItems = (templates ?? []).filter((t) => checked.has(t.template_version_id));
 
   const load = useCallback(() => api.templates({ includeArchived: true }).then((r) => {
     setTemplates(r.templates);
     setCategories(r.categories);
+    // A version that left the list (deleted, or archived out of the view) cannot stay checked.
+    setChecked((cur) => new Set([...cur].filter((id) => r.templates.some((t) => t.template_version_id === id))));
   }, (e) => setMsg({ kind: "err", text: errorText(e) })), []);
   useEffect(() => void load(), [load]);
   useEffect(() => {
     setDetail(null);
-    if (selected) void api.template(selected).then(setDetail, (e) => setMsg({ kind: "err", text: errorText(e) }));
-  }, [selected]);
+    setDetailError(null);
+    // A failed load shows its error inside the drawer, because the drawer and its scrim cover the page notice.
+    if (selected) void api.template(selected).then(setDetail, (e) => setDetailError(e instanceof ApiError && e.status === 404 ? "ไม่พบเทมเพลตนี้ อาจถูกลบไปแล้ว" : errorText(e)));
+  }, [selected, detailTry]);
+  // Escape closes the upload dialog first, then the drawer. The confirm dialog stops its own Escape.
+  useEffect(() => {
+    if (!uploadOpen && !selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (uploadOpen) setUploadOpen(false);
+      else onSelect ? onSelect(null) : setOwnSelected(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [uploadOpen, selected, onSelect]);
+
+  const changeFilter = (next: StatusFilter) => { setFilter(next); setChecked(new Set()); };
+  const changeCategory = (next: CategoryFilter) => { setCategoryFilter(next); setChecked(new Set()); };
 
   async function approve(id: string, themeVars?: TemplateThemeVars) {
     const target = templates?.find((t) => t.template_version_id === id) ?? (detail?.template.template_version_id === id ? detail.template : null);
@@ -96,19 +120,27 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     }
   }
 
-  async function archive(t: TemplateVersionSummary) {
+  async function archiveMany(items: TemplateVersionSummary[]) {
+    const targets = uniqueTemplates(items.filter((t) => !t.archived));
+    if (targets.length === 0) return;
+    const names = targets.map((t) => t.name).join(", ");
     const ok = await confirm({
       title: "เก็บเทมเพลตเข้าคลัง?",
-      body: `${t.name} จะไม่แสดงตอนเลือกเทมเพลตสร้างแบรนด์ แบรนด์ที่ใช้อยู่ยังทำงานต่อ`,
+      body: `${names} จะไม่แสดงตอนเลือกเทมเพลตสร้างแบรนด์ แบรนด์ที่ใช้อยู่ยังทำงานต่อ`,
       confirmLabel: "เก็บถาวร",
     });
-    if (ok) await manage(() => api.archiveTemplate(t.template_id), `เก็บ ${t.name} เข้าคลังแล้ว`);
+    if (!ok) return;
+    const done = await manage(async () => { for (const t of targets) await api.archiveTemplate(t.template_id); },
+      targets.length === 1 ? `เก็บ ${targets[0]!.name} เข้าคลังแล้ว` : `เก็บ ${targets.length} รายการเข้าคลังแล้ว`);
+    if (done) setChecked(new Set());
   }
 
-  async function remove(t: TemplateVersionSummary) {
+  async function removeMany(items: TemplateVersionSummary[]) {
+    const targets = uniqueTemplates(items);
+    if (targets.length === 0) return;
     const ok = await confirm({
       title: "ลบเทมเพลต?",
-      body: `${t.name} และทุกเวอร์ชันจะถูกลบถาวร ลบได้เฉพาะเทมเพลตที่ไม่มีแบรนด์ใช้และไม่เคยอนุมัติ`,
+      body: `${targets.map((t) => t.name).join(", ")} และทุกเวอร์ชันจะถูกลบถาวร ลบได้เฉพาะเทมเพลตที่ไม่มีแบรนด์ใช้และไม่เคยอนุมัติ`,
       confirmLabel: "ลบ",
       tone: "danger",
     });
@@ -116,19 +148,35 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     setMsg(null);
     setRefused(null);
     setBusy(true);
+    let deleted = 0;
     try {
-      await api.deleteTemplate(t.template_id);
-      // A deleted version cannot stay selected.
-      if (templates?.some((x) => x.template_id === t.template_id && x.template_version_id === selected)) select(null);
-      setMsg({ kind: "ok", text: `ลบ ${t.name} แล้ว` });
-      await load();
-    } catch (e) {
-      const reason = e instanceof ApiError && e.status === 409 ? REFUSAL_TEXT[e.body?.error ?? ""] : undefined;
-      if (reason) setRefused({ templateId: t.template_id, name: t.name, reason });
-      else setMsg({ kind: "err", text: errorText(e) });
+      for (const t of targets) {
+        try {
+          await api.deleteTemplate(t.template_id);
+          deleted += 1;
+          // A deleted version cannot stay selected.
+          if (templates?.some((x) => x.template_id === t.template_id && x.template_version_id === selected)) select(null);
+        } catch (e) {
+          // The first refusal stops the run: the ones already deleted stay deleted, the rest stay checked.
+          const reason = e instanceof ApiError && e.status === 409 ? REFUSAL_TEXT[e.body?.error ?? ""] : undefined;
+          if (reason) setRefused({ templateId: t.template_id, name: t.name, reason });
+          else setMsg({ kind: "err", text: errorText(e) });
+          break;
+        }
+      }
+      if (deleted > 0) {
+        setMsg({ kind: "ok", text: targets.length === 1 ? `ลบ ${targets[0]!.name} แล้ว` : `ลบ ${deleted} รายการแล้ว` });
+        await load();
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function moveMany(items: TemplateVersionSummary[], categoryId: string | null) {
+    const targets = uniqueTemplates(items);
+    const done = await manage(async () => { for (const t of targets) await api.setTemplateCategory(t.template_id, categoryId); }, `ย้าย ${targets.length} รายการแล้ว`);
+    if (done) setChecked(new Set());
   }
 
   async function importUrl() {
@@ -147,97 +195,132 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     }
   }
 
+  const noticeEl = msg && <div className="tpl-note" data-kind={msg.kind} role="status">{msg.text}</div>;
+  const toggle = (id: string) => setChecked((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const toggleAll = () => setChecked(visibleTemplates.every((t) => checked.has(t.template_version_id)) ? new Set() : new Set(visibleTemplates.map((t) => t.template_version_id)));
+
   return (
-    <>
+    <div className="tpl-page">
       {confirmDialog}
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", marginBottom: 18 }}>
+      <header className="tpl-head">
         <div>
           <h1 aria-label="เทมเพลต (Templates)">เทมเพลต</h1>
           <p className="hint">{templates ? `${templates.filter((t) => !t.archived && t.status === "awaiting_approval").length} รายการรอ Owner อนุมัติ` : "กำลังโหลด…"}</p>
         </div>
-        <div className="seg" role="group" aria-label="กรองสถานะเทมเพลต" style={{ flexWrap: "wrap" }}>
-          {([
-            ["all", "ทั้งหมด"], ["approved", "ใช้ได้"], ["awaiting_approval", "รออนุมัติ"], ["rejected", "ไม่ผ่าน"], ["checking", "กำลังตรวจ"],
-          ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
-        </div>
-      </div>
-      {msg && <div className={msg.kind === "ok" ? "note pos" : "note neg"} style={{ background: msg.kind === "ok" ? "var(--moneybg)" : "var(--badbg)", color: msg.kind === "ok" ? "var(--money)" : "var(--bad)" }} role="status">{msg.text}</div>}
+        <button type="button" className="btn pri" onClick={() => { setMsg(null); setImported(null); setUploadOpen(true); }}><Upload size={16} aria-hidden="true" />อัปโหลดเทมเพลต</button>
+      </header>
+      {!uploadOpen && noticeEl}
       {refused && (
-        <div className="note neg" role="alert" style={{ background: "var(--badbg)", color: "var(--bad)", display: "grid", gap: 8 }}>
+        <div className="tpl-note" data-kind="err" role="alert" style={{ display: "grid", gap: 8 }}>
           <b>{refused.name}</b>
           <span>{refused.reason}</span>
           <span>เก็บถาวรแทนได้ เทมเพลตจะไม่แสดงตอนสร้างแบรนด์ แต่แบรนด์เดิมยังทำงานต่อ</span>
           <button type="button" className="btn" style={{ justifySelf: "start" }} disabled={busy} onClick={() => {
             const target = templates?.find((t) => t.template_id === refused.templateId);
             setRefused(null);
-            if (target) void archive(target);
+            if (target) void archiveMany([target]);
           }}>เก็บถาวรแทน</button>
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 300px), 1fr))", gap: 16, marginBottom: 16 }}>
-      <TemplateZipImport busy={busy} onBusy={(value) => {
-        setBusy(value);
-        if (value) { setMsg(null); setImported(null); }
-      }} onError={(e) => setMsg({ kind: "err", text: errorText(e) })} onResult={async (r) => {
-        setImported(r);
-        if (r.template_version_id) select(r.template_version_id);
-        await load();
-      }} />
-      <section className="panel" style={{ display: "grid", gap: 10, alignContent: "start" }}>
-        <h2>นำเข้าจาก URL</h2>
-        <label>ลิงก์หน้าเว็บที่เผยแพร่แล้ว
-          <input aria-label="URL ของเว็บที่เผยแพร่ (Published URL)" placeholder="https://pastel-lending.bolt.host" type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
-        </label>
-        <label>ชื่อเทมเพลต
-          <input aria-label="ชื่อเทมเพลต (Template name)" placeholder="Pastel Lending" maxLength={128} value={form.template_name} onChange={(e) => setForm({ ...form, template_name: e.target.value })} />
-        </label>
-        <button className="btn pri" aria-label="นำเข้า (Import)" style={{ justifySelf: "start" }} disabled={busy || !form.url.trim() || !form.template_name.trim()} onClick={() => void importUrl()}>นำเข้า</button>
-        <p className="hint">กฎที่บล็อกมี 4 ข้อ: ชื่อแบรนด์อื่น, script ภายนอก, ปุ่มต้องไป /go, หน้ากฎหมายครบ 4 หน้า</p>
-      </section>
-      </div>
-      {imported && <SubmitOutcome result={imported} />}
-      <TemplateCategoryBar categories={categories} filter={categoryFilter} onFilter={setCategoryFilter} owner={owner} busy={busy}
-        onCreate={(name) => manage(() => api.createTemplateCategory(name), `เพิ่มหมวด ${name} แล้ว`)} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 14 }}>
-        {visibleTemplates.map((t) => {
-          const currentDetail = detail?.template.template_version_id === t.template_version_id ? detail : null;
-          const warnings = currentDetail?.checks.flatMap((c) => [...checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn"), ...checkWarnings(c.details, "import_warnings")]) ?? [];
-          const status = currentDetail?.template.status ?? t.status;
-          return (
-            <article key={t.template_version_id} className="panel" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column", borderColor: t.template_version_id === selected ? "var(--money)" : "var(--line)" }}>
-              <button type="button" aria-pressed={t.template_version_id === selected} onClick={() => select(t.template_version_id)} style={{ border: 0, padding: 0, background: "transparent", color: "var(--ink)", textAlign: "left", width: "100%", flex: 1 }}>
-                {t.thumbnail_url ? <img src={t.thumbnail_url} alt={`ตัวอย่าง ${t.name} (Template preview)`} loading="lazy" style={{ width: "100%", aspectRatio: "16 / 10", objectFit: "cover", display: "block", borderBottom: "1px solid var(--line)" }} /> : <span className="hint" style={{ display: "grid", placeItems: "center", aspectRatio: "16 / 10", background: "var(--paper)", borderBottom: "1px solid var(--line)" }}>ไม่มีภาพตัวอย่าง (No preview)</span>}
-                <span style={{ display: "grid", gap: 6, padding: "12px 14px" }}>
-                  <span style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}><strong style={{ fontWeight: 500 }}>{t.name}</strong><span>v{t.version}</span></span>
-                  <span><span className={`pill ${statusPill[status]}`}>{statusLabel[status]}</span>{t.archived && <>{" "}<span className="pill">เก็บถาวร</span></>}</span>
-                  <span className="hint">แบรนด์ที่ใช้ (Brands using): {t.brands_using}</span>
-                  {warnings.length > 0 && <span className="amb">คำเตือน {warnings.length} ข้อ ไม่บล็อก</span>}
-                  {!currentDetail && <span className="hint">ดูผลตรวจและคำเตือน</span>}
-                  <span className="hint">ส่งโดย {t.submitted_by_label ?? "-"} · {t.created_at}</span>
-                </span>
+      <div className="tpl-layout">
+        <CategoryList categories={categories} counts={categoryCounts} total={live.length} filter={categoryFilter} onFilter={changeCategory} owner={owner} busy={busy}
+          onCreate={(name) => manage(() => api.createTemplateCategory(name), `เพิ่มหมวด ${name} แล้ว`)} />
+        <div className="tpl-main">
+          <div className="tpl-chips" role="group" aria-label="กรองสถานะเทมเพลต">
+            {STATUS_CHIPS.map(([id, label]) => (
+              <button type="button" key={id} className="tpl-chip" aria-pressed={filter === id} onClick={() => changeFilter(id)}>
+                {label}<span className="tpl-chip-count">{chipCount(id)}</span>
               </button>
-              {me.role === "owner" && status === "awaiting_approval" && !currentDetail && <button type="button" className="btn pri" style={{ margin: "0 14px 12px", alignSelf: "start" }} aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => void approve(t.template_version_id)}>อนุมัติ</button>}
-              {(owner || t.category_id) && (
-                <div className="row" style={{ margin: "0 14px 12px", gap: 8, flexWrap: "wrap" }}>
-                  <TemplateCategoryPicker templateName={t.name} value={t.category_id} categories={categories} owner={owner} busy={busy}
-                    onChange={(categoryId) => void manage(() => api.setTemplateCategory(t.template_id, categoryId), "บันทึกหมวดแล้ว")} />
-                  {owner && !t.archived && <button type="button" className="btn" aria-label={`เก็บถาวร ${t.name} v${t.version}`} disabled={busy} onClick={() => void archive(t)}>เก็บถาวร</button>}
-                  {owner && <button type="button" className="btn danger" aria-label={`ลบ ${t.name} v${t.version}`} disabled={busy} onClick={() => void remove(t)}>ลบ</button>}
-                </div>
-              )}
-            </article>
-          );
-        })}
+            ))}
+          </div>
+          <section className="tpl-card" aria-label="รายการเทมเพลต">
+            {owner && checkedItems.length > 0 && (
+              <BulkBar items={checkedItems} categories={categories} busy={busy} onMove={(categoryId) => void moveMany(checkedItems, categoryId)}
+                onArchive={() => void archiveMany(checkedItems)} onDelete={() => void removeMany(checkedItems)} onClear={() => setChecked(new Set())} />
+            )}
+            {!templates ? <p className="tpl-empty">กำลังโหลด…</p> : templates.length === 0 ? <p className="tpl-empty">ยังไม่มีเทมเพลต</p> : visibleTemplates.length === 0 ? (
+              <div className="tpl-empty"><b>ไม่มีเทมเพลตในมุมมองนี้</b><span>ลองเลือกหมวดหรือสถานะอื่น</span></div>
+            ) : (
+              <TemplateTable items={visibleTemplates} categories={categories} owner={owner} busy={busy} checked={checked} openId={selected}
+                hasDetail={(id) => detail?.template.template_version_id === id} onToggle={toggle} onToggleAll={toggleAll} onOpen={select}
+                onCategory={(t, categoryId) => void manage(() => api.setTemplateCategory(t.template_id, categoryId), "บันทึกหมวดแล้ว")}
+                onApprove={(t) => void approve(t.template_version_id)} />
+            )}
+          </section>
+          <footer className="tpl-foot">
+            <Info size={16} aria-hidden="true" />
+            <div>
+              <p><b>ลบถาวร</b> ได้เฉพาะเทมเพลตที่ไม่มีแบรนด์ใช้อยู่ (แบรนด์ที่ใช้ = 0) และไม่เคยอนุมัติ</p>
+              <p>ถ้ามีแบรนด์ใช้อยู่ ให้ <b>เก็บถาวร</b> แทน แบรนด์เดิมยังทำงานต่อได้ แต่แบรนด์ใหม่จะเลือกเทมเพลตนี้ไม่ได้</p>
+            </div>
+          </footer>
+        </div>
       </div>
-      {templates?.length === 0 && <p className="hint">ยังไม่มีเทมเพลต (No templates yet)</p>}
-      {templates && templates.length > 0 && visibleTemplates.length === 0 && <p className="hint">ไม่มีเทมเพลตในสถานะนี้</p>}
-      {detail && <TemplateDetail key={detail.template.template_version_id} me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} onSaved={async () => {
-        const id = detail.template.template_version_id;
-        const fresh = await api.template(id);
-        // The owner may have opened another template while the reload ran.
-        setDetail((cur) => (cur?.template.template_version_id === id ? fresh : cur));
-      }} />}
-    </>
+      {selected && (
+        <div className="tpl-drawer-wrap">
+          <div className="tpl-scrim" data-testid="template-scrim" onClick={() => select(null)} />
+          <aside className="tpl-drawer" role="dialog" aria-label="เทมเพลตที่เลือก">
+            <button type="button" className="tpl-close" aria-label="ปิดรายละเอียด" onClick={() => select(null)}><X size={18} aria-hidden="true" /></button>
+            {detail ? <TemplateDetail key={detail.template.template_version_id} me={me} detail={detail} busy={busy} onApprove={(themeVars) => void approve(detail.template.template_version_id, themeVars)} onSaved={async () => {
+              const id = detail.template.template_version_id;
+              const fresh = await api.template(id);
+              // The owner may have opened another template while the reload ran.
+              setDetail((cur) => (cur?.template.template_version_id === id ? fresh : cur));
+            }} /> : detailError ? (
+              <div className="tpl-drawer-error" role="alert">
+                <p>{detailError}</p>
+                <button type="button" className="btn" onClick={() => setDetailTry((n) => n + 1)}>ลองใหม่</button>
+              </div>
+            ) : <p className="hint">กำลังโหลดรายละเอียด…</p>}
+          </aside>
+        </div>
+      )}
+      {uploadOpen && (
+        <UploadDialog onClose={() => setUploadOpen(false)}>
+          {noticeEl}
+          <div className="tpl-upload-grid">
+            <TemplateZipImport busy={busy} onBusy={(value) => {
+              setBusy(value);
+              if (value) { setMsg(null); setImported(null); }
+            }} onError={(e) => setMsg({ kind: "err", text: errorText(e) })} onResult={async (r) => {
+              setImported(r);
+              if (r.template_version_id) select(r.template_version_id);
+              await load();
+            }} />
+            <section className="panel" style={{ display: "grid", gap: 10, alignContent: "start" }}>
+              <h2>นำเข้าจาก URL</h2>
+              <label>ลิงก์หน้าเว็บที่เผยแพร่แล้ว
+                <input aria-label="URL ของเว็บที่เผยแพร่ (Published URL)" placeholder="https://pastel-lending.bolt.host" type="url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+              </label>
+              <label>ชื่อเทมเพลต
+                <input aria-label="ชื่อเทมเพลต (Template name)" placeholder="Pastel Lending" maxLength={128} value={form.template_name} onChange={(e) => setForm({ ...form, template_name: e.target.value })} />
+              </label>
+              <button className="btn pri" aria-label="นำเข้า (Import)" style={{ justifySelf: "start" }} disabled={busy || !form.url.trim() || !form.template_name.trim()} onClick={() => void importUrl()}>นำเข้า</button>
+              <p className="hint">กฎที่บล็อกมี 4 ข้อ: ชื่อแบรนด์อื่น, script ภายนอก, ปุ่มต้องไป /go, หน้ากฎหมายครบ 4 หน้า</p>
+            </section>
+          </div>
+          {imported && <SubmitOutcome result={imported} />}
+        </UploadDialog>
+      )}
+    </div>
+  );
+}
+
+/** Modal for the zip and URL imports. A click on the scrim and the close button close it; Escape is handled by the screen. */
+function UploadDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus(); }, []);
+  return (
+    <div className="tpl-modal-wrap">
+      <div className="tpl-scrim" data-testid="upload-scrim" onClick={onClose} />
+      <div className="tpl-modal" role="dialog" aria-modal="true" aria-label="อัปโหลดเทมเพลต">
+        <header>
+          <h2>อัปโหลดเทมเพลต</h2>
+          <button type="button" ref={closeRef} className="tpl-close" aria-label="ปิดหน้าต่างอัปโหลด" onClick={onClose}><X size={18} aria-hidden="true" /></button>
+        </header>
+        <div className="tpl-modal-body">{children}</div>
+      </div>
+    </div>
   );
 }
 
@@ -339,10 +422,10 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
   const warnings = detail.checks.flatMap((c) => checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn"));
   const importWarnings = detail.checks.flatMap((c) => checkWarnings(c.details, "import_warnings"));
   return (
-    <section className="panel" style={{ marginTop: 16 }} aria-label="รายละเอียดเทมเพลต (Template detail)">
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+    <section className="tpl-detail" aria-label="รายละเอียดเทมเพลต">
+      <div className="tpl-detail-head">
         <h2>{`${t.name} · v${t.version}`}</h2>
-        <span className={`pill ${statusPill[t.status]}`}>{statusLabel[t.status]}</span>
+        <Chip tone={statusTone[t.status]} dot>{statusLabel[t.status]}</Chip>
       </div>
       <p className="hint">{t.template_version_id} · ส่งโดย (Submitted by) {t.submitted_by_label ?? "-"} · <code>{t.sha256.slice(0, 12)}</code></p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 16, marginBlock: 16 }}>
