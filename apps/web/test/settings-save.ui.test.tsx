@@ -236,7 +236,7 @@ describe("Settings review and save", () => {
     onPatch = (body) => json(saved(patched(alpha, body), ["theme"]));
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("รหัสสีหลัก (Primary hex)", "#abcdef");
+    type("รหัสสีหลัก", "#abcdef");
     fireEvent.click(review());
     await answerConfirm(true);
     await waitFor(() => expect(patches()).toHaveLength(1));
@@ -247,7 +247,7 @@ describe("Settings review and save", () => {
     onPatch = (body) => json(saved(patched(alpha, body), ["theme"]));
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    fireEvent.click(screen.getByRole("button", { name: "ใช้สีของเทมเพลต (Use template colors)" }));
+    fireEvent.click(screen.getByRole("button", { name: "ใช้สีของเทมเพลต" }));
     fireEvent.click(review());
     await answerConfirm(true);
     await waitFor(() => expect(patches()).toHaveLength(1));
@@ -259,12 +259,12 @@ describe("Settings review and save", () => {
     onPatch = () => json({ error: "conflict", current_updated_at: T2 }, 409);
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("รหัสสีหลัก (Primary hex)", "#abcdef");
+    type("รหัสสีหลัก", "#abcdef");
     fireEvent.click(review());
     await answerConfirm(true);
     await screen.findByText(CONFLICT);
     await waitFor(() => expect((screen.getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("333"));
-    expect((screen.getByLabelText("รหัสสีหลัก (Primary hex)") as HTMLInputElement).value).toBe("#abcdef");
+    expect((screen.getByLabelText("รหัสสีหลัก") as HTMLInputElement).value).toBe("#abcdef");
   });
 
   it("after a 409 a field the owner did not edit takes the reloaded value, so the next save does not revert it", async () => {

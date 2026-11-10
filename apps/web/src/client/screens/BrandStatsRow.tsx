@@ -37,18 +37,27 @@ export function brandStats(brandId: string, runtime: BrandSummary[] | null, funn
   };
 }
 
-/** The core funnel report of a period, reloaded when `refreshKey` changes. Null while loading, when it failed, or when `period` is null. */
-function useFunnelWindow(period: BrandPeriod | null, refreshKey: number): FunnelReportResponse | null {
+/**
+ * The core funnel report of a period, reloaded when `refreshKey` changes. `undefined` while it loads, `null` when it failed
+ * (or when `period` is null), so a screen can say "loading" and "failed" apart.
+ */
+export function useFunnelWindowState(period: BrandPeriod | null, refreshKey: number): FunnelReportResponse | null | undefined {
   // The period travels with the report so that a report of the previous period is never shown for the new one.
-  const [loaded, setLoaded] = useState<{ period: BrandPeriod; report: FunnelReportResponse } | null>(null);
+  const [loaded, setLoaded] = useState<{ period: BrandPeriod; report: FunnelReportResponse | null } | undefined>(undefined);
   useEffect(() => {
     if (!period) return;
     let active = true;
     void api.funnel(periodWindow(period))
-      .then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded(null); });
+      .then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded({ period, report: null }); });
     return () => { active = false; };
   }, [period, refreshKey]);
-  return loaded && loaded.period === period ? loaded.report : null;
+  if (!period) return null;
+  return loaded && loaded.period === period ? loaded.report : undefined;
+}
+
+/** The funnel report of a period. Null while loading, when it failed, or when `period` is null. */
+export function useFunnelWindow(period: BrandPeriod | null, refreshKey: number): FunnelReportResponse | null {
+  return useFunnelWindowState(period, refreshKey) ?? null;
 }
 
 /** The core funnel report of the last 7 days for every brand, reloaded when `refreshKey` changes. Null while loading or when it failed. */
@@ -65,16 +74,22 @@ export function usePeriodFunnel(period: BrandPeriod, refreshKey: number, week: F
 /** GET /api/spend?period= (owner only; cost in the account currency, cost_usd at the panel's rate). */
 export type SpendReport = PanelSpendReportResponse;
 
-/** The ad spend per brand of a period. Only the Owner asks: the API answers 403 to an Employee. Null while loading or when it failed. */
-export function useSpendReport(period: BrandPeriod, enabled: boolean, refreshKey: number): SpendReport | null {
-  const [loaded, setLoaded] = useState<{ period: BrandPeriod; report: SpendReport } | null>(null);
+/** The ad spend per brand of a period. Only the Owner asks: the API answers 403 to an Employee. `undefined` while loading, `null` when it failed or when `enabled` is false. */
+export function useSpendReportState(period: BrandPeriod, enabled: boolean, refreshKey: number): SpendReport | null | undefined {
+  const [loaded, setLoaded] = useState<{ period: BrandPeriod; report: SpendReport | null } | undefined>(undefined);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    api.spend(period).then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded(null); });
+    api.spend(period).then((report) => { if (active) setLoaded({ period, report }); }, () => { if (active) setLoaded({ period, report: null }); });
     return () => { active = false; };
   }, [period, enabled, refreshKey]);
-  return enabled && loaded && loaded.period === period ? loaded.report : null;
+  if (!enabled) return null;
+  return loaded && loaded.period === period ? loaded.report : undefined;
+}
+
+/** The ad spend per brand of a period. Null while loading, when it failed, or for an Employee. */
+export function useSpendReport(period: BrandPeriod, enabled: boolean, refreshKey: number): SpendReport | null {
+  return useSpendReportState(period, enabled, refreshKey) ?? null;
 }
 
 /** An amount per billing currency. Baht and dollars are never added together. */
@@ -152,17 +167,17 @@ export function brandMoney(brandId: string, runtime: BrandSummary[] | null, funn
 }
 
 const CELLS: Array<{ key: keyof BrandStats; label: string }> = [
-  { key: "clicks", label: "คลิก (Clicks)" },
-  { key: "leads", label: "ลีด (Leads)" },
-  { key: "sold", label: "ขายได้ (Sold)" },
-  { key: "pending", label: "รอผล (Pending)" },
+  { key: "clicks", label: "คลิก" },
+  { key: "leads", label: "ลีด" },
+  { key: "sold", label: "ขายได้" },
+  { key: "pending", label: "รอผล" },
 ];
 
 export function BrandStatsRow({ name, stats }: { name: string; stats: BrandStats }) {
   return (
-    <div className="brand-stats" role="group" aria-label={`สถิติ 7 วัน (7-day stats) ${name}`}>
+    <div className="brand-stats" role="group" aria-label={`สถิติ 7 วัน ${name}`}>
       {CELLS.map(({ key, label }) => (
-        <span key={key} title={stats[key] === null ? "ไม่มีข้อมูล (No data)" : undefined}>
+        <span key={key} title={stats[key] === null ? "ไม่มีข้อมูล" : undefined}>
           <small className="muted">{label}</small> <b>{stats[key] ?? "—"}</b>
         </span>
       ))}

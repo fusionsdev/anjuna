@@ -218,10 +218,10 @@ describe("Templates screen", () => {
     routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, template: { ...detail.template, theme_vars: themeVars } }));
     render(<TemplatesScreen me={owner} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
-    const primary = await screen.findByLabelText("สีหลัก (Primary)") as HTMLInputElement;
+    const primary = await screen.findByLabelText("สีหลัก") as HTMLInputElement;
     expect(primary.value).toBe("--brand, --accent");
-    expect((screen.getByLabelText("สีหลักเข้ม (Primary dark)") as HTMLInputElement).value).toBe("--brand-dark");
-    expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("สีหลักเข้ม") as HTMLInputElement).value).toBe("--brand-dark");
+    expect((screen.getByLabelText("สีรอง") as HTMLInputElement).value).toBe("");
     fireEvent.change(primary, { target: { value: "--brand, --hero" } });
     fireEvent.click(screen.getByRole("button", { name: "อนุมัติ (Approve)" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "อนุมัติ (Approve)" }));
@@ -233,7 +233,7 @@ describe("Templates screen", () => {
   it("blocks Approve on an invalid variable name", async () => {
     render(<TemplatesScreen me={owner} />);
     fireEvent.click(await screen.findByText("Bolt Harbor"));
-    fireEvent.change(await screen.findByLabelText("สีรอง (Secondary)"), { target: { value: "color: red" } });
+    fireEvent.change(await screen.findByLabelText("สีรอง"), { target: { value: "color: red" } });
     fireEvent.click(screen.getByRole("button", { name: "อนุมัติ (Approve)" }));
     expect(await screen.findByText(/ชื่อตัวแปรไม่ถูกต้อง/)).toBeTruthy();
     expect(requests.some((r) => r.method === "POST")).toBe(false);
@@ -340,14 +340,14 @@ describe("App deep link", () => {
     routes.set("GET /api/templates/sealed", () => json({ templates: [] }));
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: /^แบรนด์$/ }));
-    expect(await screen.findByRole("heading", { name: "Lifecycle แบรนด์" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "แบรนด์" })).toBeTruthy();
     await goTo("#other");
     expect(screen.queryByRole("heading", { name: "เทมเพลต (Templates)" })).toBeNull();
     await goTo("#templates/tv-bolt-1");
     expect(await screen.findByRole("heading", { name: "เทมเพลต (Templates)" })).toBeTruthy();
     expect(await screen.findByText("Harbor | Funding")).toBeTruthy();
     expect(window.location.pathname).toBe("/templates/tv-bolt-1");
-    expect(screen.queryByRole("heading", { name: "Lifecycle แบรนด์" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "แบรนด์" })).toBeNull();
   });
 
   describe("theme vars", () => {
@@ -369,12 +369,12 @@ describe("App deep link", () => {
       routes.set("PUT /api/templates/tv-bolt-1/theme-vars", (init) => { saved = JSON.parse(String(init?.body)).theme_vars; return json({ template_version_id: "tv-bolt-1", theme_vars: saved }); });
       await open(owner);
       fireEvent.click(screen.getByRole("button", { name: "ตรวจหาสี (Detect colors)" }));
-      await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("--color-royal"));
-      expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).value).toBe("--color-sand");
+      await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).value).toBe("--color-royal"));
+      expect((screen.getByLabelText("สีรอง") as HTMLInputElement).value).toBe("--color-sand");
       fireEvent.click(screen.getByRole("button", { name: "บันทึกแผนที่สี (Save color map)" }));
       expect(await screen.findByText("บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)")).toBeTruthy();
       expect(requests.find((r) => r.method === "PUT")?.body).toEqual({ theme_vars: found });
-      expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("--color-royal");
+      expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).value).toBe("--color-royal");
       // The saved-map ledger shows the reloaded map above the inputs.
       expect(screen.getByText("--color-royal")).toBeTruthy();
       expect(screen.getByText("--color-sand")).toBeTruthy();
@@ -387,7 +387,7 @@ describe("App deep link", () => {
       routes.set("GET /api/templates/tv-bolt-1", () => (saved ? json({ error: "reload_failed" }, 500) : json(sealedDetail(null))));
       routes.set("PUT /api/templates/tv-bolt-1/theme-vars", () => { saved = true; return json({ template_version_id: "tv-bolt-1", theme_vars: found }); });
       await open(owner);
-      fireEvent.change(screen.getByLabelText("สีหลัก (Primary)"), { target: { value: "--color-royal" } });
+      fireEvent.change(screen.getByLabelText("สีหลัก"), { target: { value: "--color-royal" } });
       fireEvent.click(screen.getByRole("button", { name: "บันทึกแผนที่สี (Save color map)" }));
       expect(await screen.findByText("บันทึกแล้ว Redeploy แบรนด์เพื่อให้สีมีผล (Saved. Redeploy brands to apply)")).toBeTruthy();
       expect((await screen.findByRole("alert")).textContent).toBeTruthy();
@@ -399,10 +399,10 @@ describe("App deep link", () => {
       routes.set("GET /api/templates/tv-bolt-1", () => json(sealedDetail(found)));
       routes.set("POST /api/templates/tv-bolt-1/detect-theme-vars", () => json({ template_version_id: "tv-bolt-1", theme_vars: empty }));
       await open(owner);
-      expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("--color-royal");
+      expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).value).toBe("--color-royal");
       fireEvent.click(screen.getByRole("button", { name: "ตรวจหาสี (Detect colors)" }));
       expect(await screen.findByText("ไม่พบตัวแปรสี (No color variables found)")).toBeTruthy();
-      for (const label of ["สีหลัก (Primary)", "สีหลักเข้ม (Primary dark)", "สีรอง (Secondary)"]) {
+      for (const label of ["สีหลัก", "สีหลักเข้ม", "สีรอง"]) {
         expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe("");
       }
     });
@@ -425,11 +425,11 @@ describe("App deep link", () => {
       routes.set("POST /api/templates/tv-bolt-1/detect-theme-vars", () => json({ template_version_id: "tv-bolt-1", theme_vars: found }));
       await open(owner);
       fireEvent.click(screen.getByRole("button", { name: "ตรวจหาสี (Detect colors)" }));
-      await waitFor(() => expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("--color-royal"));
+      await waitFor(() => expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).value).toBe("--color-royal"));
       fireEvent.click(screen.getByText("Bolt Marina"));
       await screen.findByText("Marina | Funding");
-      expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("");
-      expect((screen.getByLabelText("สีรอง (Secondary)") as HTMLInputElement).value).toBe("");
+      expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).value).toBe("");
+      expect((screen.getByLabelText("สีรอง") as HTMLInputElement).value).toBe("");
     });
 
     it("detect with no variables shows the empty note", async () => {
@@ -437,7 +437,7 @@ describe("App deep link", () => {
       await open(owner);
       fireEvent.click(screen.getByRole("button", { name: "ตรวจหาสี (Detect colors)" }));
       expect(await screen.findByText("ไม่พบตัวแปรสี (No color variables found)")).toBeTruthy();
-      expect((screen.getByLabelText("สีหลัก (Primary)") as HTMLInputElement).value).toBe("");
+      expect((screen.getByLabelText("สีหลัก") as HTMLInputElement).value).toBe("");
       expect(screen.queryByRole("button", { name: "บันทึกแผนที่สี (Save color map)" })).toBeNull();
     });
 

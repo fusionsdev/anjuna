@@ -376,4 +376,15 @@ describe("scope on Home work items and the all-brand labels", () => {
     render(<App />);
     await waitFor(() => expect(document.querySelector(".traffic-stack .all-brands-note")!.textContent).toContain("ทุกแบรนด์"));
   });
+  it("hides the Home reconciliation line while the scope hides brands, and shows it with every brand in scope", async () => {
+    window.history.replaceState(null, "", "/");
+    withRoutes({ "/api/conversions": () => conversionsFixture });
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("region", { name: "คอนเวอร์ชัน" }).querySelector(".all-brands-note")).not.toBeNull());
+    expect(screen.queryByTestId("reconciliation")).toBeNull();
+    cleanup();
+    window.history.replaceState(null, "", "/?scope=all");
+    render(<App />);
+    expect((await screen.findByTestId("reconciliation")).textContent).toMatch(/^กระทบยอด: ขายได้ 0 = ส่งแล้ว \d+ \+ ส่งไม่ได้ \d+ \+ ค้างส่ง \d+/);
+  });
 });

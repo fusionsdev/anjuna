@@ -42,6 +42,11 @@ const DATA: Record<string, { funnel: ReturnType<typeof funnelRow>[]; spend: Retu
   },
 };
 
+const adsData = (accountFor: string[], enabledFor: string[] = []) => ({
+  campaigns: enabledFor.map((brand_id, n) => ({ draft_job_id: `6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e${String(n).padStart(2, "0")}`, campaign_id: null, brand_id, account: "1234567890", name: "demo-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-06T00:00:00.000Z", geo: { country: "US" }, final_url: "https://x.test/" })),
+  brands: accountFor.map((brand_id) => ({ brand_id, currency: "THB", thb_per_unit: 1, committed_thb_day: 0 })),
+  caps: { total_thb_day: 1000, brand_thb_day: 500 }, enabled_total_thb_day: 0,
+});
 type Handler = (init?: RequestInit) => Response | Promise<Response>;
 type SpendFn = (period: string) => Promise<unknown>;
 const apiWithSpend = api as unknown as { spend?: SpendFn };
@@ -62,10 +67,14 @@ beforeEach(() => {
   requests = [];
   routes = new Map<string, Handler>([
     ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
+    // Credit Genie has an account and an enabled campaign. The other brands have no account.
+    ["GET /api/ads/campaigns", () => json(adsData(["brand-cg"], ["brand-cg"]))],
     ["GET /api/lifecycle/brands", () => json({ brands: lifecycleRows })],
     ["GET /api/brands", () => json({ brands: lifecycleRows.map((row) => runtimeRow(row.brand_id)), generated_at: "2026-10-06T00:00:00Z" })],
     ["GET /api/funnel", () => json({ from: "2026-10-01T00:00:00.000Z", to: "2026-10-07T00:00:00.000Z", rows: DATA["7d"]!.funnel })],
   ]);
+  // The gclid warning of the brands that spend today (Credit Genie, FloatMe, Alpha Loans): few landings without a gclid, unless a test says otherwise.
+  for (const id of ["brand-cg", "brand-fm", "brand-al"]) routes.set(`GET /api/traffic/realtime?period=24h&brand=${id}`, () => json({ kpis: { landing_views: 400, no_gclid_landings: { count: 20, pct: 5 } } }));
   for (const row of lifecycleRows) {
     routes.set(`GET /api/brands/${row.brand_id}/checklist`, () => json({ brand_id: row.brand_id, checklist: [] }));
     routes.set(`GET /api/brands/${row.brand_id}/installs`, () => json({ brand_id: row.brand_id, installs: [] }));
@@ -106,91 +115,82 @@ afterEach(() => {
 });
 
 const names = () => [...document.querySelectorAll(".brand-table button.brand-pick")].map((button) => button.querySelector("b")?.textContent);
-/** The cells of a brand's table row after the name: status, flow gate, then the numbers. */
+/** The text of the spend and leads cells of a brand's row, and its Google Ads chip. The stage dots and the buttons are not numbers. */
 const cells = (name: string) => {
   const row = [...document.querySelectorAll(".brand-table button.brand-pick")].find((button) => button.querySelector("b")?.textContent === name)!.closest("tr")!;
-  // Read the text a person reads: the status badge icon is aria-hidden, and the Pause or Resume button is not a status.
-  return [...row.querySelectorAll("td")].slice(1).map((cell) => {
-    const copy = cell.cloneNode(true) as Element;
-    copy.querySelectorAll('[aria-hidden="true"], .row-action').forEach((icon) => icon.remove());
-    return copy.textContent;
-  });
+  const text = (col: string) => row.querySelector(`[data-col="${col}"]`)?.textContent ?? null;
+  return { spend: text("spend"), leads: text("leads"), ads: text("ads") };
 };
 const sortSelect = () => screen.getByLabelText(/เรียงลำดับ/) as unknown as HTMLSelectElement;
 const funnelPaths = () => requests.filter((r) => r.path.startsWith("/api/funnel?")).map((r) => r.path);
 
 describe("brands table for the Owner", () => {
-  it("lists spend, clicks, leads, cost per lead and profit, issues first", async () => {
+  it("lists spend and leads with the Google Ads chip, issues first, and no profit column", async () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]));
-    expect(cells("floatsme.test")).toEqual(["live", "Keyword Param", "฿21,700", "96", "0", "—", "−$620"]);
-    expect(cells("creditsgene.test")).toEqual(["live", "Keyword Param", "฿28,000", "212", "10", "฿2,800", "−$546"]);
-    expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "฿3,500", "50", "5", "฿700", "$300"]);
-    // No spend row: spend, cost per lead and profit are unknown, never 0.
-    expect(cells("wizard.test")).toEqual(["live", "Keyword Param", "—", "40", "4", "—", "—"]);
-    expect(screen.getByRole("columnheader", { name: /กำไร/ })).toBeTruthy();
+    expect(cells("floatsme.test")).toMatchObject({ spend: "฿21,700", leads: "0" });
+    await waitFor(() => expect(cells("creditsgene.test").ads).toBe("ใช้งาน"));
+    expect(cells("creditsgene.test")).toMatchObject({ spend: "฿28,000", leads: "10" });
+    expect(cells("alpha.test")).toMatchObject({ spend: "฿3,500", leads: "5" });
+    // No spend row: the spend is unknown, never 0, and no Google Ads account reads as connected.
+    expect(cells("wizard.test")).toEqual({ spend: "—", leads: "4", ads: "ยังไม่เชื่อม" });
+    expect(screen.queryByRole("columnheader", { name: /กำไร/ })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: /คลิก/ })).toBeNull();
     expect(spend).toHaveBeenCalledWith("7d");
   });
 
-  it("shows ฿350 spend against $20 revenue at 35 THB per USD as a $10 profit, never $20 − 350", async () => {
+  it("shows ฿350 spend and 5 leads for a brand with $10 spend at 35 THB per USD", async () => {
     const week = DATA["7d"]!;
     const saved = { funnel: week.funnel, spend: week.spend };
     week.funnel = [funnelRow("brand-al", 50, 5, 20)];
     week.spend = [cost("brand-al", 10)];
     try {
       render(<BrandLifecycle me={owner} />);
-      await waitFor(() => expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "฿350", "50", "5", "฿70", "$10"]));
+      await waitFor(() => expect(cells("alpha.test")).toMatchObject({ spend: "฿350", leads: "5" }));
     } finally {
       Object.assign(week, saved);
     }
   });
 
-  it("marks spend, cost per lead and profit with ~ when the spend row is an estimated campaign share", async () => {
+  it("marks spend with ~ when the spend row is an estimated campaign share", async () => {
     const week = DATA["7d"]!;
     const saved = { funnel: week.funnel, spend: week.spend };
     week.funnel = [funnelRow("brand-al", 50, 5, 20)];
     week.spend = [{ ...cost("brand-al", 10), allocation: "estimated" } as never];
     try {
       render(<BrandLifecycle me={owner} />);
-      await waitFor(() => expect(cells("alpha.test")).toEqual(["live", "Keyword Param", "~฿350", "50", "5", "~฿70", "~$10"]));
+      await waitFor(() => expect(cells("alpha.test").spend).toBe("~฿350"));
     } finally {
       Object.assign(week, saved);
     }
   });
 
-  it("shows a loss in the negative colour class and a gain in the positive one", async () => {
-    render(<BrandLifecycle me={owner} />);
-    await waitFor(() => expect(cells("floatsme.test")[6]).toBe("−$620"));
-    const profitClass = (name: string) => [...document.querySelectorAll(".brand-table button.brand-pick")].find((b) => b.querySelector("b")?.textContent === name)!.closest("tr")!.querySelectorAll("td")[7]!.className;
-    expect(profitClass("floatsme.test")).toBe("neg");
-    expect(profitClass("alpha.test")).toBe("pos");
-  });
-
-  it("serves the 7-day table and the 7-day stats row with one funnel request, and refetches both sources for another period", async () => {
+  it("asks for the 7-day funnel and the 30-day funnel of the stage dots, and refetches the period sources for another period", async () => {
     render(<BrandLifecycle me={owner} />);
     await waitFor(() => expect(names()[0]).toBe("alpha.test"));
-    expect(funnelPaths()).toHaveLength(1);
+    // One request serves the 7-day numbers; the 30-day request feeds the lead and sold stages.
+    await waitFor(() => expect(funnelPaths()).toHaveLength(2));
     expect(screen.getByRole("button", { name: "7 วัน" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.change(sortSelect(), { target: { value: "profit" } });
     await waitFor(() => expect(names()).toEqual(["floatsme.test", "creditsgene.test", "alpha.test", "wizard.test"]));
 
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith("today"));
-    await waitFor(() => expect(cells("creditsgene.test")).toEqual(["live", "Keyword Param", "฿3,150", "20", "2", "฿1,575", "$410"]));
+    await waitFor(() => expect(cells("creditsgene.test")).toMatchObject({ spend: "฿3,150", leads: "2" }));
+    // The chip reads today's spend and the campaigns, so a new period leaves it as it was.
+    expect(cells("creditsgene.test").ads).toBe("ใช้งาน");
     expect(screen.getByRole("button", { name: "วันนี้" }).getAttribute("aria-pressed")).toBe("true");
     const today = funnelPaths().at(-1)!;
     const params = new URLSearchParams(today.split("?")[1]);
     expect(Date.parse(params.get("to")!) - Date.parse(params.get("from")!)).toBe(86_400_000);
     // The loss order follows the period: creditsgene.test now earns money, floatsme.test still loses.
     await waitFor(() => expect(names()).toEqual(["floatsme.test", "alpha.test", "creditsgene.test", "wizard.test"]));
-    // The stats row under each brand stays the 7-day one.
-    expect(screen.getByRole("group", { name: /สถิติ 7 วัน \(7-day stats\) creditsgene.test/ })).toBeTruthy();
   });
 
-  it("shows spend, cost per lead and profit as unknown when the spend report fails", async () => {
+  it("shows spend as unknown when the spend report fails", async () => {
     spend.mockRejectedValue(new Error("down"));
     render(<BrandLifecycle me={owner} />);
-    await waitFor(() => expect(cells("floatsme.test")).toEqual(["live", "Keyword Param", "—", "96", "0", "—", "—"]));
+    await waitFor(() => expect(cells("floatsme.test")).toMatchObject({ spend: "—", leads: "0" }));
     // Nothing to rank by, so the API order stays.
     fireEvent.change(sortSelect(), { target: { value: "profit" } });
     expect(names()).toEqual(["creditsgene.test", "floatsme.test", "alpha.test", "wizard.test"]);
@@ -198,9 +198,28 @@ describe("brands table for the Owner", () => {
 });
 
 describe("brands table for an Employee", () => {
+  it("shows ไม่มี gclid for a brand whose landings of the last 24 hours had too few gclids, and keeps it when the period changes", async () => {
+    routes.set("GET /api/traffic/realtime?period=24h&brand=brand-cg", () => json({ kpis: { landing_views: 300, no_gclid_landings: { count: 120, pct: 40 } } }));
+    render(<BrandLifecycle me={owner} />);
+    await waitFor(() => expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid (24 ชม.)"));
+    expect(cells("alpha.test").ads).toBe("ยังไม่เชื่อม");
+    // The hover text says the window is the rolling 24 hours while spend is today.
+    const warnChip = document.querySelector('[data-col="ads"] .chip[title]')!;
+    expect(warnChip.textContent).toBe("ไม่มี gclid (24 ชม.)");
+    expect(warnChip.getAttribute("title")).toContain("24 ชั่วโมงล่าสุด");
+    expect(warnChip.getAttribute("title")).toContain("เฉพาะวันนี้");
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(spend).toHaveBeenCalledWith("30d"));
+    expect(cells("creditsgene.test").ads).toBe("ไม่มี gclid (24 ชม.)");
+    // Only the brands that spend today were asked, each for 24 hours.
+    const asked = requests.filter((r) => r.path.startsWith("/api/traffic/realtime")).map((r) => r.path).sort();
+    expect([...new Set(asked)]).toEqual(["/api/traffic/realtime?period=24h&brand=brand-al", "/api/traffic/realtime?period=24h&brand=brand-cg", "/api/traffic/realtime?period=24h&brand=brand-fm"]);
+  });
+
   it("has no money column, never asks for spend and shows no dollar amount", async () => {
     render(<BrandLifecycle me={employee} />);
-    await waitFor(() => expect(cells("creditsgene.test")).toEqual(["live", "Keyword Param", "212", "10"]));
+    // The chip reads the campaigns, which an employee may read. With no spend report it says เปิดแล้ว, never ใช้งาน.
+    await waitFor(() => expect(cells("creditsgene.test")).toEqual({ spend: null, leads: "10", ads: "เปิดแล้ว" }));
     expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]);
     expect(screen.queryByRole("columnheader", { name: /ค่าโฆษณา/ })).toBeNull();
     expect(screen.queryByRole("columnheader", { name: /ต้นทุน/ })).toBeNull();
@@ -228,10 +247,10 @@ describe("side panel of the selected brand", () => {
     await waitFor(() => expect(requests.filter((r) => r.method === "POST").map((r) => r.path)).toEqual(["/api/brands/brand-fm/rollback"]));
   });
 
-  it("selects a brand from its stats row too", async () => {
+  it("selects a brand by clicking its row", async () => {
     render(<BrandLifecycle me={employee} />);
-    const group = await screen.findByRole("group", { name: /สถิติ 7 วัน \(7-day stats\) alpha.test/ });
-    fireEvent.click(group);
+    const pick = await screen.findByRole("button", { name: /alpha.test/ });
+    fireEvent.click(pick.closest("tr")!);
     expect(await screen.findByRole("heading", { name: "alpha.test" })).toBeTruthy();
   });
 });

@@ -17,7 +17,8 @@ const valid = (over: Partial<WizardForm> = {}): WizardForm => ({
 const errorsOf = (step: (typeof STEPS)[number], form: WizardForm, over: Partial<typeof ctx> = {}) => validateStep(step, form, { ...ctx, ...over });
 const fieldsOf = (step: (typeof STEPS)[number], form: WizardForm, over: Partial<typeof ctx> = {}) => Object.keys(errorsOf(step, form, over)).sort();
 /** Every message is Thai first, then English in parentheses. */
-const bilingual = (text: string) => /[฀-๿]/.test(text) && /\([A-Za-z]/.test(text);
+/** A message is Thai only: it has Thai text and no English in parentheses. */
+const thaiOnly = (text: string) => /[฀-๿]/.test(text) && !/\([A-Za-z]/.test(text);
 
 describe("emptyForm", () => {
   it("is blank and holds no APR, term or loan-rule field", () => {
@@ -59,9 +60,9 @@ describe("validateStep brand", () => {
   it("does not check the domain once the draft exists, because the domain is fixed", () => {
     expect(errorsOf("brand", valid({ domain: "" }), { hasDraft: true })).toEqual({});
   });
-  it("writes every message as Thai with English in parentheses", () => {
+  it("writes every message in Thai only", () => {
     for (const message of Object.values(errorsOf("brand", { ...emptyForm(), name: "Lead_Cash", domain: "www.x.test", keyword: "!!!", phone: "abc", email: "x" }))) {
-      expect(bilingual(message!), message).toBe(true);
+      expect(thaiOnly(message!), message).toBe(true);
     }
   });
 });
@@ -88,7 +89,7 @@ describe("validateStep template, copy and tracking", () => {
     expect(Object.keys(copyFieldErrors(valid({ h1: "No slot here", cta: "Say <b>hi</b>", sub: "Ask about a personal loan" }))).sort()).toEqual(["cta", "h1", "sub"]);
     expect(errorsOf("copy", valid({ h1: "No slot here" })).h1).toMatch(/\{\{keyword\}\}/);
   });
-  it("names each rule in Thai and English: slot, wording, plain text, brand clean and length", () => {
+  it("names each rule in Thai: slot, wording, plain text, brand clean and length", () => {
     const one = (over: Partial<WizardForm>, field: "h1" | "cta" | "sub") => copyFieldErrors(valid(over))[field]!;
     for (const message of [
       one({ h1: "Two {{keyword}} and {{keyword}}" }, "h1"),
@@ -98,7 +99,7 @@ describe("validateStep template, copy and tracking", () => {
       one({ sub: "Powered by Anjuna" }, "sub"),
       one({ cta: "a".repeat(41) }, "cta"),
       one({ sub: "a {b} c" }, "sub"),
-    ]) expect(bilingual(message), message).toBe(true);
+    ]) expect(thaiOnly(message), message).toBe(true);
     expect(one({ cta: "a".repeat(41) }, "cta")).toContain("40");
     expect(one({ sub: "Powered by Anjuna" }, "sub")).not.toContain("Anjuna");
   });

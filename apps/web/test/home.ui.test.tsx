@@ -1,6 +1,6 @@
 import conversionsFixture from "@anjuna/contracts/fixtures/admin/conversions.response.json";
 import type { ConversionsReportResponse } from "@anjuna/contracts";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, type Me } from "../src/client/api";
 import { clickLossWarning, isStale } from "../src/client/home-metrics";
@@ -75,11 +75,25 @@ let runtimeReply: () => Response | Promise<Response>;
 let spend: ReturnType<typeof vi.fn>;
 const realSpend = api.spend;
 let requests: string[];
+// Answers the per-status upload reads of the brand table. Unset, they fall through to `conversions`.
+let convFacts: ((url: URL) => Response | Promise<Response>) | undefined;
+let adsReply: () => Response | Promise<Response>;
+// The realtime report of one brand, for its gclid warning. Default: plenty of landings, few without a gclid.
+let realtimeReply: (brand: string) => Response | Promise<Response>;
+// Google Ads state: Creditgenie has an account and an enabled campaign; Sixpack has no account.
+const ADS_BODY = {
+  campaigns: [{ draft_job_id: "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", campaign_id: null, brand_id: "cg", account: "1234567890", name: "cg-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-22T00:00:00.000Z", geo: { country: "US" }, final_url: "https://cg.test/" }],
+  brands: [{ brand_id: "cg", currency: "THB", thb_per_unit: 1, committed_thb_day: 0 }],
+  caps: { total_thb_day: 1000, brand_thb_day: 500 }, enabled_total_thb_day: 0,
+};
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));
   requests = [];
+  convFacts = undefined;
+  adsReply = () => json(ADS_BODY);
+  realtimeReply = () => json({ kpis: { landing_views: 400, no_gclid_landings: { count: 20, pct: 5 } } });
   funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
   conversions = (period) => json(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER);
   aggregates = (from, to) => json(aggregatesBody(from, to));
@@ -94,11 +108,14 @@ beforeEach(() => {
     requests.push(input);
     const url = new URL(input, "http://panel.test");
     if (url.pathname === "/api/funnel") return funnel(url.searchParams.get("from") ?? "");
+    if (url.pathname === "/api/conversions" && convFacts && /status=(uploaded|dead)/.test(input)) return convFacts(url);
     if (url.pathname === "/api/conversions") return conversions(url.searchParams.get("period") ?? "");
     if (url.pathname === "/api/leads/aggregates") return aggregates(url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? "");
     if (url.pathname === "/api/alerts") return alertsReply();
     if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
     if (url.pathname === "/api/lifecycle/brands") return brandsReply();
+    if (url.pathname === "/api/ads/campaigns") return adsReply();
+    if (url.pathname === "/api/traffic/realtime") return realtimeReply(url.searchParams.get("brand") ?? "");
     if (url.pathname === "/api/brands/checklists") return checklistsReply();
     if (url.pathname === "/api/brands") return runtimeReply();
     throw new Error(`Unexpected test HTTP request: ${input}`);
@@ -117,14 +134,18 @@ const ledgerValue = (label: string) => {
   const cell = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText(label).parentElement!;
   return { text: cell.querySelector(".v")!.textContent, className: cell.querySelector(".v")!.className };
 };
-const heading = (name: string) => screen.findByRole("heading", { level: 1, name });
+/** The numbers sentence under the page title. It reads the loaded values, so tests wait on it. */
+const heading = (name: string) => screen.findByText(name, { selector: "p.home-summary" });
 /** The delta line under a ledger value, `null` when the cell has none. */
 const ledgerDelta = (label: string) => {
   const d = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText(label).parentElement!.querySelector(".d");
   return d ? { text: d.textContent, className: d.className } : null;
 };
-const funnelQueries = () => requests.filter((r) => r.startsWith("/api/funnel")).map((r) => new URL(r, "http://panel.test").searchParams);
-const conversionRequests = () => requests.filter((r) => r.startsWith("/api/conversions"));
+/** The brand table asks once for the last 30 days (its stages) on mount. The period requests are the rest, so that first one is left out. */
+const dropFirst = <T,>(list: T[], match: (item: T) => boolean): T[] => { const at = list.findIndex(match); return at < 0 ? list : [...list.slice(0, at), ...list.slice(at + 1)]; };
+const funnelQueries = () => dropFirst(requests.filter((r) => r.startsWith("/api/funnel")).map((r) => new URL(r, "http://panel.test").searchParams), (q) => q.get("from") === "2026-09-23T00:00:00.000Z" && q.get("to") === "2026-10-23T00:00:00.000Z");
+// The brand table asks per status for its upload dots (brand-facts.ts). The period requests are the ones without a status.
+const conversionRequests = () => requests.filter((r) => r.startsWith("/api/conversions") && !/[?&]status=(uploaded|dead)/.test(r));
 /** The `[from, to]` days of every daily-bars request, in call order. */
 const aggregateQueries = () => requests.filter((r) => r.startsWith("/api/leads/aggregates")).map((r) => {
   const params = new URL(r, "http://panel.test").searchParams;
@@ -184,7 +205,7 @@ describe("Home screen, owner", () => {
     render(<HomeScreen me={owner} />);
     await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     const spendCell = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText("ค่าโฆษณา").parentElement!;
-    expect(spendCell.querySelector(".hint")!.textContent).toBe("$1,780");
+    expect(spendCell.querySelector(".hint")!.textContent).toBe("≈$1,780");
     // Revenue $410 minus $1,780, never $410 minus 62,300 baht.
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
   });
@@ -239,10 +260,10 @@ describe("Home screen, owner", () => {
     expect(funnelQuery(0).get("to")).toBe("2026-10-23T00:00:00.000Z");
     expect(funnelQuery(1).get("from")).toBe("2026-10-21T00:00:00.000Z");
     expect(funnelQuery(1).get("to")).toBe("2026-10-22T00:00:00.000Z");
-    expect(spend).toHaveBeenLastCalledWith("today");
+    expect(spend).toHaveBeenCalledWith("today");
 
     fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
-    await waitFor(() => expect(spend).toHaveBeenLastCalledWith("7d"));
+    await waitFor(() => expect(spend).toHaveBeenCalledWith("7d"));
     await waitFor(() => expect(funnelQueries()).toHaveLength(4));
     expect(funnelQuery(2).get("from")).toBe("2026-10-16T00:00:00.000Z");
     expect(funnelQuery(2).get("to")).toBe("2026-10-23T00:00:00.000Z");
@@ -255,14 +276,16 @@ describe("Home screen, owner", () => {
     expect(funnelQuery(4).get("from")).toBe("2026-09-23T00:00:00.000Z");
     expect(funnelQuery(5).get("from")).toBe("2026-08-24T00:00:00.000Z");
     expect(funnelQuery(5).get("to")).toBe("2026-09-23T00:00:00.000Z");
-    expect(spend).toHaveBeenLastCalledWith("30d");
+    expect(spend).toHaveBeenCalledWith("30d");
   });
 
-  it("shows the revenue change against the previous window and no delta on spend, cost per lead or profit", async () => {
+  it("shows the revenue change against the previous window, the spend change in the neutral colour, and none on cost per lead or profit", async () => {
     render(<HomeScreen me={owner} />);
     await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
     await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "▼ 32%", className: "d neg" }));
-    expect(ledgerDelta("ค่าโฆษณา")).toBeNull();
+    // Today against yesterday. The spend mock answers 62,300 for both, so the change is 0%, drawn without a good or bad colour.
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "0%", className: "d" }));
+    expect(spend).toHaveBeenCalledWith("yesterday");
     expect(ledgerDelta("ต้นทุนต่อลีด")).toBeNull();
     expect(ledgerDelta("กำไร/ขาดทุน")).toBeNull();
   });
@@ -390,7 +413,7 @@ describe("Home screen, owner", () => {
     expect(window.location.search).toBe("?period=today&status=dead");
 
     window.history.replaceState(null, "", "/");
-    const all = card().getByRole("link", { name: "ดูทั้งหมด" });
+    const all = card().getByRole("link", { name: "ดูคิว" });
     expect(all.getAttribute("href")).toBe("/conversions?period=today");
     expect(appTakesClick(all)).toBe(true);
     expect(window.location.pathname).toBe("/conversions");
@@ -405,32 +428,32 @@ describe("Home screen, owner", () => {
 
     const dead = card().getByRole("link", { name: "ส่งไม่ได้ 9" });
     expect(dead.getAttribute("href")).toBe("/conversions?period=30d&status=dead");
-    expect(card().getByRole("link", { name: "ดูทั้งหมด" }).getAttribute("href")).toBe("/conversions?period=30d");
-    await waitFor(() => expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" }).map((l) => l.getAttribute("href"))).toEqual(["/conversions?period=30d&status=dead", "/conversions?period=30d&status=pending"]));
+    expect(card().getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions?period=30d");
+    await waitFor(() => expect(fixList().getAllByRole("link", { name: /^(ลองใหม่|ดูรายละเอียด)$/ }).map((l) => l.getAttribute("href"))).toEqual(["/conversions?period=30d&status=dead", "/conversions?period=30d&status=pending"]));
 
     expect(appTakesClick(dead)).toBe(true);
     expect(window.location.pathname + window.location.search).toBe("/conversions?period=30d&status=dead");
 
     // Today is not the Conversions default, so it stays in the query. 7d is the default and leaves the query out.
     fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
-    await waitFor(() => expect(card().getByRole("link", { name: "ดูทั้งหมด" }).getAttribute("href")).toBe("/conversions?period=today"));
+    await waitFor(() => expect(card().getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions?period=today"));
     fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
-    await waitFor(() => expect(card().getByRole("link", { name: "ดูทั้งหมด" }).getAttribute("href")).toBe("/conversions"));
+    await waitFor(() => expect(card().getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions"));
   });
 
   it("keeps the browser default for a ctrl-click, meta-click or middle-click on the card and fix links", async () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
     const dead = card().getByRole("link", { name: "ส่งไม่ได้ 4" });
-    const all = card().getByRole("link", { name: "ดูทั้งหมด" });
+    const all = card().getByRole("link", { name: "ดูคิว" });
     for (const link of [dead, all]) {
       expect(appTakesClick(link, { ctrlKey: true })).toBe(false);
       expect(appTakesClick(link, { metaKey: true })).toBe(false);
       expect(appTakesClick(link, { shiftKey: true })).toBe(false);
       expect(appTakesClick(link, { button: 1 })).toBe(false);
     }
-    await waitFor(() => expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" })).toHaveLength(2));
-    const [deadItem] = fixList().getAllByRole("link", { name: "ดูรายละเอียด" });
+    await waitFor(() => expect(fixList().getAllByRole("link", { name: /^(ลองใหม่|ดูรายละเอียด)$/ })).toHaveLength(2));
+    const [deadItem] = fixList().getAllByRole("link", { name: /^(ลองใหม่|ดูรายละเอียด)$/ });
     expect(appTakesClick(deadItem!, { ctrlKey: true })).toBe(false);
     expect(window.location.pathname + window.location.search).toBe("/");
 
@@ -472,13 +495,14 @@ describe("Home screen, owner", () => {
     const dots = [...screen.getByRole("region", { name: "ต้องแก้" }).querySelectorAll(".home-item .dot")].map((d) => d.getAttribute("style") ?? "");
     expect(dots.map((style) => (style.includes("--bad") ? "bad" : "warn"))).toEqual(["bad", "warn", "warn", "warn"]);
 
-    const links = fixList().getAllByRole("link", { name: "ดูรายละเอียด" });
+    const links = fixList().getAllByRole("link", { name: /^(ลองใหม่|ดูรายละเอียด)$/ });
     // Stalled rows count at any age, so their link opens the widest list.
     expect(links.map((l) => l.getAttribute("href"))).toEqual(["/conversions?period=today&status=dead", "/conversions?period=30d&status=pending"]);
     expect(appTakesClick(links[1]!)).toBe(true);
     expect(window.location.pathname + window.location.search).toBe("/conversions?period=30d&status=pending");
-    // The alert items keep their button that opens the alerts screen.
-    expect(fixList().getAllByRole("button", { name: "ดูรายละเอียด" })).toHaveLength(2);
+    // The postback item opens that brand's leads. The reject item keeps the button that opens the alerts screen.
+    expect(fixList().getAllByRole("link", { name: "ดูลีด" })).toHaveLength(1);
+    expect(fixList().getAllByRole("button", { name: "ดูรายละเอียด" })).toHaveLength(1);
   });
 
   it("keeps the top 4 of the fix list with bad items before warn items", async () => {
@@ -516,7 +540,7 @@ describe("Home screen, owner", () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(fixTexts()).toEqual(["คอนเวอร์ชันส่งไม่ได้ 4 รายการ", "คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ"]));
     expect(fixList().getByText("— โหลดการแจ้งเตือนไม่สำเร็จ")).toBeTruthy();
-    expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" }).map((l) => l.getAttribute("href"))).toEqual(["/conversions?period=today&status=dead", "/conversions?period=30d&status=pending"]);
+    expect(fixList().getAllByRole("link", { name: /^(ลองใหม่|ดูรายละเอียด)$/ }).map((l) => l.getAttribute("href"))).toEqual(["/conversions?period=today&status=dead", "/conversions?period=30d&status=pending"]);
     expect(fixList().queryByText("ไม่มีเรื่องที่ต้องแก้")).toBeNull();
   });
 
@@ -525,7 +549,7 @@ describe("Home screen, owner", () => {
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(fixTexts()).toEqual(["คอนเวอร์ชันส่งไม่ได้ 4 รายการ", "คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ"]));
     expect(fixList().getByText("…")).toBeTruthy();
-    expect(fixList().getAllByRole("link", { name: "ดูรายละเอียด" })).toHaveLength(2);
+    expect(fixList().getAllByRole("link", { name: /^(ลองใหม่|ดูรายละเอียด)$/ })).toHaveLength(2);
     expect(fixList().queryByText("ไม่มีเรื่องที่ต้องแก้")).toBeNull();
   });
 
@@ -789,8 +813,8 @@ describe("Home screen, work queue", () => {
     const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
     const order = [banner, needsFix, tasks, kpis, brands, funnelStrip, conversionQueue];
     for (let i = 1; i < order.length; i++) expect(follows(order[i - 1]!, order[i]!)).toBe(true);
-    // Five KPI tiles for the owner.
-    expect(kpis.querySelectorAll(".cell")).toHaveLength(5);
+    // Five KPI cards for the owner. The revenue and profit card holds two figures.
+    expect(kpis.children).toHaveLength(5);
   });
 
   it("shows no banner when nothing is urgent", async () => {
@@ -840,7 +864,8 @@ describe("Home screen, work queue", () => {
     checklistsReply = () => json({ error: "core_unavailable" }, 502);
     render(<HomeScreen me={owner} />);
     const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
-    expect(await todo.findByText("— แบรนด์")).toBeTruthy();
+    // Test sold and drain route both read their counts from the checklist batch, so both show a dash.
+    expect(await todo.findAllByText("— แบรนด์")).toHaveLength(2);
     expect(await todo.findByText("2 รายการ")).toBeTruthy();
   });
 
@@ -849,7 +874,7 @@ describe("Home screen, work queue", () => {
     const onGo = vi.fn();
     render(<HomeScreen me={owner} onGo={onGo} />);
     const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
-    await todo.findByText("— แบรนด์");
+    await todo.findAllByText("— แบรนด์");
     fireEvent.click(todo.getAllByRole("button", { name: "เปิด" })[0]!);
     expect(onGo).toHaveBeenCalledWith("brands");
     expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -960,13 +985,13 @@ describe("Home screen, work queue", () => {
     expect(order.slice(0, 2).sort()).toEqual(["d6", "dr"]);
   });
 
-  it("keeps a broken brand among the 10 rows when 11 healthy brands sort after it", async () => {
+  it("keeps a broken brand among the 5 rows when 11 healthy brands sort after it", async () => {
     const healthy = Array.from({ length: 11 }, (_, i) => lifecycleBrand(`ok${i}`, `Healthy${i}`, "live"));
     brandsReply = () => json({ brands: [...healthy, lifecycleBrand("bad", "Broken", "live", { runtime_sync_status: "sync_error" })] });
     checklistsReply = () => json({ brands: {} });
     render(<HomeScreen me={owner} />);
     await waitFor(() => expect(brandRow("bad")).toBeTruthy());
-    expect(brandsRegion().querySelectorAll("[data-brand-id]")).toHaveLength(10);
+    expect(brandsRegion().querySelectorAll("[data-brand-id]")).toHaveLength(5);
     expect(brandsRegion().querySelector("[data-brand-id]")!.getAttribute("data-brand-id")).toBe("bad");
     expect(rowButton("bad")!.textContent).toBe("ตรวจสอบ");
   });
@@ -1021,5 +1046,228 @@ describe("Home screen, work queue", () => {
     brandsReply = () => json({ error: "core_unavailable" }, 502);
     render(<HomeScreen me={owner} />);
     expect(await within(screen.getByRole("region", { name: "แบรนด์" })).findByText("— โหลดรายการแบรนด์ไม่สำเร็จ")).toBeTruthy();
+  });
+});
+
+describe("Home screen, v9 layout", () => {
+  it("heads the page หน้าแรก with the Thai date, the range toggle, the comparison text and the create button", async () => {
+    render(<HomeScreen me={owner} />);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("หน้าแรก");
+    expect(screen.getByText(/วันพฤหัสบดีที่ 22 ตุลาคม 2569|วันพฤหัสบดี 22 ตุลาคม 2569/)).toBeTruthy();
+    expect(screen.getByText("เทียบกับเมื่อวาน")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    expect(screen.getByText("เทียบกับ 30 วันก่อนหน้า")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "+ สร้างแบรนด์ใหม่" })).toBeTruthy();
+  });
+
+  it("gives each fix item the button its kind names: ลองใหม่, ตั้ง drain route, ตรวจ gclid, else ดูรายละเอียด", async () => {
+    // The list shows 4 items. The alert items are quiet here so the drain route and gclid items fit; ดูลีด is covered with the alert items above.
+    const quiet = { state: "ok", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [] } };
+    alertsBody = { ...alertsReport, brands_without_postbacks: { state: "ok", detail: { window_hours: 24, brands: [] } }, reject_rate: quiet };
+    // d6 has no drain route row, and Google billed 6,000 clicks of which 283 reached the sites.
+    checklistsReply = () => json({ brands: { ...checklistsBody().brands, d6: { checklist: [evidence("test_sold")], template_approved: true, template_waiting_id: null } } });
+    spend = vi.fn(async () => spendReport(62300, 6000));
+    (api as unknown as { spend: unknown }).spend = spend;
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(fixList().getByRole("button", { name: "ตั้ง drain route" })).toBeTruthy());
+    expect(fixList().getByRole("link", { name: "ลองใหม่" }).getAttribute("href")).toBe("/conversions?period=today&status=dead");
+    expect(fixList().getByRole("link", { name: "ตรวจ gclid" }).getAttribute("href")).toBe("/traffic");
+    // The stalled conversions item has no kind of its own.
+    expect(fixList().getByRole("link", { name: "ดูรายละเอียด" }).getAttribute("href")).toBe("/conversions?period=30d&status=pending");
+  });
+
+  it("adds a ตั้ง drain route row to the work list with the brand count", async () => {
+    checklistsReply = () => json({ brands: { ...checklistsBody().brands, d6: { checklist: [evidence("test_sold")], template_approved: true, template_waiting_id: null } } });
+    render(<HomeScreen me={owner} />);
+    const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
+    await waitFor(() => expect(todo.getByText("ตั้ง drain route").querySelector("span")!.textContent).toBe("1 แบรนด์"));
+  });
+
+  it("shows seven stage dots per brand and the brand count on the link that opens every brand", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    const dots = brandRow("cg")!.querySelector('[role="img"]')!;
+    expect(dots.querySelectorAll(".stage-dot")).toHaveLength(7);
+    expect(dots.getAttribute("aria-label")).toContain("สร้าง: เสร็จ");
+    expect(dots.getAttribute("aria-label")).toContain("เทมเพลต: เสร็จ");
+    // Creditgenie has leads in the 30 day funnel and a test sold row.
+    expect(dots.getAttribute("aria-label")).toContain("ลีด: เสร็จ");
+    expect(dots.getAttribute("aria-label")).toContain("ขายได้: เสร็จ");
+    // Three brands are listed: the two live ones and the draft. The demo brand is not.
+    expect(within(brandsRegion()).getByRole("link", { name: "ดูทั้งหมด 3" })).toBeTruthy();
+  });
+
+  it("shows the Google Ads chip of each brand from today's spend", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("ใช้งาน"));
+    // d6 has no spend rows, so no account is connected to it.
+    expect(brandRow("d6")!.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
+  });
+
+  it("closes the queue card with sold = sent + failed + waiting, waiting counting the rows in flight", async () => {
+    // 12 sold = 5 sent + 4 failed + (1 pending + 2 processing): one period, every brand, nothing left over.
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { pending: 1, processing: 2, uploaded: 5, dead: 4 } });
+    funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : { ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 12, 254)] });
+    render(<HomeScreen me={owner} />);
+    const line = await screen.findByTestId("reconciliation");
+    await waitFor(() => expect(line.textContent).toBe("กระทบยอด: ขายได้ 12 = ส่งแล้ว 5 + ส่งไม่ได้ 4 + ค้างส่ง 3"));
+    expect(screen.getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions?period=today");
+  });
+
+  it("shows the gap instead of hiding it when the two sides do not match", async () => {
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { pending: 1, processing: 0, uploaded: 5, dead: 4 } });
+    funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : { ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 12, 254)] });
+    render(<HomeScreen me={owner} />);
+    const line = await screen.findByTestId("reconciliation");
+    await waitFor(() => expect(line.textContent).toBe("กระทบยอด: ขายได้ 12 = ส่งแล้ว 5 + ส่งไม่ได้ 4 + ค้างส่ง 1 · ต่างกัน +2"));
+  });
+
+  it("hides the reconciliation line while a source loads or when one fails", async () => {
+    conversions = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "คอนเวอร์ชัน" })).queryByText(/กระทบยอด/)).toBeNull());
+    expect(screen.queryByTestId("reconciliation")).toBeNull();
+  });
+
+  it("puts two buttons on the incident banner: ดูคิว and การแจ้งเตือน", async () => {
+    render(<HomeScreen me={owner} />);
+    const banner = await screen.findByRole("alert", { name: "เหตุด่วน" });
+    expect(within(banner).getByRole("button", { name: "ดูคิว" })).toBeTruthy();
+    expect(within(banner).getByRole("button", { name: "การแจ้งเตือน" })).toBeTruthy();
+  });
+});
+
+describe("Home screen, facts behind the brand table", () => {
+  const convRow = (brand: string, status: string) => ({ lead_id: `${brand}-1`, brand, status, reason_code: null, last_error: null, click_type: null, attempts: 1, value: null, currency: "THB", occurred_at: "2026-10-20T00:00:00.000Z", created_at: "2026-10-20T00:00:00.000Z", updated_at: "2026-10-20T00:00:00.000Z", next_attempt_at: null });
+  const page = (rows: ReturnType<typeof convRow>[], truncated: boolean) => ({ ...CONVERSIONS_OWNER, rows, truncated });
+  const dotsOf = (id: string) => brandRow(id)!.querySelector('[role="img"]')!.getAttribute("aria-label")!;
+
+  it("reads the upload dot of a brand exactly when the page of 200 rows is full of other brands", async () => {
+    // The big page holds only Sixpack rows and is cut. Creditgenie has an uploaded row that the cut left out: its own read finds it.
+    convFacts = (url) => {
+      const brand = url.searchParams.get("brand");
+      const status = url.searchParams.get("status")!;
+      if (brand) return json(page(brand === "cg" && status === "uploaded" ? [convRow("cg", "uploaded")] : [], false));
+      return json(page(status === "uploaded" ? [convRow("d6", "uploaded")] : [], true));
+    };
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(dotsOf("cg")).toContain("อัปโหลด: เสร็จ"));
+    expect(dotsOf("d6")).toContain("อัปโหลด: เสร็จ");
+    expect(requests.filter((r) => /status=uploaded&brand=cg&limit=1/.test(r))).toHaveLength(1);
+  });
+
+  it("shows a dead conversion as a failed upload dot", async () => {
+    convFacts = (url) => json(page(url.searchParams.get("status") === "dead" ? [convRow("cg", "dead")] : [], false));
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(dotsOf("cg")).toContain("อัปโหลด: ล้มเหลว"));
+  });
+
+  it("reads the upload dot as ไม่ทราบ, never done, when both reads fail", async () => {
+    convFacts = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(dotsOf("cg")).toContain("อัปโหลด: ไม่ทราบ");
+    expect(dotsOf("cg")).not.toContain("อัปโหลด: เสร็จ");
+  });
+
+  it("does not call an upload done when uploaded answered but the dead read failed", async () => {
+    // Uploaded has a row for Creditgenie; the dead read fails. "No dead conversion" is not known, so the dot is unknown, not done.
+    convFacts = (url) => (url.searchParams.get("status") === "dead" ? json({ error: "bad_gateway" }, 502) : json(page([convRow("cg", "uploaded")], false)));
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(dotsOf("cg")).toContain("อัปโหลด: ไม่ทราบ");
+    expect(dotsOf("cg")).not.toContain("อัปโหลด: เสร็จ");
+    expect(brandRow("cg")!.querySelector('[data-stage="อัปโหลด"]')!.getAttribute("title")).toBe("อัปโหลด · ไม่ทราบ");
+  });
+
+  it("keeps the Google Ads chip the same when the period changes: it reads today's spend and the campaigns, not the chosen window", async () => {
+    render(<HomeScreen me={owner} />);
+    const chip = () => brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent;
+    await waitFor(() => expect(chip()).toBe("ใช้งาน"));
+    for (const label of ["7 วัน", "30 วัน", "วันนี้"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
+      expect(chip()).toBe("ใช้งาน");
+    }
+  });
+
+  it("shows ไม่มี gclid when the brand's landings of the last 24 hours had too few gclids, and keeps it across periods", async () => {
+    realtimeReply = (brand) => json({ kpis: { landing_views: 300, no_gclid_landings: { count: brand === "cg" ? 120 : 3, pct: brand === "cg" ? 40 : 1 } } });
+    render(<HomeScreen me={owner} />);
+    const chip = () => brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent;
+    await waitFor(() => expect(chip()).toBe("ไม่มี gclid (24 ชม.)"));
+    for (const label of ["7 วัน", "30 วัน", "วันนี้"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
+      expect(chip()).toBe("ไม่มี gclid (24 ชม.)");
+    }
+    // Asked for 24 hours and for the brand that spends today only (Sixpack has no spend row).
+    const asked = requests.filter((r) => r.startsWith("/api/traffic/realtime"));
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((r) => r === "/api/traffic/realtime?period=24h&brand=cg")).toBe(true);
+  });
+
+  it("keeps ใช้งาน when the gclid read fails, and never asks for an employee", async () => {
+    realtimeReply = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("ใช้งาน"));
+    cleanup();
+    requests = [];
+    render(<HomeScreen me={employee} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(requests.some((r) => r.startsWith("/api/traffic/realtime"))).toBe(false);
+  });
+
+  it("shows a dash in the Google Ads cell while the campaigns read fails, never not connected", async () => {
+    adsReply = () => json({ error: "bad_gateway" }, 502);
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("—");
+  });
+
+  it("gives an employee the chip the campaigns show, without spend: เปิดแล้ว for an enabled campaign", async () => {
+    render(<HomeScreen me={employee} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("เปิดแล้ว"));
+    expect(brandRow("d6")!.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
+  });
+});
+
+describe("Home screen, spend change and funnel strip", () => {
+  const thirtyDays = (recent: number, older: number) => {
+    const daily = Array.from({ length: 30 }, (_, i) => ({ date: new Date(Date.UTC(2026, 8, 23 + i)).toISOString().slice(0, 10), cost: i >= 23 ? recent : i >= 16 ? older : 100, currency: "THB" as const }));
+    return { ...spendReport(84000, 1200), period: "30d", from: "2026-09-23", to: "2026-10-22", daily };
+  };
+
+  it("compares 7 days with the 7 days before from the daily rows, and says so in the neutral colour", async () => {
+    spend = vi.fn(async (period: string) => (period === "30d" ? thirtyDays(2000, 1000) : spendReport(14000, 400)));
+    (api as unknown as { spend: unknown }).spend = spend;
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿14,000 ได้ 17 ลีด ต้นทุนลีดละ ฿824");
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "▲ 100%", className: "d" }));
+  });
+
+  it("shows a dash for the spend change over 30 days and when the earlier window cannot be read", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "–", className: "d" }));
+    // 7 days with only two daily rows: the earlier week is not in the report, so it is a dash too.
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "–", className: "d" }));
+  });
+
+  it("draws each stage of the funnel with a horizontal bar sized against the largest stage", async () => {
+    render(<HomeScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    const bars = [...document.querySelectorAll<HTMLElement>(".home-stage .home-bar")];
+    expect(bars.length).toBeGreaterThan(3);
+    expect(bars.every((bar) => bar.style.width.endsWith("%") && bar.style.height === "")).toBe(true);
+    expect(Math.max(...bars.map((bar) => parseInt(bar.style.width, 10)))).toBe(100);
   });
 });

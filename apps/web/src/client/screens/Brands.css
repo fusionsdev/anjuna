@@ -8,7 +8,7 @@
 .brands-aside { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 /* Brand table: one main row per brand and a quiet row under it for the 7-day stats. */
-.brand-table .brand-pick { display: block; border: 0; background: transparent; padding: 0; text-align: left; font: inherit; color: inherit; }
+.brand-table .brand-pick { display: inline-flex; align-items: center; min-height: 44px; border: 0; background: transparent; padding: 0 4px; text-align: left; font: inherit; color: inherit; }
 .brand-table .brand-pick b { font-weight: 500; }
 .brand-table .brand-pick:focus-visible { outline: 2px solid var(--leak); outline-offset: 2px; }
 .brand-table tr.sel td { background: var(--paper); }
@@ -87,3 +87,84 @@
   .brand-table td[data-label=""] { display: block; }
   .brand-table td[data-label=""]::before { content: none; }
 }
+
+/* v9 Brands: chips, then search + sort + demo toggle on one row, then the table beside a 360px sticky detail panel. */
+.brands-head h1 { font-size: var(--text-h1); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.brands-sub { font-size: var(--text-body); color: var(--sub); }
+.brands-grid { grid-template-columns: minmax(0, 1fr) 360px; }
+.brands-aside { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.brand-filters { flex-direction: column; align-items: stretch; gap: 12px; }
+.brand-chip { min-height: 44px; padding: 0 14px; font-size: var(--text-body); }
+.brand-chip[aria-pressed="true"] { background: var(--brand-tint); color: var(--brand-ink); border-color: var(--brand); font-weight: 600; }
+.brand-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.brand-filter-row label { margin: 0; }
+.brand-search { position: relative; flex: 1 1 220px; display: block; }
+.brand-search svg { position: absolute; left: 12px; top: 14px; color: var(--sub); }
+.brand-search input { width: 100%; padding-left: 36px; }
+.brand-sort { flex-direction: row; align-items: center; gap: 8px; color: var(--sub); }
+.brand-demo-toggle { flex-direction: row; align-items: center; min-height: 44px; font-size: var(--text-body); color: var(--sub); }
+@media (max-width: 1100px) { .brands-grid { grid-template-columns: minmax(0, 1fr); } .brands-aside { position: static; max-height: none; } }
+
+/* Detail panel (design BrandDetailPanel): four checklist cards, then the collapsed installation section. */
+.brand-side { border-left: 0; border-radius: var(--radius-card); padding: 20px; box-shadow: var(--shadow-1); }
+.brand-side .side-head h2 { font-size: var(--text-card-title); font-weight: 600; }
+.check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.check-grid .check-row { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.check-grid .check-row.done { background: var(--ok-bg); border-color: transparent; }
+.check-grid .check-row .check-icon { color: var(--sub); flex-shrink: 0; }
+.check-grid .check-row.done .check-icon { color: var(--ok); }
+.check-grid .check-row label { flex: 1 1 100px; margin: 0; font-size: 13px; font-weight: 500; }
+.check-grid .check-row .btn { min-height: 44px; flex: 1 1 100%; }
+.install-details > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; font-size: var(--text-body); }
+@media (max-width: 1100px) { .check-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Wizard page (design NewBrand): back link, title, numbered stepper, form beside a 320px sticky summary. */
+.wizard-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.wizard-back { align-self: flex-start; min-height: 44px; border: 0; background: none; color: var(--sub); padding: 0; font-size: var(--text-body); }
+.wizard-back:hover { color: var(--ink); }
+.wizard-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.wizard-head h1 { margin: 0; font-size: var(--text-h1); font-weight: 600; letter-spacing: -.01em; }
+.wizard-sub { margin: 4px 0 0; color: var(--sub); font-size: var(--text-body); }
+.wizard-saved { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 12px; border-radius: var(--radius-chip); background: var(--ok-bg); color: var(--ok); font-size: 13px; font-weight: 500; }
+.wizard-stepper { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.wizard-step > span, .wizard-step > button { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px 0 8px; border: 1px solid var(--line); border-radius: var(--radius-chip); background: var(--card); color: var(--sub); font-size: var(--text-body); }
+.wizard-step > button { cursor: pointer; color: var(--ink); }
+.wizard-step.current > span { background: var(--ink); border-color: var(--ink); color: var(--on); font-weight: 600; }
+.wizard-step.done > button { background: var(--ok-bg); border-color: transparent; color: var(--ok); }
+.wizard-num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--canvas); color: var(--ink); font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.wizard-step.current .wizard-num { background: var(--brand); color: var(--on); }
+.wizard-step.done .wizard-num { background: var(--ok); color: var(--on); }
+.wizard-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.wizard-summary { position: sticky; top: 16px; }
+.wizard-summary ul { list-style: none; margin: 12px 0; padding: 0; display: grid; gap: 4px; }
+.wizard-summary li { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: 8px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); }
+.wizard-summary li:first-child { border-top: 0; }
+.wizard-summary-mark { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 50%; border: 1px solid var(--line); color: var(--ok); }
+.wizard-summary li[data-filled="true"] .wizard-summary-mark { background: var(--ok-bg); border-color: transparent; }
+.wizard-summary-label { font-size: 13px; color: var(--sub); }
+.wizard-summary-value { grid-column: 2; font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
+.currency-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--canvas); }
+.wizard-card { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+@media (max-width: 1023px) { .wizard-grid { grid-template-columns: minmax(0, 1fr); } .wizard-summary { position: static; } }
+
+/* Fit the compact table beside the 360px panel: the menu is an icon, the buttons are narrower, the checklist is one column. */
+.brand-grid-table table { width: 100%; }
+.row-actions { flex-wrap: nowrap; white-space: nowrap; }
+.brand-grid-table .btn.row-action { padding: 0 10px; font-size: 13px; }
+.brand-grid-table .row-menu-btn { width: 44px; padding: 0; }
+.brands-aside .check-grid { grid-template-columns: minmax(0, 1fr); }
+.check-grid .check-row input[type="checkbox"] { position: absolute; opacity: 0; pointer-events: none; }
+.check-grid .check-row label { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+.check-grid .check-row .muted { font-size: 13px; }
+
+/* The compact table has about 600px beside the panel: no avatar, tighter cells. */
+.brand-table .brand-avatar { display: none; }
+.brand-table th, .brand-table td { padding-inline: 6px; }
+.brand-table .brand-name-text { gap: 0; }
+.brand-table .row-actions { flex-direction: column; align-items: flex-end; gap: 4px; }
+.brand-table .row-actions .btn.row-action { white-space: normal; text-align: center; line-height: 1.3; padding-block: 6px; }
+@media (max-width: 767px) { .brand-table .row-actions { flex-direction: row; align-items: center; } }
+.brand-table th, .brand-table td { padding-inline: 4px; }
+.lifecycle-list { padding-inline: 12px; }
+.brand-table .chip { padding-inline: 8px; }
+.brand-table .stage-dots { gap: 3px; }

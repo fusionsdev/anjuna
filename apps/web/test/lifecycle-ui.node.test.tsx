@@ -172,7 +172,7 @@ describe("BrandLifecycle SSR", () => {
   it("renders Thai labels and no upgrade-all card (it moved to Settings)", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "owner", email: "owner@example.test", role: "owner" }} />);
     expect(html).toContain("แบรนด์ใหม่");
-    expect(html).toContain("ปุ่มหลักของแต่ละแถวคือขั้นตอนถัดไปของแบรนด์ ปุ่มจัดการรวมการทำงานอื่น");
+    expect(html).toContain("ปุ่มหลักของแต่ละแถวคือขั้นตอนถัดไปของแบรนด์ ปุ่ม ⋯ รวมการทำงานอื่น");
     expect(html).not.toContain("อัปเกรดทุกแบรนด์");
     expect(html).not.toContain("อัปเกรดแบบ canary ก่อน");
     // The create form moved into the wizard: the list screen holds one button that opens it.
@@ -185,7 +185,7 @@ describe("BrandLifecycle SSR", () => {
   it("does not render upgrade-all for employees", () => {
     const html = renderToStaticMarkup(<BrandLifecycle me={{ id: "employee", email: "employee@example.test", role: "employee" }} />);
     expect(html).not.toContain("อัปเกรดทุกแบรนด์ (เฉพาะเจ้าของ)");
-    expect(html).toContain("สถานะ");
+    expect(html).toContain("ต้องแก้");
   });
 
   it("renders persisted checklist evidence and no inline lead id field", () => {

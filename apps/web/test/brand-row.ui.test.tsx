@@ -15,6 +15,11 @@ const runtimeRow = (id: string, status: string, flow_gate_mode: string) => ({
   stats_7d: { leads: 0, sold: 0, pending: 0 },
 });
 const pauseName = "หยุดชั่วคราว";
+const adsData = (accountFor: string[], enabledFor: string[] = []) => ({
+  campaigns: enabledFor.map((brand_id, n) => ({ draft_job_id: `6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e${String(n).padStart(2, "0")}`, campaign_id: null, brand_id, account: "1234567890", name: "demo-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-06T00:00:00.000Z", geo: { country: "US" }, final_url: "https://x.test/" })),
+  brands: accountFor.map((brand_id) => ({ brand_id, currency: "THB", thb_per_unit: 1, committed_thb_day: 0 })),
+  caps: { total_thb_day: 1000, brand_thb_day: 500 }, enabled_total_thb_day: 0,
+});
 const resumeName = "เปิดใช้งานต่อ";
 
 type Handler = (init?: RequestInit) => Response | Promise<Response>;
@@ -41,6 +46,8 @@ beforeEach(() => {
   pauseStatus = 200;
   routes = new Map<string, Handler>([
     ["GET /api/upgrade-all/latest", () => json({ upgrade: null })],
+    // A Google Ads read that answered: no brand has an account here.
+    ["GET /api/ads/campaigns", () => json(adsData([]))],
     ["GET /api/lifecycle/brands", () => json({ brands: rows })],
     ["GET /api/brands", () => json({ brands: [runtimeRow("b-live", "live", "param"), runtimeRow("b-paused", "paused", "signed_cookie")], generated_at: "2026-10-06T00:00:00Z" })],
     ["GET /api/funnel", () => json({ from: "2026-10-01T00:00:00.000Z", to: "2026-10-07T00:00:00.000Z", rows: [] })],
@@ -65,10 +72,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("brand row basics", () => {
-  it("shows the flow-gate label on each row", async () => {
+  it("shows seven stage dots and the Google Ads chip on each row", async () => {
     render(<BrandLifecycle me={owner} />);
-    expect(within(await rowOf("live.example")).getByText("Keyword Param")).toBeTruthy();
-    expect(within(await rowOf("paused.example")).getByText("Single Page Cookie")).toBeTruthy();
+    const live = await rowOf("live.example");
+    const dots = live.querySelector('[role="img"]')!;
+    expect(dots.querySelectorAll(".stage-dot")).toHaveLength(7);
+    expect(dots.getAttribute("aria-label")).toContain("สร้าง: เสร็จ");
+    // The harness has no spend rows, so no Google Ads account is connected to the live brand. The paused brand reads paused.
+    await waitFor(() => expect(live.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม"));
+    expect((await rowOf("paused.example")).querySelector('[data-col="ads"]')!.textContent).toBe("หยุดชั่วคราว");
   });
 
   it("pauses from the row menu after a confirm, without selecting the row", async () => {
@@ -167,20 +179,18 @@ describe("brand row basics", () => {
   });
 });
 
-describe("brand row status badge", () => {
-  it("shows the paused badge for a factory-live brand that core reports as paused", async () => {
+describe("brand row Google Ads chip for a paused brand", () => {
+  it("shows หยุดชั่วคราว for a factory-live brand that core reports as paused", async () => {
     routes.set("GET /api/brands", () => json({ brands: [runtimeRow("b-live", "paused", "param"), runtimeRow("b-paused", "paused", "signed_cookie")], generated_at: "2026-10-06T00:00:00Z" }));
     render(<BrandLifecycle me={owner} />);
     const row = await rowOf("live.example");
-    const badge = (await within(row).findByText("หยุดชั่วคราว (paused)")).closest(".pill")!;
-    expect(badge.className).toContain("p-warn");
-    expect(within(row).queryByText("live")).toBeNull();
+    await waitFor(() => expect(row.querySelector('[data-col="ads"]')!.textContent).toBe("หยุดชั่วคราว"));
   });
 
-  it("keeps the live badge while core reports the brand live", async () => {
+  it("does not show หยุดชั่วคราว while core reports the brand live", async () => {
     render(<BrandLifecycle me={owner} />);
-    const badge = (await within(await rowOf("live.example")).findByText("live")).closest(".pill")!;
-    expect(badge.className).toContain("p-live");
+    const row = await rowOf("live.example");
+    expect(row.querySelector('[data-col="ads"]')!.textContent).not.toBe("หยุดชั่วคราว");
   });
 });
 
@@ -189,32 +199,15 @@ describe("brand table cards", () => {
     render(<BrandLifecycle me={owner} />);
     const row = await rowOf("live.example");
     const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
-    expect(labels).toEqual([
-      "แบรนด์",
-      "สถานะ",
-      "โฟลว์",
-      "ค่าโฆษณา",
-      "คลิก",
-      "ลีด",
-      "ต้นทุน/ลีด",
-      "กำไร",
-    ]);
-    const stats = row.nextElementSibling!;
-    expect(stats.className).toContain("stats");
-    expect(stats.querySelector("td")!.getAttribute("data-label")).toBe("");
+    // The Brands table is compact: no cost per lead column, and no second row of stats under each brand.
+    expect(labels).toEqual(["แบรนด์", "ระยะ", "ค่าโฆษณา", "ลีด", "Google Ads", ""]);
+    expect(row.nextElementSibling?.className ?? "").not.toContain("stats");
   });
 
   it("brand table cells carry data-label without the owner-only cells for a non-owner", async () => {
     render(<BrandLifecycle me={{ ...owner, role: "employee" }} />);
     const row = await rowOf("live.example");
     const labels = [...row.querySelectorAll("td")].map((cell) => cell.getAttribute("data-label"));
-    expect(labels).toEqual([
-      "แบรนด์",
-      "สถานะ",
-      "โฟลว์",
-      "คลิก",
-      "ลีด",
-    ]);
-    expect(row.nextElementSibling!.querySelector("td")!.getAttribute("data-label")).toBe("");
+    expect(labels).toEqual(["แบรนด์", "ระยะ", "ลีด", "Google Ads", ""]);
   });
 });

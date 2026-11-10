@@ -126,3 +126,23 @@ export function scopeAlerts(report: AlertsReportResponse, inScope: (brandId: str
     reject_rate: { ...report.reject_rate, detail: { ...report.reject_rate.detail, brands: only(report.reject_rate.detail.brands) } },
   };
 }
+
+/**
+ * Baht spent over `days` UTC days that end `offset` days before `report.to`, added up from the daily rows (a USD row at the server's rate).
+ * Null when core sent no daily rows, or when the report does not reach back far enough for the window (a 30 day report holds 30 days,
+ * so a 7 day window and the 7 days before it fit, and a 30 day window and the 30 days before it do not).
+ */
+export function spendWindowThb(report: PanelSpendReportResponse, days: number, offset: number): number | null {
+  const daily = report.daily ?? [];
+  if (daily.length === 0) return null;
+  const end = Date.parse(`${report.to}T00:00:00.000Z`) - offset * 86_400_000;
+  const start = end - (days - 1) * 86_400_000;
+  const first = Date.parse(`${report.from}T00:00:00.000Z`);
+  if (start < first) return null;
+  let total = 0;
+  for (const row of daily) {
+    const at = Date.parse(`${row.date}T00:00:00.000Z`);
+    if (at >= start && at <= end) total += row.currency === "USD" ? row.cost * report.fx.thbPerUsd : row.cost;
+  }
+  return total;
+}

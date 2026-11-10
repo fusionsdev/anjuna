@@ -264,7 +264,7 @@ describe("brand card: Copy Final URL, Open site and revision history", () => {
     expect(field.hasAttribute("readonly")).toBe(true);
     const label = document.querySelector(`label[for="${field.id}"]`);
     expect(field.id).not.toBe("");
-    expect(label?.textContent).toContain("(Final URL to copy by hand)");
+    expect(label?.textContent).toBe("Final URL สำหรับคัดลอกเอง");
   });
 
   it("shows a failed revisions load as an alert with Retry, and Retry refetches", async () => {

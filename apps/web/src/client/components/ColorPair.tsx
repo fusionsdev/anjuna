@@ -91,19 +91,19 @@ export function ColorPair(props: { value: BrandTheme | null; onChange(next: Bran
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ minWidth: 140 }}>สีหลัก (Primary)</span>
-        <input type="color" aria-label="สีหลัก (Primary)" value={primaryParsed.success ? primaryParsed.data : shownPrimary} disabled={disabled} onChange={(e) => onPrimaryColor(e.target.value)} />
-        <input type="text" aria-label="รหัสสีหลัก (Primary hex)" value={primaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onPrimaryText(e.target.value)} onBlur={onPrimaryBlur} />
+        <span style={{ minWidth: 140 }}>สีหลัก</span>
+        <input type="color" aria-label="สีหลัก" value={primaryParsed.success ? primaryParsed.data : shownPrimary} disabled={disabled} onChange={(e) => onPrimaryColor(e.target.value)} />
+        <input type="text" aria-label="รหัสสีหลัก" value={primaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onPrimaryText(e.target.value)} onBlur={onPrimaryBlur} />
       </div>
       {primaryError && <p className="neg" role="alert">{primaryError}</p>}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ minWidth: 140 }}>สีรอง (Secondary)</span>
-        <input type="color" aria-label="สีรอง (Secondary)" value={secondaryParsed.success ? secondaryParsed.data : shownSecondary} disabled={disabled} onChange={(e) => onSecondaryColor(e.target.value)} />
-        <input type="text" aria-label="รหัสสีรอง (Secondary hex)" value={secondaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onSecondaryText(e.target.value)} onBlur={onSecondaryBlur} />
+        <span style={{ minWidth: 140 }}>สีรอง</span>
+        <input type="color" aria-label="สีรอง" value={secondaryParsed.success ? secondaryParsed.data : shownSecondary} disabled={disabled} onChange={(e) => onSecondaryColor(e.target.value)} />
+        <input type="text" aria-label="รหัสสีรอง" value={secondaryText} placeholder="#rrggbb" spellCheck={false} disabled={disabled} onChange={(e) => onSecondaryText(e.target.value)} onBlur={onSecondaryBlur} />
       </div>
       {secondaryError && <p className="neg" role="alert">{secondaryError}</p>}
       <div>
-        <button type="button" className="btn" disabled={disabled} onClick={onReset}>ใช้สีของเทมเพลต (Use template colors)</button>
+        <button type="button" className="btn" disabled={disabled} onClick={onReset}>ใช้สีของเทมเพลต</button>
       </div>
     </div>
   );
