@@ -1,7 +1,7 @@
 import type { TrafficTailEvent } from "@anjuna/contracts";
 
 /** How a stream event reads in the stage chain of a session. `tone` marks errors; `kind` is the filter group. */
-export type StageKind = "gate" | "landing" | "form" | "lead" | "redirect";
+export type StageKind = "gate" | "landing" | "form" | "lead" | "redirect" | "postback";
 export const STAGE: Record<TrafficTailEvent["event_type"], { label: string; kind: StageKind; error?: true }> = {
   gate_viewed: { label: "ด่านตรวจ", kind: "gate" },
   landing_viewed: { label: "หน้าแรก", kind: "landing" },
@@ -13,12 +13,14 @@ export const STAGE: Record<TrafficTailEvent["event_type"], { label: string; kind
   lead_submitted: { label: "ส่งลีดแล้ว", kind: "lead" },
   redirect_started: { label: "ส่งต่อผู้ซื้อ", kind: "redirect" },
   redirect_failed: { label: "ส่งต่อไม่สำเร็จ", kind: "redirect", error: true },
+  postback_received: { label: "โพสต์แบ็ก", kind: "postback" },
 };
 
-export type EventFilter = "all" | "landing" | "form" | "lead" | "redirect" | "bot";
+export type EventFilter = "all" | "landing" | "form" | "lead" | "redirect" | "postback" | "bot";
 export const EVENT_FILTERS: ReadonlyArray<{ id: EventFilter; label: string }> = [
   { id: "all", label: "ทุกเหตุการณ์" }, { id: "landing", label: "หน้าแรก" }, { id: "form", label: "ฟอร์ม" },
-  { id: "lead", label: "ส่งลีด" }, { id: "redirect", label: "ส่งต่อ" }, { id: "bot", label: "บอท" },
+  { id: "lead", label: "ส่งลีด" }, { id: "redirect", label: "ส่งต่อ" }, { id: "postback", label: "โพสต์แบ็ก" },
+  { id: "bot", label: "บอท" },
 ];
 
 export const BOT_LABEL = { googlebot: "Googlebot", adsbot: "AdsBot", "other-bot": "บอทอื่น" } as const;
@@ -53,7 +55,7 @@ export const MAX_SESSIONS = 40;
 /**
  * Groups events by session ref, newest session first, at most MAX_SESSIONS. `events` is in arrival order, newest arrival first, as the stream keeps it.
  * An event that arrives late still lands in its place: each session's chain is sorted by event time, and the session's `lastTs`
- * is its highest event time, found before the sessions are ordered.
+ * is its highest event time, found before the sessions are ordered. Device, browser and family come from the oldest event that is not a postback.
  */
 export function groupSessions(events: readonly TrafficTailEvent[]): LiveSession[] {
   const byId = new Map<string, LiveSession>();
@@ -71,6 +73,13 @@ export function groupSessions(events: readonly TrafficTailEvent[]): LiveSession[
     // Arrival order is newest first, so reversing puts the oldest arrival first and the stable sort keeps that order for equal times.
     session.events.reverse();
     session.events.sort((a, b) => a.ts - b.ts);
+    // A postback carries no device, browser or user agent, so the visitor's oldest event describes the session.
+    const visitor = session.events.find((e) => e.event_type !== "postback_received");
+    if (visitor) {
+      session.device = visitor.device_type;
+      session.browser = visitor.browser;
+      session.family = visitor.user_agent_family;
+    }
   }
   return [...byId.values()].sort((a, b) => b.lastTs - a.lastTs).slice(0, MAX_SESSIONS);
 }

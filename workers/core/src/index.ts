@@ -27,7 +27,7 @@ export function createCoreHandler(rpcRoutes: ReadonlyMap<string, RpcHandler> = n
       const { pathname } = new URL(request.url);
       if (pathname === "/api/health" && request.method === "GET") return json({ ok: true });
       if (pathname === "/api/postback" && ["GET", "POST"].includes(request.method)) {
-        return handlePostback(request, env);
+        return handlePostback(request, env, ctx);
       }
       if (pathname === "/api/conversions/pending" && request.method === "GET") {
         return handleConversionsPending(request, env);

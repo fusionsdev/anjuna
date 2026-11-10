@@ -46,8 +46,15 @@ async function bundle(entry: string): Promise<string> {
   return result.outputFiles[0]!.text;
 }
 
+const TEST_TAILS = { throwing: "ThrowingTail", recording: "RecordingTail", hanging: "HangingTail" } as const;
+
 export async function createHarness(options: {
-  trafficTail?: boolean;
+  /**
+   * true binds the real TrafficTail. "throwing" binds a tail whose fetch always throws. "recording" binds a tail that
+   * keeps every pushed body, with no dedup, and answers GET with the bodies received since the last GET. "hanging" binds
+   * a tail that holds every push open until GET /release; any GET answers { received, released }.
+   */
+  trafficTail?: boolean | keyof typeof TEST_TAILS;
   brand?: boolean;
   listmonk?: Partial<Record<"LISTMONK_URL" | "LISTMONK_USER" | "LISTMONK_TOKEN" | "LISTMONK_LIST_MAP", string>>;
   /** Extra secrets and vars for the production Worker. */
@@ -74,11 +81,36 @@ export async function createHarness(options: {
     ...(options.limiters ? { serviceBindings: Object.fromEntries(Object.entries(options.limiters).map(([name, props]) =>
       [name, { name: "limiter", entrypoint: "Limiter", props: { name, ...props } }])) } : {}),
   };
+  const testTail = typeof options.trafficTail === "string" ? TEST_TAILS[options.trafficTail] : null;
   const mf = new Miniflare(convertV4MiniflareOptions({
     cf: false,
     workers: [
       { ...common, name: "production", script: production,
-        ...(options.trafficTail ? { durableObjects: { TRAFFIC_TAIL: { className: "TrafficTail", useSQLite: true } } } : {}) },
+        ...(testTail
+          ? { durableObjects: { TRAFFIC_TAIL: { className: testTail, scriptName: "test-tail" } } }
+          : options.trafficTail ? { durableObjects: { TRAFFIC_TAIL: { className: "TrafficTail", useSQLite: true } } } : {}) },
+      ...(testTail ? [{
+        name: "test-tail", modules: true, compatibilityDate: "2026-08-01",
+        durableObjects: { TAIL: { className: testTail, useSQLite: true } },
+        script: `import { DurableObject } from "cloudflare:workers";
+          export class ThrowingTail extends DurableObject { async fetch() { throw new Error("tail down"); } }
+          export class RecordingTail extends DurableObject {
+            pushes = [];
+            async fetch(request) {
+              if (request.method === "POST") { this.pushes.push(JSON.parse(await request.text())); return Response.json({ status: "ok" }); }
+              return Response.json(this.pushes.splice(0));
+            }
+          }
+          export class HangingTail extends DurableObject {
+            received = 0; released = false; gate = new Promise((resolve) => { this.open = resolve; });
+            async fetch(request) {
+              if (request.method === "POST") { this.received++; await this.gate; return Response.json({ status: "ok" }); }
+              if (new URL(request.url).pathname === "/release") { this.released = true; this.open(); }
+              return Response.json({ received: this.received, released: this.released });
+            }
+          }
+          export default { fetch() { return new Response(null, { status: 404 }); } };`,
+      }] : []),
       { ...common, name: "test-core", script: testWorker },
       { ...common, name: "no-drain-token", script: production, bindings: {} },
       ...(options.limiters ? [{

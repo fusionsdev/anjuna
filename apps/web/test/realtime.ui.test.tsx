@@ -2,7 +2,7 @@ import type { TrafficRealtimeResponse } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RealtimeTab } from "../src/client/traffic/RealtimeTab";
-import { csvText, deltaText, groupSessions } from "../src/client/traffic/live";
+import { EVENT_FILTERS, STAGE, csvText, deltaText, groupSessions, matchesFilter } from "../src/client/traffic/live";
 import { MockEventSource, realtimeReport, tailEvent } from "./traffic-helpers";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -383,6 +383,33 @@ describe("traffic live helpers", () => {
     expect(mine.lastTs).toBe(1_800_000_010_000);
     // The session with the later event time is first, although its late event arrived after the other session's event.
     expect(sessions.map((s) => s.sessionRef)).toEqual([ref, "cccccccccccccccc"]);
+  });
+  it("labels a postback as its own stage and filters it on its own", () => {
+    expect(STAGE.postback_received).toEqual({ label: "โพสต์แบ็ก", kind: "postback" });
+    expect(EVENT_FILTERS.map((f) => f.id)).toEqual(["all", "landing", "form", "lead", "redirect", "postback", "bot"]);
+    const postback = tailEvent({ event_type: "postback_received", device_type: null, browser: null, user_agent_family: "unknown" });
+    const others = (["gate_viewed", "landing_viewed", "form_started", "lead_submitted", "redirect_started"] as const).map((event_type) => tailEvent({ event_type }));
+    expect([postback, ...others].filter((e) => matchesFilter(e, "postback"))).toEqual([postback]);
+    expect(matchesFilter(postback, "lead")).toBe(false);
+    expect(matchesFilter(postback, "all")).toBe(true);
+  });
+  it("puts a postback last in the visitor's session and keeps the visitor's device, browser and family", () => {
+    const ref = "dddddddddddddddd";
+    // Landing and lead differ in every visitor field, so the test shows which event the session reads them from.
+    const landing = tailEvent({ event_id: "v1", session_ref: ref, event_type: "landing_viewed", ts: 1_800_000_000_000, device_type: "desktop", browser: "firefox", user_agent_family: "browser" });
+    const lead = tailEvent({ event_id: "v2", session_ref: ref, event_type: "lead_submitted", ts: 1_800_000_060_000, device_type: "mobile", browser: "safari", user_agent_family: "googlebot" });
+    const postback = tailEvent({ event_id: "pb-1", session_ref: ref, event_type: "postback_received", ts: 1_800_000_900_000, device_type: null, browser: null, user_agent_family: "unknown" });
+    // Newest arrival first. [postback, lead, landing]: the postback arrived last. [lead, landing, postback]: it arrived first.
+    for (const arrival of [[postback, lead, landing], [lead, landing, postback]]) {
+      const [session, ...rest] = groupSessions(arrival);
+      expect(rest).toEqual([]);
+      expect(session!.events.map((e) => e.event_id)).toEqual(["v1", "v2", "pb-1"]);
+      expect([session!.device, session!.browser, session!.family]).toEqual(["desktop", "firefox", "browser"]);
+      expect(session!.lastTs).toBe(1_800_000_900_000);
+    }
+    // A postback alone keeps its own empty values until a visitor event of the session arrives.
+    const [alone] = groupSessions([postback]);
+    expect([alone!.device, alone!.browser, alone!.family]).toEqual([null, null, "unknown"]);
   });
   it("gives an event with no session ref a row of its own", () => {
     const sessions = groupSessions([tailEvent({ event_id: "n1", session_ref: null }), tailEvent({ event_id: "n2", session_ref: null })]);
