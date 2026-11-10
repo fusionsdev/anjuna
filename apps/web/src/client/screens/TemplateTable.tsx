@@ -86,7 +86,7 @@ export function TemplateTable({ items, categories, owner, busy, checked, openId,
 }) {
   const allChecked = items.length > 0 && items.every((t) => checked.has(t.template_version_id));
   return (
-    <div className="tpl-scroll">
+    <div className="tpl-scroll stack-table">
       <table className="tpl-table">
         <thead>
           <tr>

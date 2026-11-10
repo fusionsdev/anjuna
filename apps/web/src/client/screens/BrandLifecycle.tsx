@@ -6,6 +6,8 @@ import { brandSpendFresh, checklistFlags } from "../home-metrics";
 import { adsChip, stageStatuses, stageUnknowns } from "../brand-stages";
 import { useAdsCampaigns, useBrandDeadCount, useNoGclid, useUploadFacts } from "../brand-facts";
 import { BrandTable, type BrandTableRow } from "../components/BrandTable";
+import { CsvButton } from "../components/CsvButton";
+import type { CsvColumn } from "../csv";
 import { isCurrentOperationResult, isCurrentRefresh, lifecycleMutationAvailability, nextAction, reduceLifecycleState, shouldRecoverAcceptedInstall, type LifecycleRow, type LifecycleState, type NextAction } from "../lifecycle-state";
 import { type ConfirmOptions, useConfirm } from "../components/ConfirmDialog";
 import { InstallProgress } from "../components/InstallProgress";
@@ -912,11 +914,27 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     };
   });
 
+  // The CSV of the brands in the table now. The spend column is written for an owner only, like the table.
+  type CsvBrand = { id: string; domain: string; name: string; status: string; ads: string; spend: string; leads: number | null };
+  const csvRows: CsvBrand[] = sortedRows.map(({ brand, name, money }, index) => ({
+    id: brand.brand_id, domain: brand.hostnames[0] ?? "", name, status: brand.status, ads: rowModels[index]?.ads?.label ?? "", spend: money.spendText, leads: money.leads,
+  }));
+  const csvColumns: CsvColumn<CsvBrand>[] = [
+    { header: "รหัสแบรนด์", value: (r) => r.id },
+    { header: "โดเมน", value: (r) => r.domain },
+    { header: "ชื่อ", value: (r) => r.name },
+    { header: "สถานะ", value: (r) => r.status },
+    { header: "Google Ads", value: (r) => r.ads },
+    ...(owner ? [{ header: "ค่าโฆษณา", value: (r: CsvBrand) => r.spend }] : []),
+    { header: "ลีด", value: (r) => r.leads },
+  ];
+
   return <div className="brands-page">
     <div className="brands-head">
       <div><h1>แบรนด์</h1><p className="brands-sub">{shownRows.length} แบรนด์ เลือกแถวเพื่อดูและแก้ไข</p></div>
       <div className="brands-actions">
         <div className="seg" role="group" aria-label="ช่วงเวลา">{BRAND_PERIODS.map(([key, label]) => <button key={key} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div>
+        <CsvButton page="brands" columns={csvColumns} rows={csvRows} />
         <button className="btn" onClick={() => { setError(null); setRefresh((value) => value + 1); }}>รีเฟรช</button>
         <button className="btn pri" onClick={() => (onNewBrand ? onNewBrand() : setWizard({}))}>แบรนด์ใหม่</button>
       </div>

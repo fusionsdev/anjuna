@@ -74,3 +74,5 @@
 .campaigns-log-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; margin-top: 8px; background: var(--c-accent); }
 .campaigns-log b { display: block; font-weight: 500; }
 .campaigns-log small { color: var(--c-muted); font-size: 13px; }
+.campaigns-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.campaigns-card-head h2 { margin: 0; }

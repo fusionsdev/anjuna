@@ -47,7 +47,7 @@ export function UpgradeOutcomes({ refresh }: { refresh: number }) {
     {result?.upgrade === null && !result.command_error && <p>ยังไม่มีการอัปเกรดทุกแบรนด์ที่รับคำสั่ง (No accepted upgrade-all yet)</p>}
     {result?.upgrade && <>
       <p><code>{result.upgrade.command.from_template_version_id}</code> → <code>{result.upgrade.command.to_template_version_id}</code> · รับคำสั่งเมื่อ (Accepted) {result.upgrade.accepted_at}</p>
-      <table className="table">
+      <div className="stack-table"><table className="table">
         <thead><tr><th>แบรนด์ (Brand)</th><th>บทบาท (Role)</th><th>ผลลัพธ์ (Outcome)</th><th>ติดตั้ง (Install)</th><th>รายละเอียด (Details)</th></tr></thead>
         <tbody>{result.upgrade.outcomes.map((row) => <tr key={row.brand_id}>
           <th scope="row"><BrandLabel brandId={row.brand_id} domain={row.domain} /></th>
@@ -56,7 +56,7 @@ export function UpgradeOutcomes({ refresh }: { refresh: number }) {
           <td>{row.install_id ? <code>{row.install_id}</code> : "—"}{row.retry_of && <><br />ลองใหม่จาก (Retry of) <code>{row.retry_of}</code></>}</td>
           <td>{row.error ?? "—"}</td>
         </tr>)}</tbody>
-      </table>
+      </table></div>
     </>}
   </section>;
 }

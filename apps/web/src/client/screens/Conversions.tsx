@@ -5,7 +5,9 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
+import { CsvButton } from "../components/CsvButton";
 import { type Column, DataTable } from "../components/DataTable";
+import type { CsvColumn } from "../csv";
 import { EmptyState } from "../components/EmptyState";
 import { FilterBar } from "../components/FilterBar";
 import { LoadMore } from "../components/LoadMore";
@@ -166,6 +168,19 @@ export function ConversionsScreen({ me }: { me: Me }) {
     { key: "created", header: "สร้างเมื่อ", cell: (row) => when(row.created_at) },
     { key: "next", header: "ลองใหม่", cell: (row) => when(row.next_attempt_at) },
   ];
+  // The CSV of the rows on screen. The money column follows the role, like the table: an employee's file has none.
+  const csvColumns: CsvColumn<Row>[] = [
+    { header: "รหัสลีด", value: (row) => row.lead_id },
+    { header: "แบรนด์", value: (row) => row.brand },
+    { header: "สถานะ", value: (row) => STATUS_BADGE[row.status].label },
+    { header: "เหตุผล", value: (row) => (row.reason_code ? (REASON_TEXT[row.reason_code]?.label ?? row.reason_code) : "") },
+    { header: "ข้อความเต็ม", value: (row) => row.last_error?.trim() || "" },
+    { header: "Click", value: (row) => row.click_type },
+    { header: "ครั้งที่ลอง", value: (row) => row.attempts },
+    ...(owner ? [{ header: "มูลค่า", value: (row: Row) => row.value }] : []),
+    { header: "สร้างเมื่อ", value: (row) => row.created_at },
+    { header: "ลองใหม่", value: (row) => row.next_attempt_at },
+  ];
   const report = load && "report" in load ? load.report : null;
   const loadingMore = load !== null && "report" in load && load.limit !== limit;
   const shownLimit = load && "report" in load ? load.limit : LIMIT_START;
@@ -237,6 +252,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
                 <button type="button" className="btn conv-bulk-clear" aria-label="ล้างการเลือก" onClick={() => setPicked(new Set())}>ล้าง</button>
               </div>
             )}
+            <div className="csv-row"><CsvButton page="conversions" columns={csvColumns} rows={visibleRows} /></div>
             <DataTable
               label="รายการคอนเวอร์ชัน (Conversions)"
               columns={columns}

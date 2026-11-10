@@ -54,7 +54,7 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
       <h1 aria-label="คีย์ Builder (Builder keys)">คีย์ Builder</h1>
       <p className="hint">ให้ bolt.new ส่งเทมเพลตเข้ามาตรวจได้เอง · หนึ่งคนต่อหนึ่งคีย์ · คีย์แสดงในตารางตลอด</p>
       {msg && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>{msg}</div>}
-      <section className="panel" style={{ marginTop: 16 }}><div className="tw"><table>
+      <section className="panel" style={{ marginTop: 16 }}><div className="tw stack-table"><table>
         <thead>
           <tr><th>ชื่อ</th><th>คีย์</th><th>สร้างเมื่อ</th><th>ใช้ล่าสุด</th><th>สถานะ</th><th /></tr>
         </thead>

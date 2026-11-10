@@ -5,6 +5,8 @@ import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { hydrateAlertStates, recordAlertState, useAlertSession } from "../alerts-session";
 import { Chip, type ChipTone } from "../components/Chip";
+import { CsvButton } from "../components/CsvButton";
+import type { CsvColumn } from "../csv";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { scopeAlerts } from "../home-metrics";
@@ -162,6 +164,16 @@ function AlertList({ report, domains, onChanged }: { report: AlertsReportRespons
   const counts: Record<Filter, number> = { open: entries.open.length, closed: entries.closed.length, all: entries.open.length + entries.closed.length + entries.healthy.length };
   const visible = filter === "open" ? entries.open : filter === "closed" ? entries.closed : [...entries.open, ...entries.closed, ...entries.healthy];
 
+  // The CSV of the rows in the list now: the rule, the brand, the level, whether it is open, acknowledged or closed, and the detail text.
+  const csvColumns: CsvColumn<Entry>[] = [
+    { header: "กฎ", value: (i) => (i.rule ? RULE_TITLE[i.rule] : describeKey(i.key ?? "").title) },
+    { header: "แบรนด์", value: (i) => i.brand },
+    { header: "ระดับ", value: (i) => LEVEL_LABEL[i.level] },
+    { header: "สถานะ", value: (i) => (i.group === "closed" ? "ปิดแล้ว" : i.group === "open" ? (i.acknowledged ? "รับทราบแล้ว" : "เปิดอยู่") : "ปกติ") },
+    { header: "รายละเอียด", value: (i) => i.detail },
+    { header: "ปิดเมื่อ", value: (i) => i.closedAt },
+  ];
+
   async function act(entry: Entry, action: "ack" | "close") {
     if (!entry.key) return;
     setNotice(null);
@@ -184,6 +196,7 @@ function AlertList({ report, domains, onChanged }: { report: AlertsReportRespons
         {FILTERS.map(([id, label]) => (
           <button key={id} type="button" aria-pressed={filter === id} aria-label={label} onClick={() => setFilter(id)}>{label}<span className="num">{counts[id]}</span></button>
         ))}
+        <CsvButton page="alerts" columns={csvColumns} rows={visible} />
       </div>
       {notice && <p className={notice.kind === "ok" ? "alert-notice" : "alert-notice err"} role={notice.kind === "ok" ? "status" : "alert"}>{notice.text}</p>}
       <section className="panel" aria-label="รายการแจ้งเตือน">
@@ -236,6 +249,18 @@ function describeKey(key: string): { title: string; brand: string | null } {
   return { title: key, brand: null };
 }
 
+/** The CSV of the send history on screen. */
+function historyCsv(domains: Map<string, string>): CsvColumn<NotificationLogRow>[] {
+  return [
+    { header: "เวลา", value: (r) => r.sent_at },
+    { header: "ช่องทาง", value: () => "Telegram" },
+    { header: "กฎ", value: (r) => describeKey(r.alert_key).title },
+    { header: "แบรนด์", value: (r) => { const brand = describeKey(r.alert_key).brand; return brand ? (domains.get(brand) ?? brand) : ""; } },
+    { header: "สถานะ", value: (r) => (r.status === "failed" ? "ล้มเหลว" : "ส่งแล้ว") },
+    { header: "รหัสตอบกลับ", value: (r) => r.response_code },
+  ];
+}
+
 function History({ me, domains }: { me?: Me; domains: Map<string, string> }) {
   const [rows, setRows] = useState<NotificationLogRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -264,6 +289,7 @@ function History({ me, domains }: { me?: Me; domains: Map<string, string> }) {
   if (!rows) return <Spinner />;
   return (
     <section className="panel" aria-label="ประวัติการส่ง">
+      <div className="csv-row"><CsvButton page="alerts-history" columns={historyCsv(domains)} rows={rows} /></div>
       <h2>ประวัติการส่ง</h2>
       {notice && <p className={notice.kind === "ok" ? "alert-notice" : "alert-notice err"} role={notice.kind === "ok" ? "status" : "alert"}>{notice.text}</p>}
       {rows.length === 0 ? <EmptyState title="ยังไม่มีการส่งแจ้งเตือน" /> : (

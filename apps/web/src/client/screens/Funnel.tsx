@@ -128,7 +128,7 @@ export function FunnelScreen() {
     </div>
     <section className="panel" aria-label="ฟันเนลรายแบรนด์">
       {error ? <p role="alert">{error}</p> : !traffic ? <p role="status">กำลังโหลด…</p> :
-        <div className="tw"><table><thead><tr>
+        <div className="tw stack-table"><table><thead><tr>
           <th>แบรนด์</th><th>คลิกที่จ่าย</th><th>ถึงเว็บ</th><th>ถึง /go</th><th>เปิดฟอร์ม</th><th>ลีด</th><th>ขายได้</th><th>จุดรั่วมากสุด</th>
         </tr></thead><tbody>{[...brands.values()].filter((b) => inScopeId(b.brand_id)).map((b) => {
           const sold = report ? report.rows.filter((r) => r.brand === b.brand_id).reduce((sum, r) => sum + r.sold, 0) : null;
@@ -154,7 +154,7 @@ export function FunnelScreen() {
         </div>
       </div>
       {selectedError ? <p role="alert">{selectedError}</p> : !selected || selected.period !== period || selected.by !== tab ? <p role="status">กำลังโหลด…</p> :
-        <div className="tw" style={{ marginTop: 8 }}><table><thead><tr><th>{tabs[tab]}</th><th style={{ width: "40%" }} aria-label="สัดส่วนผู้เข้าชม" /><th>เข้าเว็บ</th><th>ลีด</th><th>อัตราลีด</th></tr></thead>
+        <div className="tw stack-table" style={{ marginTop: 8 }}><table><thead><tr><th>{tabs[tab]}</th><th style={{ width: "40%" }} aria-label="สัดส่วนผู้เข้าชม" /><th>เข้าเว็บ</th><th>ลีด</th><th>อัตราลีด</th></tr></thead>
           <tbody>{selected.rows.map((r) => <tr key={r.key}><td>{trafficLabel(tab, r.key)}</td>
             <td><div className="prog"><i style={{ width: `${r.visits / maxVisits * 100}%`, background: "var(--spend)" }} /></div></td>
             <td>{number(r.visits)}</td><td>{number(r.leads)}</td><td className={r.visits > 0 && r.leads / r.visits < .01 ? "amb" : ""}>{rate(r.visits > 0 ? r.leads / r.visits : null)}</td>
@@ -176,7 +176,7 @@ export function FunnelScreen() {
     <section className="panel" style={{ marginTop: 16 }}>
       <h2>แยกตามคีย์เวิร์ดและ A/B</h2>
       {reportError ? <p role="alert">{reportError}</p> : error ? <p className="hint">ยังโหลดรายงานไม่ได้</p> : !report ? <p role="status">กำลังโหลด…</p> :
-        <div className="tw"><table><thead><tr><th>แบรนด์</th><th>คีย์เวิร์ด</th><th>ตัวแปร</th><th>คลิก</th><th>/go</th><th>เปิดฟอร์ม</th><th>ส่ง</th><th>ขายได้</th>{owner && <th>รายได้</th>}<th>อัตราส่ง</th><th>อัตราขาย</th></tr></thead>
+        <div className="tw stack-table"><table><thead><tr><th>แบรนด์</th><th>คีย์เวิร์ด</th><th>ตัวแปร</th><th>คลิก</th><th>/go</th><th>เปิดฟอร์ม</th><th>ส่ง</th><th>ขายได้</th>{owner && <th>รายได้</th>}<th>อัตราส่ง</th><th>อัตราขาย</th></tr></thead>
           <tbody>{report.rows.map((r) => <tr key={JSON.stringify([r.brand, r.keyword, r.variant])}>
             <td><BrandLabel brandId={r.brand} domain={labelOf(r.brand)} /></td><td>{r.keyword ?? "—"}</td><td>{r.variant ?? "—"}</td><td>{r.clicks}</td><td>{r.go_count}</td><td>{r.form_views}</td><td>{r.submits}</td><td>{r.sold}</td>
             {owner && <td>{r.revenue === null ? "—" : r.revenue.toFixed(2)}</td>}<td>{rate(r.submit_rate)}</td><td>{rate(r.sold_rate)}</td>

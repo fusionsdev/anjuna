@@ -2,6 +2,8 @@ import { roleAtLeast, type PanelCampaign, type PanelCampaignsResponse } from "@a
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
+import { CsvButton } from "../components/CsvButton";
+import type { CsvColumn } from "../csv";
 import { Chip, type ChipTone } from "../components/Chip";
 import type { Tone } from "../components/StatusBadge";
 import { PANEL_ROLE_TABLE } from "../../server/panel-roles";
@@ -25,6 +27,16 @@ const STATE: Record<State, { label: string; tone: Tone }> = {
 /** Only these may be enabled; enabling, enabled and unknown never offer enable again. */
 const ENABLEABLE: ReadonlySet<State> = new Set(["draft", "paused"]);
 const PAUSABLE: ReadonlySet<State> = new Set(["enabled", "unknown"]);
+
+/** The columns of the CSV of the campaigns on screen: the same ones the table shows, with the budget as a number in baht. */
+const CSV_COLUMNS: CsvColumn<PanelCampaign>[] = [
+  { header: "แบรนด์", value: (c) => c.brand_id },
+  { header: "แคมเปญ", value: (c) => c.name },
+  { header: "สถานะ", value: (c) => STATE[c.state].label },
+  { header: "งบต่อวัน (บาท)", value: (c) => c.daily_budget_thb },
+  { header: "บัญชี", value: (c) => c.account },
+  { header: "อัปเดต", value: (c) => c.updated_at },
+];
 
 const satang = (baht: number) => Math.round(baht * 100);
 const baht = (n: number) => `฿${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
@@ -203,9 +215,9 @@ export function CampaignsScreen({ me }: { me: Me }) {
 
       <div className="campaigns-main">
       <section className="campaigns-card">
-        <h2>แคมเปญทั้งหมด</h2>
+        <div className="campaigns-card-head"><h2>แคมเปญทั้งหมด</h2><CsvButton page="campaigns" columns={CSV_COLUMNS} rows={visible} /></div>
         {!data ? <p className="campaigns-muted">กำลังโหลด</p> : shown.length === 0 ? <p className="campaigns-muted">ยังไม่มีแคมเปญจากหน้านี้</p> : visible.length === 0 ? <p className="campaigns-muted">ไม่มีแคมเปญในสถานะนี้</p> : (
-          <div className="campaigns-scroll"><table>
+          <div className="campaigns-scroll stack-table"><table>
             <thead><tr><th>แบรนด์</th><th>แคมเปญ</th><th>สถานะ</th><th className="num">งบต่อวัน</th><th>บัญชี</th><th>อัปเดต</th><th><span className="sr-only">การทำงาน</span></th></tr></thead>
             <tbody>
               {visible.map((c) => (
@@ -242,7 +254,7 @@ export function CampaignsScreen({ me }: { me: Me }) {
         {data && (
           <section className="campaigns-card campaigns-caps">
             <h2>เพดานงบต่อวัน</h2>
-            <div className="campaigns-scroll"><table aria-label="เพดานงบต่อวัน">
+            <div className="campaigns-scroll stack-table"><table aria-label="เพดานงบต่อวัน">
               <thead><tr><th /><th className="num">เพดาน</th><th className="num">ใช้ไป</th><th className="num">เหลือ</th></tr></thead>
               <tbody>
                 <tr>
