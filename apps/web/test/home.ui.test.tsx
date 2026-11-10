@@ -35,6 +35,12 @@ const alertsReport = {
   submit_error_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.05, alert_at: 0.1, samples: [] } },
   reject_rate: { state: "warn", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [{ brand: "Credit Genie", rejected: 5, decided: 13, rate: 0.38 }] } },
 };
+// Traffic breakdown: form-views are measured from form_started events; /go has no event (null). cg: 283 reach the site, 94 open the form.
+const breakdownReport = {
+  period: "today", by: "source", from: "2026-10-22T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", timezone: "America/New_York",
+  rows: [],
+  brands: [{ brand_id: "cg", hostname: "creditgenie.test", visits: 283, go_count: null, form_views: 94, leads: 17 }],
+};
 // The Conversions fixture, owner view: uploaded 5, pending 3, dead 4, stalled 1, uploaded value 412.5.
 const CONVERSIONS_OWNER = conversionsFixture as ConversionsReportResponse;
 // 30 days: every count is different so the period switch shows in the card.
@@ -72,6 +78,7 @@ let alertsReply: () => Response | Promise<Response>;
 let brandsReply: () => Response | Promise<Response>;
 let checklistsReply: () => Response | Promise<Response>;
 let runtimeReply: () => Response | Promise<Response>;
+let breakdownReply: () => Response | Promise<Response>;
 let spend: ReturnType<typeof vi.fn>;
 const realSpend = api.spend;
 let requests: string[];
@@ -101,7 +108,8 @@ beforeEach(() => {
   alertsReply = () => json(alertsBody);
   brandsReply = () => json({ brands: BRANDS });
   checklistsReply = () => json(checklistsBody());
-  runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "live" }, { brand_id: "d6", status: "live" }] });
+  runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "live", hostnames: ["creditgenie.test"] }, { brand_id: "d6", status: "live", hostnames: ["sixpack.test"] }] });
+  breakdownReply = () => json(breakdownReport);
   spend = vi.fn(async (period: string) => (period === "30d" ? spendReport(84000, 1200) : spendReport(62300, 402)));
   (api as unknown as { spend: unknown }).spend = spend;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
@@ -116,6 +124,7 @@ beforeEach(() => {
     if (url.pathname === "/api/lifecycle/brands") return brandsReply();
     if (url.pathname === "/api/ads/campaigns") return adsReply();
     if (url.pathname === "/api/traffic/realtime") return realtimeReply(url.searchParams.get("brand") ?? "");
+    if (url.pathname === "/api/traffic/breakdown") return breakdownReply();
     if (url.pathname === "/api/brands/checklists") return checklistsReply();
     if (url.pathname === "/api/brands") return runtimeReply();
     throw new Error(`Unexpected test HTTP request: ${input}`);
@@ -183,12 +192,12 @@ describe("Home screen, owner", () => {
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
 
     const stages = [...document.querySelectorAll(".home-stage")].map((s) => s.textContent);
-    // /go and form-view are unmeasured (FA-6 not built), so they read "—"; the biggest measured leak is ลีด -> ขายได้ (76%).
-    expect(stages).toEqual(["402คลิกที่จ่าย", "283ถึงเว็บ", "—ถึง /go", "—เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
-    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("4ขายได้");
-    expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หลุด 76%");
-    expect(document.querySelector(".note")!.textContent).toContain('หลุดมากที่สุดที่ขั้น "ลีด" ไป "ขายได้": จาก 17 เหลือ 4 (76%)');
-    expect(screen.getByText("/go และ เปิดฟอร์ม ยังไม่มีข้อมูลการวัด")).toBeTruthy();
+    // /go is unmeasured ("—"); เปิดฟอร์ม shows the real count (94) from the traffic breakdown. Biggest leak is เปิดฟอร์ม -> ลีด (82%).
+    expect(stages).toEqual(["402คลิกที่จ่าย", "283ถึงเว็บ", "—ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ลีด");
+    expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หลุด 82%");
+    expect(document.querySelector(".note")!.textContent).toContain('หลุดมากที่สุดที่ขั้น "เปิดฟอร์ม" ไป "ลีด": จาก 94 เหลือ 17 (82%)');
+    expect(screen.getByText("/go ยังไม่มีข้อมูลการวัด")).toBeTruthy();
 
     const fixes = within(screen.getByRole("region", { name: "ต้องแก้" }));
     expect(await fixes.findByText("demo06")).toBeTruthy();
@@ -366,7 +375,8 @@ describe("Home screen, owner", () => {
     await heading("จ่ายค่าโฆษณา ฿62,300 ได้ — ลีด ต้นทุนลีดละ —");
     expect(ledgerValue("รายได้").text).toBe("—");
     expect(ledgerValue("กำไร/ขาดทุน").text).toBe("—");
-    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["402คลิกที่จ่าย", "—ถึงเว็บ", "—ถึง /go", "—เปิดฟอร์ม", "—ลีด", "—ขายได้"]);
+    // The funnel API failed, so visits/leads/sold read "—"; the form count comes from the traffic breakdown, which still answered.
+    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["402คลิกที่จ่าย", "—ถึงเว็บ", "—ถึง /go", "94เปิดฟอร์ม", "—ลีด", "—ขายได้"]);
     expect(document.querySelector(".note")).toBeNull();
   });
 
@@ -656,8 +666,7 @@ describe("Home screen, owner", () => {
     expect(ledgerValue("รายได้").text).toBe("$410");
     await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
     await waitFor(() => expect(fixTexts()).toContain("คอนเวอร์ชันส่งไม่ได้ 4 รายการ"));
-    // /go and form unmeasured, so the biggest measured leak is ลีด -> ขายได้.
-    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("4ขายได้");
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ลีด");
   });
 
   it("shows the empty state when the window has no leads", async () => {
@@ -704,7 +713,7 @@ describe("Home screen, employee", () => {
     expect(screen.queryByText("รายได้")).toBeNull();
     expect(screen.queryByText("กำไร/ขาดทุน")).toBeNull();
     expect(screen.queryByText("คลิกที่จ่าย")).toBeNull();
-    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283ถึงเว็บ", "—ถึง /go", "—เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
+    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283ถึงเว็บ", "—ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
     // Only the owner can approve a template.
     expect(screen.queryByText("อนุมัติเทมเพลต")).toBeNull();
     expect(await within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).findByText("1 แบรนด์")).toBeTruthy();
