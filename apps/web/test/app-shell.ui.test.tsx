@@ -191,4 +191,32 @@ describe("SidebarNav", () => {
     expect(onOpen).not.toHaveBeenCalled();
     expect(link.getAttribute("href")).toBe("/");
   });
+  it("wires the shortcuts: / focuses the page search, ? lists the shortcuts, and g then b opens the brands page", () => {
+    window.history.replaceState(null, "", "/");
+    render(
+      <AppShell me={me} onSignOut={vi.fn()} nav={<SidebarNav items={items} current="home" onOpen={vi.fn()} />}>
+        <input type="search" aria-label="ค้นหาแบรนด์" />
+      </AppShell>,
+    );
+    fireEvent.keyDown(document, { key: "/" });
+    expect(document.activeElement).toBe(screen.getByLabelText("ค้นหาแบรนด์"));
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document, { key: "?" });
+    expect(screen.getByRole("dialog", { name: "ทางลัดคีย์บอร์ด" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(document, { key: "g" });
+    fireEvent.keyDown(document, { key: "b" });
+    expect(window.location.pathname).toBe("/brands");
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("labels the cells of a stacked table from its head row, so the card shows the column names", async () => {
+    render(
+      <AppShell me={me} onSignOut={vi.fn()} nav={<SidebarNav items={items} current="home" onOpen={vi.fn()} />}>
+        <div className="stack-table"><table><thead><tr><th>แบรนด์</th><th>สถานะ</th></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table></div>
+      </AppShell>,
+    );
+    expect([...document.querySelectorAll("main td")].map((td) => td.getAttribute("data-label"))).toEqual(["แบรนด์", "สถานะ"]);
+  });
 });

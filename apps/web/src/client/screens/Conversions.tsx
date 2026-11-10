@@ -2,10 +2,13 @@ import {
   BrandId, CONVERSIONS_MAX_LIMIT, CONVERSIONS_ROW_LIMIT, CONVERSION_STALLED_HOURS, CONVERSION_STATUSES, SPEND_PERIODS,
   type ConversionsReportResponse, type ConversionStatus, type SpendPeriod,
 } from "@anjuna/contracts";
+import { CheckHit } from "../components/CheckHit";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
+import { CsvButton } from "../components/CsvButton";
 import { type Column, DataTable } from "../components/DataTable";
+import type { CsvColumn } from "../csv";
 import { EmptyState } from "../components/EmptyState";
 import { FilterBar } from "../components/FilterBar";
 import { LoadMore } from "../components/LoadMore";
@@ -150,10 +153,10 @@ export function ConversionsScreen({ me }: { me: Me }) {
   const columns: Column<Row>[] = [
     ...(owner ? [{
       key: "pick",
-      header: <input type="checkbox" aria-label="เลือกทุกรายการที่ส่งไม่ได้" checked={allDeadPicked} disabled={deadIds.length === 0} onChange={() => setPicked(allDeadPicked ? new Set() : new Set(deadIds))} />,
+      header: <CheckHit aria-label="เลือกทุกรายการที่ส่งไม่ได้" checked={allDeadPicked} disabled={deadIds.length === 0} onChange={() => setPicked(allDeadPicked ? new Set() : new Set(deadIds))} />,
       label: "",
       cell: (row: Row) => (row.status === "dead"
-        ? <input type="checkbox" aria-label={`เลือก ${row.lead_id.slice(0, 8)}`} checked={picked.has(row.lead_id)} onChange={() => togglePick(row.lead_id)} />
+        ? <CheckHit aria-label={`เลือก ${row.lead_id.slice(0, 8)}`} checked={picked.has(row.lead_id)} onChange={() => togglePick(row.lead_id)} />
         : null),
     }] : []),
     { key: "brand", header: "แบรนด์", cell: (row) => <BrandLabel brandId={row.brand} domain={labelOf(row.brand)} /> },
@@ -165,6 +168,19 @@ export function ConversionsScreen({ me }: { me: Me }) {
     ...(owner ? [{ key: "value", header: "มูลค่า (Value)", align: "right" as const, cell: (row: Row) => (row.value === null ? "—" : usd(row.value)) }] : []),
     { key: "created", header: "สร้างเมื่อ", cell: (row) => when(row.created_at) },
     { key: "next", header: "ลองใหม่", cell: (row) => when(row.next_attempt_at) },
+  ];
+  // The CSV of the rows on screen. The money column follows the role, like the table: an employee's file has none.
+  const csvColumns: CsvColumn<Row>[] = [
+    { header: "รหัสลีด", value: (row) => row.lead_id },
+    { header: "แบรนด์", value: (row) => row.brand },
+    { header: "สถานะ", value: (row) => STATUS_BADGE[row.status].label },
+    { header: "เหตุผล", value: (row) => (row.reason_code ? (REASON_TEXT[row.reason_code]?.label ?? row.reason_code) : "") },
+    { header: "ข้อความเต็ม", value: (row) => row.last_error?.trim() || "" },
+    { header: "Click", value: (row) => row.click_type },
+    { header: "ครั้งที่ลอง", value: (row) => row.attempts },
+    ...(owner ? [{ header: "มูลค่า", value: (row: Row) => row.value }] : []),
+    { header: "สร้างเมื่อ", value: (row) => row.created_at },
+    { header: "ลองใหม่", value: (row) => row.next_attempt_at },
   ];
   const report = load && "report" in load ? load.report : null;
   const loadingMore = load !== null && "report" in load && load.limit !== limit;
@@ -237,6 +253,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
                 <button type="button" className="btn conv-bulk-clear" aria-label="ล้างการเลือก" onClick={() => setPicked(new Set())}>ล้าง</button>
               </div>
             )}
+            <div className="csv-row"><CsvButton page="conversions" columns={csvColumns} rows={visibleRows} /></div>
             <DataTable
               label="รายการคอนเวอร์ชัน (Conversions)"
               columns={columns}

@@ -3,7 +3,10 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Me } from "../api";
 import { isPlainLeftClick, navigate, viewPath, type View } from "../router";
 import { useBrandScope } from "../useBrandScope";
+import { useStackLabels } from "../stack-labels";
+import { useShortcuts } from "../useShortcuts";
 import { BrandScopeControl } from "./BrandScopeControl";
+import { ShortcutsOverlay } from "./ShortcutsOverlay";
 
 export const pageTitle: Record<View, string> = {
   home: "หน้าแรก", brands: "แบรนด์", "new-brand": "สร้างแบรนด์ใหม่", templates: "เทมเพลต", funnel: "ฟันเนล",
@@ -38,6 +41,7 @@ function useMobileViewport() {
 /** Sidebar (232px) with the logo, the brand scope button, the menu and the user block; a 56px top bar and a drawer under 1024px. */
 export function AppShell({ me, nav, onSignOut, children }: { me: Me; nav: ReactNode; onSignOut: () => void; children: ReactNode }) {
   const [drawer, setDrawer] = useState(false);
+  const [help, setHelp] = useState(false);
   const mobile = useMobileViewport();
   const scope = useBrandScope();
   const menuButton = useRef<HTMLButtonElement>(null);
@@ -66,6 +70,8 @@ export function AppShell({ me, nav, onSignOut, children }: { me: Me; nav: ReactN
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [drawer]);
+  useStackLabels(main);
+  useShortcuts({ go: (view) => navigate(viewPath(view)), toggleHelp: () => setHelp((open) => !open) });
   const goHome = (e: React.MouseEvent<HTMLAnchorElement>) => {
     if (!isPlainLeftClick(e)) return;
     e.preventDefault();
@@ -103,6 +109,7 @@ export function AppShell({ me, nav, onSignOut, children }: { me: Me; nav: ReactN
         </header>
         <main className="content" ref={main} tabIndex={-1}>{children}</main>
       </div>
+      <ShortcutsOverlay open={help} onClose={() => setHelp(false)} />
     </div>
   );
 }

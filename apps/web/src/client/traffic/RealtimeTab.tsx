@@ -245,7 +245,7 @@ export function RealtimeTab() {
                 <button type="button" className="btn" onClick={exportRecent} disabled={recent.length === 0}><Download aria-hidden="true" size={16} />ดาวน์โหลด CSV</button>
               </div>
               {recent.length === 0 ? <EmptyState title="ยังไม่มีทราฟฟิกในช่วงนี้" /> : (
-                <div className="rt-recent">
+                <div className="rt-recent stack-table">
                   <table>
                     <caption className="sr-only">ทราฟฟิกล่าสุด {recent.length} แถว</caption>
                     <thead><tr>{RECENT_HEADERS.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>

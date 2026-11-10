@@ -2,7 +2,9 @@ import { LEAD_AGGREGATES_MAX_DAYS, LEAD_OUTCOMES, type LeadListRow, type LeadOut
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiError, api, type LeadFilterState, type Me } from "../api";
 import { BrandLabel, buildBrandLabels } from "../brand-labels";
+import { CsvButton } from "../components/CsvButton";
 import { DataTable, type Column } from "../components/DataTable";
+import type { CsvColumn } from "../csv";
 import { FilterBar } from "../components/FilterBar";
 import { useConfirm } from "../components/ConfirmDialog";
 import { EmptyState } from "../components/EmptyState";
@@ -149,6 +151,17 @@ export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: 
   if (filter.brand && !brandOptions.has(filter.brand)) brandOptions.set(filter.brand, filter.brand);
   const outcomeTone = new Map(outcomes.map(([value, label, tone]) => [value, { label, tone }]));
 
+  // The CSV of the rows on screen: the same columns as the table, with no email or phone (those only come with the server export).
+  const csvColumns: CsvColumn<LeadListRow>[] = [
+    { header: "สร้างเมื่อ", value: (r) => r.created_at },
+    { header: "แบรนด์", value: (r) => r.brand },
+    { header: "ผล", value: (r) => outcomeTone.get(r.outcome)?.label ?? r.outcome },
+    { header: "ยอดที่ขอ", value: (r) => r.requested_amount },
+    { header: "รัฐ", value: (r) => r.state },
+    { header: "คีย์เวิร์ด", value: (r) => r.keyword },
+    { header: "ตัวแปร", value: (r) => r.variant },
+    { header: "รหัสลีด", value: (r) => r.lead_id },
+  ];
   const columns: Column<LeadListRow>[] = [
     { key: "created", header: "สร้างเมื่อ (Created)", cell: (r) => fmt(r.created_at) },
     { key: "brand", header: "แบรนด์ (Brand)", cell: (r) => <BrandLabel brandId={r.brand} domain={domains.get(r.brand) ?? r.hostname} /> },
@@ -240,6 +253,7 @@ export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: 
     <section className="panel" aria-label="รายการลีด">
       {!valid ? <p className="hint">แก้ตัวกรองด้านบนก่อนจึงจะโหลดรายการได้ (Fix the filter above to load the list)</p>
         : error ? <p role="alert">{error}</p> : !page ? <Spinner /> : <>
+        <div className="csv-row"><CsvButton page="leads" columns={csvColumns} rows={page.rows.filter((r) => inScopeId(r.brand))} /></div>
         <DataTable label="รายการลีด" columns={columns} rows={page.rows.filter((r) => inScopeId(r.brand))} rowKey={(r) => r.lead_id} empty={empty} />
         {page.next_cursor && <div style={{ marginTop: 10 }}><button type="button" className="btn" onClick={() => setCursor(page.next_cursor)}>ถัดไป (Next)</button></div>}
       </>}

@@ -1,5 +1,6 @@
 import type { TemplateCategory, TemplateReviewStatus, TemplateVersionSummary } from "@anjuna/contracts";
 import { Archive, Trash2, X } from "lucide-react";
+import { CheckHit } from "../components/CheckHit";
 import { Chip, type ChipTone } from "../components/Chip";
 import { TemplateCategoryPicker } from "./TemplateCategories";
 
@@ -86,11 +87,11 @@ export function TemplateTable({ items, categories, owner, busy, checked, openId,
 }) {
   const allChecked = items.length > 0 && items.every((t) => checked.has(t.template_version_id));
   return (
-    <div className="tpl-scroll">
+    <div className="tpl-scroll stack-table">
       <table className="tpl-table">
         <thead>
           <tr>
-            {owner && <th className="tpl-check"><input type="checkbox" aria-label="เลือกทั้งหมด" checked={allChecked} onChange={onToggleAll} /></th>}
+            {owner && <th className="tpl-check"><CheckHit aria-label="เลือกทั้งหมด" checked={allChecked} onChange={onToggleAll} /></th>}
             <th>เทมเพลต</th>
             <th>หมวด</th>
             <th>สถานะ</th>
@@ -104,7 +105,7 @@ export function TemplateTable({ items, categories, owner, busy, checked, openId,
             const id = t.template_version_id;
             return (
               <tr key={id} className={id === openId ? "sel" : undefined} data-checked={checked.has(id) ? "true" : undefined}>
-                {owner && <td className="tpl-check"><input type="checkbox" aria-label={`เลือก ${t.name} v${t.version}`} checked={checked.has(id)} onChange={() => onToggle(id)} /></td>}
+                {owner && <td className="tpl-check"><CheckHit aria-label={`เลือก ${t.name} v${t.version}`} checked={checked.has(id)} onChange={() => onToggle(id)} /></td>}
                 <td>
                   <div className="tpl-name-cell">
                     <Thumb t={t} />
