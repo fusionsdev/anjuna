@@ -40,11 +40,17 @@
 .tpl-table tr:last-child td { border-bottom: 0; }
 .tpl-table .num { text-align: right; font-family: var(--mono); }
 .tpl-table .tpl-check { width: 44px; padding-right: 0; }
-.tpl-table .tpl-check input { width: 18px; height: 18px; accent-color: var(--brand); }
 .tpl-table tr.sel td, .tpl-table tr[data-checked="true"] td { background: var(--brand-tint); }
 .tpl-table .tpl-action { text-align: right; white-space: nowrap; }
 .tpl-name-cell { display: flex; align-items: center; gap: 12px; }
 .tpl-name-cell > div { min-width: 220px; }
+/* Under 768px the table is a stack of cards. The text column may shrink to the card and wraps long names, ids and sender names;
+   the 64px thumbnail keeps its size. Without this the 220px minimum pushes the text out of a 375px card and the card clips it. */
+@media (max-width: 767px) {
+  .tpl-name-cell { min-width: 0; max-width: 100%; }
+  .tpl-name-cell > div { min-width: 0; flex: 1 1 0; overflow-wrap: anywhere; }
+  .tpl-name-cell .tpl-open { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+}
 .tpl-name-cell small { display: block; color: var(--sub); font-size: 13px; }
 .tpl-name-cell code { font-family: var(--mono); font-size: 13px; }
 .tpl-thumb { flex: 0 0 64px; width: 64px; height: 48px; border-radius: 8px; border: 1px solid var(--line); object-fit: cover; object-position: top; background: var(--canvas); display: block; }

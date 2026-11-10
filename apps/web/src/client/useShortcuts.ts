@@ -36,9 +36,16 @@ export function findPageSearch(root: HTMLElement | Document = document): HTMLEle
   return null;
 }
 
+/** The modal dialog that is open, if any: an element marked aria-modal (confirm, upload, reset, shortcut list) or an open <dialog>. */
+export function openModal(root: Document = document): HTMLElement | null {
+  return root.querySelector<HTMLElement>('[aria-modal="true"], dialog[open]');
+}
+
 /**
  * Page shortcuts: "/" focuses the page search, "g" then h, b, t or a goes to a page, "?" toggles the shortcut list.
  * Nothing fires while the user types in a field, a select or an editable area, or while Ctrl, Alt or Meta is held.
+ * Nothing fires either while a modal is open: the modal owns the keyboard (focus trap, Escape, Tab), and a "/" or a "g b" from its buttons
+ * would move focus or the page behind it. The one exception is "?" while the shortcut list itself is the open modal, so it can close itself.
  */
 export function useShortcuts({ go, toggleHelp }: { go: (view: PageView) => void; toggleHelp: () => void }): void {
   const latest = useRef({ go, toggleHelp });
@@ -48,6 +55,12 @@ export function useShortcuts({ go, toggleHelp }: { go: (view: PageView) => void;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
       if (isTypingTarget(e.target)) { chordAt = 0; return; }
+      const modal = openModal();
+      if (modal) {
+        chordAt = 0;
+        if (e.key === "?" && modal.querySelector("#shortcuts-title")) { e.preventDefault(); latest.current.toggleHelp(); }
+        return;
+      }
       const key = e.key;
       if (chordAt && Date.now() - chordAt <= CHORD_TIMEOUT_MS) {
         chordAt = 0;

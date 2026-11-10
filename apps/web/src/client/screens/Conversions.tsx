@@ -2,6 +2,7 @@ import {
   BrandId, CONVERSIONS_MAX_LIMIT, CONVERSIONS_ROW_LIMIT, CONVERSION_STALLED_HOURS, CONVERSION_STATUSES, SPEND_PERIODS,
   type ConversionsReportResponse, type ConversionStatus, type SpendPeriod,
 } from "@anjuna/contracts";
+import { CheckHit } from "../components/CheckHit";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
@@ -152,10 +153,10 @@ export function ConversionsScreen({ me }: { me: Me }) {
   const columns: Column<Row>[] = [
     ...(owner ? [{
       key: "pick",
-      header: <input type="checkbox" aria-label="เลือกทุกรายการที่ส่งไม่ได้" checked={allDeadPicked} disabled={deadIds.length === 0} onChange={() => setPicked(allDeadPicked ? new Set() : new Set(deadIds))} />,
+      header: <CheckHit aria-label="เลือกทุกรายการที่ส่งไม่ได้" checked={allDeadPicked} disabled={deadIds.length === 0} onChange={() => setPicked(allDeadPicked ? new Set() : new Set(deadIds))} />,
       label: "",
       cell: (row: Row) => (row.status === "dead"
-        ? <input type="checkbox" aria-label={`เลือก ${row.lead_id.slice(0, 8)}`} checked={picked.has(row.lead_id)} onChange={() => togglePick(row.lead_id)} />
+        ? <CheckHit aria-label={`เลือก ${row.lead_id.slice(0, 8)}`} checked={picked.has(row.lead_id)} onChange={() => togglePick(row.lead_id)} />
         : null),
     }] : []),
     { key: "brand", header: "แบรนด์", cell: (row) => <BrandLabel brandId={row.brand} domain={labelOf(row.brand)} /> },
