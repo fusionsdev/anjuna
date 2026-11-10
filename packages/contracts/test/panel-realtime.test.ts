@@ -12,6 +12,11 @@ it("TrafficTailEvent parses and rejects private fields", () => {
   }
   expect(TrafficTailEvent.safeParse({ ...event, url: "https://example.com/?email=private" }).success).toBe(false);
 });
+it("TrafficTailEvent accepts a postback stage and keeps postback details out", () => {
+  const postback = { ...event, event_id: "pb-7", event_type: "postback_received", device_type: null, browser: null, user_agent_family: "unknown" };
+  expect(TrafficTailEvent.parse(postback)).toEqual(postback);
+  expect(TrafficTailEvent.safeParse({ ...postback, payout: 25 }).success).toBe(false);
+});
 it("TrafficRealtimeResponse parses all report fields", () => {
   const metrics = { landing_views: 0, form_starts: 0, leads: 0, validation_errors: 0, redirect_errors: 0 };
   const bots = { current_hour: 0, "24h": 0 };

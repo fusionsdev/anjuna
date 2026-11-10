@@ -72,7 +72,7 @@ export function LiveStream({ events, labelOf }: { events: readonly TrafficTailEv
                   const failing = event.http_status !== null && event.http_status >= 400;
                   return (
                     <li key={event.event_id} data-event={event.event_type}>
-                      <Chip tone={stage.error ? "danger" : stage.kind === "lead" ? "success" : "neutral"}>{stage.label}</Chip>
+                      <Chip tone={stage.error ? "danger" : stage.kind === "lead" || stage.kind === "postback" ? "success" : "neutral"}>{stage.label}</Chip>
                       {failing && <Chip tone="danger">HTTP {event.http_status}</Chip>}
                       {isBot(event) && event.http_status !== null && !failing && <Chip tone="neutral">HTTP {event.http_status}</Chip>}
                     </li>

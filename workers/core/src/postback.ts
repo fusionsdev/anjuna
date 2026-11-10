@@ -1,10 +1,11 @@
 import {
-  PostbackQuery, postbackRawFromSearchParams, queuesConversion, v1Clean,
+  PostbackQuery, TrafficTailEvent, postbackRawFromSearchParams, queuesConversion, v1Clean,
 } from "@anjuna/contracts";
 import { hashesEqual, sha256 } from "./auth.js";
 import type { Env } from "./env.js";
 import { json, unauthorized } from "./http.js";
 import { globalPostbackDigest } from "./postback-token.js";
+import { pushTail, tailSessionRef } from "./traffic-tail/index.js";
 
 interface PostbackLead {
   lead_id: string;
@@ -12,7 +13,7 @@ interface PostbackLead {
   postback_token_hash: string | null;
 }
 
-export async function handlePostback(request: Request, env: Env): Promise<Response> {
+export async function handlePostback(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const query = postbackRawFromSearchParams(new URL(request.url).searchParams);
   // V1: query token wins; an empty query token falls back to the Authorization header.
   const token = (query.token || (request.headers.get("Authorization") || "")
@@ -74,5 +75,32 @@ export async function handlePostback(request: Request, env: Env): Promise<Respon
   // Keep V1's atomic enqueue + dedup + status update, including a paid replay after a $0 sale.
   const results = await env.LEADS.batch(statements);
   const dedup = results[enqueue ? 1 : 0]!;
+  // The tail publish runs after the response under waitUntil; it never delays or changes the reply.
+  if (dedup.meta.changes && ctx) ctx.waitUntil(publishPostbackStage(env, lead.lead_id, dedup.meta.last_row_id));
   return json({ status: dedup.meta.changes ? "accepted" : "duplicate", lead_id: lead.lead_id });
+}
+
+/**
+ * Shows an accepted postback as the last stage of the lead's visitor session on the live tail.
+ * leads.session_id is the id the form sent with telemetry, so tailSessionRef gives the same session_ref.
+ * Every failure is caught here, so the returned promise never rejects.
+ */
+async function publishPostbackStage(env: Env, leadId: string, rowId: number): Promise<void> {
+  try {
+    const row = await env.LEADS.prepare("SELECT session_id, brand, hostname FROM leads WHERE lead_id = ?1")
+      .bind(leadId).first<{ session_id: string | null; brand: string | null; hostname: string | null }>();
+    if (!row?.session_id || !row.brand || !row.hostname) return;
+    const domain = row.hostname.toLowerCase().replace(/^www\./, "");
+    // The "pb-" prefix keeps postback_events ids apart from numeric traffic_events ids in the tail dedup.
+    const event: TrafficTailEvent = {
+      event_id: `pb-${rowId}`, ts: Date.now(), event_type: "postback_received",
+      session_ref: await tailSessionRef(row.session_id), brand: row.brand, domain,
+      device_type: null, browser: null, user_agent_family: "unknown", url: `https://${domain}/`,
+      http_status: null, response_ms: null, gate_passed: null,
+    };
+    TrafficTailEvent.parse(event);
+    await pushTail(env, event);
+  } catch {
+    console.warn("postback_tail_publish_failed");
+  }
 }
