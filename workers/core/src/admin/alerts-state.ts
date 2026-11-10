@@ -35,29 +35,24 @@ export async function handleAlertStateRoute(request: Request, env: Env, ctx: Adm
   }
   if (path === "/admin/alerts/state" && request.method === "GET") {
     // Every state an owner or employee acknowledged or closed, so a fresh page load shows what was already done.
-    // Keyset pages, newest update first: the cursor holds the updated_at and alert_key of the last row of the page before.
+    // Pages by alert_key, ascending, and the cursor is the last alert_key of the page before. alert_key never changes, unlike updated_at:
+    // MultiNotifier.process rewrites updated_at on every cron tick, so a cursor on updated_at lets a row that is not read yet jump past it
+    // and be skipped while the reader sees the end. The reader sorts after the last page.
     const raw = url.searchParams.get("limit") ?? String(ALERT_STATES_PAGE_DEFAULT);
     if (!/^[0-9]+$/.test(raw) || Number(raw) < 1 || Number(raw) > ALERT_STATES_PAGE_MAX) return json({ error: "invalid" }, 422);
     const limit = Number(raw);
-    let after: [string, string] | null = null;
-    const cursor = url.searchParams.get("cursor");
-    if (cursor !== null) {
-      try {
-        const value: unknown = JSON.parse(cursor);
-        if (Array.isArray(value) && value.length === 2 && typeof value[0] === "string" && typeof value[1] === "string") after = [value[0], value[1]];
-      } catch { /* answered below */ }
-      if (!after) return json({ error: "invalid" }, 422);
-    }
+    const after = url.searchParams.get("cursor");
+    if (after !== null && (after.length < 1 || after.length > 200)) return json({ error: "invalid" }, 422);
     const touched = "(acknowledged_at IS NOT NULL OR closed_at IS NOT NULL)";
-    const statement = after
-      ? env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} AND (updated_at < ?1 OR (updated_at = ?1 AND alert_key > ?2)) ORDER BY updated_at DESC, alert_key ASC LIMIT ?3`).bind(after[0], after[1], limit + 1)
-      : env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} ORDER BY updated_at DESC, alert_key ASC LIMIT ?1`).bind(limit + 1);
-    const { results } = await statement.all<{ updated_at: string; alert_key: string }>();
+    const statement = after !== null
+      ? env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} AND alert_key > ?1 ORDER BY alert_key ASC LIMIT ?2`).bind(after, limit + 1)
+      : env.LEADS.prepare(`SELECT * FROM alert_state WHERE ${touched} ORDER BY alert_key ASC LIMIT ?1`).bind(limit + 1);
+    const { results } = await statement.all<{ alert_key: string }>();
     const page = results.slice(0, limit);
     const last = page[page.length - 1];
     return json({
       rows: page.flatMap(row => { const parsed = AlertStateRow.safeParse(row); return parsed.success ? [parsed.data] : []; }),
-      next_cursor: results.length > limit && last ? JSON.stringify([last.updated_at, last.alert_key]) : null,
+      next_cursor: results.length > limit && last ? last.alert_key : null,
     });
   }
   if (path === "/admin/alerts/log" && request.method === "GET") {

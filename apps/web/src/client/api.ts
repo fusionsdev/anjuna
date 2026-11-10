@@ -73,6 +73,13 @@ export interface BrandChecklists {
 }
 
 /** GET /api/nav/counts: what the sidebar badges show. */
+/** Newest update first, ties by alert_key, one row per key. Core pages in alert_key order, so the order is made here after the last page. */
+export function sortAlertStates(rows: readonly AlertStateRow[]): AlertStateRow[] {
+  const byKey = new Map<string, AlertStateRow>();
+  for (const row of rows) byKey.set(row.alert_key, row);
+  return [...byKey.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.alert_key.localeCompare(b.alert_key));
+}
+
 /** Most pages of alert states one load reads: 100 pages of 500 rows. */
 const ALERT_STATES_MAX_PAGES = 100;
 
@@ -330,7 +337,8 @@ export const api = {
   /** The last sends of the Telegram notifier, newest first. Core caps the limit at 100. */
   alertsLog: (limit = 100) => request<unknown>("GET", `/api/alerts/log?limit=${limit}`).then((body) => z.object({ rows: z.array(NotificationLogRow) }).parse(body).rows),
   /**
-   * Every alert state with an acknowledge or a close on it, as core stored them. Core answers in pages, so this follows the cursor to the end.
+   * Every alert state with an acknowledge or a close on it, as core stored them, newest update first. Core answers in pages in alert_key order,
+   * so this follows the cursor to the end and sorts after the last page.
    * A cursor that repeats, or more than ALERT_STATES_MAX_PAGES pages, is an error: the list is not complete and the screen says so.
    */
   alertStates: async (): Promise<AlertStateRow[]> => {
@@ -341,7 +349,7 @@ export const api = {
       if (cursor !== null) query.set("cursor", cursor);
       const body = AlertStatesResponse.parse(await request<unknown>("GET", `/api/alerts/state?${query}`));
       rows.push(...body.rows);
-      if (body.next_cursor === null) return rows;
+      if (body.next_cursor === null) return sortAlertStates(rows);
       if (body.next_cursor === cursor) throw new Error("alert state cursor did not move");
       cursor = body.next_cursor;
     }

@@ -271,6 +271,21 @@ describe("Alerts list", () => {
       expect(pageRequests[1]).toBe("/api/alerts/state?limit=500&cursor=500");
     });
 
+    it("sorts the rows newest update first after the last page, and keeps one row per key, when core pages in alert_key order", async () => {
+      const row = (key: string, updated: string) => ({ ...closedRow(key), updated_at: updated });
+      const pages: Record<string, { rows: ReturnType<typeof row>[]; next_cursor: string | null }> = {
+        "": { rows: [row("a:brand-1", "2026-11-01T00:00:00.000Z"), row("b:brand-1", "2026-11-05T00:00:00.000Z")], next_cursor: "b:brand-1" },
+        "b:brand-1": { rows: [row("c:brand-1", "2026-11-09T00:00:00.000Z"), row("c:brand-2", "2026-11-05T00:00:00.000Z"), row("a:brand-1", "2026-11-01T00:00:00.000Z")], next_cursor: null },
+      };
+      vi.mocked(fetch).mockImplementation((async (input: string) => {
+        const cursor = new URL(input, "http://panel.test").searchParams.get("cursor") ?? "";
+        return new Response(JSON.stringify(pages[cursor]), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch);
+      const rows = await api.alertStates();
+      // Newest first; the two rows from 2026-11-05 are ordered by key; the repeated a:brand-1 is one row.
+      expect(rows.map((r) => r.alert_key)).toEqual(["c:brand-1", "b:brand-1", "c:brand-2", "a:brand-1"]);
+    });
+
     it("says the stored states could not load when core keeps returning the same cursor", async () => {
       vi.spyOn(api, "alerts").mockResolvedValue(noisy());
       vi.mocked(fetch).mockImplementation((async (input: string) => {
