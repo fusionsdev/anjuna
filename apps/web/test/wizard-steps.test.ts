@@ -110,6 +110,8 @@ describe("validateStep template, copy and tracking", () => {
     expect(visibleCopyLength(valid({ name: "Maple Cash Lending", brand_name: "Maple", h1: "{{keyword}} now" }), "h1")).toBe("Maple now".length);
     expect(visibleCopyLength(valid({ name: "", brand_name: "", h1: "{{keyword}} now" }), "h1")).toBe("Quick Loan now".length);
     expect(visibleCopyLength(valid({ cta: " Go " }), "cta")).toBe(2);
+    // "$&" is slot text, not a replacement pattern: the marker counts as 2 characters.
+    expect(visibleCopyLength(valid({ name: "Maple", brand_name: "$&", h1: "{{keyword}} now" }), "h1")).toBe("$& now".length);
     expect(copyFieldErrors(valid({ name: "M".repeat(10), h1: `${"a".repeat(131)} {{keyword}}` })).h1).toContain("140");
     expect(copyFieldErrors(valid({ name: "M".repeat(9), h1: `${"a".repeat(130)} {{keyword}}` }))).toEqual({});
     // A long keyword no longer uses up h1 room: only the name is on the page.

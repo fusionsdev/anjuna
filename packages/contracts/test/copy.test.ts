@@ -32,6 +32,13 @@ describe("validateCopy", () => {
     }
   });
 
+  it("counts slot text literally: $& in a brand name is 2 characters, not the marker", () => {
+    // 136 + space + 2 = 139 visible. A replacement pattern would insert the 11-character marker and give 148.
+    expect(validateCopy({ ...copy, h1: "a".repeat(136) + " {{keyword}}" }, "Maple", "$&")).toEqual([]);
+    // 138 + space + 2 = 141 is one over the 140 limit.
+    expect(validateCopy({ ...copy, h1: "a".repeat(138) + " {{keyword}}" }, "Maple", "$&")).toContainEqual(expect.objectContaining({ field: "h1", code: "length" }));
+  });
+
   it("slotText is what the marker becomes: it sets the visible length and the markup, keyword_default is still checked on its own", () => {
     const brand = "Harbor & Sons, LLC";
     expect(renderCopyH1(copy.h1, keyword, brand)).toBe("Harbor &amp; Sons, LLC | Check Your Options".replace(/^(.*?) \| /, '<span data-kw>$1</span> | '));

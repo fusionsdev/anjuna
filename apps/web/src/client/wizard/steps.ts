@@ -129,7 +129,9 @@ export function copyFieldErrors(f: WizardForm): FieldErrors {
 /** Characters a visitor sees: the h1's {{keyword}} marker counts as the site name it becomes. */
 export function visibleCopyLength(f: WizardForm, field: CopyField): number {
   const value = f[field].trim();
-  return field === "h1" ? value.replaceAll(COPY_KEYWORD_MARKER, slotTextOf(f)).length : value.length;
+  // A callback keeps "$&", "$'" and "$$" in the site name literal.
+  const slot = slotTextOf(f);
+  return field === "h1" ? value.replaceAll(COPY_KEYWORD_MARKER, () => slot).length : value.length;
 }
 
 export interface ValidateContext {

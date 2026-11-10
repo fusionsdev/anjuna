@@ -39,7 +39,9 @@ export function validateCopy(copy: BrandCopy, keywordDefault: string, slotText: 
       continue;
     }
     if (/[\u0000-\u001f\u007f<>"\u2028\u2029]/.test(value)) add(field, "plain_text", `${field} must be a single line of plain text without HTML or double quotes.`);
-    const visible = field === "h1" ? value.replaceAll(COPY_KEYWORD_MARKER, typeof slotText === "string" ? slotText : "") : value;
+    // A callback keeps "$&", "$'" and "$$" in the slot text literal.
+    const slot = typeof slotText === "string" ? slotText : "";
+    const visible = field === "h1" ? value.replaceAll(COPY_KEYWORD_MARKER, () => slot) : value;
     if (!cleanCopy(value) || !cleanCopy(visible)) add(field, "brand_clean", `${field} contains a forbidden identity or credential.`);
     if (TEMPLATE_RULES.forbiddenWording.test(visible)) add(field, "forbidden_wording", `${field} must not use "personal loan" wording.`);
     if (visible.length > COPY_LIMITS[field]) add(field, "length", `${field} must be at most ${COPY_LIMITS[field]} visible characters.`);
