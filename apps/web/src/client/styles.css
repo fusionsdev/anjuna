@@ -292,6 +292,9 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
   /* No horizontal scroll of the page; a button or a field is at least 44px tall. */
   html, body { overflow-x: hidden; }
   :is(.data-table, .stack-table) td :is(button, .btn, select, input:not([type="checkbox"]):not([type="radio"])) { min-height: 44px; }
+  /* A chip or a sub-line in a card wraps instead of running past the card edge. */
+  :is(.data-table, .stack-table) td :is(.chip, .pill) { white-space: normal; max-width: 100%; }
+  :is(.data-table, .stack-table) td small { overflow-wrap: anywhere; }
   :is(.data-table, .stack-table) td input[type="checkbox"] { width: 24px; height: 24px; }
 }
 
