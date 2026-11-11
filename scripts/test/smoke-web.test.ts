@@ -9,7 +9,8 @@ import { parseDocument } from "yaml";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const script = join(root, "scripts/smoke-web.sh");
-const html = '<!doctype html><title>release fixture</title>';
+// The smoke now matches the artifact's main module asset, so the fixture must carry one.
+const html = '<!doctype html><title>release fixture</title><script type="module" crossorigin src="/assets/index-FIX123.js"></script>';
 let directory: string;
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "web-smoke-"));
@@ -60,7 +61,7 @@ describe("web smoke against local HTTP fixtures", () => {
         }, (error, stdout, stderr) => resolve({ code: error ? 1 : 0, output: stdout + stderr }));
       });
       expect(result.code, result.output).toBe(ok ? 0 : 1);
-      expect(result.output).toContain(`web smoke mode: ${token === "both" ? "authenticated" : "anonymous-fallback"}`);
+      expect(result.output).toContain(`web smoke mode: ${token === "both" ? "authenticated" : "anonymous"}`);
       expect(result.output).not.toContain("fixture-secret");
       expect(requests).toHaveLength(1);
       expect(requests[0]?.["cf-access-client-id"]).toBe(token === "both" ? "fixture-id" : undefined);
