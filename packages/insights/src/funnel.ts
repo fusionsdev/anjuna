@@ -55,6 +55,54 @@ export class InMemoryFunnelEvents implements FunnelEventsSource {
   }
 }
 
+/**
+ * D1-backed source: every `/go` hit writes a `click_sessions` row with `landing_path = '/go'`,
+ * so `go_count` is counted from there. `form_views` has no such row and stays 0 (a separate follow-up).
+ * Mirrors {@link queryClicks} for brand-filter host expansion and brand resolution. Only reads.
+ */
+export class D1FunnelEvents implements FunnelEventsSource {
+  constructor(private readonly db: D1Database) {}
+
+  async counts(filter: FunnelFilter): Promise<FunnelEventsRow[]> {
+    const f = FunnelFilter.parse(filter);
+    const map = await loadBrandMap(this.db);
+    const where = ["landing_path = '/go'", "click_seen_at >= ?", "click_seen_at < ?"];
+    const params: (string | number)[] = [f.from, f.to];
+    if (f.brand !== undefined) {
+      const hosts = map.brandToHosts.get(f.brand) ?? [];
+      if (hosts.length === 0) return [];
+      where.push(`hostname IN (${hosts.map(() => "?").join(", ")})`);
+      params.push(...hosts);
+    }
+    if (f.keyword !== undefined) {
+      where.push("keyword = ?");
+      params.push(f.keyword);
+    }
+    if (f.variant !== undefined) {
+      where.push("variant = ?");
+      params.push(f.variant);
+    }
+    const sql = `SELECT hostname, variant, keyword, COUNT(*) AS n
+                FROM click_sessions
+                WHERE ${where.join(" AND ")}
+                GROUP BY hostname, variant, keyword`;
+    const { results } = await this.db
+      .prepare(sql)
+      .bind(...params)
+      .all<{ hostname: string | null; variant: string | null; keyword: string | null; n: number }>();
+    // A /go hit without a hostname cannot be attributed to a brand; drop it, as queryClicks does.
+    return results
+      .filter((r) => r.hostname !== null && r.hostname.length > 0)
+      .map((r) => ({
+        brand: map.hostToBrand.get(r.hostname!.toLowerCase()) ?? r.hostname!,
+        keyword: r.keyword,
+        variant: r.variant,
+        form_views: 0,
+        go_count: r.n,
+      }));
+  }
+}
+
 /** One funnel row. Rates are null when their denominator is zero. */
 export const FunnelRow = z.strictObject({
   brand: z.string().min(1),

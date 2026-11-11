@@ -35,12 +35,16 @@ const alertsReport = {
   submit_error_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.05, alert_at: 0.1, samples: [] } },
   reject_rate: { state: "warn", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [{ brand: "Credit Genie", rejected: 5, decided: 13, rate: 0.38 }] } },
 };
-// Traffic breakdown: form-views are measured from form_started events; /go has no event (null). cg: 283 reach the site, 94 open the form.
+// Traffic breakdown: form-views from form_started events, /go counted from click_sessions (landing_path='/go').
+// cg: 283 reach the site, 94 open the form. go_count is null in this default so most tests exercise the "—" path;
+// the tests that need a measured /go override breakdownReply with a value.
 const breakdownReport = {
   period: "today", by: "source", from: "2026-10-22T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", timezone: "America/New_York",
   rows: [],
   brands: [{ brand_id: "cg", hostname: "creditgenie.test", visits: 283, go_count: null, form_views: 94, leads: 17 }],
 };
+// The same brands with a measured /go, for scenarios that assert the Home /go stage shows a number.
+const breakdownWithGo = (go: number) => ({ ...breakdownReport, brands: breakdownReport.brands.map((b) => ({ ...b, go_count: go })) });
 // The Conversions fixture, owner view: uploaded 5, pending 3, dead 4, stalled 1, uploaded value 412.5.
 const CONVERSIONS_OWNER = conversionsFixture as ConversionsReportResponse;
 // 30 days: every count is different so the period switch shows in the card.
@@ -183,6 +187,7 @@ const appTakesClick = (link: Element, init: MouseEventInit = {}) => {
 
 describe("Home screen, owner", () => {
   it("shows spend, leads, cost per lead, the ledger, the money flow and the to-do list", async () => {
+    breakdownReply = () => json(breakdownWithGo(131));
     render(<HomeScreen me={owner} />);
     await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
 
@@ -192,12 +197,11 @@ describe("Home screen, owner", () => {
     expect(ledgerValue("กำไร/ขาดทุน")).toEqual({ text: "−$1,370", className: "v neg" });
 
     const stages = [...document.querySelectorAll(".home-stage")].map((s) => s.textContent);
-    // /go is unmeasured ("—"); เปิดฟอร์ม shows the real count (94) from the traffic breakdown. Biggest leak is เปิดฟอร์ม -> ลีด (82%).
-    expect(stages).toEqual(["402คลิกที่จ่าย", "283ถึงเว็บ", "—ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
+    // /go shows the measured count (131) from the traffic breakdown; เปิดฟอร์ม shows 94. Biggest leak is เปิดฟอร์ม -> ลีด (82%).
+    expect(stages).toEqual(["402คลิกที่จ่าย", "283ถึงเว็บ", "131ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
     expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ลีด");
     expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หลุด 82%");
     expect(document.querySelector(".note")!.textContent).toContain('หลุดมากที่สุดที่ขั้น "เปิดฟอร์ม" ไป "ลีด": จาก 94 เหลือ 17 (82%)');
-    expect(screen.getByText("/go ยังไม่มีข้อมูลการวัด")).toBeTruthy();
 
     const fixes = within(screen.getByRole("region", { name: "ต้องแก้" }));
     expect(await fixes.findByText("demo06")).toBeTruthy();
@@ -698,6 +702,7 @@ describe("Home screen, employee", () => {
   });
 
   it("shows visitors, leads, sold and pending with no money and no spend request", async () => {
+    breakdownReply = () => json(breakdownWithGo(131));
     render(<HomeScreen me={employee} />);
     await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
 
@@ -713,7 +718,7 @@ describe("Home screen, employee", () => {
     expect(screen.queryByText("รายได้")).toBeNull();
     expect(screen.queryByText("กำไร/ขาดทุน")).toBeNull();
     expect(screen.queryByText("คลิกที่จ่าย")).toBeNull();
-    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283ถึงเว็บ", "—ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
+    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283ถึงเว็บ", "131ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
     // Only the owner can approve a template.
     expect(screen.queryByText("อนุมัติเทมเพลต")).toBeNull();
     expect(await within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).findByText("1 แบรนด์")).toBeTruthy();

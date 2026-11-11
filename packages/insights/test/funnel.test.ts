@@ -2,6 +2,7 @@ import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
+  D1FunnelEvents,
   FunnelReport,
   InMemoryFunnelEvents,
   funnelReport,
@@ -93,5 +94,56 @@ describe("funnelReport", () => {
 
   it("rejects a from/to window where from is not before to", async () => {
     await expect(funnelReport(env.DB, EVENTS, { from: TO, to: FROM })).rejects.toThrow(/from must be before to/);
+  });
+});
+
+describe("D1FunnelEvents.counts", () => {
+  const key = (r: { brand: string; keyword: string | null; variant: string | null; go_count: number }) =>
+    `${r.brand}/${r.keyword}/${r.variant}=${r.go_count}`;
+
+  beforeAll(async () => {
+    // Reseed click_sessions with /go hits only; brand_runtime (a.test, b.test) survives the delete.
+    await env.DB.prepare("DELETE FROM click_sessions").run();
+    const go = (id: string, hostname: string, variant: string | null, keyword: string | null, seen_at: string, path = "/go") =>
+      env.DB
+        .prepare(
+          `INSERT INTO click_sessions
+            (click_session_id, landing_path, hostname, variant, keyword, click_seen_at, first_seen_at, last_seen_at, created_at)
+           VALUES (?1, ?6, ?2, ?3, ?4, ?5, ?5, ?5, ?5)`,
+        )
+        .bind(id, hostname, variant, keyword, seen_at, path);
+    await env.DB.batch([
+      go("go1", "a.test", "A", "loans", "2026-10-01T10:00:00.000Z"),
+      go("go2", "a.test", "A", "loans", "2026-10-01T11:00:00.000Z"),
+      go("go3", "a.test", "B", "cash", "2026-10-01T12:00:00.000Z"),
+      go("go4", "b.test", "A", "loans", "2026-10-01T10:00:00.000Z"),
+      // Must NOT count: landing_path is not /go, and a /go hit outside the window.
+      go("nc1", "a.test", "A", "loans", "2026-10-01T13:00:00.000Z", "/apply"),
+      go("nc2", "a.test", "A", "loans", "2026-09-30T10:00:00.000Z"),
+    ]);
+  });
+
+  it("counts /go hits grouped by brand x keyword x variant, excluding non-/go and out-of-window rows", async () => {
+    const rows = await new D1FunnelEvents(env.DB).counts({ from: FROM, to: TO });
+    expect(rows.map(key).sort()).toEqual([
+      "brand-a/cash/B=1",
+      "brand-a/loans/A=2",
+      "brand-b/loans/A=1",
+    ]);
+    expect(rows.every((r) => r.form_views === 0)).toBe(true);
+  });
+
+  it("filters on brand, keyword and variant", async () => {
+    const d1 = new D1FunnelEvents(env.DB);
+    expect((await d1.counts({ from: FROM, to: TO, brand: "brand-b" })).map(key)).toEqual(["brand-b/loans/A=1"]);
+    expect((await d1.counts({ from: FROM, to: TO, keyword: "cash" })).map(key)).toEqual(["brand-a/cash/B=1"]);
+    expect((await d1.counts({ from: FROM, to: TO, variant: "A" })).map(key).sort()).toEqual([
+      "brand-a/loans/A=2",
+      "brand-b/loans/A=1",
+    ]);
+  });
+
+  it("returns [] for a brand with no mapped hosts", async () => {
+    expect(await new D1FunnelEvents(env.DB).counts({ from: FROM, to: TO, brand: "ghost" })).toEqual([]);
   });
 });
