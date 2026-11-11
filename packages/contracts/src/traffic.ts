@@ -19,7 +19,7 @@ export const TrafficBreakdownResponse = z.strictObject({
   rows: z.array(z.strictObject({ key: z.string(), visits: Count, leads: Count })),
   brands: z.array(z.strictObject({
     brand_id: z.string(), hostname: z.string(), visits: Count,
-    // The current telemetry vocabulary has no /go event. Unknown is not zero.
+    // Counted from click_sessions WHERE landing_path = '/go'; 0 means measured zero. Nullable kept for back-compat.
     go_count: Count.nullable(), form_views: Count, leads: Count,
   })),
 });

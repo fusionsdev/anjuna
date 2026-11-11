@@ -48,17 +48,28 @@ export async function loadTrafficBreakdown(
   const { from, to } = trafficWindow(query.period, now);
   // The only interpolated SQL is an allowlisted expression, never request text.
   const dimension = DIMENSIONS[query.by];
-  const [groups, brands] = await Promise.all([
+  const [groups, brands, goHits] = await Promise.all([
     env.LEADS.prepare(SESSIONS + `
       SELECT ${dimension} AS key, SUM(visits) AS visits, SUM(leads) AS leads
       FROM attributed GROUP BY ${dimension} ORDER BY visits DESC, key
     `).bind(from, to).all<{ key: string; visits: number; leads: number }>(),
     env.LEADS.prepare(SESSIONS + `
       SELECT brand_id, MIN(host) AS hostname, SUM(visits) AS visits,
-        NULL AS go_count, SUM(form_views) AS form_views, SUM(leads) AS leads
+        SUM(form_views) AS form_views, SUM(leads) AS leads
       FROM attributed GROUP BY brand_id ORDER BY brand_id
-    `).bind(from, to).all<TrafficBreakdownResponse["brands"][number]>(),
+    `).bind(from, to).all<Omit<TrafficBreakdownResponse["brands"][number], "go_count">>(),
+    // Each /go hit writes a click_sessions row (landing_path = '/go'); count them per brand over the same window.
+    env.LEADS.prepare(`
+      SELECT brand_id, COUNT(*) AS go_count
+      FROM click_sessions
+      WHERE landing_path = '/go' AND click_seen_at >= ?1 AND click_seen_at < ?2
+      GROUP BY brand_id
+    `).bind(from, to).all<{ brand_id: string; go_count: number }>(),
   ]);
+  // brand_id here is derived from the host via brand_runtime; click_sessions.brand_id is the real id.
+  // They align for matched brands; an unmatched host (brand_id = host) has no /go rows and stays 0.
+  const goByBrand = new Map(goHits.results.map((row) => [row.brand_id, row.go_count]));
+  const brandRows = brands.results.map((row) => ({ ...row, go_count: goByBrand.get(row.brand_id) ?? 0 }));
   let rows = groups.results;
   if (query.by === "hour") {
     // Convert each UTC date/hour separately: a fixed UTC offset breaks across DST.
@@ -70,5 +81,5 @@ export async function loadTrafficBreakdown(
       row.leads += group.leads;
     }
   }
-  return TrafficBreakdownResponse.parse({ ...query, from, to, timezone: "America/New_York", rows, brands: brands.results });
+  return TrafficBreakdownResponse.parse({ ...query, from, to, timezone: "America/New_York", rows, brands: brandRows });
 }

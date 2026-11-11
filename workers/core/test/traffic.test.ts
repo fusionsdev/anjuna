@@ -30,6 +30,17 @@ beforeAll(async () => {
   await event("old", "landing_viewed", "2026-10-01T12:00:00.000Z", "outside-window");
   await event("future", "landing_viewed", "2026-11-02T12:00:00.000Z", "exclusive-end");
   await event("error-only", "form_validation_failed", "2026-11-01T09:00:00.000Z", "not-a-visit");
+  // /go hits for brand-a; brand-b has none. A non-/go row and one outside the window must not count.
+  async function go(id: string, brand: string, stamp: string, path = "/go") {
+    await h.db.prepare(`INSERT INTO click_sessions
+      (click_session_id, brand_id, landing_path, click_seen_at, first_seen_at, last_seen_at, created_at)
+      VALUES (?1, ?2, ?3, ?4, ?4, ?4, ?4)`)
+      .bind(id, brand, path, stamp).run();
+  }
+  await go("g1", "brand-a", "2026-11-01T05:30:00.000Z");
+  await go("g2", "brand-a", "2026-11-01T06:30:00.000Z");
+  await go("g3", "brand-a", "2026-11-01T06:40:00.000Z", "/apply");
+  await go("g4", "brand-a", "2026-10-01T12:00:00.000Z");
 });
 afterAll(async () => { await h?.mf.dispose(); });
 
@@ -42,10 +53,15 @@ describe("traffic breakdown D1 reads", () => {
       { key: "unknown", visits: 1, leads: 0 },
     ]);
     expect(data.brands).toEqual([
-      { brand_id: "brand-a", hostname: "brand-a.example", visits: 2, go_count: null, form_views: 1, leads: 1 },
-      { brand_id: "brand-b", hostname: "brand-b.example", visits: 1, go_count: null, form_views: 1, leads: 0 },
+      { brand_id: "brand-a", hostname: "brand-a.example", visits: 2, go_count: 2, form_views: 1, leads: 1 },
+      { brand_id: "brand-b", hostname: "brand-b.example", visits: 1, go_count: 0, form_views: 1, leads: 0 },
     ]);
     expect(JSON.stringify(data)).not.toContain("forged-brand");
+  });
+  it("counts /go hits per brand from click_sessions and leaves a brand with none at 0", async () => {
+    const go = Object.fromEntries((await load("source")).brands.map((b) => [b.brand_id, b.go_count]));
+    // brand-a has two in-window /go rows; the /apply row and the out-of-window /go row are excluded.
+    expect(go).toEqual({ "brand-a": 2, "brand-b": 0 });
   });
   it.each(["domain", "device", "browser"] as const)("groups %s with the same visit and lead totals", async (by) => {
     const data = await load(by);

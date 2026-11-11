@@ -142,7 +142,7 @@ export function FunnelScreen() {
             <td>{leak ? <span className={`pill ${leak.loss > .8 ? "p-warn" : "p-mute"}`}>{leak.label} หลุด {Math.round(leak.loss * 100)}%</span> : <span className="pill p-mute">—</span>}</td>
           </tr>;
         })}{brands.size === 0 && <tr><td colSpan={8} className="hint">ไม่มีข้อมูลในช่วงนี้</td></tr>}</tbody></table></div>}
-      <p className="hint">นับเซสชันไม่ซ้ำในช่วงเวลา UTC · ลีดนับจากเซสชันที่เข้าเว็บในช่วงนี้ · /go ยังไม่มีข้อมูลการวัด · ขายได้มาจากผลขายในช่วงเวลาเดียวกัน</p>
+      <p className="hint">นับเซสชันไม่ซ้ำในช่วงเวลา UTC · ลีดนับจากเซสชันที่เข้าเว็บในช่วงนี้ · ขายได้มาจากผลขายในช่วงเวลาเดียวกัน</p>
       {spendError && <p role="alert" className="hint">โหลดคลิกที่จ่ายไม่สำเร็จ</p>}
     </section>
 

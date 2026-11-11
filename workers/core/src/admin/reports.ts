@@ -1,7 +1,7 @@
 /**
  * Read-only admin reports. The panel never binds the leads D1; it calls these routes.
- * Analytics Engine is not wired yet, so /go, form-view and submit-error counts stay empty.
- * Mailing status reads `mailing_outbox` only. It never constructs a listmonk client.
+ * /go is measured from click_sessions (landing_path = '/go'); form-view and submit-error counts stay
+ * empty until Analytics Engine is wired. Mailing status reads `mailing_outbox` only. It never constructs a listmonk client.
  */
 import {
   AlertsReportResponse,
@@ -12,7 +12,7 @@ import {
   type FunnelQuery,
 } from "@anjuna/contracts";
 import {
-  InMemoryFunnelEvents,
+  D1FunnelEvents,
   InMemorySubmitErrorCounts,
   funnelReport,
   runAlerts,
@@ -22,12 +22,11 @@ import { loadBotHits } from "./bot-hits.js";
 import { loadUnallocatedAlert } from "../ad-allocation.js";
 import { listmonkConfigured } from "../listmonk-config.js";
 
-const EMPTY_EVENTS = new InMemoryFunnelEvents([]);
 const EMPTY_SUBMIT_ERRORS = new InMemorySubmitErrorCounts([]);
 
 /** Only the owner sees money. Every other role gets `revenue: null` on every row. */
 export async function loadFunnel(env: Env, filter: FunnelQuery, role: AdminRole): Promise<FunnelReportResponse> {
-  const report = await funnelReport(env.LEADS, EMPTY_EVENTS, filter);
+  const report = await funnelReport(env.LEADS, new D1FunnelEvents(env.LEADS), filter);
   const shown = role === "owner" ? report : { ...report, rows: report.rows.map((row) => ({ ...row, revenue: null })) };
   return FunnelReportResponse.parse(shown);
 }
