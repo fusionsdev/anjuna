@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   AlertsReport,
   InMemorySubmitErrorCounts,
+  RATE_ALERT_MIN_SAMPLE,
   RecordingNotifier,
   brandsWithoutPostbacks,
   clickRisk,
@@ -163,6 +164,17 @@ describe("submitErrorRate", () => {
     expect(r.state).toBe("ok");
     expect(r.detail.samples).toEqual([]);
   });
+
+  it("needs RATE_ALERT_MIN_SAMPLE attempts before a brand can warn or alert", async () => {
+    expect(RATE_ALERT_MIN_SAMPLE).toBe(10);
+    const source = new InMemorySubmitErrorCounts([
+      { brand: "brand-small", submits: 0, errors: 9 }, // 100% of 9: below the floor
+      { brand: "brand-edge", submits: 8, errors: 2 }, // 20% of 10: at the floor
+    ]);
+    const r = await submitErrorRate(source, { now: NOW });
+    expect(r.state).toBe("alert");
+    expect(r.detail.samples).toEqual([{ brand: "brand-edge", submits: 8, errors: 2, rate: 0.2 }]);
+  });
 });
 
 describe("rejectRateByBrand", () => {
@@ -200,6 +212,25 @@ describe("rejectRateByBrand", () => {
     const r = await rejectRateByBrand(env.DB, { now: NOW });
     expect(r.state).toBe("ok");
     expect(r.detail.brands).toEqual([]);
+  });
+
+  it("opens no alert below RATE_ALERT_MIN_SAMPLE decided leads", async () => {
+    await truncateLeads(env.DB);
+    await seedDecisions("brand-one", 0, 1); // 1 of 1: the production case
+    await seedDecisions("brand-nine", 4, 5); // 5 of 9: still below the floor
+
+    const r = await rejectRateByBrand(env.DB, { now: NOW });
+    expect(r.state).toBe("ok");
+    expect(r.detail.brands).toEqual([]);
+  });
+
+  it("alerts at exactly RATE_ALERT_MIN_SAMPLE decided leads", async () => {
+    await truncateLeads(env.DB);
+    await seedDecisions("brand-ten", 5, 5); // 5 of 10
+
+    const r = await rejectRateByBrand(env.DB, { now: NOW });
+    expect(r.state).toBe("alert");
+    expect(r.detail.brands).toEqual([{ brand: "brand-ten", rejected: 5, decided: 10, rate: 0.5 }]);
   });
 });
 

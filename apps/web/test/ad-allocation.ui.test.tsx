@@ -133,6 +133,8 @@ describe("alert row ค่าโฆษณายังไม่จัดสรร
     // The title is on the row and on the rules card.
     expect((await screen.findAllByText("ค่าโฆษณายังไม่จัดสรร")).length).toBe(2);
     expect(screen.getByText("แคมเปญที่ยังไม่จัดสรรเกิน 20% ของค่าโฆษณา 7 วัน")).toBeTruthy();
-    expect(screen.getByText(/บัญชี 538-116-3935 · THB · ยังไม่จัดสรร 21%/)).toBeTruthy();
+    // An open card shows its fix cause and the button to the allocation page (FUS-392).
+    expect(screen.getByText("บัญชี 538-116-3935 ค่าโฆษณา THB ยังไม่ได้แบ่งให้แบรนด์ 21% ใน 7 วัน")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "แบ่งค่าโฆษณา" }).getAttribute("href")).toBe("/ad-allocation");
   });
 });

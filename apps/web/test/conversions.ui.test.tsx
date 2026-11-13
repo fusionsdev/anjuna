@@ -129,15 +129,12 @@ describe("Conversions page", () => {
   it("shows the reason label, fix text and full error", async () => {
     render(<ConversionsScreen me={owner} />);
     await table();
-    // One row per reason code in the fixture. Label and fix text are the spec "UI text per code" table.
+    // Rows that are not dead, and a dead row whose code has its own fix, keep the spec "UI text per code" table.
     const expected: Array<[string, string]> = [
-      ["ไม่มี click id (No click id)", "Lead มาโดยไม่มี gclid/gbraid/wbraid/msclkid. ส่งขึ้น Ads ไม่ได้. ตรวจว่าแคมเปญเปิด auto-tagging."],
       ["ลองครบแล้ว (Attempts exhausted)", "Drain ดึงไปแล้วไม่ตอบกลับจนครบจำนวนครั้ง. ตรวจ log ของ drain บน VPS."],
       ["ไม่มี route (No route)", "Drain ไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. เพิ่ม route ใน drain config บน VPS."],
       ["ยังไม่พร้อม (Not ready)", "Ads ยังไม่รับ click นี้. Drain จะลองใหม่เอง."],
       ["ตั้งค่า Microsoft ไม่ครบ (Microsoft env missing)", "ตั้ง ACCOUNT และ CONVERSION_NAME ของ Microsoft Ads ใน env ของ drain."],
-      ["อัปโหลดไม่ผ่าน (Upload failed)", "Ads ตอบ error. Drain จะลองใหม่ตาม backoff."],
-      ["Ads ตอบ error (Platform error)", "ดูข้อความ error เต็มในแถว."],
     ];
     for (const [label, fix] of expected) {
       const row = screen.getByText(label).closest("tr")!;
@@ -147,17 +144,49 @@ describe("Conversions page", () => {
     const details = noRoute.querySelector("details")!;
     expect(within(details).getByText("ข้อความเต็ม")).toBeTruthy();
     expect(details.textContent).toContain("no route for brand=brand-a hostname=a.example");
-    const platform = screen.getByText("Ads ตอบ error (Platform error)").closest("tr")!;
+    // Dead rows with no click id or an unknown error read in plain Thai; the raw text sits behind ดูรายละเอียด.
+    expect(screen.getByText("ไม่มีรหัสคลิก คนเข้าเว็บไม่ได้มาจากโฆษณา ส่งไม่ได้")).toBeTruthy();
+    expect(screen.queryByText("ไม่มี click id (No click id)")).toBeNull();
+    const unknown = screen.getAllByText("ส่งไม่สำเร็จ");
+    expect(unknown).toHaveLength(2);
+    const platform = unknown.map((cell) => cell.closest("tr")!).find((row) => row.textContent!.includes("INVALID_GCLID"))!;
+    expect(within(platform.querySelector("details")!).getByText("ดูรายละเอียด")).toBeTruthy();
     expect(platform.querySelector("details")!.textContent).toContain("INVALID_GCLID: The gclid could not be decoded");
+    expect(platform.querySelector("details")!.hasAttribute("open")).toBe(false);
     // The uploaded and processing rows have no reason and no error text.
     expect(document.querySelectorAll("details")).toHaveLength(7);
     expect(screen.getAllByRole("row")).toHaveLength(1 + report.rows.length);
   });
 
+  it("names one-per-click, AdKit and no click id dead rows in plain Thai and links every row to its lead", async () => {
+    const dead = report.rows.find((row) => row.status === "dead")!;
+    const rows = [
+      { ...dead, lead_id: "a1aaaaaa-0000-4000-8000-000000000001", reason_code: "platform_error" as const, last_error: "Command failed: adkit manage google conversions upload: CLICK_CONVERSION_ALREADY_EXISTS one-per-click" },
+      { ...dead, lead_id: "a2aaaaaa-0000-4000-8000-000000000002", reason_code: "platform_error" as const, last_error: "Command failed: adkit manage google conversions upload --data {\"conversions\":[]}" },
+      { ...dead, lead_id: "a3aaaaaa-0000-4000-8000-000000000003", reason_code: "no_click_id" as const, last_error: "no click id" },
+    ];
+    respond = () => json({ ...report, rows });
+    render(<ConversionsScreen me={owner} />);
+    const grid = await table();
+    const rowOf = (id: string) => screen.getByRole("link", { name: `ดูลีด ${id.slice(0, 8)}` }).closest("tr")!;
+    const [onePerClick, adkit, noClick] = within(grid).getAllByRole("link", { name: /^ดูลีด / }).map((link) => link.closest("tr")!);
+    expect(within(onePerClick!).getByText("ส่งซ้ำ Google Ads รับครั้งเดียวต่อคลิก ไม่ต้องทำอะไร")).toBeTruthy();
+    // No resend route exists yet, so the text names the failure only; the raw error sits behind ดูรายละเอียด.
+    expect(within(adkit!).getByText("AdKit ขัดข้อง ส่งไม่สำเร็จ")).toBeTruthy();
+    expect(within(adkit!).getByText("ดูรายละเอียด")).toBeTruthy();
+    expect(within(noClick!).getByText("ไม่มีรหัสคลิก คนเข้าเว็บไม่ได้มาจากโฆษณา ส่งไม่ได้")).toBeTruthy();
+    // The raw CLI text never shows outside the collapsed toggle.
+    for (const row of [onePerClick!, adkit!]) expect(row.querySelector("b")!.textContent).not.toContain("Command failed");
+    const link = within(rowOf(rows[1]!.lead_id)).getByRole("link", { name: /^ดูลีด / });
+    expect(link.getAttribute("href")).toBe(`/leads/${rows[1]!.lead_id}`);
+    fireEvent.click(link);
+    expect(window.location.pathname).toBe(`/leads/${rows[1]!.lead_id}`);
+  });
+
   it("shows the value column and value totals to the owner only", async () => {
     const view = render(<ConversionsScreen me={owner} />);
     await table();
-    expect(screen.getAllByRole("columnheader")).toHaveLength(9);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(10);
     expect(screen.getByRole("columnheader", { name: "มูลค่า (Value)" })).toBeTruthy();
     expect(screen.getByText("$412.50")).toBeTruthy();
     expect(screen.getByText("$170.00")).toBeTruthy();
@@ -169,7 +198,7 @@ describe("Conversions page", () => {
     // The response still carries every number: the role check alone hides them.
     render(<ConversionsScreen me={employee} />);
     await table();
-    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
     expect(screen.queryByRole("columnheader", { name: "มูลค่า (Value)" })).toBeNull();
     expect(screen.queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
     expect(screen.queryByText("มูลค่าที่ส่งไม่ได้")).toBeNull();
@@ -245,9 +274,10 @@ describe("Conversions page: details", () => {
     await table();
     expect(screen.getByText("ไม่มี route (No route)")).toBeTruthy();
     expect(screen.getByText("Drain ไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. เพิ่ม route ใน drain config บน VPS.")).toBeTruthy();
-    expect(screen.getByText("Ads ตอบ error (Platform error)")).toBeTruthy();
+    // The dead platform error row reads as unknown, and an employee gets no raw text behind it.
+    expect(screen.getAllByText("ส่งไม่สำเร็จ")).toHaveLength(2);
     expect(document.querySelectorAll("details")).toHaveLength(0);
-    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
     expect(document.body.textContent).not.toContain("$");
   });
 
@@ -500,6 +530,23 @@ describe("readConversionFilters and conversionsPath", () => {
     expect(readConversionFilters("?period=today&status=pending&brand=brand-a")).toEqual({ period: "today", status: "pending", brand: "brand-a" });
     expect(readConversionFilters("?period=30D&status=DEAD&brand=")).toEqual({ period: "7d", status: "all", brand: null });
     expect(readConversionFilters("?period=toString&status=constructor")).toEqual({ period: "7d", status: "all", brand: null });
+    // The stalled alert's cutoff: an ISO instant is kept, anything else reads as none.
+    expect(readConversionFilters("?status=pending&created_before=2026-11-12T20%3A00%3A00.000Z")).toEqual({ period: "7d", status: "pending", brand: null, createdBefore: "2026-11-12T20:00:00.000Z" });
+    expect(readConversionFilters("?created_before=yesterday").createdBefore).toBeUndefined();
+    expect(conversionsPath({ period: "7d", status: "pending", brand: null, createdBefore: "2026-11-12T20:00:00.000Z" })).toBe("/conversions?status=pending&created_before=2026-11-12T20%3A00%3A00.000Z");
+  });
+
+  it("asks core for every row created before the stalled cutoff and says the table ignores the period", async () => {
+    window.history.replaceState(null, "", "/conversions?status=pending&created_before=2026-11-12T20%3A00%3A00.000Z");
+    render(<ConversionsScreen me={owner} />);
+    await waitFor(() => expect(requests.some((u) => u.searchParams.get("created_before") === "2026-11-12T20:00:00.000Z" && u.searchParams.get("status") === "pending")).toBe(true));
+    expect(await screen.findByText(/ตารางแสดงรายการที่สร้างก่อน .* ทุกช่วงเวลา/)).toBeTruthy();
+    // No period button reads as chosen while the cutoff rules the table; a period click drops the cutoff.
+    const periods = within(screen.getByRole("group", { name: "ช่วงเวลา" }));
+    expect(periods.getAllByRole("button").map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "false", "false", "false"]);
+    fireEvent.click(periods.getByRole("button", { name: "30 วัน" }));
+    expect(window.location.search).toBe("?period=30d&status=pending");
+    window.history.replaceState(null, "", "/");
   });
 
   it("writes only the values that differ from the defaults", () => {

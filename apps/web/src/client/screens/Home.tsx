@@ -300,7 +300,7 @@ export function HomeScreen({ me, onGo, onCountsChanged }: { me: Me; onGo?: (targ
 
   // Items the alert and conversion reports do not carry: brands waiting for a drain route, and clicks that never reached the site.
   const extraFixes: FixItem[] = [
-    ...(drainBrands ?? []).map((b): FixItem => ({ id: `drain:${b.brand_id}`, level: "warn", brand: b.hostnames[0] ?? b.name ?? b.brand_id, message: "ยังไม่ได้ตั้งเส้นทาง drain คอนเวอร์ชันจะไม่ถูกส่ง", kind: "drain-route", onAct: () => void actions.run("set-route", actionBrand(b)) })),
+    ...(drainBrands ?? []).map((b): FixItem => ({ id: `drain:${b.brand_id}`, level: "warn", brand: b.hostnames[0] ?? b.name ?? b.brand_id, message: "ยังไม่ได้ตั้งเส้นทาง drain คอนเวอร์ชันจะไม่ถูกส่ง", kind: "drain-route", path: brandsPath("drain-route") })),
     ...(clickLoss ? [{ id: "click-loss", level: "warn", brand: "ทุกแบรนด์", message: `Google คิดเงิน ${num(clickLoss.paid)} คลิก มาถึงเว็บ ${num(clickLoss.reached)} คน ตรวจ gclid และ URL ปลายทาง`, kind: "gclid", path: "/traffic" } satisfies FixItem] : []),
   ];
   const fixes = fixItems(scopedAlerts, conversions, period, extraFixes);
@@ -342,7 +342,7 @@ export function HomeScreen({ me, onGo, onCountsChanged }: { me: Me; onGo?: (targ
         </div>
       </div>
       <div className="home-stack">
-        <IncidentBanner urgent={urgent} clickLoss={clickLoss} onAlerts={go("alerts")} />
+        <IncidentBanner urgent={urgent} clickLoss={clickLoss} onAlerts={go("alerts")} domains={brandDomains} />
         <div className="home-grid2">
           <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} domains={brandDomains} onAlerts={go("alerts")} />
           <HumanTasks tasks={tasks} />

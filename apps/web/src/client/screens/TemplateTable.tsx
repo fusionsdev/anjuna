@@ -2,6 +2,7 @@ import type { TemplateCategory, TemplateReviewStatus, TemplateVersionSummary } f
 import { Archive, Trash2, X } from "lucide-react";
 import { CheckHit } from "../components/CheckHit";
 import { Chip, type ChipTone } from "../components/Chip";
+import { isPlainLeftClick, routePath } from "../router";
 import { TemplateCategoryPicker } from "./TemplateCategories";
 
 export const statusLabel: Record<TemplateReviewStatus, string> = {
@@ -126,7 +127,14 @@ export function TemplateTable({ items, categories, owner, busy, checked, openId,
                 <td className="num">{t.brands_using}</td>
                 <td className="tpl-action">
                   {owner && t.status === "awaiting_approval" && !hasDetail(id)
-                    ? <button type="button" className="btn pri" aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => onApprove(t)}>อนุมัติ</button>
+                    ? t.similarity_fail_count > 0
+                      // The approve route refuses a version with similarity FAILs, so the row says so and links to the drawer that lists them.
+                      ? <span className="tpl-blocked">
+                        <button type="button" className="btn" disabled aria-label={`ยังอนุมัติไม่ได้ ${t.name} v${t.version}`}>ยังอนุมัติไม่ได้</button>
+                        <a href={routePath({ view: "templates", templateId: id })} aria-label={`ดูเหตุผล ${t.name} v${t.version}`}
+                          onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); onOpen(id); }}>ดูเหตุผล</a>
+                      </span>
+                      : <button type="button" className="btn pri" aria-label={`อนุมัติ ${t.name} v${t.version}`} disabled={busy} onClick={() => onApprove(t)}>อนุมัติ</button>
                     : <button type="button" className="btn" aria-label={`ดูรายละเอียด ${t.name} v${t.version}`} onClick={() => onOpen(id)}>ดูรายละเอียด</button>}
                 </td>
               </tr>

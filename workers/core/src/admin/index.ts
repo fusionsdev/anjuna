@@ -22,6 +22,7 @@ import {
   BrandStatusChangeRequest,
   LeadAggregatesQuery,
   LEAD_AGGREGATES_MAX_DAYS,
+  isLeadInstant,
   LEAD_EXPORT_COLUMNS,
   LEAD_EXPORT_PII_COLUMNS,
   LeadConversion,
@@ -762,7 +763,7 @@ export function likeEscape(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
 }
 
-/** UTC calendar days, `YYYY-MM-DD`, both inclusive. */
+/** UTC calendar days, `YYYY-MM-DD`, both inclusive; or two ISO instants, `from` inclusive and `to` exclusive. */
 export interface LeadWindow {
   from: string;
   to: string;
@@ -781,7 +782,7 @@ export function resolveLeadWindow(
 ): LeadWindow | { issue: { path: string; message: string } } {
   const to = query.to ?? now.toISOString().slice(0, 10);
   const from = query.from ?? new Date(Date.parse(to) - 29 * 86_400_000).toISOString().slice(0, 10);
-  if (from > to) return { issue: { path: "from", message: "from must not be after to" } };
+  if (Date.parse(from) > Date.parse(to)) return { issue: { path: "from", message: "from must not be after to" } };
   if ((Date.parse(to) - Date.parse(from)) / 86_400_000 + 1 > LEAD_AGGREGATES_MAX_DAYS) {
     return { issue: { path: "from", message: `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days` } };
   }
@@ -802,12 +803,21 @@ export function leadFilterSql(
     bindings.push(value);
     return `?${bindings.length}`;
   };
+  // A day window runs from its first midnight to the midnight after its last day; an instant window is used as given.
+  const instant = isLeadInstant(window.from);
   const toExclusive = new Date(`${window.to}T00:00:00.000Z`);
   toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
-  const clauses: string[] = [
-    `julianday(l.created_at) >= julianday(${add(`${window.from}T00:00:00.000Z`)})`,
-    `julianday(l.created_at) < julianday(${add(toExclusive.toISOString())})`,
-  ];
+  const fromBound = instant ? window.from : `${window.from}T00:00:00.000Z`;
+  const toBound = instant ? window.to : toExclusive.toISOString();
+  // `decided` compares postback_events.created_at as text, as rejectRateByBrand (packages/insights alerts.ts) does,
+  // so the list holds the leads that alert counted.
+  const clauses: string[] = query.time === "decided"
+    ? [`EXISTS (SELECT 1 FROM postback_events pe WHERE pe.lead_id = l.lead_id AND pe.event_type IN ('soldLead', 'rejectLead')
+         AND pe.created_at >= ${add(fromBound)} AND pe.created_at < ${add(toBound)})`]
+    : [
+      `julianday(l.created_at) >= julianday(${add(fromBound)})`,
+      `julianday(l.created_at) < julianday(${add(toBound)})`,
+    ];
   if (query.brand !== undefined) clauses.push(`l.brand = ${add(query.brand)}`);
   if (query.status === "sold") clauses.push("l.status = 'soldLead'");
   else if (query.status === "rejected") clauses.push("l.status = 'rejectLead'");

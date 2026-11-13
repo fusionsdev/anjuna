@@ -25,6 +25,14 @@ const UPLOAD: Record<LeadConversion["status"], { label: string; tone: Tone }> = 
   uploaded: { label: "อัปโหลดแล้ว (Uploaded)", tone: "live" },
   dead: { label: "ล้มเหลวถาวร (Dead)", tone: "bad" },
 };
+/** LeadsGate event and status words the owner sees in Thai. Other values show as stored. */
+const EVENT_LABEL: Record<string, string> = { rejectLead: "โดนปฏิเสธ" };
+const eventLabel = (type: string): string => EVENT_LABEL[type] ?? type;
+/**
+ * LeadsGate postbacks carry no reason: postback_events stores event_type, payout and created_at only.
+ * A rejected lead therefore always shows this line until a reason field is stored.
+ */
+export const NO_BUYER_REASON = "ผู้ซื้อไม่ได้ส่งเหตุผลมา";
 const CLICK_TYPE: Record<LeadConversion["click_type"], string> = {
   gclid: "gclid", gbraid: "gbraid", wbraid: "wbraid", msclkid: "msclkid", none: "ไม่มี (None)",
 };
@@ -163,12 +171,13 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
   const showPayout = me.role === "owner";
   const found = reconcile(lead.postbacks, lead.conversion);
   const postbackColumns: Column<Postback>[] = [
-    { key: "event", header: "เหตุการณ์ (Event)", cell: (p) => p.event_type },
+    { key: "event", header: "เหตุการณ์ (Event)", cell: (p) => eventLabel(p.event_type) },
     ...(showPayout ? [{ key: "payout", header: "ค่าตอบแทน (Payout)", align: "right" as const, cell: (p: Postback) => (p.payout === null ? "" : money(p.payout)) }] : []),
     { key: "received", header: "รับเมื่อ (Received)", cell: (p) => fmt(p.created_at) },
   ];
 
   const events = leadTimeline(lead);
+  const rejected = lead.outcome === "rejected" || lead.postbacks.some((p) => p.event_type === "rejectLead");
   const click = lead.conversion ? (lead.conversion.click_type !== "none"
     ? <Chip tone="success">มี click id ({CLICK_TYPE[lead.conversion.click_type]})</Chip>
     : <Chip tone="warning">ไม่มี click id</Chip>) : null;
@@ -176,6 +185,7 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
     <section className={sec} style={secStyle} aria-labelledby="lead-timeline">
       <h3 id="lead-timeline">ไทม์ไลน์</h3>
       {click && <p className="lead-chips">{click}</p>}
+      {rejected && <p className="hint" role="note" aria-label="เหตุผลที่โดนปฏิเสธ">{NO_BUYER_REASON}</p>}
       <ol className="lead-timeline" aria-label="ไทม์ไลน์ลีด">
         {events.map((e, i) => <li key={`${e.label}|${e.at}|${i}`}><span className="tl-dot" data-tone={e.tone} aria-hidden="true" /><div><p>{e.label}</p><p className="tl-time">{fmt(e.at)}</p></div></li>)}
       </ol>
@@ -217,7 +227,7 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
       <Fields label="ลีด (Lead)" rows={[
         ["สร้างเมื่อ (Created)", fmt(lead.created_at)],
         ["อัปเดตเมื่อ (Updated)", fmt(lead.updated_at)],
-        ["สถานะดิบ (Raw status)", lead.status],
+        ["สถานะดิบ (Raw status)", eventLabel(lead.status)],
         ["ยอดที่ขอ (Amount)", money(lead.requested_amount)],
         ["วัตถุประสงค์ (Purpose)", lead.loan_purpose],
         ["คีย์เวิร์ด (Keyword)", lead.keyword],

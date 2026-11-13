@@ -115,16 +115,17 @@ export async function loadConversions(env: Env, query: ConversionsQuery, role: A
   ).bind(stalledBefore).first<{ n: number }>();
 
   // updated_at is NULL on a pending row until the drain first claims it (postback.ts does not set it).
+  // created_before replaces the period window for the rows, compared as text like conversionStalled (packages/insights alerts.ts).
   const rows = await env.LEADS.prepare(
     `SELECT c.lead_id, l.brand, c.status, c.last_error, c.gclid, c.gbraid, c.wbraid, c.msclkid, c.google_order_id, c.attempts,
             c.value, c.currency, c.occurred_at, c.created_at, c.updated_at, c.next_attempt_at
      FROM conversion_uploads c JOIN leads l ON l.lead_id = c.lead_id
-     WHERE c.created_at >= ?1 AND c.created_at < ?2
+     WHERE (CASE WHEN ?6 IS NULL THEN c.created_at >= ?1 AND c.created_at < ?2 ELSE c.created_at < ?6 END)
        AND (?3 = 'all' OR c.status = ?3) AND (?4 IS NULL OR l.brand = ?4)
      ORDER BY CASE c.status WHEN 'dead' THEN 0 WHEN 'pending' THEN 1 WHEN 'processing' THEN 2 ELSE 3 END,
               COALESCE(c.updated_at, c.created_at) DESC, c.lead_id
      LIMIT ?5`,
-  ).bind(from, to, query.status, query.brand ?? null, limit + 1).all<Row>();
+  ).bind(from, to, query.status, query.brand ?? null, limit + 1, query.created_before ?? null).all<Row>();
 
   const count = (s: ConversionStatus) => Number(totals.results.find((r) => r.status === s)?.n ?? 0);
   const sum = (s: ConversionStatus) => cents(Number(totals.results.find((r) => r.status === s)?.v ?? 0));

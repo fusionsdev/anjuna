@@ -42,6 +42,7 @@
 .tpl-table .tpl-check { width: 44px; padding-right: 0; }
 .tpl-table tr.sel td, .tpl-table tr[data-checked="true"] td { background: var(--brand-tint); }
 .tpl-table .tpl-action { text-align: right; white-space: nowrap; }
+.tpl-blocked { display: inline-flex; gap: 8px; align-items: center; }
 .tpl-name-cell { display: flex; align-items: center; gap: 12px; }
 .tpl-name-cell > div { min-width: 220px; }
 /* Under 768px the table is a stack of cards. The text column may shrink to the card and wraps long names, ids and sender names;

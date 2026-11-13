@@ -180,8 +180,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 // spec leads
 /** The leads filter as the screen holds it. An empty string means the filter is not set. */
 export interface LeadFilterState {
+  /** A `YYYY-MM-DD` day, or an ISO instant when an alert link names its exact window. */
   from: string;
   to: string;
+  /** "decided" matches leads by their soldLead or rejectLead postback time; "" by lead creation time. */
+  time: "decided" | "";
   brand: string;
   status: LeadOutcome | "";
   q: string;
@@ -204,7 +207,7 @@ function queryPath(path: string, entries: [string, string | null | undefined][])
 }
 
 const leadFilterEntries = (filter: LeadFilterState): [string, string][] =>
-  [["from", filter.from], ["to", filter.to], ["brand", filter.brand], ["status", filter.status], ["q", filter.q]];
+  [["from", filter.from], ["to", filter.to], ["time", filter.time], ["brand", filter.brand], ["status", filter.status], ["q", filter.q]];
 
 export const api = {
   trafficBreakdown: (period: TrafficPeriod, by: TrafficDimension) =>
@@ -332,10 +335,11 @@ export const api = {
     return request<FunnelReportResponse>("GET", `/api/funnel?${params}`);
   },
   /** Read-only. Money and raw error text come back null for an employee. */
-  conversions: (query: { period: SpendPeriod; status?: ConversionsQuery["status"]; brand?: string; limit?: number }) => {
+  conversions: (query: { period: SpendPeriod; status?: ConversionsQuery["status"]; brand?: string; created_before?: string; limit?: number }) => {
     const params = new URLSearchParams({ period: query.period });
     if (query.status) params.set("status", query.status);
     if (query.brand) params.set("brand", query.brand);
+    if (query.created_before) params.set("created_before", query.created_before);
     if (query.limit) params.set("limit", String(query.limit));
     return request<ConversionsReportResponse>("GET", `/api/conversions?${params}`);
   },

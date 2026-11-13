@@ -77,6 +77,8 @@ export const TemplateVersionSummary = z.strictObject({
   category_id: z.string().nullable().default(null),
   /** Any version of this template was ever sealed, read from the whole version history, not from the rows of one list page. Delete is refused while it is true. */
   was_approved: z.boolean().default(false),
+  /** Distinct failing similarity lines of the version's latest checks; approve is refused while it is above 0. */
+  similarity_fail_count: z.number().int().nonnegative().default(0),
 });
 export type TemplateVersionSummary = z.infer<typeof TemplateVersionSummary>;
 

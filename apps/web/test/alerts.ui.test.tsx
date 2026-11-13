@@ -3,6 +3,8 @@ import type { AlertsReportResponse } from "@anjuna/contracts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, type Me } from "../src/client/api";
+import { alertFix } from "../src/client/alert-fix";
+import { hostnameBrand, incidentsOf, type RuleId } from "../src/client/alert-incidents";
 import { hydrateAlertStates, resetAlertSession } from "../src/client/alerts-session";
 import { AlertsScreen } from "../src/client/screens/Alerts";
 
@@ -37,6 +39,49 @@ describe("Alerts brand labels", () => {
   });
 });
 
+describe("Alerts lead to cause and fix (FUS-392)", () => {
+  const rejecting: AlertsReportResponse = {
+    ...healthy,
+    generated_at: "2026-11-13T02:00:00.000Z",
+    brands_without_postbacks: { state: "alert", detail: { window_hours: 24, brands: [{ brand: "brand-a", leads: 4 }] } },
+    reject_rate: { state: "alert", detail: { ...healthy.reject_rate.detail, window_hours: 24, brands: [{ brand: "brand-a", rejected: 6, decided: 10, rate: 0.6 }] } },
+  };
+  const scrollIntoView = Element.prototype.scrollIntoView;
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    Element.prototype.scrollIntoView = scrollIntoView;
+  });
+
+  it("gives a reject alert its cause in Thai and one button to that brand's rejected leads in the alert window", async () => {
+    vi.spyOn(api, "alerts").mockResolvedValue(rejecting);
+    render(<AlertsScreen />);
+    const link = await screen.findByRole("link", { name: "ดูลีดโดนปฏิเสธ" });
+    const card = link.closest("li")!;
+    expect(within(card).getByText("lead.example")).toBeTruthy();
+    expect(within(card).getByText("ลีดโดนปฏิเสธ 6 จาก 10 ราย (60%) ใน 24 ชม.")).toBeTruthy();
+    // The exact 24 h window the rule counted, matched on the postback time the rule counts.
+    const exact = "/leads?brand=brand-a&status=rejected&time=decided&from=2026-11-12T02%3A00%3A00.000Z&to=2026-11-13T02%3A00%3A00.000Z";
+    expect(link.getAttribute("href")).toBe(exact);
+    // The postback alert opens that brand's leads that still wait for a result.
+    expect(screen.getByRole("link", { name: "ดูลีด" }).getAttribute("href")).toBe("/leads?brand=brand-a&status=pending");
+    fireEvent.click(link);
+    expect(window.location.pathname + window.location.search).toBe(exact);
+  });
+
+  it("selects the card named by ?key= from Home", async () => {
+    window.history.replaceState(null, "", "/alerts?key=reject_rate%3Abrand-a");
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    vi.spyOn(api, "alerts").mockResolvedValue(rejecting);
+    render(<AlertsScreen />);
+    const card = (await screen.findByRole("link", { name: "ดูลีดโดนปฏิเสธ" })).closest("li")!;
+    await waitFor(() => expect(card.getAttribute("aria-current")).toBe("true"));
+    expect(card.classList.contains("is-selected")).toBe(true);
+    expect(screen.getByRole("link", { name: "ดูลีด" }).closest("li")!.getAttribute("aria-current")).toBeNull();
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+  });
+});
+
 describe("Alerts click_risk", () => {
   it("names each risky hostname with its high-risk share", async () => {
     vi.spyOn(api, "alerts").mockResolvedValue({
@@ -48,7 +93,8 @@ describe("Alerts click_risk", () => {
     });
     render(<AlertsScreen />);
     // The numbers the page showed before the redesign: high-risk visitors out of all visitors.
-    expect(await screen.findByText("floatsme.com · เสี่ยงสูง 62 จาก 200 คน (31%)")).toBeTruthy();
+    // An open card shows its fix cause in place of the detail line.
+    expect(await screen.findByText("floatsme.com คนเข้าเว็บเสี่ยงสูง 62 จาก 200 คน (31%) ใน 24 ชม.")).toBeTruthy();
   });
 
   it("says no hostname crossed the threshold when the report is healthy", async () => {
@@ -424,5 +470,42 @@ describe("Alerts send history", () => {
     fireEvent.click(screen.getByRole("button", { name: "ประวัติการส่ง" }));
     await screen.findByRole("table", { name: "ประวัติการส่ง" });
     expect(screen.queryByRole("button", { name: /^ส่งใหม่/ })).toBeNull();
+  });
+});
+
+describe("alertFix covers every rule (FUS-392)", () => {
+  const all: AlertsReportResponse = {
+    ...healthy,
+    generated_at: "2026-11-13T02:00:00.000Z",
+    conversion_stalled: { state: "alert", detail: { max_hours: 6, stuck_count: 3, oldest_created_at: "2026-11-12T00:00:00.000Z" } },
+    brands_without_postbacks: { state: "alert", detail: { window_hours: 24, brands: [{ brand: "brand-a", leads: 4 }] } },
+    submit_error_rate: { state: "alert", detail: { ...healthy.submit_error_rate.detail, window_hours: 24, samples: [{ brand: "brand-a", errors: 3, submits: 7, rate: 0.3 }] } },
+    reject_rate: { state: "alert", detail: { ...healthy.reject_rate.detail, window_hours: 24, brands: [{ brand: "brand-a", rejected: 6, decided: 10, rate: 0.6 }] } },
+    click_risk: { state: "alert", detail: { window_hours: 24, alert_at: 0.2, min_visits: 50, hostnames: [{ hostname: "lead.example", visits: 100, high_risk: 30, rate: 0.3 }] } },
+    ad_spend_unallocated: { state: "alert", detail: { window_days: 30, alert_at: 0.1, accounts: [{ account: "1234567890", currency: "USD", share: 0.35 }] } },
+  };
+  const RULES: RuleId[] = ["conversion_stalled", "brands_without_postbacks", "submit_error_rate", "reject_rate", "click_risk", "ad_spend_unallocated"];
+
+  it("gives every open incident of every rule type a Thai cause and a page", () => {
+    const incidents = incidentsOf(all, hostnameBrand(new Map([["brand-a", "lead.example"]])));
+    expect([...new Set(incidents.map((i) => i.rule))].sort()).toEqual([...RULES].sort());
+    for (const incident of incidents) {
+      const fix = alertFix(incident, all);
+      expect(fix, incident.id).not.toBeNull();
+      expect(fix!.cause).not.toMatch(/^[\x20-\x7e]*$/);
+    }
+    // A rule whose report row is missing still gets a page.
+    for (const rule of RULES) expect(alertFix({ rule, brand: null, level: "alert" }, all), rule).not.toBeNull();
+  });
+
+  it("opens the page each rule fixes, with the window the rule counted", () => {
+    const fixOf = (id: string) => alertFix(incidentsOf(all, hostnameBrand(new Map([["brand-a", "lead.example"]]))).find((i) => i.id === id)!, all)!;
+    expect(fixOf("submit_error_rate:brand-a")).toEqual({ cause: "ฟอร์มส่งไม่สำเร็จ 3 จาก 10 ครั้ง (30%) ใน 24 ชม.", path: "/errors?brand=brand-a", label: "ดูข้อผิดพลาดของฟอร์ม" });
+    expect(fixOf("click_risk:lead.example")).toEqual({ cause: "lead.example คนเข้าเว็บเสี่ยงสูง 30 จาก 100 คน (30%) ใน 24 ชม.", path: "/traffic?brand=brand-a", label: "ดูทราฟฟิกของแบรนด์" });
+    expect(fixOf("ad_spend_unallocated:1234567890:USD")).toEqual({ cause: "บัญชี 123-456-7890 ค่าโฆษณา USD ยังไม่ได้แบ่งให้แบรนด์ 35% ใน 30 วัน", path: "/ad-allocation", label: "แบ่งค่าโฆษณา" });
+    // The stalled rule counts pending rows created before generated_at minus max_hours, of any age: no period in the link.
+    const stalled = fixOf("conversion_stalled");
+    expect(stalled.path).toBe("/conversions?status=pending&created_before=2026-11-12T20%3A00%3A00.000Z");
+    expect(stalled.path).not.toContain("period");
   });
 });

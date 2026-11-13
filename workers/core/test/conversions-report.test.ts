@@ -61,6 +61,16 @@ describe("GET /admin/conversions", () => {
     expect(body.truncated).toBe(false);
   });
 
+  it("created_before lists every pending row created before the cutoff, of any age, and leaves the totals on the period", async () => {
+    await seedMixed();
+    await seed("pend-ancient", "brand-b", { status: "pending", created_at: "2026-09-01T00:00:00.000Z", updated_at: null });
+    // The stalled alert's cutoff: pend-old (10-22T00:00) is before it, pend-new (10-23T10:00) is not; pend-ancient is outside 7d.
+    const body = await parsed(`&status=pending&created_before=${encodeURIComponent("2026-10-23T06:00:00.000Z")}`);
+    expect(short(body.rows).sort()).toEqual(["pend-ancient", "pend-old"]);
+    expect(body.totals.pending).toBe(2);
+    expect(body.stalled).toBe(2);
+  });
+
   it("period=yesterday includes yesterday 00:00Z and excludes today 00:00Z and the instant before yesterday", async () => {
     // now is 2026-10-23T12:00Z, so yesterday is 2026-10-22 and the window is [10-22T00:00Z, 10-23T00:00Z).
     await seed("before", "brand-a", { status: "uploaded", created_at: "2026-10-21T23:59:59.999Z", updated_at: "2026-10-21T23:59:59.999Z" });

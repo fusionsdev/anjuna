@@ -1,12 +1,13 @@
 import { CONVERSION_STALLED_HOURS, type AlertsReportResponse, type ConversionsReportResponse } from "@anjuna/contracts";
 import { conversionsPath } from "../Conversions";
+import { alertFix, alertPath } from "../../alert-fix";
 import { inApp } from "./shared";
 
 export type HomePeriod = "today" | "7d" | "30d";
 
-export type FixKind = "gclid" | "retry" | "drain-route" | "leads" | "details";
+export type FixKind = "gclid" | "retry" | "drain-route" | "leads" | "rejects" | "details";
 /** What the item's button says. Every kind not listed here reads "ดูรายละเอียด". */
-export const FIX_LABEL: Record<FixKind, string> = { gclid: "ตรวจ gclid", retry: "ลองใหม่", "drain-route": "ตั้ง drain route", leads: "ดูลีด", details: "ดูรายละเอียด" };
+export const FIX_LABEL: Record<FixKind, string> = { gclid: "ตรวจ gclid", retry: "ลองใหม่", "drain-route": "ตั้ง drain route", leads: "ดูลีด", rejects: "ดูลีดโดนปฏิเสธ", details: "ดูรายละเอียด" };
 /**
  * An item with a `path` links there; one with `onAct` runs that; one with neither opens the alerts screen.
  * `kind` picks the button label.
@@ -30,7 +31,7 @@ function alertItems(report: AlertsReportResponse, stalledElsewhere: boolean): Fi
   const items: FixItem[] = [];
   const stalled = report.conversion_stalled;
   if (stalled.state !== "ok" && stalled.detail.stuck_count > 0 && !stalledElsewhere) {
-    items.push({ id: "stalled", level: level(stalled.state), brand: "ทุกแบรนด์", message: `${stalled.detail.stuck_count} คอนเวอร์ชันยังไม่ถูกส่งเกิน ${stalled.detail.max_hours} ชั่วโมง` });
+    items.push({ id: "stalled", level: level(stalled.state), brand: "ทุกแบรนด์", path: alertPath("conversion_stalled"), message: `${stalled.detail.stuck_count} คอนเวอร์ชันยังไม่ถูกส่งเกิน ${stalled.detail.max_hours} ชั่วโมง` });
   }
   const noPostback = report.brands_without_postbacks;
   if (noPostback.state !== "ok") {
@@ -38,11 +39,15 @@ function alertItems(report: AlertsReportResponse, stalledElsewhere: boolean): Fi
   }
   const submitErrors = report.submit_error_rate;
   if (submitErrors.state !== "ok") {
-    for (const s of submitErrors.detail.samples) items.push({ id: `submit:${s.brand}`, level: level(submitErrors.state), brand: s.brand, message: `ส่งฟอร์มผิดพลาด ${percent(s.rate)} (${s.errors} จาก ${s.submits + s.errors} ครั้ง)` });
+    for (const s of submitErrors.detail.samples) items.push({ id: `submit:${s.brand}`, level: level(submitErrors.state), brand: s.brand, path: alertPath(`submit_error_rate:${s.brand}`), message: `ส่งฟอร์มผิดพลาด ${percent(s.rate)} (${s.errors} จาก ${s.submits + s.errors} ครั้ง)` });
   }
   const rejects = report.reject_rate;
   if (rejects.state !== "ok") {
-    for (const b of rejects.detail.brands) items.push({ id: `reject:${b.brand}`, level: level(rejects.state), brand: b.brand, message: `อัตรา reject ${percent(b.rate)} สูงกว่าค่าปกติ ${percent(rejects.detail.warn_at)}` });
+    for (const b of rejects.detail.brands) {
+      // Same cause and page as the Alerts card. A row that has no fix (cannot happen for a listed brand) opens its card.
+      const fix = alertFix({ rule: "reject_rate", brand: b.brand, level: rejects.state }, report);
+      items.push({ id: `reject:${b.brand}`, level: level(rejects.state), brand: b.brand, kind: fix ? "rejects" : "details", path: fix?.path ?? alertPath(`reject_rate:${b.brand}`), message: fix?.cause ?? `อัตรา reject ${percent(b.rate)}` });
+    }
   }
   return items;
 }

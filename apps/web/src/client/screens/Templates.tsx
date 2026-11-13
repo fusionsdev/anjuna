@@ -6,6 +6,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { ApiError, api, type Me } from "../api";
 import type { TemplateStatusFilter } from "../router";
 import { awaitingApproval } from "../task-counts";
+import { approveBlockedText, approvedWithFailuresText, similarityFailures } from "../template-similarity";
 import { Chip } from "../components/Chip";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CategoryList, type CategoryFilter } from "./TemplateCategories";
@@ -343,11 +344,42 @@ function checkWarnings(details: unknown, key: "warning_issues" | "import_warning
   return parsed.success ? parsed.data : [];
 }
 
-function Warnings({ issues }: { issues: TemplateSubmitIssue[] }) {
+const MARKUP = /<\/?[a-z][^>]*>/i;
+const BRAND_OUTSIDE = /^The template brand name "(.+)" appears (\d+) time\(s\) outside data-brand/;
+
+/**
+ * The owner's line for a warning whose text carries HTML markup meant for the template builder: a plain Thai hint
+ * of what is wrong and who fixes it. Null when the warning has no markup and shows as stored.
+ */
+export function ownerHint(issue: TemplateSubmitIssue): string | null {
+  if (!MARKUP.test(issue.message) && !MARKUP.test(issue.fix)) return null;
+  const outside = BRAND_OUTSIDE.exec(issue.message);
+  if (outside) return `ชื่อแบรนด์ "${outside[1]}" อยู่นอกช่องชื่อแบรนด์ ${outside[2]} จุด ระบบเปลี่ยนเป็นชื่อแบรนด์ให้ตอนติดตั้ง ถ้าอยากให้หน้าตัวอย่างตรงกัน ให้ผู้สร้างเทมเพลตแก้`;
+  if (issue.message.startsWith("No element has data-brand")) return "เทมเพลตยังไม่มีช่องชื่อแบรนด์ แก้ชื่อแบรนด์จากแผงควบคุมไม่ได้ ให้ผู้สร้างเทมเพลตเพิ่ม";
+  return "ข้อความในเทมเพลตยังไม่ตรงรูปแบบ ให้ผู้สร้างเทมเพลตแก้";
+}
+
+/** `plain` is the owner's drawer: a warning with builder markup shows its Thai hint in place of the raw text. */
+function Warnings({ issues, plain = false }: { issues: TemplateSubmitIssue[]; plain?: boolean }) {
   if (!issues.length) return null;
   return <div className="note" role="note" aria-label="คำเตือน (Warnings)">
     <b>คำเตือน (Warnings)</b>
-    <ul>{issues.map((issue, i) => <li key={i}><code>{issue.rule}</code> {issue.file ? issue.file + ": " : ""}{issue.message}{" "}<span>{issue.fix}</span></li>)}</ul>
+    <ul>{issues.map((issue, i) => {
+      const hint = plain ? ownerHint(issue) : null;
+      return hint
+        ? <li key={i}>{hint}</li>
+        : <li key={i}><code>{issue.rule}</code> {issue.file ? issue.file + ": " : ""}{issue.message}{" "}<span>{issue.fix}</span></li>;
+    })}</ul>
+  </div>;
+}
+
+/** The similarity FAIL lines of a version: the reason its approve button is off, or a warning once it is approved. */
+function SimilarityGate({ failures, sealed }: { failures: string[]; sealed: boolean }) {
+  if (failures.length === 0) return null;
+  const title = sealed ? approvedWithFailuresText(failures.length) : approveBlockedText(failures.length);
+  return <div className="note neg" role="alert" aria-label={title}>
+    <b>{title}</b>
+    <ul>{failures.map((line) => <li key={line}>{line}</li>)}</ul>
   </div>;
 }
 
@@ -432,8 +464,10 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
   const identity = detail.checks.find((c) => c.check_name === "identity_scan");
   const similarity = (identity?.details as { similarity?: { summary?: string } } | null | undefined)?.similarity?.summary ?? null;
   const defaults = t.text_defaults;
-  const warnings = detail.checks.flatMap((c) => checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn"));
-  const importWarnings = detail.checks.flatMap((c) => checkWarnings(c.details, "import_warnings"));
+  const failures = similarityFailures(detail.checks);
+  // Similarity lines show once, in the gate block, so the warning list leaves them out.
+  const warnings = detail.checks.flatMap((c) => checkWarnings(c.details).filter((i) => ruleDisposition(i.rule) === "warn" && i.rule !== "similarity"));
+  const importWarnings = detail.checks.flatMap((c) => checkWarnings(c.details, "import_warnings").filter((i) => i.rule !== "similarity"));
   return (
     <section className="tpl-detail" aria-label="รายละเอียดเทมเพลต">
       <div className="tpl-detail-head">
@@ -455,8 +489,9 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
           return <li key={c.check_name}><span className={`pill ${blocking ? "p-bad" : advisory ? "p-warn" : "p-live"}`}>{blocking ? "fail" : advisory ? "คำเตือน (Warning)" : "pass"}</span> {c.check_name}</li>;
         })}
       </ul>
-      <Warnings issues={[...warnings, ...importWarnings]} />
-      {similarity && <p className="hint">ความคล้าย (Similarity): {similarity}</p>}
+      <SimilarityGate failures={failures} sealed={sealed} />
+      <Warnings issues={[...warnings, ...importWarnings]} plain />
+      {similarity && failures.length === 0 && <p className="hint">ความคล้าย (Similarity): {similarity}</p>}
       <h3>ข้อความเริ่มต้น (Text defaults)</h3>
       <div className="ledger" style={{ marginBlock: 12 }}>
         <div className="cell"><span className="k" style={{ display: "block" }}>ชื่อแบรนด์ (Brand name)</span><b>{defaults?.brand_name ?? "-"}</b></div>
@@ -481,7 +516,7 @@ function TemplateDetail({ me, detail, busy, onApprove, onSaved }: { me: Me; deta
           <button type="button" className="btn" disabled={busy || themeBusy} onClick={() => void detectColors()}>ตรวจหาสี (Detect colors)</button>
           {sealed
             ? <button type="button" className="btn pri" disabled={busy || themeBusy} onClick={() => void saveColors()}>บันทึกแผนที่สี (Save color map)</button>
-            : <button className="btn pri" disabled={busy || themeBusy} onClick={submitApprove}>อนุมัติ (Approve)</button>}
+            : <button className="btn pri" disabled={busy || themeBusy || failures.length > 0} title={failures.length > 0 ? approveBlockedText(failures.length) : undefined} onClick={submitApprove}>อนุมัติ (Approve)</button>}
         </div>
       )}
     </section>

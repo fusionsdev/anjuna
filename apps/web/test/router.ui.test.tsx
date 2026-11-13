@@ -186,9 +186,9 @@ describe("leads and suppressions routes", () => {
   });
 
   it("builds an export URL that carries every set filter and the pii flag", () => {
-    expect(api.leadsExportUrl({ from: "2026-10-01", to: "2026-10-31", brand: "brand-a", status: "sold", q: "" }, true))
+    expect(api.leadsExportUrl({ from: "2026-10-01", to: "2026-10-31", time: "", brand: "brand-a", status: "sold", q: "" }, true))
       .toBe("/api/leads/export?from=2026-10-01&to=2026-10-31&brand=brand-a&status=sold&pii=1");
-    expect(api.leadsExportUrl({ from: "2026-10-01", to: "", brand: "", status: "", q: "a&b=c" }, false))
+    expect(api.leadsExportUrl({ from: "2026-10-01", to: "", time: "", brand: "", status: "", q: "a&b=c" }, false))
       .toBe("/api/leads/export?from=2026-10-01&q=a%26b%3Dc");
   });
 });
