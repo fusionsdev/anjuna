@@ -3,17 +3,33 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
 
+const REVEAL_MS = 30_000;
+
 export function BuilderKeysScreen({ me }: { me: Me }) {
   const [keys, setKeys] = useState<BuilderKeySummary[] | null>(null);
   const [label, setLabel] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [revealedId, setRevealedId] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
+  const revealTimer = useRef<number | undefined>(undefined);
   const [confirm, confirmDialog] = useConfirm();
 
   const load = useCallback(() => api.builderKeys().then((r) => setKeys(r.keys), (e) => setMsg(e instanceof ApiError ? e.thai : "โหลดไม่สำเร็จ")), []);
   useEffect(() => void load(), [load]);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+  useEffect(() => () => window.clearTimeout(revealTimer.current), []);
+
+  // One revealed id and one timer: revealing a row replaces the previous one, and the timer hides it after REVEAL_MS.
+  function toggleReveal(k: BuilderKeySummary) {
+    window.clearTimeout(revealTimer.current);
+    if (revealedId === k.key_id) {
+      setRevealedId(null);
+      return;
+    }
+    setRevealedId(k.key_id);
+    revealTimer.current = window.setTimeout(() => setRevealedId(null), REVEAL_MS);
+  }
 
   async function run(fn: () => Promise<unknown>) {
     setMsg(null);
@@ -52,7 +68,7 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
   return (
     <>
       <h1 aria-label="คีย์ Builder (Builder keys)">คีย์ Builder</h1>
-      <p className="hint">ให้ bolt.new ส่งเทมเพลตเข้ามาตรวจได้เอง · หนึ่งคนต่อหนึ่งคีย์ · คีย์แสดงในตารางตลอด</p>
+      <p className="hint">ให้ bolt.new ส่งเทมเพลตเข้ามาตรวจได้เอง · หนึ่งคนต่อหนึ่งคีย์ · คีย์โชว์แค่ 4 ตัวท้าย กดดูคีย์เพื่อดูเต็ม แล้วจะซ่อนเองใน 30 วินาที</p>
       {msg && <div className="note neg" style={{ background: "var(--badbg)", color: "var(--bad)" }}>{msg}</div>}
       <section className="panel" style={{ marginTop: 16 }}><div className="tw stack-table"><table>
         <thead>
@@ -65,9 +81,17 @@ export function BuilderKeysScreen({ me }: { me: Me }) {
               <td>
                 {k.secret ? (
                   <>
-                    <code style={{ display: "inline-block", maxWidth: "min(100%, 30ch)", overflowWrap: "anywhere", padding: "2px 6px", border: "1px solid var(--line)", borderRadius: 6, background: "var(--paper)", fontSize: 13 }}>{k.secret}</code>{" "}
-                    <button className="btn" aria-label={`คัดลอกคีย์ ${k.label} (Copy)`} onClick={() => void copy(k)}>
-                      {copiedId === k.key_id ? "คัดลอกแล้ว (Copied)" : "คัดลอก (Copy)"}
+                    <code style={{ display: "inline-block", maxWidth: "min(100%, 30ch)", overflowWrap: "anywhere", padding: "2px 6px", border: "1px solid var(--line)", borderRadius: 6, background: "var(--paper)", fontSize: 13 }}>{revealedId === k.key_id ? k.secret : `•••• ${k.secret.slice(-4)}`}</code>{" "}
+                    <button
+                      className="btn"
+                      aria-label={revealedId === k.key_id ? `ซ่อนคีย์ ${k.label}` : `ดูคีย์ ${k.label}`}
+                      aria-pressed={revealedId === k.key_id}
+                      onClick={() => toggleReveal(k)}
+                    >
+                      {revealedId === k.key_id ? "ซ่อน" : "ดูคีย์"}
+                    </button>{" "}
+                    <button className="btn" aria-label={`คัดลอกคีย์ ${k.label}`} onClick={() => void copy(k)}>
+                      {copiedId === k.key_id ? "คัดลอกแล้ว" : "คัดลอก"}
                     </button>
                   </>
                 ) : (

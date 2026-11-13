@@ -344,14 +344,24 @@ describe("scope on Home work items and the all-brand labels", () => {
     render(<App />);
     // Credit Genie and Nova Cash are in scope. Alpha Loans is paused in core, so it is out.
     await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("2 แบรนด์"));
+    await showInactive();
+    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("3 แบรนด์"));
+  });
+
+  it("opens the Test sold chip from the Home card and batches only the brands in scope", async () => {
+    window.history.replaceState(null, "", "/");
+    const open = { checklist: [], template_approved: true, template_waiting_id: null };
+    withRoutes({ "/api/brands/checklists": () => ({ brands: { "brand-cg": open, "brand-nv": open, "brand-al": open } }) });
+    render(<App />);
+    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("2 แบรนด์"));
+    // The card opens the Brands list on its chip; the bulk button above the table batches the same 2 brands.
     fireEvent.click(todo().getAllByRole("button", { name: "เปิด" })[0]!);
+    expect(window.location.pathname + window.location.search).toBe("/brands?chip=test-sold");
+    fireEvent.click(await screen.findByRole("button", { name: "ทดสอบการขายทั้งหมด 2 แบรนด์" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog.textContent).toContain("Credit Genie");
     expect(dialog.textContent).toContain("Nova Cash");
     expect(dialog.textContent).not.toContain("Alpha Loans");
-    fireEvent.click(within(dialog).getByRole("button", { name: /ยกเลิก/ }));
-    await showInactive();
-    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("3 แบรนด์"));
   });
 
   it("labels the Home conversion queue ทุกแบรนด์ while the scope hides brands, and not when every brand shows", async () => {

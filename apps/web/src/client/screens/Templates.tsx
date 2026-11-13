@@ -1,9 +1,11 @@
 import { TemplateSubmitIssue, TemplateThemeVars, isEmptyThemeVars } from "@anjuna/contracts";
 import { ruleDisposition } from "@anjuna/template-cert/policy";
-import type { TemplateCategory, TemplateDetailResponse, TemplateReviewStatus, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
+import type { TemplateCategory, TemplateDetailResponse, TemplateSubmitResult, TemplateVersionSummary } from "@anjuna/contracts";
 import { Info, Upload, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me } from "../api";
+import type { TemplateStatusFilter } from "../router";
+import { awaitingApproval } from "../task-counts";
 import { Chip } from "../components/Chip";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CategoryList, type CategoryFilter } from "./TemplateCategories";
@@ -13,15 +15,21 @@ import "./Templates.css";
 
 const errorText = (e: unknown) => (e instanceof ApiError ? (e.body?.message ?? REFUSAL_TEXT[e.body?.error ?? ""] ?? e.thai) : "ไม่สำเร็จ");
 
-type StatusFilter = TemplateReviewStatus | "all" | "archived";
+type StatusFilter = TemplateStatusFilter;
 const STATUS_CHIPS: Array<[StatusFilter, string]> = [
   ["all", "ทุกสถานะ"], ["approved", "ใช้ได้"], ["awaiting_approval", "รออนุมัติ"], ["rejected", "ไม่ผ่าน"], ["checking", "กำลังตรวจ"], ["archived", "เก็บถาวร"],
 ];
 
+/** Whether a version shows under a status chip. รออนุมัติ is the predicate the Home card and the sidebar badge count with. */
+const matchesStatus = (t: TemplateVersionSummary, id: StatusFilter) =>
+  id === "archived" ? t.archived : id === "awaiting_approval" ? awaitingApproval(t) : !t.archived && (id === "all" || t.status === id);
+
 /** Distinct templates: a template with several versions is one archive or delete target. */
 const uniqueTemplates = (items: TemplateVersionSummary[]) => [...new Map(items.map((t) => [t.template_id, t])).values()];
 
-export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selectedId?: string | null; onSelect?: (id: string | null) => void }) {
+/** status and onStatus: the `?status=` of the URL and the setter that writes it. Without onStatus the screen keeps the filter itself. */
+/** onCountsChanged: called after a write that may change the sidebar's template badge (approve, archive, delete, import). */
+export function TemplatesScreen({ me, selectedId, onSelect, status, onStatus, onCountsChanged }: { me: Me; selectedId?: string | null; onSelect?: (id: string | null) => void; status?: StatusFilter | null; onStatus?: (status: StatusFilter) => void; onCountsChanged?: () => void }) {
   const [templates, setTemplates] = useState<TemplateVersionSummary[] | null>(null);
   // Without onSelect the screen keeps its own selection (it renders alone in tests); with it the URL owns the selection.
   const [ownSelected, setOwnSelected] = useState<string | null>(null);
@@ -35,7 +43,8 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
   const [imported, setImported] = useState<TemplateSubmitResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
-  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [ownFilter, setOwnFilter] = useState<StatusFilter>("all");
+  const filter = onStatus ? (status ?? "all") : ownFilter;
   const [categories, setCategories] = useState<TemplateCategory[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
@@ -46,8 +55,8 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
 
   const inCategory = (t: TemplateVersionSummary) => categoryFilter === "all" || t.category_id === categoryFilter;
   const live = (templates ?? []).filter((t) => !t.archived);
-  const visibleTemplates = (templates ?? []).filter((t) => inCategory(t) && (filter === "archived" ? t.archived : !t.archived && (filter === "all" || t.status === filter)));
-  const chipCount = (id: StatusFilter) => (templates ?? []).filter((t) => inCategory(t) && (id === "archived" ? t.archived : !t.archived && (id === "all" || t.status === id))).length;
+  const visibleTemplates = (templates ?? []).filter((t) => inCategory(t) && matchesStatus(t, filter));
+  const chipCount = (id: StatusFilter) => (templates ?? []).filter((t) => inCategory(t) && matchesStatus(t, id)).length;
   const categoryCounts = new Map<string, number>();
   for (const t of live) if (t.category_id) categoryCounts.set(t.category_id, (categoryCounts.get(t.category_id) ?? 0) + 1);
   const checkedItems = (templates ?? []).filter((t) => checked.has(t.template_version_id));
@@ -77,7 +86,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     return () => document.removeEventListener("keydown", onKey);
   }, [uploadOpen, selected, onSelect]);
 
-  const changeFilter = (next: StatusFilter) => { setFilter(next); setChecked(new Set()); };
+  const changeFilter = (next: StatusFilter) => { if (onStatus) onStatus(next); else setOwnFilter(next); setChecked(new Set()); };
   const changeCategory = (next: CategoryFilter) => { setCategoryFilter(next); setChecked(new Set()); };
 
   async function approve(id: string, themeVars?: TemplateThemeVars) {
@@ -93,6 +102,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     try {
       const r = await api.approveTemplate(id, themeVars);
       setMsg({ kind: "ok", text: r.already_sealed ? "อนุมัติไว้แล้ว (Already approved)" : "อนุมัติแล้ว (Approved)" });
+      onCountsChanged?.();
       await load();
       setDetail(await api.template(id));
     } catch (e) {
@@ -110,6 +120,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
     try {
       await action();
       setMsg({ kind: "ok", text: okText });
+      onCountsChanged?.();
       await load();
       return true;
     } catch (e) {
@@ -166,6 +177,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       }
       if (deleted > 0) {
         setMsg({ kind: "ok", text: targets.length === 1 ? `ลบ ${targets[0]!.name} แล้ว` : `ลบ ${deleted} รายการแล้ว` });
+        onCountsChanged?.();
         await load();
       }
     } finally {
@@ -187,6 +199,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       const r = await api.importTemplate(form);
       setImported(r);
       if (r.template_version_id) select(r.template_version_id);
+      onCountsChanged?.();
       await load();
     } catch (e) {
       setMsg({ kind: "err", text: errorText(e) });
@@ -205,7 +218,7 @@ export function TemplatesScreen({ me, selectedId, onSelect }: { me: Me; selected
       <header className="tpl-head">
         <div>
           <h1 aria-label="เทมเพลต (Templates)">เทมเพลต</h1>
-          <p className="hint">{templates ? `${templates.filter((t) => !t.archived && t.status === "awaiting_approval").length} รายการรอ Owner อนุมัติ` : "กำลังโหลด…"}</p>
+          <p className="hint">{templates ? `${templates.filter(awaitingApproval).length} รายการรอ Owner อนุมัติ` : "กำลังโหลด…"}</p>
         </div>
         <button type="button" className="btn pri" onClick={() => { setMsg(null); setImported(null); setUploadOpen(true); }}><Upload size={16} aria-hidden="true" />อัปโหลดเทมเพลต</button>
       </header>

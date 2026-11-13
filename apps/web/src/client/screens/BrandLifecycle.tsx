@@ -20,11 +20,11 @@ import { EmptyState } from "../components/EmptyState";
 import { finalUrl, siteUrl } from "../final-url";
 import { isPlainLeftClick, navigate, routePath } from "../router";
 import { useBrandActions, type BrandAction } from "../useBrandActions";
-import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
+import { BRAND_CHIPS, brandHealth, isDemoBrand, matchesBrandSearch, sortBrands, type BrandChip, type BrandSortMode } from "../brand-health";
+import { isDraft, listedInBrands, matchesListChip } from "../task-counts";
 import { BRAND_PERIODS, BrandStatsRow, SpendText, brandMoney, brandStats, useFunnelWindow, useFunnelWindowState, useSpendReportState, type BrandPeriod, type BrandStats } from "./BrandStatsRow";
 import { BrandFilters } from "./BrandFilters";
 import { useBrandScope } from "../useBrandScope";
-import { toScopeBrand } from "../brand-scope";
 import { BrandWizard } from "./BrandWizard";
 import { ConfigPanel } from "./ConfigPanel";
 import "./Brands.css";
@@ -86,7 +86,7 @@ const coreListLabel: Record<CoreListErrorCode, string> = {
  * Any other row uses brand.status, brand.latest_install?.status and recoveryRequired false. Retry and Recover need the install detail only the selected row has;
  * a brand without a form artifact keeps a disabled Install the menu hides and the handler refuses.
  */
-export type BrandActionKey = "install" | "rollback" | "redeploy" | "redeployLatest" | "recover" | "resumeWizard" | "duplicate" | "retry" | "timeline" | "openSite" | "copyFinalUrl" | "runtimeConfig";
+export type BrandActionKey = "install" | "rollback" | "redeploy" | "redeployLatest" | "recover" | "resumeWizard" | "editWizard" | "duplicate" | "retry" | "timeline" | "openSite" | "copyFinalUrl" | "runtimeConfig";
 /** disabled without a reason: the action cannot run for any role (Install without a form artifact). disabled with a reason: this role may not run it. */
 export interface BrandActionItem { key: BrandActionKey; label: string; group: "deploy" | "other"; tone?: "danger"; disabled?: boolean; reason?: string }
 const ownerOnlyReason: Partial<Record<BrandActionKey, string>> = {
@@ -94,6 +94,7 @@ const ownerOnlyReason: Partial<Record<BrandActionKey, string>> = {
   redeploy: "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้",
   redeployLatest: "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้",
   recover: "เฉพาะเจ้าของกู้คืนได้",
+  editWizard: "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้",
 };
 export interface BrandActionGating {
   brand: LifecycleBrandSummary;
@@ -127,6 +128,8 @@ export function brandActionItems(g: BrandActionGating): BrandActionItem[] {
   if (managed && actions.recover) items.push(ownerOnly({ key: "recover", label: "กู้คืน", group: "deploy", tone: "danger" }));
   if (managed && actions.retry && g.hasRetryTarget) items.push({ key: "retry", label: "ลองใหม่", group: "deploy" });
   if (managed && (brand.status === "draft" || brand.status === "failed") && g.hasResumeWizard) items.push({ key: "resumeWizard", label: "ทำต่อในวิซาร์ด", group: "other" });
+  // A live brand's wizard finishes with a redeploy, so it has the ติดตั้งใหม่ gating: live, no running operation, owner.
+  if (managed && brand.status === "live" && actions.rollback && g.hasResumeWizard) items.push(ownerOnly({ key: "editWizard", label: "แก้ไขในวิซาร์ด", group: "other" }));
   if (managed && g.hasDuplicate) items.push({ key: "duplicate", label: "ทำสำเนา", group: "other" });
   items.push({ key: "timeline", label: "ไทม์ไลน์", group: "other" });
   if (g.hasSite) {
@@ -142,8 +145,10 @@ export function brandActionItems(g: BrandActionGating): BrandActionItem[] {
  * wizardRoute: true while the URL is /brands/new, so back and forward open and close the wizard.
  * routeBrandId: the brand id in the URL path; onSelectBrand and onWizardClosed keep the URL in step with the screen.
  * onNewBrand: the app opens /brands/new for the New brand button, so the wizard has a URL. Without it the button opens the wizard here.
+ * routeChip and onChip: the `?chip=` of the URL and the setter that writes it. Without onChip the screen keeps the chip itself (it renders alone in tests).
+ * onCountsChanged: called after a write that may change a sidebar badge (a brand action, a route set, the wizard closed or finished).
  */
-export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, routeBrandId, onSelectBrand, onWizardClosed, onNewBrand }: {
+export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, routeBrandId, onSelectBrand, onWizardClosed, onNewBrand, routeChip, onChip, onCountsChanged }: {
   me: Me;
   wizardRequest?: number;
   wizardRoute?: boolean;
@@ -151,6 +156,9 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   onSelectBrand?: (brandId: string) => void;
   onWizardClosed?: () => void;
   onNewBrand?: () => void;
+  routeChip?: BrandChip | null;
+  onChip?: (chip: BrandChip) => void;
+  onCountsChanged?: () => void;
 }) {
   const [wizard, setWizard] = useState<{ brandId?: string; initialStep?: number } | null>(null);
   const [duplicateOf, setDuplicateOf] = useState<LifecycleBrandSummary | null>(null);
@@ -203,6 +211,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   // After a fix succeeds only the acted brand's data is read again. The selection reset stays out of it: it would close an open config of the brand on screen.
   function onActionDone(action: BrandAction, acted: Array<{ id: string }>) {
     void load();
+    onCountsChanged?.();
     const current = selectedIdRef.current;
     if (!current || !acted.some((brand) => brand.id === current)) return;
     // A retry starts an install, which the selection reset picks up through the history read.
@@ -221,8 +230,10 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const weekState = useFunnelWindowState("7d", refresh);
   const weekFunnel = weekState ?? null;
   const [period, setPeriod] = useState<BrandPeriod>("7d");
-  // View preferences, not routes: /brands/:id is the only deep link.
-  const [chip, setChip] = useState<BrandChip>("all");
+  // The chip is in the URL (`?chip=`), so a Home card opens the list already filtered and Back returns to it. Sort and search are view preferences.
+  const [ownChip, setOwnChip] = useState<BrandChip>("all");
+  const chip = onChip ? (routeChip ?? "all") : ownChip;
+  const setChip = (next: BrandChip) => (onChip ? onChip(next) : setOwnChip(next));
   const [sort, setSort] = useState<BrandSortMode>("issues");
   const [search, setSearch] = useState("");
   // The brand scope (sidebar control) decides which brands show: paused and retired brands and demo<digits> brands are hidden by default.
@@ -641,6 +652,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       await api.setStatus(brandId, pausing ? "pause" : "resume");
       showToast("ok", pausing ? "หยุดแบรนด์แล้ว" : "เปิดแบรนด์แล้ว");
       await load();
+      onCountsChanged?.();
     } catch (e) {
       showToast("err", e instanceof ApiError ? e.thai : "ไม่สำเร็จ");
     } finally {
@@ -695,7 +707,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
         break;
       // Recover exists only on the selected row.
       case "recover": if (brand.brand_id === selectedIdRef.current) runDeploy(key, brand); break;
-      case "resumeWizard": setWizard({ brandId: brand.brand_id }); break;
+      case "resumeWizard":
+      case "editWizard": setWizard({ brandId: brand.brand_id }); break;
       case "duplicate": setDuplicateOf(brand); break;
       case "timeline": navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); break;
       case "openSite": if (site) window.open(site, "_blank", "noopener,noreferrer"); break;
@@ -851,7 +864,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   const configBrand = configBrandId ? runtimeBrands.find((brand) => brand.brand_id === configBrandId) : undefined;
 
   // The install the wizard started is picked up by the brand's history recovery, which polls it.
-  if (wizard) return <BrandWizard key={wizard.brandId ?? "new"} me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); onWizardClosed?.(); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); onSelectBrand?.(brandId); }} />;
+  if (wizard) return <BrandWizard key={wizard.brandId ?? "new"} me={me} brandId={wizard.brandId} initialStep={wizard.initialStep} onClose={() => { setWizard(null); setRefresh((value) => value + 1); onCountsChanged?.(); onWizardClosed?.(); }} onGenerated={(brandId) => { setWizard(null); setSelectedId(brandId); setRefresh((value) => value + 1); onCountsChanged?.(); onSelectBrand?.(brandId); }} />;
 
   const runtimeList = runtimeError ? null : runtimeBrands;
   const tableRows = brands.map((brand) => ({
@@ -862,17 +875,14 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   }));
   // Chip counts follow the demo toggle and the search, so a count never promises rows they have hidden.
   // The scope also hides paused and retired brands, except under the "หยุด" chip, which exists to show them.
-  const inScopeRow = (row: (typeof tableRows)[number], hideInactive: boolean) => {
-    const scoped = toScopeBrand(row.brand, runtimeBrands.find((r) => r.brand_id === row.brand.brand_id)?.status);
-    return brandScope.scope.brandIds === null || brandScope.scope.brandIds.includes(scoped.id)
-      ? (showDemo || !scoped.demo) && !(hideInactive && scoped.inactive)
-      : false;
-  };
+  // The scope rule and the chip predicates are the ones the Home cards count with (task-counts.ts).
+  const inScopeRow = (row: (typeof tableRows)[number], hideInactive: boolean) =>
+    listedInBrands(brandScope.scope, row.brand, runtimeBrands.find((r) => r.brand_id === row.brand.brand_id)?.status, hideInactive);
   const shownRows = tableRows.filter((row) => inScopeRow(row, brandScope.scope.hideInactive));
   const hiddenDemoCount = showDemo ? 0 : tableRows.filter((row) => isDemoBrand(row.brand)).length;
   const searchedRows = shownRows.filter((row) => matchesBrandSearch(row.brand, search));
   const pausedRows = tableRows.filter((row) => inScopeRow(row, false) && matchesBrandSearch(row.brand, search));
-  const chipRows = (id: BrandChip) => (id === "paused" ? pausedRows : searchedRows).filter((row) => matchesBrandChip(row.health, row.brand, id));
+  const chipRows = (id: BrandChip) => (id === "paused" ? pausedRows : searchedRows).filter((row) => matchesListChip(id, row.health, row.brand, checklists?.brands[row.brand.brand_id]));
   const chipCounts = Object.fromEntries(BRAND_CHIPS.map(({ id }) => [id, chipRows(id).length])) as Record<BrandChip, number>;
   const sortedRows = sortBrands(
     chipRows(chip),
@@ -882,7 +892,13 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
   // One BrandTable row per brand: the seven stage dots, the money of the chosen period, the Google Ads chip, the one primary button and the row menu.
   const rowModels: BrandTableRow[] = sortedRows.map(({ brand, name, money }) => {
     const runtime = runtimeBrands.find((r) => r.brand_id === brand.brand_id);
+    // Under the สร้างค้างไว้ chip a draft's one button resumes its wizard, the same path as the menu item ทำต่อในวิซาร์ด.
+    const resume = chip === "drafts" && isDraft(brand);
     const primary = rowPrimary(brand, runtime);
+    const action = resume
+      ? { kind: "resume-wizard", label: "สร้างต่อ", disabled: false, primary: true, onClick: () => rowAction("resumeWizard", brand) }
+      : { kind: primary.kind, label: primary.label, disabled: primary.disabled, reason: primary.reason, primary: true, onClick: () => runPrimary(primary, brand, runtime) };
+    const menuItems = menuItemsFor(brand, runtime, primary).filter((item) => !(resume && item.key === "resumeWizard"));
     const entry = checklists?.brands[brand.brand_id];
     const funnel30 = stageFunnel?.rows.filter((r) => r.brand === brand.brand_id);
     const upload = uploadFacts?.get(brand.brand_id);
@@ -909,8 +925,8 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       spend: <SpendText text={money.spendText} estimated={money.estimated} />,
       leads: count(money.leads),
       costPerLead: null,
-      action: { kind: primary.kind, label: primary.label, disabled: primary.disabled, reason: primary.reason, primary: true, onClick: () => runPrimary(primary, brand, runtime) },
-      menu: <RowMenu label="จัดการ" items={menuItemsFor(brand, runtime, primary)} />,
+      action,
+      menu: <RowMenu label="จัดการ" items={menuItems} />,
     };
   });
 
@@ -947,6 +963,12 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
     {coreListError && <p className="error" role="alert">{coreListLabel[coreListError.code] ?? coreListError.message}. ใช้รายการแบรนด์จาก Core ไม่ได้ จึงแสดงเฉพาะแบรนด์จาก factory (Core brand list is unavailable) กรุณารีเฟรชเพื่อลองใหม่</p>}
     <div className="brands-grid">
       <section className="panel lifecycle-list">
+        {/* The bulk Test sold that the Home card used to open: one dialog for every row this chip shows. */}
+        {chip === "test-sold" && sortedRows.length > 0 && <div className="side-actions">
+          <button type="button" className="btn pri" onClick={() => void brandActions.runBatch("test-sold", sortedRows.map(({ brand }) => ({ id: brand.brand_id, name: brand.name ?? brand.brand_id, domain: brand.hostnames[0] ?? brand.brand_id })))}>
+            {`ทดสอบการขายทั้งหมด ${sortedRows.length} แบรนด์`}
+          </button>
+        </div>}
         {rowModels.length > 0 && <BrandTable rows={rowModels} showMoney={owner} compact selectedId={selectedId} onSelect={(id) => { setSelectedId(id); onSelectBrand?.(id); }} label="แบรนด์" />}
         {brands.length === 0 && <p className="muted">ยังไม่มีแบรนด์</p>}
         {brands.length > 0 && sortedRows.length === 0 && (
@@ -966,7 +988,7 @@ export function BrandLifecycle({ me, wizardRequest = 0, wizardRoute = false, rou
       </div>
     </div>
     {duplicateOf && <DuplicateDialog source={duplicateOf} onClose={() => setDuplicateOf(null)} onDuplicated={(brandId) => { setDuplicateOf(null); setSelectedId(brandId); setWizard({ brandId, initialStep: 0 }); onSelectBrand?.(brandId); }} />}
-    {configBrandId && configBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={brands.find((brand) => brand.brand_id === configBrandId)?.name} onClose={() => setConfigBrandId(null)} onChanged={() => void load()} onOperationStarted={() => setRefresh((value) => value + 1)} />}
+    {configBrandId && configBrand && <ConfigPanel key={configBrandId} me={me} brandId={configBrandId} brandName={brands.find((brand) => brand.brand_id === configBrandId)?.name} onClose={() => setConfigBrandId(null)} onChanged={() => { void load(); onCountsChanged?.(); }} onOperationStarted={() => setRefresh((value) => value + 1)} />}
     {toast && <Toast key={toast.id} kind={toast.kind} text={toast.text} onDismiss={dismissToast} />}
     {confirmDialog}
     {brandActions.view}
@@ -1005,7 +1027,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
   const actionItem = (key: BrandActionKey) => actionItems.find((item) => item.key === key);
   // Disabled and titled for the reason; for an employee these are the owner-only actions.
   const gate = (key: BrandActionKey) => ({ disabled: actionItem(key)?.disabled === true, title: actionItem(key)?.reason });
-  const ownerOnlyShown = (["rollback", "redeploy", "redeployLatest", "recover"] as const).some((key) => actionItem(key)?.reason !== undefined);
+  const ownerOnlyShown = (["rollback", "redeploy", "redeployLatest", "recover", "editWizard"] as const).some((key) => actionItem(key)?.reason !== undefined);
   const isManaged = brand.status !== "unmanaged";
   const missingArtifact = brand.bundle_form_version == null || brand.payload_version == null;
   const site = siteUrl(brand.hostnames);
@@ -1035,7 +1057,7 @@ export function LifecycleDetail({ me, brand, state, install, pendingOperation = 
     })}</div></div>
     <details className="section install-details" open={Boolean(install && install.status !== "ready") || revisions === null || (isManaged && (brand.status === "draft" || brand.status === "failed" || brand.status === "rolled_back"))}>
       <summary>การติดตั้ง</summary>
-    {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง</button>}{showAction("rollback") && <button className="btn" {...gate("rollback")} onClick={onRollback}>ย้อนกลับ</button>}{showAction("redeploy") && <button className="btn" {...gate("redeploy")} onClick={onRedeploy}>ติดตั้งใหม่</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" {...gate("redeployLatest")} onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด</button>}{showAction("recover") && <button className="btn danger" {...gate("recover")} onClick={onRecover}>กู้คืน</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}{ownerOnlyShown && <p className="muted small" role="note">ปุ่มที่กดไม่ได้ใช้ได้เฉพาะเจ้าของ</p>}</div>}
+    {isManaged && <div className="side-actions">{showAction("install") && <button className="btn pri" disabled={missingArtifact} onClick={onInstall}>ติดตั้ง</button>}{showAction("rollback") && <button className="btn" {...gate("rollback")} onClick={onRollback}>ย้อนกลับ</button>}{showAction("redeploy") && <button className="btn" {...gate("redeploy")} onClick={onRedeploy}>ติดตั้งใหม่</button>}{showAction("redeployLatest") && onRedeployLatest && <button className="btn" {...gate("redeployLatest")} onClick={onRedeployLatest}>ติดตั้งใหม่พร้อมฟอร์มล่าสุด</button>}{showAction("recover") && <button className="btn danger" {...gate("recover")} onClick={onRecover}>กู้คืน</button>}{showAction("resumeWizard") && onResumeWizard && <button className="btn" onClick={onResumeWizard}>ทำต่อในวิซาร์ด</button>}{showAction("editWizard") && onResumeWizard && <button className="btn" {...gate("editWizard")} onClick={onResumeWizard}>แก้ไขในวิซาร์ด</button>}{showAction("duplicate") && onDuplicate && <button className="btn" onClick={onDuplicate}>ทำสำเนา</button>}{showAction("install") && missingArtifact && <p className="muted small" role="note">ติดตั้งไม่ได้: แบรนด์นี้ยังไม่มี form artifact ที่ยืนยันแล้ว</p>}{ownerOnlyShown && <p className="muted small" role="note">ปุ่มที่กดไม่ได้ใช้ได้เฉพาะเจ้าของ</p>}</div>}
     {/* spec timeline: the managed-only row above would hide it for an unmanaged brand */}
     <div className="side-actions"><a className="btn" href={routePath({ view: "brand-timeline", brandId: brand.brand_id })} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(routePath({ view: "brand-timeline", brandId: brand.brand_id })); }}>ไทม์ไลน์</a></div>
     {site && <div className="side-actions">

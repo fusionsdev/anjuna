@@ -40,6 +40,7 @@ export const TRACKING_TEXT = {
   retry: "ลองสร้างใหม่",
   needAccount: "เลือกบัญชี Google Ads ก่อนสร้าง conversion action",
   readOnly: "Owner กำหนดค่านี้ · แสดงอย่างเดียว",
+  liveLocked: "แก้การติดตามของแบรนด์ที่ออนไลน์อยู่ได้ที่หน้าตั้งค่า",
   // held and unknown occur only on campaign jobs; the labels keep the map total over every job status.
   job: { queued: "รอคิว", claimed: "กำลังสร้าง", done: "สร้างแล้ว", failed: "สร้างไม่สำเร็จ", held: "รอตรวจวงเงิน", unknown: "ไม่ทราบผล" },
   pollFailed: "ตรวจสถานะงานไม่สำเร็จ จะลองใหม่อัตโนมัติ",
@@ -49,6 +50,8 @@ export const TRACKING_TEXT = {
 
 /** Why the Generate button is off for an employee: generate is owner only (spec). */
 export const GENERATE_OWNER_ONLY = "เฉพาะ Owner สร้างเว็บไซต์ได้ ฉบับร่างบันทึกแล้ว ให้ Owner กดสร้าง";
+/** Why the live-brand finish button is off for an employee: the same text as the ติดตั้งใหม่ button's reason. */
+export const REDEPLOY_OWNER_ONLY = "เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้";
 
 export const requiredText = (field: FieldKey): string => `${FIELD_LABEL[field]}: จำเป็นต้องกรอก`;
 
@@ -138,6 +141,8 @@ export function wizardErrorText(error: unknown): string {
     return GENERATE_ISSUE_TEXT[issue.field ?? issue.path ?? ""] ?? (stripEnglishSuffix(issue.message ?? "") || "ฉบับร่างยังไม่ครบ");
   }
   if (code === "lifecycle_operation_active") return "กำลังติดตั้งแบรนด์นี้อยู่ แก้ไขไม่ได้";
+  // The live-brand wizard routes answer their 409s in Thai already (locked domain, name or keyword, a race).
+  if (error.status === 409 && /[฀-๿]/.test(message)) return message;
   if (error.status === 409) return "ฉบับร่างถูกแก้ไขหรือติดตั้งแล้ว กรุณาโหลดใหม่";
   if (code === "template_not_sealed") return "เทมเพลตนี้ยังไม่ได้อนุมัติ";
   if (code === "compatible_form_artifact_missing") return "ยังไม่มีฟอร์มที่ใช้ได้";

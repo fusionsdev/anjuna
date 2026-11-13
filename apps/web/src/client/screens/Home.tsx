@@ -4,8 +4,8 @@ import { api, type BrandChecklists, type Me } from "../api";
 import { DailyBars, dailySeries, type DailyCount } from "../components/DailyBars";
 import { Sparkline } from "../components/Sparkline";
 import { Chip } from "../components/Chip";
-import { isDemoBrand } from "../brand-health";
-import { checklistFlags, clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals, spendWindowThb } from "../home-metrics";
+import { awaitingApproval, isDraft, listedInBrands, needsDrainRoute, needsTestSold, type ChecklistEntry } from "../task-counts";
+import { clickLossWarning, delta, previousRange, scopeAlerts, scopeFunnel, scopeSpend, spendSeries, spendTotals, spendWindowThb } from "../home-metrics";
 import { useBrandScope } from "../useBrandScope";
 import { buildBrandLabels } from "../brand-labels";
 import { useAdsCampaigns, useNoGclid, useUploadFacts } from "../brand-facts";
@@ -15,7 +15,7 @@ import { HumanTasks, type HumanTask } from "./home/HumanTasks";
 import { IncidentBanner } from "./home/IncidentBanner";
 import { NeedsFixList, fixItems, type FixItem, type HomePeriod } from "./home/NeedsFixList";
 import { inApp, mark, num, type Value } from "./home/shared";
-import { navigate } from "../router";
+import { brandsPath, navigate, templatesPath } from "../router";
 import { useBrandActions, type ActionBrand } from "../useBrandActions";
 import "./Home.css";
 import { AllBrandsNote } from "../components/AllBrandsNote";
@@ -118,12 +118,13 @@ function pendingLeads(report: AlertsReportResponse): number {
   return report.brands_without_postbacks.detail.brands.reduce((sum, b) => sum + b.leads, 0);
 }
 
-export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) => void }) {
+/** onCountsChanged: called after a brand action (approve template, test sold, retry), which may change a sidebar badge. */
+export function HomeScreen({ me, onGo, onCountsChanged }: { me: Me; onGo?: (target: HomeTarget) => void; onCountsChanged?: () => void }) {
   const owner = me.role === "owner";
   const go = (target: HomeTarget) => () => onGo?.(target);
   const [period, setPeriod] = useState<HomePeriod>("today");
   // The raw reports are kept and the scope is applied on read, so a change of scope updates the numbers without a new request.
-  const { inScopeId, hidesBrands } = useBrandScope();
+  const { inScopeId, hidesBrands, scope } = useBrandScope();
   const [funnelRaw, setFunnelRaw] = useState<FunnelReportResponse | null | undefined>(undefined);
   const [previousRaw, setPreviousRaw] = useState<FunnelReportResponse | null | undefined>(undefined);
   // The form-view and /go counts come from the traffic breakdown; the funnel report still returns 0 form_views.
@@ -148,7 +149,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const [spendTodayRaw, setSpendTodayRaw] = useState<PanelSpendReportResponse | null | undefined>(undefined);
   // An action that changed a brand raises this, so the brand list and the batch checklist are read again.
   const [reloadKey, setReloadKey] = useState(0);
-  const actions = useBrandActions({ onDone: () => setReloadKey((value) => value + 1) });
+  const actions = useBrandActions({ onDone: () => { setReloadKey((value) => value + 1); onCountsChanged?.(); } });
 
   // Funnel counts, spend, conversions and the daily bars follow the period switch. A late answer for an old period is dropped.
   useEffect(() => {
@@ -185,7 +186,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
     api.templates().then(
       (list) => {
         if (!current) return;
-        setTemplates(list.templates.filter((t) => t.status === "awaiting_approval").length);
+        setTemplates(list.templates.filter(awaitingApproval).length);
         setTemplateLabels(Object.fromEntries(list.templates.map((t) => [t.template_version_id, `${t.name} v${t.version}`])));
       },
       () => current && setTemplates(null),
@@ -272,22 +273,24 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
   const allPath = conversionsPath({ period, status: "all", brand: null });
   const deadPath = conversionsPath({ period, status: "dead", brand: null });
 
-  // Test sold is open for a live brand whose checklist lacks the row. Demo brands and brands the batch does not list are not counted.
-  const testSoldBrands: LifecycleBrandSummary[] | null | undefined = brands === undefined || checklists === undefined ? undefined
-    : brands === null || checklists === null ? null
-      : (scopedBrands ?? []).filter((b) => b.status === "live" && !isDemoBrand(b) && checklists.brands[b.brand_id] && !checklists.brands[b.brand_id]!.checklist.some((row) => row.item === "test_sold"));
-  const testSold: Value = testSoldBrands === undefined ? undefined : testSoldBrands === null ? null : testSoldBrands.length;
+  // The to-do cards count the rows the Brands list shows: the same scope rule and the same predicates (task-counts.ts).
+  // Each card opens that list with its chip in the URL, so the number on the card is the number of rows there.
+  const listedBrands = brands ? brands.filter((b) => listedInBrands(scope, b, paused?.has(b.brand_id) ? "paused" : undefined)) : brands;
+  const checklistBrands = (pick: (b: LifecycleBrandSummary, entry: ChecklistEntry) => boolean): LifecycleBrandSummary[] | null | undefined =>
+    listedBrands === undefined || checklists === undefined ? undefined
+      : listedBrands === null || checklists === null ? null
+        : listedBrands.filter((b) => pick(b, checklists.brands[b.brand_id]));
+  const testSoldBrands = checklistBrands(needsTestSold);
+  const drainBrands = checklistBrands(needsDrainRoute);
+  const countOf = (list: readonly unknown[] | null | undefined): Value => (list === undefined ? undefined : list === null ? null : list.length);
   const actionBrand = (b: LifecycleBrandSummary): ActionBrand => ({ id: b.brand_id, name: b.name ?? b.brand_id, domain: b.hostnames[0] ?? b.brand_id });
-  const drafts: Value = brands === undefined ? undefined : brands === null ? null : (scopedBrands ?? []).filter((b) => b.status === "draft").length;
-  // A live brand whose checklist has no drain route row. Only the batch read can say so: an unknown or missing entry never counts.
-  const drainBrands: LifecycleBrandSummary[] | null | undefined = brands === undefined || checklists === undefined ? undefined
-    : brands === null || checklists === null ? null
-      : (scopedBrands ?? []).filter((b) => b.status === "live" && !isDemoBrand(b) && checklistFlags(checklists.brands[b.brand_id]).drain_route === false);
+  const drafts: Value = countOf(listedBrands ? listedBrands.filter(isDraft) : listedBrands);
   const tasks: HumanTask[] = [
-    { id: "test-sold", title: "ยืนยัน Test sold", count: testSold, unit: "แบรนด์", show: true, onOpen: () => { if (testSoldBrands) void actions.runBatch("test-sold", testSoldBrands.map(actionBrand)); else go("brands")(); } },
-    { id: "drain-route", title: "ตั้ง drain route", count: drainBrands === undefined ? undefined : drainBrands === null ? null : drainBrands.length, unit: "แบรนด์", show: owner, onOpen: () => { if (drainBrands && drainBrands.length === 1) void actions.run("set-route", actionBrand(drainBrands[0]!)); else go("brands")(); } },
-    { id: "templates", title: "อนุมัติเทมเพลต", count: templates, unit: "รายการ", show: owner, onOpen: go("templates") },
-    { id: "drafts", title: "ร่างที่ยังไม่กดสร้าง", count: drafts, unit: "ร่าง", show: true, onOpen: go("new-brand") },
+    { id: "test-sold", title: "ยืนยัน Test sold", count: countOf(testSoldBrands), unit: "แบรนด์", show: true, onOpen: () => navigate(brandsPath("test-sold")) },
+    // One brand opens its route form at once; more open the filtered list.
+    { id: "drain-route", title: "ตั้ง drain route", count: countOf(drainBrands), unit: "แบรนด์", show: owner, onOpen: () => { if (drainBrands && drainBrands.length === 1) void actions.run("set-route", actionBrand(drainBrands[0]!)); else navigate(brandsPath("drain-route")); } },
+    { id: "templates", title: "อนุมัติเทมเพลต", count: templates, unit: "รายการ", show: owner, onOpen: () => navigate(templatesPath("awaiting_approval")) },
+    { id: "drafts", title: "แบรนด์ที่สร้างค้างไว้", count: drafts, unit: "แบรนด์", show: true, onOpen: () => navigate(brandsPath("drafts")) },
   ];
 
   // The banner: items that reached the alert level, and paid clicks that did not reach the site. Only the owner has paid clicks.
@@ -339,7 +342,7 @@ export function HomeScreen({ me, onGo }: { me: Me; onGo?: (target: HomeTarget) =
         </div>
       </div>
       <div className="home-stack">
-        <IncidentBanner urgent={urgent} clickLoss={clickLoss} onQueue={() => navigate(allPath)} onAlerts={go("alerts")} />
+        <IncidentBanner urgent={urgent} clickLoss={clickLoss} onAlerts={go("alerts")} />
         <div className="home-grid2">
           <NeedsFixList alerts={scopedAlerts} conversions={conversions} fixes={fixes} domains={brandDomains} onAlerts={go("alerts")} />
           <HumanTasks tasks={tasks} />

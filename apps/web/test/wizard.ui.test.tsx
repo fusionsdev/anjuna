@@ -653,6 +653,125 @@ describe("entry points on the Lifecycle screen", () => {
     expect(screen.getByRole("button", { name: "ทำสำเนา" })).toBeTruthy();
   });
 
+  describe("edit a live brand in the wizard", () => {
+    const LIVE_PROFILE = { contact: CONTACT, copy: { brand_name: "Live Cash" } };
+    const liveDraft = { ...draftBody({ status: "live", name: "Live Cash", profile: LIVE_PROFILE }), brand: { brand_id: "brand_live", name: "Live Cash", domain: "live.test", keyword_default: "Quick Loan", status: "live" }, base_revision_id: "rev_live_1" };
+    beforeEach(() => {
+      routes.set("GET /api/wizard/drafts/brand_live", () => json(liveDraft));
+      routes.set("POST /api/wizard/preview/brand_live", () => new Response("<p>preview</p>", { headers: { "content-type": "text/html" } }));
+      routes.set("POST /api/brands/brand_live/wizard-redeploy", () => json({ install_id: "ins_live", brand_id: "brand_live", status: "running" }, 201));
+    });
+    const openLive = async (me: Me) => {
+      render(<BrandLifecycle me={me} routeBrandId="brand_live" />);
+      await screen.findByRole("heading", { name: "live.test" });
+    };
+    const toReview = async () => {
+      for (const step of ["เทมเพลต", "ข้อความ", "ติดตามผล", "ตรวจและสร้าง"]) {
+        fireEvent.click(screen.getByRole("button", { name: "ถัดไป" }));
+        await heading(step);
+      }
+    };
+
+    it("shows แก้ไขในวิซาร์ด on a live brand and opens the wizard prefilled with a read-only domain, name and keyword", async () => {
+      await openLive(owner);
+      expect(screen.queryByRole("button", { name: "ทำต่อในวิซาร์ด" })).toBeNull();
+      fireEvent.click(await screen.findByRole("button", { name: "แก้ไขในวิซาร์ด" }));
+      await heading("ข้อมูลแบรนด์");
+      expect(screen.getByRole("region", { name: "แก้ไขในวิซาร์ด" })).toBeTruthy();
+      expect(screen.getByText("กำลังแก้แบรนด์ที่ออนไลน์อยู่ เว็บจะเปลี่ยนหลังกดติดตั้ง")).toBeTruthy();
+      expect(text("โดเมน").value).toBe("live.test");
+      expect(text("โดเมน").disabled).toBe(true);
+      expect(text("ชื่อแบรนด์").value).toBe("Live Cash");
+      expect(text("ชื่อแบรนด์").readOnly).toBe(true);
+      expect(text(/คีย์เวิร์ด/).readOnly).toBe(true);
+      expect(screen.getByText("แก้ชื่อที่โชว์บนเว็บได้ที่ข้อความแบรนด์")).toBeTruthy();
+      expect(text(/โทรศัพท์/).value).toBe(CONTACT.phone);
+      expect(screen.queryByRole("button", { name: "ตรวจโซน Cloudflare" })).toBeNull();
+    });
+
+    it("shows แก้ไขในวิซาร์ด disabled with the owner-only reason for an employee", async () => {
+      await openLive(employee);
+      const button = await screen.findByRole("button", { name: "แก้ไขในวิซาร์ด" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.title).toBe("เฉพาะเจ้าของติดตั้งแบรนด์ใหม่ได้");
+    });
+
+    it("saves nothing on Next and asks for confirmation naming the domain before the redeploy", async () => {
+      await openLive(owner);
+      fireEvent.click(await screen.findByRole("button", { name: "แก้ไขในวิซาร์ด" }));
+      await heading("ข้อมูลแบรนด์");
+      await toReview();
+      expect(requests.filter((r) => r.method === "PATCH")).toEqual([]);
+      await waitFor(() => expect(sent("POST", "/api/wizard/preview/brand_live")).toHaveLength(1));
+      expect(sent("POST", "/api/wizard/zone-check")).toEqual([]);
+      fireEvent.click(screen.getByRole("button", { name: "บันทึกและติดตั้งใหม่" }));
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog.textContent).toContain("live.test");
+      // No test proves an automatic rollback, so the dialog points to the manual one.
+      expect(dialog.textContent).toContain("ถ้าเว็บใหม่มีปัญหา กดย้อนกลับได้ที่หน้าแบรนด์");
+      expect(dialog.textContent).not.toContain("ระบบจะย้อนกลับ");
+      fireEvent.click(within(dialog).getByRole("button", { name: /ยกเลิก/ }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")).toEqual([]);
+      fireEvent.click(screen.getByRole("button", { name: "บันทึกและติดตั้งใหม่" }));
+      fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "บันทึกและติดตั้งใหม่" }));
+      await waitFor(() => expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")).toHaveLength(1));
+      expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")[0]!.body).toMatchObject({ template_version_id: "tv-1", profile: { contact: CONTACT }, base_revision_id: "rev_live_1" });
+      expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")[0]!.body).not.toHaveProperty("domain");
+      expect(sent("POST", "/api/brands/brand_new/generate")).toEqual([]);
+    });
+
+    it("shows the tracking step read-only with the Settings note and starts no conversion action", async () => {
+      const ads = { google_ads_account: "1234567890", adkit_project: "proj-a" };
+      routes.set("GET /api/wizard/drafts/brand_live", () => json({ ...liveDraft, profile: { ...LIVE_PROFILE, ads } }));
+      await openLive(owner);
+      fireEvent.click(await screen.findByRole("button", { name: "แก้ไขในวิซาร์ด" }));
+      await heading("ข้อมูลแบรนด์");
+      for (const step of ["เทมเพลต", "ข้อความ", "ติดตามผล"]) {
+        fireEvent.click(screen.getByRole("button", { name: "ถัดไป" }));
+        await heading(step);
+      }
+      expect(screen.getByText("แก้การติดตามของแบรนด์ที่ออนไลน์อยู่ได้ที่หน้าตั้งค่า")).toBeTruthy();
+      expect(screen.getByText("1234567890")).toBeTruthy();
+      expect(screen.queryByRole("combobox")).toBeNull();
+      expect(screen.queryByRole("button", { name: "สร้าง conversion action" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ถัดไป" }));
+      await heading("ตรวจและสร้าง");
+      fireEvent.click(screen.getByRole("button", { name: "บันทึกและติดตั้งใหม่" }));
+      fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "บันทึกและติดตั้งใหม่" }));
+      await waitFor(() => expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")).toHaveLength(1));
+      // The stored ads go back unchanged, so the server's tracking lock passes.
+      expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")[0]!.body).toMatchObject({ profile: { ads } });
+      expect(requests.filter((r) => r.path.startsWith("/api/v1/adkit/"))).toEqual([]);
+    });
+
+    it("lets a live brand keep its current template when that template is outside the approved list", async () => {
+      routes.set("GET /api/wizard/drafts/brand_live", () => json({ ...liveDraft, revision: { ...liveDraft.revision, template_version_id: "tv-archived" } }));
+      await openLive(owner);
+      fireEvent.click(await screen.findByRole("button", { name: "แก้ไขในวิซาร์ด" }));
+      await heading("ข้อมูลแบรนด์");
+      await toReview();
+      fireEvent.click(screen.getByRole("button", { name: "บันทึกและติดตั้งใหม่" }));
+      fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "บันทึกและติดตั้งใหม่" }));
+      await waitFor(() => expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")).toHaveLength(1));
+      expect(sent("POST", "/api/brands/brand_live/wizard-redeploy")[0]!.body).toMatchObject({ template_version_id: "tv-archived" });
+    });
+
+    it("keeps Next enabled on the template step when no template is approved but the live brand runs a valid one", async () => {
+      routes.set("GET /api/templates", () => json({ templates: [] }));
+      routes.set("GET /api/wizard/drafts/brand_live", () => json({ ...liveDraft, revision: { ...liveDraft.revision, template_version_id: "tv-archived" } }));
+      await openLive(owner);
+      fireEvent.click(await screen.findByRole("button", { name: "แก้ไขในวิซาร์ด" }));
+      await heading("ข้อมูลแบรนด์");
+      fireEvent.click(screen.getByRole("button", { name: "ถัดไป" }));
+      await heading("เทมเพลต");
+      const next = screen.getByRole("button", { name: "ถัดไป" }) as HTMLButtonElement;
+      expect(next.disabled).toBe(false);
+      fireEvent.click(next);
+      await heading("ข้อความ");
+    });
+  });
+
   it("keeps a resumed draft wizard open while the new-brand route stays off", async () => {
     hold({ contact: CONTACT, copy: {}, ads: {} });
     const view = render(<BrandLifecycle me={employee} wizardRoute={false} />);

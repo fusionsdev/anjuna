@@ -1,4 +1,6 @@
+import { TEMPLATE_REVIEW_STATUSES, type TemplateReviewStatus } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
+import { BRAND_CHIPS, type BrandChip } from "./brand-health";
 
 /** One screen of the panel and the id it shows, read from the URL path. */
 export type Route =
@@ -114,6 +116,37 @@ export function routePath(route: Route): string {
     default:
       return viewPath(route.view);
   }
+}
+
+/** `/brands?chip=<id>`: the brand list filter a Home card opens. An unknown id reads as none, so the list opens on its default. */
+export function brandChipFromSearch(search: string): BrandChip | null {
+  const value = new URLSearchParams(search).get("chip");
+  return BRAND_CHIPS.find((chip) => chip.id === value)?.id ?? null;
+}
+
+/** The Templates status filter. `archived` lists the archived templates. */
+export type TemplateStatusFilter = TemplateReviewStatus | "all" | "archived";
+const TEMPLATE_STATUS_FILTERS: readonly TemplateStatusFilter[] = ["all", ...TEMPLATE_REVIEW_STATUSES, "archived"];
+
+/** `/templates?status=<status>`: the Templates filter a Home card opens. An unknown status reads as none. */
+export function templateStatusFromSearch(search: string): TemplateStatusFilter | null {
+  const value = new URLSearchParams(search).get("status");
+  return TEMPLATE_STATUS_FILTERS.find((status) => status === value) ?? null;
+}
+
+/** The brand list with a chip. The default chip "all" gives the bare /brands. */
+export const brandsPath = (chip: BrandChip): string => (chip === "all" ? "/brands" : `/brands?chip=${encodeURIComponent(chip)}`);
+
+/** The template list with a status filter. "all" gives the bare /templates. */
+export const templatesPath = (status: TemplateStatusFilter): string => (status === "all" ? "/templates" : `/templates?status=${encodeURIComponent(status)}`);
+
+/** The open page with one query parameter set, or removed when `value` is null. The path and the other parameters stay. */
+export function withSearchParam(name: string, value: string | null): string {
+  const params = new URLSearchParams(window.location.search);
+  if (value === null) params.delete(name);
+  else params.set(name, value);
+  const query = params.toString();
+  return window.location.pathname + (query ? `?${query}` : "");
 }
 
 export function viewPath(view: Exclude<View, "not-found">): string {

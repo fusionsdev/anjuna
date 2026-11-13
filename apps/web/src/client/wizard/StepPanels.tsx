@@ -64,17 +64,18 @@ export function ZoneStatus({ zone }: { zone: ZoneState }) {
   return <p role="status" className="note pos" style={{ background: "var(--moneybg)", color: "var(--money)" }}>โซน {result.zone_name} active และไม่มี record ที่ขวาง</p>;
 }
 
-export function BrandPanel({ form, errors, set, hasDraft, zone, onCheckZone }: FieldsProps & { hasDraft: boolean; zone: ZoneState; onCheckZone: () => void }) {
+/** live: the brand is online, so the server refuses a new name, keyword or domain and the zone is not checked again. */
+export function BrandPanel({ form, errors, set, hasDraft, zone, onCheckZone, live = false }: FieldsProps & { hasDraft: boolean; zone: ZoneState; onCheckZone: () => void; live?: boolean }) {
   const common = { form, errors, set };
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12, marginTop: 12 }}>
-      <Field field="name" {...common} required maxLength={60} placeholder="Level Lending" />
-      <Field field="domain" {...common} required disabled={hasDraft} placeholder="example.com" hint={hasDraft ? "เปลี่ยนโดเมนไม่ได้หลังสร้างฉบับร่าง" : "โดเมนหลัก ไม่ใช่ www"} />
-      <div style={{ gridColumn: "1 / -1" }}>
+      <Field field="name" {...common} required maxLength={60} placeholder="Level Lending" readOnly={live} hint={live ? "แก้ชื่อที่โชว์บนเว็บได้ที่ข้อความแบรนด์" : undefined} />
+      <Field field="domain" {...common} required disabled={hasDraft} placeholder="example.com" hint={live ? "เปลี่ยนโดเมนของแบรนด์ที่ออนไลน์อยู่ไม่ได้" : hasDraft ? "เปลี่ยนโดเมนไม่ได้หลังสร้างฉบับร่าง" : "โดเมนหลัก ไม่ใช่ www"} />
+      {!live && <div style={{ gridColumn: "1 / -1" }}>
         <button type="button" className="btn" onClick={onCheckZone} disabled={zone.state === "checking" || !form.domain.trim()} aria-label="ตรวจโซน Cloudflare">ตรวจโซน Cloudflare</button>
-      </div>
-      <div style={{ gridColumn: "1 / -1" }}><ZoneStatus zone={zone} /></div>
-      <Field field="keyword" {...common} required placeholder="Fast cash" hint="คำนี้แสดงในชื่อหน้า คำอธิบายเว็บ และหัวฟอร์ม เมื่อลิงก์โฆษณามีคีย์เวิร์ด" />
+      </div>}
+      {!live && <div style={{ gridColumn: "1 / -1" }}><ZoneStatus zone={zone} /></div>}
+      <Field field="keyword" {...common} required placeholder="Fast cash" readOnly={live} hint={live ? "แก้คีย์เวิร์ดของแบรนด์ที่ออนไลน์อยู่ได้ที่หน้าตั้งค่า" : "คำนี้แสดงในชื่อหน้า คำอธิบายเว็บ และหัวฟอร์ม เมื่อลิงก์โฆษณามีคีย์เวิร์ด"} />
       <Field field="phone" {...common} required type="tel" placeholder="+1 (555) 010-0199" />
       <Field field="address" {...common} required placeholder="12 Main St, Austin, TX 78701" />
       <Field field="email" {...common} required type="email" placeholder="help@example.com" />
@@ -216,7 +217,7 @@ const READ_ONLY_FIELDS: Array<[FieldKey, string]> = [
  * created by a job (POST /api/v1/adkit/conversion-actions), read again by repeating the idempotent call until it is
  * done or failed. No free text. The Microsoft Ads account left the wizard for the global settings.
  */
-export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: FieldsProps & { canEdit: boolean; draftId: string | null; saveAds: () => Promise<void> }) {
+export function TrackingPanel({ form, errors, set, canEdit, live = false, draftId, saveAds }: FieldsProps & { canEdit: boolean; live?: boolean; draftId: string | null; saveAds: () => Promise<void> }) {
   const projects = useDirectory(canEdit ? api.adkitProjects : null, String(canEdit));
   const project = form.adkit_project;
   const accounts = useDirectory(canEdit && project ? () => api.adkitAccounts(project) : null, `${canEdit}:${project}`);
@@ -260,7 +261,7 @@ export function TrackingPanel({ form, errors, set, canEdit, draftId, saveAds }: 
   if (!canEdit) {
     return (
       <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-        <p role="note" className="note">{TRACKING_TEXT.readOnly}</p>
+        <p role="note" className="note">{live ? TRACKING_TEXT.liveLocked : TRACKING_TEXT.readOnly}</p>
         {READ_ONLY_FIELDS.map(([field, label]) => <p key={field}>{label}: <b>{form[field] || "—"}</b></p>)}
       </div>
     );

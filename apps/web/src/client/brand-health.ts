@@ -6,7 +6,11 @@ export type BrandIssue = "install_failed" | "sync_error" | "install_running" | "
 const ISSUE_ORDER: readonly BrandIssue[] = ["install_failed", "sync_error", "install_running", "no_domain", "paused", "checklist_failing"];
 const NO_ISSUE_SEVERITY = 99;
 
-export type BrandChip = "all" | "needs-fix" | "live" | "unfinished" | "paused";
+/** The chips brand health decides. */
+export type HealthChip = "all" | "needs-fix" | "live" | "unfinished" | "paused";
+/** The chips a Home to-do card opens. Their predicates read the checklist and live in task-counts.ts. */
+export type TaskChip = "test-sold" | "drain-route" | "drafts";
+export type BrandChip = HealthChip | TaskChip;
 
 export const BRAND_CHIPS: ReadonlyArray<{ id: BrandChip; label: string }> = [
   { id: "needs-fix", label: "ต้องแก้" },
@@ -14,6 +18,9 @@ export const BRAND_CHIPS: ReadonlyArray<{ id: BrandChip; label: string }> = [
   { id: "live", label: "ใช้งาน" },
   { id: "unfinished", label: "ยังไม่เสร็จ" },
   { id: "paused", label: "หยุด" },
+  { id: "test-sold", label: "รอทดสอบการขาย" },
+  { id: "drain-route", label: "รอตั้งเส้นทางส่งยอดขาย" },
+  { id: "drafts", label: "สร้างค้างไว้" },
 ];
 
 export type BrandSortMode = "issues" | "activity" | "az" | "profit";
@@ -62,7 +69,7 @@ export function brandHealth(brand: LifecycleBrandSummary, runtime: Pick<BrandSum
  * needs-fix: a failed install, a sync error, no live domain or a failing checklist. unfinished: still a draft or an install is running.
  * live ignores a failing checklist, so a live brand with open checklist rows stays under live.
  */
-export function matchesBrandChip(health: BrandHealth, brand: LifecycleBrandSummary, chip: BrandChip): boolean {
+export function matchesBrandChip(health: BrandHealth, brand: LifecycleBrandSummary, chip: HealthChip): boolean {
   switch (chip) {
     case "all":
       return true;

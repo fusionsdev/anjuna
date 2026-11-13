@@ -140,6 +140,8 @@ export interface ValidateContext {
   canEditTracking: boolean;
   /** The approved templates the employee may pick. */
   templates: Array<{ template_version_id: string }>;
+  /** A live brand's current template version: valid even when archived or outside the template list. */
+  currentTemplateId?: string | null;
 }
 
 const REQUIRED_CONTACT: FieldKey[] = ["phone", "address", "email"];
@@ -164,7 +166,7 @@ export function validateStep(step: StepId, f: WizardForm, ctx: ValidateContext):
       return { ...profileErrors({ contact: contactOf(f) }), ...errors };
     }
     case "template":
-      if (!ctx.templates.some((t) => t.template_version_id === f.template_version_id)) errors.template_version_id = requiredText("template_version_id");
+      if (f.template_version_id !== (ctx.currentTemplateId ?? null) && !ctx.templates.some((t) => t.template_version_id === f.template_version_id)) errors.template_version_id = requiredText("template_version_id");
       return errors;
     case "copy":
       return { ...profileErrors({ copy: copyOf(f) }), ...copyFieldErrors(f) };

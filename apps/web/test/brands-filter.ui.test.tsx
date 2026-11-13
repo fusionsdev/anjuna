@@ -164,11 +164,11 @@ describe("brands list filters and sort", () => {
     expect(names()).toEqual(["alpha.test", "creditsgene.test", "floatsme.test", "wizard.test"]);
   });
 
-  it("offers the chips ต้องแก้, ทั้งหมด, ใช้งาน, ยังไม่เสร็จ and หยุด in the design order, with no English in parentheses", async () => {
+  it("offers the chips ต้องแก้, ทั้งหมด, ใช้งาน, ยังไม่เสร็จ and หยุด in the design order, then the three Home task chips, with no English in parentheses", async () => {
     render(<BrandLifecycle me={owner} />);
     await loaded(owner);
     const chips = within(screen.getByRole("group", { name: "ตัวกรองแบรนด์" })).getAllByRole("button");
-    expect(chips.map((chip) => chip.firstChild?.textContent?.trim())).toEqual(["ต้องแก้", "ทั้งหมด", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
+    expect(chips.map((chip) => chip.firstChild?.textContent?.trim())).toEqual(["ต้องแก้", "ทั้งหมด", "ใช้งาน", "ยังไม่เสร็จ", "หยุด", "รอทดสอบการขาย", "รอตั้งเส้นทางส่งยอดขาย", "สร้างค้างไว้"]);
     expect(chips.every((chip) => !/\([A-Za-z]/.test(chip.textContent ?? ""))).toBe(true);
   });
 

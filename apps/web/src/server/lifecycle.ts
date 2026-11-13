@@ -28,12 +28,12 @@ import {
 } from "@anjuna/contracts";
 import { effectiveThemeVarsSql } from "@anjuna/factory-db";
 import { z } from "zod";
-import { DraftDomain } from "../shared/wizard.js";
+import { DraftDomain, WizardRedeployRequest } from "../shared/wizard.js";
 import type { Env } from "./env.js";
 import { writeFactoryAudit } from "./audit.js";
 import { callCore } from "./core.js";
 import { checklistSteps, drainRouteRow, smokeFinalUrlRow, smokeFinalUrlRows, smokeFinalUrlStatement } from "./drain-route-checklist.js";
-import { generateBrand } from "./generate.js";
+import { draftIssues, generateBrand } from "./generate.js";
 import { authorizePanel } from "./panel-roles.js";
 import { queueInstallRetry } from "./retry-install.js";
 import { asTimestamp } from "./timestamps.js";
@@ -411,6 +411,98 @@ async function redeploy(request: Request, env: Env, ctx: AdminRequestContext, br
     return json(409, { error: "lifecycle_operation_active", message: "Lifecycle operation claim was not admitted" });
   }
   await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId, ...(formArtifactId ? { form_artifact_id: formArtifactId } : {}), ...(templateVersionId ? { template_version_id: templateVersionId } : {}) });
+  return dispatch(env, ctx, installId, brandId, "/install", { install_id: installId, brand_id: brandId, revision_id: revisionId, started_by: ctx.actor_id, started_role: ctx.actor_role });
+}
+
+// Wizard edits of a live brand. The brand row and its domain, hostnames, keyword and name stay as they are: the install
+// reads brands.name and brands.keyword_default, and a rollback restores revisions only, so the wizard may change only
+// what lives on the revision (template version and profile; the public name is profile.copy.brand_name).
+export const LIVE_DOMAIN_LOCKED = "เปลี่ยนโดเมนของแบรนด์ที่ออนไลน์อยู่ไม่ได้";
+export const LIVE_NAME_LOCKED = "แก้ชื่อที่โชว์บนเว็บได้ที่ข้อความแบรนด์";
+export const LIVE_KEYWORD_LOCKED = "แก้คีย์เวิร์ดของแบรนด์ที่ออนไลน์อยู่ได้ที่หน้าตั้งค่า";
+export const LIVE_TRACKING_LOCKED = "แก้การติดตามของแบรนด์ที่ออนไลน์อยู่ได้ที่หน้าตั้งค่า";
+const ADS_KEYS = ["google_ads_account", "google_conversion_action", "adkit_project", "microsoft_ads_account"] as const;
+/** Same tracking values key by key, so a profile that only reorders keys or drops an empty group counts as unchanged. */
+const sameAds = (a: BrandProfile["ads"], b: BrandProfile["ads"]): boolean => ADS_KEYS.every((key) => (a?.[key] ?? null) === (b?.[key] ?? null));
+const LIVE_ONLY = "แก้ในวิซาร์ดแบบนี้ได้เฉพาะแบรนด์ที่ออนไลน์อยู่";
+const STALE_REVISION = "มีคนติดตั้งแบรนด์นี้ไปแล้วหลังจากคุณเปิดวิซาร์ด โหลดใหม่แล้วแก้อีกครั้ง";
+
+/**
+ * POST /api/brands/:id/wizard-redeploy: the wizard's edits of a live brand as one redeploy. Like redeploy(), one batch
+ * writes revision N+1 (the current config with the edits) and an upgrade install, gated on the base revision the wizard
+ * opened on (base_revision_id), the config as read and no active operation. The install Workflow moves
+ * current_revision_id, so the old revision stays the rollback target. Nothing is written before the batch, so an
+ * abandoned wizard leaves no row.
+ */
+export async function wizardRedeploy(request: Request, env: Env, ctx: AdminRequestContext, brandId: string): Promise<Response> {
+  const raw = await request.json().catch(() => null) as unknown;
+  const brand = await env.FACTORY.prepare("SELECT name,domain,keyword_default,status,current_revision_id FROM brands WHERE brand_id = ?1").bind(brandId)
+    .first<{ name: string; domain: string; keyword_default: string | null; status: string; current_revision_id: string | null }>();
+  if (!brand) return json(404, { error: "not_found", resource: "brand" });
+  if (brand.status !== "live" || !brand.current_revision_id) return json(409, { error: "conflict", message: LIVE_ONLY });
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const body = raw as Record<string, unknown>;
+    if ("domain" in body || "hostnames" in body || "brand_id" in body) return json(409, { error: "live_locked", field: "domain", message: LIVE_DOMAIN_LOCKED });
+    if (body.name !== undefined && body.name !== brand.name) return json(409, { error: "live_locked", field: "name", message: LIVE_NAME_LOCKED });
+    if (body.keyword_default !== undefined && body.keyword_default !== brand.keyword_default) return json(409, { error: "live_locked", field: "keyword_default", message: LIVE_KEYWORD_LOCKED });
+  }
+  const parsed = WizardRedeployRequest.safeParse(raw);
+  if (!parsed.success) return json(422, { error: "invalid", issues: parsed.error.issues });
+  // The wizard edited the revision it opened on. Another install since then would be overwritten, so the save stops.
+  const baseRevisionId = parsed.data.base_revision_id;
+  if (baseRevisionId !== brand.current_revision_id) return json(409, { error: "stale_revision", message: STALE_REVISION });
+  const active = await activeLifecycleOperation(env.FACTORY, brandId);
+  if (active) return operationActive(active);
+  const current = await env.FACTORY.prepare("SELECT template_version_id,config_json FROM brand_revisions WHERE revision_id = ?1")
+    .bind(brand.current_revision_id).first<{ template_version_id: string; config_json: string }>();
+  if (!current) return json(422, { error: "revision_missing" });
+
+  // Every redeploy bakes the effective theme map of its template version; a new version also brings its text defaults.
+  const templateVersionId = parsed.data.template_version_id ?? current.template_version_id;
+  const templateChanged = templateVersionId !== current.template_version_id;
+  const template = await env.FACTORY.prepare(`SELECT text_defaults_json, ${effectiveThemeVarsSql("template_versions")} AS theme_vars_json FROM template_versions WHERE template_version_id = ?1 AND status = 'sealed'`)
+    .bind(templateVersionId).first<{ text_defaults_json: string | null; theme_vars_json: string | null }>();
+  if (!template) return json(422, { error: "template_not_sealed" });
+  const baked = templateChanged ? withTextDefaults(current.config_json, template.text_defaults_json) : current.config_json;
+  const config = JSON.parse(withThemeVars(baked, template.theme_vars_json)) as Record<string, unknown>;
+  const before = storedProfile(current.config_json);
+  // The conversion-action job and the ad routing read tracking on first install only, so a redeploy may not change it.
+  if (parsed.data.profile !== undefined && !sameAds(parsed.data.profile.ads, before?.ads)) return json(409, { error: "live_locked", field: "ads", message: LIVE_TRACKING_LOCKED });
+  if (parsed.data.profile !== undefined) config.profile = parsed.data.profile;
+  const newConfig = JSON.stringify(config);
+  const issues = draftIssues({ domain: brand.domain, template_status: "sealed", keyword_default: brand.keyword_default, config_json: newConfig });
+  if (issues.length > 0) return json(422, { error: "draft_incomplete", issues });
+
+  // Key names only, as the draft edit audits them.
+  const changed: string[] = [];
+  if (templateChanged) changed.push("template_version_id");
+  if (parsed.data.profile !== undefined) {
+    for (const group of PROFILE_GROUPS) if (JSON.stringify(parsed.data.profile[group] ?? null) !== JSON.stringify(before?.[group] ?? null)) changed.push(`profile.${group}`);
+  }
+  const installId = `ins_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
+  const revisionId = `${brandId}_redeploy_${installId}`;
+  const now = new Date().toISOString();
+  const [revisionClaim, installClaim] = await env.FACTORY.batch([
+    env.FACTORY.prepare(`INSERT INTO brand_revisions (revision_id,brand_id,revision,template_version_id,form_artifact_id,config_json,created_by,created_at)
+      SELECT ?1,?2,(SELECT MAX(revision) + 1 FROM brand_revisions WHERE brand_id = ?2),?5,r.form_artifact_id,?6,?3,?4
+      FROM brands b JOIN brand_revisions r ON r.revision_id = b.current_revision_id
+      WHERE b.brand_id = ?2 AND b.status = 'live' AND b.current_revision_id = ?7 AND r.config_json = ?8
+      AND NOT EXISTS (
+        SELECT 1 FROM installs
+        WHERE brand_id = ?2 AND kind IN ('install','rollback','upgrade') AND status IN ('queued','running')
+      )`).bind(revisionId, brandId, ctx.actor_id, now, templateVersionId, newConfig, baseRevisionId, current.config_json),
+    env.FACTORY.prepare(`INSERT INTO installs
+      (install_id,brand_id,kind,status,from_revision_id,to_revision_id,started_by,started_role,started_at)
+      SELECT ?1,?2,'upgrade','queued',b.current_revision_id,?3,?4,?5,?6
+      FROM brands b WHERE b.brand_id = ?2 AND EXISTS (SELECT 1 FROM brand_revisions WHERE revision_id = ?3)`)
+      .bind(installId, brandId, revisionId, ctx.actor_id, ctx.actor_role, now),
+  ]);
+  if (revisionClaim!.meta.changes !== 1 || installClaim!.meta.changes !== 1) {
+    const raced = await activeLifecycleOperation(env.FACTORY, brandId);
+    if (raced) return operationActive(raced);
+    return json(409, { error: "conflict", message: "แบรนด์ถูกเปลี่ยนระหว่างบันทึก โหลดหน้าใหม่แล้วลองอีกครั้ง" });
+  }
+  await audit(env.FACTORY, ctx, "redeploy.start", "install", installId, { brand_id: brandId, from_revision_id: brand.current_revision_id, revision_id: revisionId, source: "wizard", changed, ...(templateChanged ? { template_version_id: templateVersionId } : {}) });
   return dispatch(env, ctx, installId, brandId, "/install", { install_id: installId, brand_id: brandId, revision_id: revisionId, started_by: ctx.actor_id, started_role: ctx.actor_role });
 }
 

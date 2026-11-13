@@ -26,7 +26,7 @@ import { RealtimeTab } from "./traffic/RealtimeTab";
 import { ClientErrorsScreen } from "./screens/ClientErrors"; // spec traffic
 import { roleAtLeast } from "@anjuna/contracts";
 import { PANEL_ROLE_TABLE } from "../server/panel-roles";
-import { navigate, parseRoute, routePath, useRoute, viewPath, type View } from "./router";
+import { brandChipFromSearch, navigate, parseRoute, routePath, templateStatusFromSearch, useRoute, useSearch, viewPath, withSearchParam, type View } from "./router";
 import { AppShell, pageTitle } from "./components/AppShell";
 import { SidebarNav, type NavItem } from "./components/SidebarNav";
 import { SectionTabs } from "./components/SectionTabs";
@@ -46,6 +46,8 @@ export function App() {
   const [wizardRequest, setWizardRequest] = useState(() => (parseRoute(window.location.pathname).view === "new-brand" ? 1 : 0));
   const route = useRoute();
   const view = route.view;
+  // The list filters a Home card opens live in the query string: `/brands?chip=` and `/templates?status=`.
+  const search = useSearch();
   // Sidebar badge counts. A count the panel could not read is null and shows no badge.
   const [counts, setCounts] = useState<Record<SidebarBadge, number | null>>({ brands_need_fix: null, templates_awaiting: null, alerts_open: null });
 
@@ -72,16 +74,11 @@ export function App() {
     }
     let cancelled = false;
     const set = (next: Record<SidebarBadge, number | null>) => { if (!cancelled) setCounts(next); };
-    api.navCounts().then((c: NavCounts) => set({ brands_need_fix: c.brands_need_fix, templates_awaiting: c.templates_awaiting, alerts_open: c.alerts_open }), () =>
-      // Without /api/nav/counts only the alerts badge can be filled, from the alerts report.
-      api.alerts().then((report) => {
-        const alerts = [report.conversion_stalled, report.brands_without_postbacks, report.submit_error_rate, report.reject_rate, report.click_risk,
-          ...(report.ad_spend_unallocated ? [report.ad_spend_unallocated] : [])]
-          .filter(({ state }) => state === "warn" || state === "alert").length;
-        set({ ...unknown, alerts_open: alerts });
-      }).catch(() => set(unknown))); // An unavailable report must not look like zero active alerts.
+    // A failed read hides every badge: a count from other inputs would differ from the page it opens.
+    api.navCounts().then((c: NavCounts) => set({ brands_need_fix: c.brands_need_fix, templates_awaiting: c.templates_awaiting, alerts_open: c.alerts_open }), () => set(unknown));
     return () => { cancelled = true; };
-  }, [me, view, countsTick]);
+    // Page changes do not refetch: each call costs several core reads. Screens call refreshCounts after a write instead.
+  }, [me, countsTick]);
   useEffect(() => { document.title = me ? `${pageTitle[view]} · Control Panel` : "Control Panel"; }, [me, view]);
 
   if (loading) return <div className="center"><Spinner /></div>;
@@ -94,7 +91,8 @@ export function App() {
   // Nine flat items. A page that holds section tabs marks its item on every view it owns and opens the first tab the role may use.
   // A thin divider sets off the watch and owner sections; an item the role may not use is left out.
   const badgeLabel: Record<SidebarBadge, (count: number) => string> = {
-    brands_need_fix: (count) => `${count} แบรนด์ที่ต้องแก้`,
+    // The count of rows the Brands page opens on (its default chip under the saved scope), so the label names no subset.
+    brands_need_fix: (count) => `${count} แบรนด์`,
     templates_awaiting: (count) => `${count} เทมเพลตรออนุมัติ`,
     alerts_open: (count) => `${count} รายการที่ต้องจัดการ`,
   };
@@ -114,7 +112,7 @@ export function App() {
   const group = groupOfView(view);
 
   return (
-    <BrandScopeProvider>
+    <BrandScopeProvider onSaved={refreshCounts}>
     <AppShell
       me={me}
       onSignOut={async () => {
@@ -129,16 +127,20 @@ export function App() {
         ? <SettingsSections tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />
         : <SectionTabs tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />)}
       {SCOPED_VIEWS.has(view) && <div className="scope-bar"><ScopeSubtitle /></div>}
-      {view === "home" && <HomeScreen me={me} onGo={open} />}
+      {view === "home" && <HomeScreen me={me} onGo={open} onCountsChanged={refreshCounts} />}
       {(view === "brands" || view === "new-brand") && (
         <BrandLifecycle
           me={me}
           wizardRequest={wizardRequest}
           wizardRoute={view === "new-brand"}
           routeBrandId={route.view === "brands" ? route.brandId : null}
-          onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }), { replace: window.location.pathname === "/brands/new" })}
+          onSelectBrand={(id) => navigate(routePath({ view: "brands", brandId: id }) + window.location.search, { replace: window.location.pathname === "/brands/new" })}
           onWizardClosed={() => { if (window.location.pathname === "/brands/new") navigate("/brands", { replace: true }); }}
           onNewBrand={() => open("new-brand")}
+          routeChip={brandChipFromSearch(search)}
+          // A chip click replaces the history entry: Back leaves the list, and returning to it restores the chip from the URL.
+          onChip={(chip) => navigate(withSearchParam("chip", chip === "all" ? null : chip), { replace: true })}
+          onCountsChanged={refreshCounts}
         />
       )}
       {/* spec timeline */}
@@ -150,7 +152,10 @@ export function App() {
         <TemplatesScreen
           me={me}
           selectedId={route.view === "templates" ? route.templateId : null}
-          onSelect={(id) => navigate(routePath({ view: "templates", templateId: id }))}
+          onSelect={(id) => navigate(routePath({ view: "templates", templateId: id }) + window.location.search)}
+          status={templateStatusFromSearch(search)}
+          onStatus={(status) => navigate(withSearchParam("status", status === "all" ? null : status), { replace: true })}
+          onCountsChanged={refreshCounts}
         />
       )}
       {view === "builder-keys" && <BuilderKeysScreen me={me} />}
