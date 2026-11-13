@@ -1,5 +1,5 @@
 // spec traffic
-import { TRAFFIC_LOG_PERIODS, TRAFFIC_METRICS, type AlertsReportResponse, type TrafficLogPeriod, type TrafficMetrics, type TrafficReportResponse } from "@anjuna/contracts";
+import { BrandId, TRAFFIC_LOG_PERIODS, TRAFFIC_METRICS, type AlertsReportResponse, type TrafficLogPeriod, type TrafficMetrics, type TrafficReportResponse } from "@anjuna/contracts";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
@@ -32,9 +32,19 @@ export function readTrafficPeriod(search: string): TrafficLogPeriod {
   return readTrafficLogPeriod(new URLSearchParams(search).get("period"));
 }
 
-/** The default period leaves a clean /traffic. */
-export function trafficPath(period: TrafficLogPeriod): string {
-  return period === DEFAULT_TRAFFIC_LOG_PERIOD ? viewPath("traffic") : `${viewPath("traffic")}?period=${period}`;
+/** `?brand=<id>` from the click risk alert link. A value that is not a brand id reads as none. */
+export function readTrafficBrand(search: string): string | null {
+  const brand = new URLSearchParams(search).get("brand");
+  return brand && BrandId.safeParse(brand).success ? brand : null;
+}
+
+/** The default period and no brand leave a clean /traffic. */
+export function trafficPath(period: TrafficLogPeriod, brand: string | null = null): string {
+  const params = new URLSearchParams();
+  if (period !== DEFAULT_TRAFFIC_LOG_PERIOD) params.set("period", period);
+  if (brand) params.set("brand", brand);
+  const query = params.toString();
+  return query ? `${viewPath("traffic")}?${query}` : viewPath("traffic");
 }
 
 const count = (n: number) => n.toLocaleString("en-US");
@@ -96,7 +106,11 @@ type Load = { report: TrafficReportResponse } | { error: string } | null;
 
 export function TrafficScreen() {
   const { inScopeId } = useBrandScope();
-  const period = readTrafficPeriod(useSearch());
+  const search = useSearch();
+  const period = readTrafficPeriod(search);
+  // The report has no brand filter in core, so a chosen brand narrows the brand tab and the recent events here.
+  const brand = readTrafficBrand(search);
+  const inBrand = (id: string) => inScopeId(id) && (brand === null || id === brand);
   const domains = useBrandDomains();
   const [tab, setTab] = useState<Breakdown>("brand");
   const [attempt, setAttempt] = useState(0);
@@ -147,7 +161,7 @@ export function TrafficScreen() {
         </div>
         <div className="seg" role="group" aria-label="ช่วงเวลา">
           {TRAFFIC_LOG_PERIODS.map((key) => (
-            <button key={key} type="button" aria-pressed={period === key} onClick={() => navigate(trafficPath(key), { replace: true })}>{TRAFFIC_LOG_PERIOD_LABEL[key]}</button>
+            <button key={key} type="button" aria-pressed={period === key} onClick={() => navigate(trafficPath(key, brand), { replace: true })}>{TRAFFIC_LOG_PERIOD_LABEL[key]}</button>
           ))}
         </div>
       </div>
@@ -161,6 +175,12 @@ export function TrafficScreen() {
       {report && (
         <div className="traffic-stack">
           <AllBrandsNote>ยอดสรุปและแนวโน้มนับทุกแบรนด์ ส่วนตารางแยกตามและเหตุการณ์ล่าสุดตามขอบเขตแบรนด์</AllBrandsNote>
+          {brand && (
+            <p className="hint traffic-brand">
+              ตารางแยกตามแบรนด์และเหตุการณ์ล่าสุดแสดงเฉพาะ <BrandLabel brandId={brand} domain={labelOf(brand)} />
+              {" "}<button type="button" className="btn" onClick={() => navigate(trafficPath(period), { replace: true })}>ดูทุกแบรนด์</button>
+            </p>
+          )}
           <div className="ledger" role="group" aria-label="สรุปทราฟฟิก">
             {TRAFFIC_METRICS.map((key) => (
               <div className="cell" key={key}><p className="k">{METRIC_LABEL[key]}</p><p className="v">{count(report.totals[key])}</p></div>
@@ -179,7 +199,7 @@ export function TrafficScreen() {
             <DataTable
               label="แยกตาม (Breakdown)"
               columns={breakdownColumns}
-              rows={tab === "brand" ? report.breakdowns[tab].filter((row) => inScopeId(row.key)) : report.breakdowns[tab]}
+              rows={tab === "brand" ? report.breakdowns[tab].filter((row) => inBrand(row.key)) : report.breakdowns[tab]}
               rowKey={(row) => row.key}
               empty={<EmptyState title="ยังไม่มีทราฟฟิกในช่วงนี้" />}
             />
@@ -192,7 +212,7 @@ export function TrafficScreen() {
             <DataTable
               label="เหตุการณ์ล่าสุด (Recent events)"
               columns={recentColumns}
-              rows={report.recent.filter((row) => inScopeId(row.brand_id)).map((row, n) => ({ ...row, n }))}
+              rows={report.recent.filter((row) => inBrand(row.brand_id)).map((row, n) => ({ ...row, n }))}
               rowKey={(row) => `${row.n}`}
               empty={<EmptyState title="ยังไม่มีทราฟฟิกในช่วงนี้" />}
             />

@@ -143,7 +143,7 @@ describe("templates API", () => {
       expect(templates.find((t) => t.template_version_id === "tv-bolt-1")).toEqual({
         template_version_id: "tv-bolt-1", template_id: "tpl-bolt", name: "Bolt Harbor", version: 1, status: "awaiting_approval",
         submitted_by_label: "Somchai (bolt.new)", created_at: NOW, sealed_at: null,
-        thumbnail_url: "/api/templates/tv-bolt-1/screenshots/desktop", brands_using: 0, archived: false, category_id: null, was_approved: false,
+        thumbnail_url: "/api/templates/tv-bolt-1/screenshots/desktop", brands_using: 0, archived: false, category_id: null, was_approved: false, similarity_fail_count: 0,
       });
     }
   });
@@ -179,6 +179,45 @@ describe("templates API", () => {
     expect(dispatched[0]).toEqual({ url: "https://factory/seal-template", template_version_id: "tv-bolt-1", sealed_by: await me(owner), sealed_role: "owner" });
     const again = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {}, env: testEnv });
     expect(await again.json()).toMatchObject({ ok: true, already_sealed: true });
+  });
+
+  it("refuses approve with 409 and the Thai text while a similarity check is FAIL, and never reaches the factory", async () => {
+    const fix = "Vellora (vellora.com): Use new images. (images similarity 0.4)";
+    const failing = JSON.stringify({ similarity: { pass: false, summary: "FAIL: too similar.", fixes: [fix] }, warning_issues: [{ rule: "similarity", message: "FAIL: too similar.", fix }] });
+    // A newer identity_scan row is the latest check, so the gate reads it.
+    const added = await env.FACTORY.prepare("INSERT INTO certifications (template_version_id, check_name, result, details_json, artifact_r2_key, created_at) VALUES ('tv-bolt-1', 'identity_scan', 'fail', ?1, NULL, ?2)")
+      .bind(failing, NOW).run();
+    try {
+      let dispatched = 0;
+      const FACTORY_WORKER = { fetch: async () => { dispatched++; return Response.json({}); } } as unknown as Fetcher;
+      const refused = await call("/api/templates/tv-bolt-1/approve", { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER }) });
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ error: "similarity_failed", message: "ยังอนุมัติไม่ได้: เช็กความซ้ำไม่ผ่าน 1 ข้อ", failures: ["Vellora (vellora.com): ใช้รูปภาพซ้ำกัน 40%"] });
+      expect(dispatched).toBe(0);
+      // The list counts the same FAIL lines, so the row approve button can say it is blocked before a click.
+      const { templates } = TemplateListResponse.parse(await (await call("/api/templates", { cookie: owner })).json());
+      expect(templates.find((t) => t.template_version_id === "tv-bolt-1")?.similarity_fail_count).toBe(1);
+    } finally {
+      await env.FACTORY.prepare("DELETE FROM certifications WHERE id = ?1").bind(added.meta.last_row_id).run();
+    }
+  });
+
+  it("re-approving a sealed version reaches the factory and answers already_sealed even with a similarity FAIL", async () => {
+    await insertSealed();
+    const failing = JSON.stringify({ similarity: { pass: false, summary: "FAIL: too similar." } });
+    const added = await env.FACTORY.prepare("INSERT INTO certifications (template_version_id, check_name, result, details_json, artifact_r2_key, created_at) VALUES ('tv-sealed-t', 'identity_scan', 'fail', ?1, NULL, ?2)")
+      .bind(failing, NOW).run();
+    try {
+      const FACTORY_WORKER = { fetch: async (req: Request) => {
+        const body = await req.json() as Record<string, string>;
+        return Response.json({ ok: true, template_version_id: body.template_version_id, sealed_by: "owner", sealed_at: NOW, already_sealed: true });
+      } } as unknown as Fetcher;
+      const again = await call("/api/templates/tv-sealed-t/approve", { cookie: owner, method: "POST", body: {}, env: makeEnv({ FACTORY_WORKER }) });
+      expect(again.status).toBe(200);
+      expect(await again.json()).toMatchObject({ ok: true, already_sealed: true });
+    } finally {
+      await env.FACTORY.prepare("DELETE FROM certifications WHERE id = ?1").bind(added.meta.last_row_id).run();
+    }
   });
 
   it("approve saves corrected theme vars", async () => {

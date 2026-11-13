@@ -211,7 +211,7 @@ describe("Home screen, owner", () => {
     expect(await fixes.findByText("demo06")).toBeTruthy();
     expect(fixes.getByText("5 ลีดยังไม่มีผลจาก LeadsGate เกิน 24 ชั่วโมง")).toBeTruthy();
     expect(fixes.getByText("Credit Genie")).toBeTruthy();
-    expect(fixes.getByText("อัตรา reject 38% สูงกว่าค่าปกติ 10%")).toBeTruthy();
+    expect(fixes.getByText("ลีดโดนปฏิเสธ 5 จาก 13 ราย (38%) ใน 24 ชม.")).toBeTruthy();
 
     await waitFor(() => expect(taskCount("ยืนยัน Test sold")).toBe("1 แบรนด์"));
     expect(taskCount("อนุมัติเทมเพลต")).toBe("2 รายการ");
@@ -530,7 +530,7 @@ describe("Home screen, owner", () => {
       "คอนเวอร์ชันส่งไม่ได้ 4 รายการ",
       "คอนเวอร์ชันค้างเกิน 6 ชม. 1 รายการ",
       "5 ลีดยังไม่มีผลจาก LeadsGate เกิน 24 ชั่วโมง",
-      "อัตรา reject 38% สูงกว่าค่าปกติ 10%",
+      "ลีดโดนปฏิเสธ 5 จาก 13 ราย (38%) ใน 24 ชม.",
     ]);
     const dots = [...screen.getByRole("region", { name: "ต้องแก้" }).querySelectorAll(".home-item .dot")].map((d) => d.getAttribute("style") ?? "");
     expect(dots.map((style) => (style.includes("--bad") ? "bad" : "warn"))).toEqual(["bad", "warn", "warn", "warn"]);
@@ -540,9 +540,10 @@ describe("Home screen, owner", () => {
     expect(links.map((l) => l.getAttribute("href"))).toEqual(["/conversions?period=today&status=dead", "/conversions?period=30d&status=pending"]);
     expect(appTakesClick(links[1]!)).toBe(true);
     expect(window.location.pathname + window.location.search).toBe("/conversions?period=30d&status=pending");
-    // The postback item opens that brand's leads. The reject item keeps the button that opens the alerts screen.
+    // The postback item opens that brand's leads. The reject item opens that brand's rejected leads in the alert window.
     expect(fixList().getAllByRole("link", { name: "ดูลีด" })).toHaveLength(1);
-    expect(fixList().getAllByRole("button", { name: "ดูรายละเอียด" })).toHaveLength(1);
+    expect(fixList().getByRole("link", { name: "ดูลีดโดนปฏิเสธ" }).getAttribute("href")).toMatch(/^\/leads\?brand=Credit\+Genie&status=rejected&time=decided&from=\d{4}-\d{2}-\d{2}T[\d%A.]+Z&to=\d{4}-\d{2}-\d{2}T[\d%A.]+Z$/);
+    expect(fixList().queryAllByRole("button", { name: "ดูรายละเอียด" })).toHaveLength(0);
   });
 
   it("keeps the top 4 of the fix list with bad items before warn items", async () => {
@@ -629,7 +630,7 @@ describe("Home screen, owner", () => {
     expect(["ส่งแล้ว", "ค้างส่ง", "ส่งไม่ได้", "ค้างเกิน 6 ชม."].map(cardValue)).toEqual(["—", "—", "—", "—"]);
     expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
     // The alert items stay; no conversion item appears.
-    await waitFor(() => expect(fixTexts()).toContain("อัตรา reject 38% สูงกว่าค่าปกติ 10%"));
+    await waitFor(() => expect(fixTexts()).toContain("ลีดโดนปฏิเสธ 5 จาก 13 ราย (38%) ใน 24 ชม."));
     expect(fixTexts().some((t) => t?.startsWith("คอนเวอร์ชัน"))).toBe(false);
   });
 
@@ -1106,7 +1107,8 @@ describe("Home screen, v9 layout", () => {
     spend = vi.fn(async () => spendReport(62300, 6000));
     (api as unknown as { spend: unknown }).spend = spend;
     render(<HomeScreen me={owner} />);
-    await waitFor(() => expect(fixList().getByRole("button", { name: "ตั้ง drain route" })).toBeTruthy());
+    // The drain route item opens the brand list on its chip.
+    await waitFor(() => expect(fixList().getByRole("link", { name: "ตั้ง drain route" }).getAttribute("href")).toBe("/brands?chip=drain-route"));
     expect(fixList().getByRole("link", { name: "ลองใหม่" }).getAttribute("href")).toBe("/conversions?period=today&status=dead");
     expect(fixList().getByRole("link", { name: "ตรวจ gclid" }).getAttribute("href")).toBe("/traffic");
     // The stalled conversions item has no kind of its own.
@@ -1339,5 +1341,16 @@ describe("Home screen, spend change and funnel strip", () => {
     expect(bars.length).toBeGreaterThan(3);
     expect(bars.every((bar) => bar.style.width.endsWith("%") && bar.style.height === "")).toBe(true);
     expect(Math.max(...bars.map((bar) => parseInt(bar.style.width, 10)))).toBe(100);
+  });
+});
+
+describe("Home banner names brands by domain (FUS-392)", () => {
+  it("shows the brand domain in place of the brand id and links each line to its fix", () => {
+    const urgent = [{ id: "reject:cg", level: "bad" as const, brand: "cg", kind: "rejects" as const, path: "/leads?brand=cg&status=rejected", message: "ลีดโดนปฏิเสธ 6 จาก 10 ราย (60%) ใน 24 ชม." }];
+    render(<IncidentBanner urgent={urgent} clickLoss={null} domains={new Map([["cg", "creditgenie.example"]])} />);
+    const line = screen.getByRole("link", { name: "ดูลีดโดนปฏิเสธ" }).closest("li")!;
+    expect(line.textContent).toContain("creditgenie.example: ลีดโดนปฏิเสธ 6 จาก 10 ราย (60%) ใน 24 ชม.");
+    expect(line.textContent).not.toMatch(/^cg:/);
+    expect(screen.getByRole("link", { name: "ดูลีดโดนปฏิเสธ" }).getAttribute("href")).toBe("/leads?brand=cg&status=rejected");
   });
 });

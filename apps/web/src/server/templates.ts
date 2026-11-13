@@ -35,6 +35,7 @@ import type { Env } from "./env.js";
 import { decodePathSegment } from "./lifecycle.js";
 import { readZipForm } from "./zip-form.js";
 import { authorizePanel } from "./panel-roles.js";
+import { approveBlockedText, similarityFailures } from "../client/template-similarity.js";
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -68,7 +69,7 @@ const SUMMARY_COLUMNS = `v.template_version_id, v.template_id, t.name, v.version
   (SELECT m.category_id FROM template_category_map m WHERE m.template_id = v.template_id) AS category_id,
   EXISTS(SELECT 1 FROM template_versions s WHERE s.template_id = v.template_id AND s.status = 'sealed') AS was_approved`;
 
-const summary = (row: VersionRow) => ({
+const summary = (row: VersionRow, similarityFailCount = 0) => ({
   template_version_id: row.template_version_id,
   template_id: row.template_id,
   name: row.name,
@@ -82,7 +83,24 @@ const summary = (row: VersionRow) => ({
   archived: row.archived === 1,
   category_id: row.category_id,
   was_approved: row.was_approved === 1,
+  similarity_fail_count: similarityFailCount,
 });
+
+/**
+ * Failing similarity lines per version, from each version's latest check per name: the read the approve gate and the
+ * detail route make, so the row button and the gate agree. Only checks whose details mention similarity are fetched.
+ */
+async function similarityFailCounts(env: Env, versionIds: string[]): Promise<Map<string, number>> {
+  if (versionIds.length === 0) return new Map();
+  const { results } = await env.FACTORY.prepare(
+    `SELECT template_version_id, details_json FROM certifications
+     WHERE id IN (SELECT MAX(id) FROM certifications WHERE template_version_id IN (SELECT value FROM json_each(?1)) GROUP BY template_version_id, check_name)
+       AND instr(details_json, '"similarity"') > 0`,
+  ).bind(JSON.stringify(versionIds)).all<{ template_version_id: string; details_json: string | null }>();
+  const checks = new Map<string, Array<{ details: unknown }>>();
+  for (const row of results) checks.set(row.template_version_id, [...(checks.get(row.template_version_id) ?? []), { details: parseJson(row.details_json) }]);
+  return new Map([...checks].map(([id, list]) => [id, similarityFailures(list).length]));
+}
 
 /**
  * True while a template may be hard deleted: no version was ever sealed and no brand revision points at any version.
@@ -140,7 +158,8 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
        ORDER BY v.created_at DESC, v.template_version_id LIMIT 200`,
     ).all<VersionRow>();
     const { results: categories } = await env.FACTORY.prepare("SELECT id, name, sort FROM template_categories ORDER BY sort, name").all<TemplateCategory>();
-    return json(200, TemplateListResponse.parse({ templates: results.map(summary), categories }));
+    const failCounts = await similarityFailCounts(env, results.map((r) => r.template_version_id));
+    return json(200, TemplateListResponse.parse({ templates: results.map((r) => summary(r, failCounts.get(r.template_version_id) ?? 0)), categories }));
   }
 
   if (path === "/api/templates/categories" && method === "POST") {
@@ -257,6 +276,17 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
     }
     const approveRequest = TemplateApproveRequest.safeParse({ theme_vars: raw?.theme_vars });
     if (!approveRequest.success) return json(422, { error: "invalid_theme_vars" });
+    // A sealed version skips the gate: the factory answers a re-approve with already_sealed: true, as before the gate.
+    const version = await env.FACTORY.prepare("SELECT status FROM template_versions WHERE template_version_id = ?1").bind(id).first<{ status: string }>();
+    if (version?.status !== "sealed") {
+      // The same latest-check-per-name read as the detail route, so the drawer and this gate count the same FAIL lines.
+      const { results: latestChecks } = await env.FACTORY.prepare(
+        `SELECT details_json FROM certifications
+         WHERE id IN (SELECT MAX(id) FROM certifications WHERE template_version_id = ?1 GROUP BY check_name)`,
+      ).bind(id).all<{ details_json: string | null }>();
+      const failures = similarityFailures(latestChecks.map((c) => ({ details: parseJson(c.details_json) })));
+      if (failures.length > 0) return json(409, { error: "similarity_failed", message: approveBlockedText(failures.length), failures });
+    }
     if (approveRequest.data.theme_vars) {
       // A sealed version is immutable (trigger in migration 0001), so the corrected map is stored only on a certified
       // version, the one status the seal accepts. A changed map and its audit row are written in one batch.
@@ -377,7 +407,7 @@ export async function handleTemplateRoute(request: Request, env: Env, path: stri
         ? `/api/templates/${encodeURIComponent(id)}/screenshots/${viewport}`
         : null;
     return json(200, TemplateDetailResponse.parse({
-      template: { ...summary(row), sha256: row.sha256, sealed_by: row.sealed_by, text_defaults: textDefaults(row.text_defaults_json), theme_vars: themeVars(row.theme_vars_json) },
+      template: { ...summary(row, similarityFailures(checks.map((c) => ({ details: parseJson(c.details_json) }))).length), sha256: row.sha256, sealed_by: row.sealed_by, text_defaults: textDefaults(row.text_defaults_json), theme_vars: themeVars(row.theme_vars_json) },
       checks: checks.map((c) => ({ check_name: c.check_name, result: c.result, details: parseJson(c.details_json), created_at: c.created_at })),
       screenshots: { desktop: shot("desktop"), mobile: shot("mobile") },
     }));

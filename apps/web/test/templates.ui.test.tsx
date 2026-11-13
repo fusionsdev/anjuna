@@ -50,6 +50,19 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, "", "/"); });
 
 describe("Templates screen", () => {
+  it("turns the row approve into a disabled ยังอนุมัติไม่ได้ and a link to the drawer while similarity fails", async () => {
+    routes.set("GET /api/templates?include_archived=1", () => json({ templates: [{ ...summary, similarity_fail_count: 2 }] }));
+    render(<TemplatesScreen me={owner} />);
+    const blocked = await screen.findByRole("button", { name: "ยังอนุมัติไม่ได้ Bolt Harbor v1" });
+    expect((blocked as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "อนุมัติ Bolt Harbor v1" })).toBeNull();
+    const why = screen.getByRole("link", { name: "ดูเหตุผล Bolt Harbor v1" });
+    expect(why.getAttribute("href")).toBe("/templates/tv-bolt-1");
+    fireEvent.click(why);
+    await waitFor(() => expect(requests.some((r) => r.method === "GET" && r.path === "/api/templates/tv-bolt-1")).toBe(true));
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
+  });
+
   const zipFile = (entries: Record<string, string>) => {
     const bytes = zipSync(Object.fromEntries(Object.entries(entries).map(([path, text]) => [path, strToU8(text)])));
     const file = new File([new Uint8Array(bytes)], "site.zip", { type: "application/zip" });
@@ -201,9 +214,72 @@ describe("Templates screen", () => {
     fireEvent.click(await screen.findByText("Bolt Harbor"));
     const warnings = await screen.findByRole("note", { name: "คำเตือน (Warnings)" });
     expect(warnings.classList.contains("note")).toBe(true);
-    for (const message of ["Email input advisory.", "Host badge removed.", "Similar layout.", "Mobile screenshot unavailable."]) expect(warnings.textContent).toContain(message);
+    for (const message of ["Email input advisory.", "Host badge removed.", "Mobile screenshot unavailable."]) expect(warnings.textContent).toContain(message);
+    // The similarity line moves to the approve gate and is not repeated in the warnings.
+    expect(warnings.textContent).not.toContain("Similar layout.");
+    expect(within(screen.getByRole("alert", { name: "ยังอนุมัติไม่ได้: เช็กความซ้ำไม่ผ่าน 1 ข้อ" })).getByText("ข้อความเช็กความซ้ำ: Review with the owner.")).toBeTruthy();
     expect(screen.getAllByText("คำเตือน (Warning)")).toHaveLength(3);
-    expect(screen.getByRole("button", { name: "อนุมัติ (Approve)" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "อนุมัติ (Approve)" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("keeps Approve off while similarity FAILs and lists each distinct failing line once", async () => {
+    const fail = (fix: string) => ({ rule: "similarity", message: "FAIL: too similar to Vellora (vellora.com). Make the design clearly different and re-run similarity_check.", fix });
+    const textLine = fail("Vellora (vellora.com): Rewrite the landing-page copy from scratch: different headlines, section copy, wording and CTA text. (text similarity 0.52)");
+    const overall = fail("Vellora (vellora.com): redesign the layout, copy and imagery; overall similarity 0.81 is above 0.7.");
+    routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, checks: [
+      { check_name: "identity_scan", result: "fail", details: { similarity: { pass: false, summary: textLine.message, fixes: [] }, warning_issues: [textLine, overall] }, created_at: STAMP },
+      // The import stored the same two lines again.
+      { check_name: "lint", result: "pass", details: { import_warnings: [textLine, overall] }, created_at: STAMP },
+    ] }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    const gate = await screen.findByRole("alert", { name: "ยังอนุมัติไม่ได้: เช็กความซ้ำไม่ผ่าน 2 ข้อ" });
+    expect(within(gate).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Vellora (vellora.com): ข้อความบนหน้าคล้ายกัน 52%",
+      "Vellora (vellora.com): ภาพรวมคล้ายกัน 81%",
+    ]);
+    const approve = screen.getByRole("button", { name: "อนุมัติ (Approve)" }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    expect(approve.title).toBe("ยังอนุมัติไม่ได้: เช็กความซ้ำไม่ผ่าน 2 ข้อ");
+    // The developer summary ("re-run similarity_check") is not shown to the owner.
+    expect(document.body.textContent).not.toContain("similarity_check");
+    fireEvent.click(approve);
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
+  });
+
+  it("keeps an approved version approved and warns about its similarity FAILs", async () => {
+    const fail = { rule: "similarity", message: "FAIL: too similar.", fix: "Vellora (vellora.com): Use new images. (images similarity 0.4)" };
+    routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, template: { ...detail.template, status: "approved", sealed_at: STAMP }, checks: [
+      { check_name: "identity_scan", result: "fail", details: { warning_issues: [fail] }, created_at: STAMP },
+    ] }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    const warning = await screen.findByRole("alert", { name: "อนุมัติไปแล้ว แต่เช็กความซ้ำไม่ผ่าน 1 ข้อ" });
+    expect(within(warning).getByText("Vellora (vellora.com): ใช้รูปภาพซ้ำกัน 40%")).toBeTruthy();
+    expect(screen.getAllByText("ใช้ได้").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/ยังอนุมัติไม่ได้/)).toBeNull();
+  });
+
+  it("shows a plain Thai hint in place of builder markup in the drawer warnings", async () => {
+    const outside = {
+      rule: "meta",
+      message: 'The template brand name "Vellora" appears 3 time(s) outside data-brand (index.html: 3). The install replaces it with each brand\'s name; wrap each mention in <span data-brand>Vellora</span> so the page reads the same before and after.',
+      fix: 'ชื่อแบรนด์ของเทมเพลต "Vellora" ปรากฏ 3 ครั้งนอก data-brand (index.html: 3) การติดตั้งจะแทนที่ด้วยชื่อของแต่ละแบรนด์ กรุณาครอบแต่ละจุดด้วย <span data-brand>Vellora</span>',
+    };
+    const missing = { rule: "meta", message: 'No element has data-brand. Put data-brand on every element, e.g. <a href="/" data-brand>Harbor Funding</a>.', fix: 'ไม่พบ data-brand เช่น <a href="/" data-brand>Harbor Funding</a>' };
+    const plain = { rule: "meta", message: "The meta description has 200 characters.", fix: "meta description ยาว 200 ตัวอักษร กรุณาย่อให้สั้นลง" };
+    routes.set("GET /api/templates/tv-bolt-1", () => json({ ...detail, checks: [
+      { check_name: "lint", result: "pass", details: { warning_issues: [outside, missing, plain] }, created_at: STAMP },
+    ] }));
+    render(<TemplatesScreen me={owner} />);
+    fireEvent.click(await screen.findByText("Bolt Harbor"));
+    const warnings = await screen.findByRole("note", { name: "คำเตือน (Warnings)" });
+    expect(within(warnings).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      'ชื่อแบรนด์ "Vellora" อยู่นอกช่องชื่อแบรนด์ 3 จุด ระบบเปลี่ยนเป็นชื่อแบรนด์ให้ตอนติดตั้ง ถ้าอยากให้หน้าตัวอย่างตรงกัน ให้ผู้สร้างเทมเพลตแก้',
+      "เทมเพลตยังไม่มีช่องชื่อแบรนด์ แก้ชื่อแบรนด์จากแผงควบคุมไม่ได้ ให้ผู้สร้างเทมเพลตเพิ่ม",
+      "meta The meta description has 200 characters. meta description ยาว 200 ตัวอักษร กรุณาย่อให้สั้นลง",
+    ]);
+    expect(warnings.textContent).not.toMatch(/<span|data-brand>|wrap each mention/);
   });
 
   it("keeps failed blocking checks red", async () => {

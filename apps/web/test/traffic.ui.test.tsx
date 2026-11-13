@@ -2,7 +2,7 @@ import trafficFixture from "@anjuna/contracts/fixtures/admin/traffic-report.resp
 import type { TrafficReportResponse } from "@anjuna/contracts";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TrafficScreen, readTrafficPeriod, trafficPath } from "../src/client/screens/Traffic";
+import { TrafficScreen, readTrafficBrand, readTrafficPeriod, trafficPath } from "../src/client/screens/Traffic";
 
 const report = trafficFixture as TrafficReportResponse;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -228,5 +228,28 @@ describe("Traffic screen", () => {
     const table = await recent();
     expect(within(table).getByText("ยังไม่มีทราฟฟิกในช่วงนี้")).toBeTruthy();
     expect(within(breakdown()).getByText("ยังไม่มีทราฟฟิกในช่วงนี้")).toBeTruthy();
+  });
+});
+
+describe("Traffic brand filter (FUS-392)", () => {
+  it("keeps ?brand= from the click risk link: the brand tab and recent events show that brand only, a period keeps it", async () => {
+    window.history.replaceState(null, "", "/traffic?brand=brand-a");
+    render(<TrafficScreen />);
+    const table = await recent();
+    const brands = within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[2]!.textContent);
+    expect(brands.length).toBeGreaterThan(0);
+    for (const text of brands) expect(text).toContain("brand-a");
+    expect(within(breakdown()).queryByText("brand-b")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน (7d)" }));
+    expect(window.location.search).toBe("?period=7d&brand=brand-a");
+    fireEvent.click(await screen.findByRole("button", { name: "ดูทุกแบรนด์" }));
+    expect(window.location.search).toBe("?period=7d");
+  });
+
+  it("trafficPath writes the brand and reads a bad brand as none", () => {
+    expect(trafficPath("24h", "brand-a")).toBe("/traffic?brand=brand-a");
+    expect(trafficPath("7d", "brand-a")).toBe("/traffic?period=7d&brand=brand-a");
+    expect(readTrafficBrand("?brand=brand-a")).toBe("brand-a");
+    expect(readTrafficBrand("?brand=")).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { LEAD_AGGREGATES_MAX_DAYS, LEAD_OUTCOMES, type LeadListRow, type LeadOutcome, LeadsQuery, type LeadsResponse } from "@anjuna/contracts";
+import { LEAD_AGGREGATES_MAX_DAYS, LEAD_OUTCOMES, LeadFilter, type LeadListRow, type LeadOutcome, LeadsQuery, type LeadsResponse, isLeadInstant } from "@anjuna/contracts";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiError, api, type LeadFilterState, type Me } from "../api";
 import { BrandLabel, buildBrandLabels } from "../brand-labels";
@@ -16,7 +16,8 @@ import { LeadDetailScreen } from "./LeadDetail";
 import "./Leads.css";
 
 // spec leads
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
+// A day or an ISO instant, as the contract reads `from` and `to`. An alert link sends instants.
+const isBound = (value: string | null): value is string => value !== null && LeadFilter.shape.from.safeParse(value).success;
 const outcomes: Array<[LeadOutcome, string, Tone]> = [
   ["sold", "ขายได้ (Sold)", "live"],
   ["pending", "รอผล (Pending)", "blue"],
@@ -38,8 +39,9 @@ function filterFromUrl(search: string): LeadFilterState {
   const from = params.get("from");
   const to = params.get("to");
   return {
-    from: from && DAY.test(from) ? from : window.from,
-    to: to && DAY.test(to) ? to : window.to,
+    from: isBound(from) ? from : window.from,
+    to: isBound(to) ? to : window.to,
+    time: params.get("time") === "decided" ? "decided" : "",
     brand: params.get("brand") ?? "",
     status: (LEAD_OUTCOMES as readonly string[]).includes(status ?? "") ? status as LeadOutcome : "",
     q: params.get("q") ?? "",
@@ -49,7 +51,7 @@ function filterFromUrl(search: string): LeadFilterState {
 /** The filter goes to the query string; an open lead stays in the path so the panel stays open. */
 function writeFilter(filter: LeadFilterState, leadId: string | null): void {
   const params = new URLSearchParams();
-  for (const key of ["from", "to", "brand", "status", "q"] as const) if (filter[key]) params.set(key, filter[key]);
+  for (const key of ["from", "to", "time", "brand", "status", "q"] as const) if (filter[key]) params.set(key, filter[key]);
   const query = params.toString();
   const path = routePath({ view: "leads", leadId });
   navigate(query ? `${path}?${query}` : path, { replace: true });
@@ -71,6 +73,7 @@ function filterProblems(filter: LeadFilterState): string[] {
     if (field === "q") return "คำค้นต้องเป็นรหัสลีดหรือ click id ยาว 4 ถึง 64 ตัว ใช้ได้เฉพาะ A-Z a-z 0-9 และ - (Search needs 4 to 64 letters, digits or hyphens)";
     if (field === "brand") return "รหัสแบรนด์ไม่ถูกต้อง (Invalid brand ID)";
     if (field === "from" || field === "to") return "วันที่ไม่ถูกต้อง (Invalid date)";
+    if (field === "time") return "ช่วงเวลาไม่ถูกต้อง";
     if (field === "status") return "สถานะไม่ถูกต้อง (Invalid status)";
     return filter.from > filter.to
       ? `วันเริ่มต้องไม่อยู่หลังวันสิ้นสุด (${issue.message})`
@@ -126,6 +129,9 @@ export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: 
     writeFilter(next, selectedId);
   };
   const search = (e: FormEvent) => { e.preventDefault(); if (qDraft !== filter.q) update({ q: qDraft }); };
+  // A date edit leaves an alert's exact window: both bounds become their days and the list matches by creation time again.
+  const updateDays = (patch: { from?: string; to?: string }) => update({ from: filter.from.slice(0, 10), to: filter.to.slice(0, 10), time: "", ...patch });
+  const exactWindow = isLeadInstant(filter.from) || isLeadInstant(filter.to);
 
   // A button, not a link: a middle click or "Save link as" would follow a PII href without the dialog.
   // After Confirm a link made only for this click downloads with the session cookie, then goes away.
@@ -228,10 +234,10 @@ export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: 
           </select>
         </label>
         <label>ตั้งแต่ (From)
-          <input type="date" value={filter.from} onChange={(e) => update({ from: e.target.value || defaultWindow().from })} />
+          <input type="date" value={filter.from.slice(0, 10)} onChange={(e) => updateDays({ from: e.target.value || defaultWindow().from })} />
         </label>
         <label>ถึง (To)
-          <input type="date" value={filter.to} onChange={(e) => update({ to: e.target.value || defaultWindow().to })} />
+          <input type="date" value={filter.to.slice(0, 10)} onChange={(e) => updateDays({ to: e.target.value || defaultWindow().to })} />
         </label>
         <label>ค้นหา (Search)
           <input type="search" value={qDraft} placeholder="รหัสลีด 4 ตัวขึ้นไป (Lead ID prefix)" onChange={(e) => setQDraft(e.target.value)} />
@@ -240,13 +246,16 @@ export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: 
         <div className="range-toggle" role="group" aria-label="ช่วงเวลา">
           {RANGES.map(([days, label]) => {
             const w = windowOf(days);
-            return <button key={days} type="button" aria-pressed={filter.from === w.from && filter.to === w.to} onClick={() => update(w)}>{label}</button>;
+            return <button key={days} type="button" aria-pressed={filter.from === w.from && filter.to === w.to} onClick={() => update({ ...w, time: "" })}>{label}</button>;
           })}
         </div>
       </form>
       </div>
       </FilterBar>
       {problems.map((problem) => <p key={problem} role="alert" className="hint">{problem}</p>)}
+      {(exactWindow || filter.time === "decided") && (
+        <p className="hint">{filter.time === "decided" ? "ลีดที่ได้ผลจาก LeadsGate ตั้งแต่" : "ลีดที่เข้ามาตั้งแต่"} {exactWindow ? fmt(filter.from) : filter.from} ถึง {exactWindow ? fmt(filter.to) : filter.to} · แก้วันที่เพื่อกลับไปดูตามวันที่ลีดเข้ามา</p>
+      )}
       <p className="hint">ช่วงวันที่เป็น UTC ค่าเริ่มต้นคือ 30 วันล่าสุด · ค้นด้วยรหัสลีดหรือ click id เท่านั้น ไม่ค้นด้วยอีเมลหรือเบอร์โทร (Dates are UTC; search matches lead ID or click ID only)</p>
     </section>
     <div className={selectedId ? "leads-layout has-panel" : "leads-layout"}>

@@ -342,3 +342,28 @@ describe("Leads screen: chips, range and the lead panel", () => {
     expect(view.container.querySelector(".lead-panel")).toBeNull();
   });
 });
+
+describe("Leads exact window from an alert link (FUS-392)", () => {
+  const FROM = "2026-11-12T02:00:00.000Z";
+  const TO = "2026-11-13T02:00:00.000Z";
+
+  it("sends the alert's instants and time=decided to core and says which leads the list holds", async () => {
+    window.history.replaceState(null, "", `/leads?brand=brand-a&status=rejected&time=decided&from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}`);
+    renderScreen();
+    await waitFor(() => expect(leadRequests()).toHaveLength(1));
+    const url = new URL(leadRequests()[0]!, "https://app.test");
+    expect(Object.fromEntries(url.searchParams)).toEqual({ from: FROM, to: TO, time: "decided", brand: "brand-a", status: "rejected" });
+    expect(screen.getByText(/^ลีดที่ได้ผลจาก LeadsGate ตั้งแต่/)).toBeTruthy();
+    // The date inputs show the days of the instants.
+    expect((screen.getByLabelText("ตั้งแต่ (From)") as HTMLInputElement).value).toBe("2026-11-12");
+  });
+
+  it("keeps day values working and leaves the exact window on a date edit", async () => {
+    window.history.replaceState(null, "", `/leads?time=decided&from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}`);
+    renderScreen();
+    await screen.findByTitle(SOLD_ID);
+    fireEvent.change(screen.getByLabelText("ถึง (To)"), { target: { value: "2026-11-14" } });
+    expect(new URLSearchParams(window.location.search).toString()).toBe("from=2026-11-12&to=2026-11-14");
+    await waitFor(() => expect(leadRequests().at(-1)).toBe("/api/leads?from=2026-11-12&to=2026-11-14"));
+  });
+});

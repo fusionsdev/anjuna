@@ -1,6 +1,8 @@
 import type { AlertsReportResponse, NotificationLogRow } from "@anjuna/contracts";
 import { Bell, BellRing, Coins, MousePointerBan, RotateCcw, ThumbsDown, Timer, Webhook, XCircle, type LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { alertFix } from "../alert-fix";
+import { isPlainLeftClick, navigate, useSearch } from "../router";
 import { ApiError, api, type Me } from "../api";
 import { BrandLabel, useBrandDomains } from "../brand-labels";
 import { hydrateAlertStates, recordAlertState, useAlertSession } from "../alerts-session";
@@ -90,6 +92,10 @@ function AlertList({ report, domains, onChanged }: { report: AlertsReportRespons
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const brandOfHostname = useMemo(() => hostnameBrand(domains), [domains]);
+  // `/alerts?key=<alert_key>` from Home selects that card and scrolls it into view.
+  const selectedKey = new URLSearchParams(useSearch()).get("key");
+  const selectedRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => { selectedRef.current?.scrollIntoView?.({ block: "center" }); }, [selectedKey]);
   const incidents = useMemo(() => incidentsOf(report, brandOfHostname), [report, brandOfHostname]);
   const entries = useMemo(() => {
     const open: Entry[] = [];
@@ -160,13 +166,16 @@ function AlertList({ report, domains, onChanged }: { report: AlertsReportRespons
               const title = i.rule ? RULE_TITLE[i.rule] : describeKey(i.key ?? "").title;
               const label = `${title}${i.brand ? ` ${domains.get(i.brand) ?? i.brand}` : ""}`;
               const busy = i.key !== null && busyKey === i.key;
+              const fix = i.group === "open" && i.rule ? alertFix({ rule: i.rule, brand: i.brand, level: i.level, id: i.id, key: i.key }, report) : null;
+              const selected = selectedKey !== null && (i.key === selectedKey || i.id === selectedKey);
               return (
-                <li key={i.id} className={i.group === "closed" ? "alert-row is-done" : "alert-row"}>
+                <li key={i.id} ref={selected ? selectedRef : undefined} aria-current={selected ? "true" : undefined} className={`${i.group === "closed" ? "alert-row is-done" : "alert-row"}${selected ? " is-selected" : ""}`}>
                   <span className="alert-dot" aria-hidden="true" style={{ background: DOT_COLOR[i.level] }} />
                   <Icon aria-hidden="true" className="alert-icon" />
                   <div className="alert-main">
                     <p className="alert-title">{title}{i.brand && <> · <BrandLabel brandId={i.brand} domain={domains.get(i.brand)} /></>}</p>
-                    <p className="hint">{i.detail}{i.closedAt ? ` · ปิดเมื่อ ${when(i.closedAt)}` : ""}</p>
+                    <p className="hint">{fix ? fix.cause : i.detail}{i.closedAt ? ` · ปิดเมื่อ ${when(i.closedAt)}` : ""}</p>
+                    {fix && <a className="btn pri" href={fix.path} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(fix.path); }}>{fix.label}</a>}
                   </div>
                   <Chip tone={LEVEL_TONE[i.level]}>{LEVEL_LABEL[i.level]}</Chip>
                   {i.group === "closed" && <Chip tone="neutral">ปิดแล้ว</Chip>}

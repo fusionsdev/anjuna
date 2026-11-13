@@ -41,6 +41,11 @@ export const DEFAULT_SUBMIT_ERROR_ALERT_AT = 0.1;
 export const DEFAULT_REJECT_WINDOW_HOURS = 24;
 export const DEFAULT_REJECT_WARN_AT = 0.1;
 export const DEFAULT_REJECT_ALERT_AT = 0.2;
+/**
+ * A percentage alert (reject rate, submit error rate) needs at least this many leads in its window.
+ * Below it a brand produces no row, so 1 reject out of 1 never opens an alert.
+ */
+export const RATE_ALERT_MIN_SAMPLE = 10;
 
 export const AlertsConfig = z.strictObject({
   /** The "as of" instant all alerts evaluate against (ISO-8601). */
@@ -189,7 +194,10 @@ export class InMemorySubmitErrorCounts implements SubmitErrorCountsSource {
   }
 }
 
-/** rate = errors / (submits + errors). Brands at or above `warn_at` are reported, worst first. */
+/**
+ * rate = errors / (submits + errors). Brands at or above `warn_at` with at least RATE_ALERT_MIN_SAMPLE
+ * attempts are reported, worst first.
+ */
 export async function submitErrorRate(
   source: SubmitErrorCountsSource,
   config: AlertsConfig,
@@ -206,7 +214,7 @@ export async function submitErrorRate(
       const rate = attempts > 0 ? c.errors / attempts : 0;
       return { brand: c.brand, submits: c.submits, errors: c.errors, rate };
     })
-    .filter((s) => s.rate >= warnAt)
+    .filter((s) => s.submits + s.errors >= RATE_ALERT_MIN_SAMPLE && s.rate >= warnAt)
     .sort((a, b) => b.rate - a.rate);
 
   const state = samples.some((s) => s.rate >= alertAt) ? "alert" : samples.length > 0 ? "warn" : "ok";
@@ -237,8 +245,8 @@ export type RejectRateResult = z.infer<typeof RejectRateResult>;
 
 /**
  * Reject rate per brand over the last `window_hours`: rejected leads as a fraction of all
- * decided leads (those with a soldLead or rejectLead postback). A brand with no decisions in
- * the window produces no row and cannot alert.
+ * decided leads (those with a soldLead or rejectLead postback). A brand with fewer than
+ * RATE_ALERT_MIN_SAMPLE decided leads in the window produces no row and cannot alert.
  */
 export async function rejectRateByBrand(db: D1Database, config: AlertsConfig): Promise<RejectRateResult> {
   const windowHours = config.reject_window_hours ?? DEFAULT_REJECT_WINDOW_HOURS;
@@ -261,7 +269,7 @@ export async function rejectRateByBrand(db: D1Database, config: AlertsConfig): P
 
   const brands = results
     .map((r) => ({ brand: r.brand, rejected: r.rejected, decided: r.decided, rate: r.decided > 0 ? r.rejected / r.decided : 0 }))
-    .filter((b) => b.rate >= warnAt)
+    .filter((b) => b.decided >= RATE_ALERT_MIN_SAMPLE && b.rate >= warnAt)
     .sort((a, b) => b.rate - a.rate);
 
   const state = brands.some((b) => b.rate >= alertAt) ? "alert" : brands.length > 0 ? "warn" : "ok";

@@ -473,18 +473,31 @@ export type GetLeadResponse = z.infer<typeof GetLeadResponse>;
  * Shared lead filter. `q` matches `lead_id` by prefix or `click_id` exactly and never an email or
  * a phone number. No refinement here so `.extend()` stays legal; the window rules sit on each
  * query below. With both days absent core uses the last 30 days.
+ *
+ * `from` and `to` are both UTC days (inclusive) or both ISO instants (`from` inclusive, `to`
+ * exclusive), so an alert link can name its exact window. `time=decided` matches a lead by the
+ * time of its soldLead or rejectLead postback instead of `leads.created_at`, the time the reject
+ * rate alert counts.
  */
 export const LeadFilter = z.strictObject({
   brand: BrandId.optional(),
-  from: Day.optional(),
-  to: Day.optional(),
+  from: z.union([Day, Timestamp]).optional(),
+  to: z.union([Day, Timestamp]).optional(),
+  time: z.enum(["created", "decided"]).optional(),
   status: LeadOutcome.optional(),
   q: z.string().regex(/^[A-Za-z0-9-]{4,64}$/).optional(),
 });
 export type LeadFilter = z.infer<typeof LeadFilter>;
 
+/** True for an ISO instant bound, false for a `YYYY-MM-DD` day. */
+export const isLeadInstant = (bound: string): boolean => bound.includes("T");
+
 type LeadWindow = { from?: string | undefined; to?: string | undefined };
-const leadWindowOrdered = (q: LeadWindow) => q.from === undefined || q.to === undefined || q.from <= q.to;
+// An instant bound needs the other bound as an instant too: a default day next to it would mix inclusive and exclusive ends.
+const leadWindowSameForm = (q: LeadWindow) =>
+  !(q.from !== undefined && isLeadInstant(q.from)) && !(q.to !== undefined && isLeadInstant(q.to))
+  || (q.from !== undefined && q.to !== undefined && isLeadInstant(q.from) && isLeadInstant(q.to));
+const leadWindowOrdered = (q: LeadWindow) => q.from === undefined || q.to === undefined || Date.parse(q.from) <= Date.parse(q.to);
 const leadWindowShort = (q: LeadWindow) =>
   q.from === undefined || q.to === undefined || (Date.parse(q.to) - Date.parse(q.from)) / 86_400_000 + 1 <= LEAD_AGGREGATES_MAX_DAYS;
 
@@ -499,6 +512,7 @@ export const LeadsQuery = LeadFilter.extend({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   cursor: LeadCursor.optional(),
 })
+  .refine(leadWindowSameForm, { path: ["to"], message: "from and to must both be days or both be instants" })
   .refine(leadWindowOrdered, "from must not be after to")
   .refine(leadWindowShort, `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days`);
 export type LeadsQuery = z.infer<typeof LeadsQuery>;
@@ -536,6 +550,7 @@ export const LeadExportQuery = LeadFilter.extend({
   pii: z.enum(["0", "1"]).default("0"),
   limit: z.coerce.number().int().min(1).max(LEAD_EXPORT_LIMIT).default(LEAD_EXPORT_LIMIT),
 })
+  .refine(leadWindowSameForm, { path: ["to"], message: "from and to must both be days or both be instants" })
   .refine(leadWindowOrdered, "from must not be after to")
   .refine(leadWindowShort, `Window is longer than ${LEAD_AGGREGATES_MAX_DAYS} days`);
 export type LeadExportQuery = z.infer<typeof LeadExportQuery>;
@@ -765,6 +780,11 @@ export const ConversionsQuery = z.strictObject({
   brand: BrandId.optional(),
   /** Rows to return. Omitted means CONVERSIONS_ROW_LIMIT. */
   limit: z.coerce.number().int().min(1).max(CONVERSIONS_MAX_LIMIT).optional(),
+  /**
+   * Rows created before this instant, any age, instead of the period window: the stalled alert's own cutoff,
+   * so its link lists every row it counts. The totals still cover the period.
+   */
+  created_before: Timestamp.optional(),
   /** Test clock, as in AlertsQuery. Omitted means now. */
   now: Timestamp.optional(),
 });

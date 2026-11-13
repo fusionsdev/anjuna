@@ -1,5 +1,5 @@
 import {
-  BrandId, CONVERSIONS_MAX_LIMIT, CONVERSIONS_ROW_LIMIT, CONVERSION_STALLED_HOURS, CONVERSION_STATUSES, SPEND_PERIODS,
+  BrandId, CONVERSIONS_MAX_LIMIT, ConversionsQuery, CONVERSIONS_ROW_LIMIT, CONVERSION_STALLED_HOURS, CONVERSION_STATUSES, SPEND_PERIODS,
   type ConversionsReportResponse, type ConversionStatus, type SpendPeriod,
 } from "@anjuna/contracts";
 import { CheckHit } from "../components/CheckHit";
@@ -14,14 +14,15 @@ import { FilterBar } from "../components/FilterBar";
 import { LoadMore } from "../components/LoadMore";
 import { Spinner } from "../components/Spinner";
 import { StatusBadge, type Tone } from "../components/StatusBadge";
-import { REASON_TEXT } from "../conversion-labels";
-import { navigate, useSearch, viewPath } from "../router";
+import { DEAD_TEXT, REASON_TEXT, deadClass } from "../conversion-labels";
+import { isPlainLeftClick, navigate, routePath, useSearch, viewPath } from "../router";
 import "./Conversions.css";
 import { useBrandScope } from "../useBrandScope";
 import { AllBrandsNote } from "../components/AllBrandsNote";
 
 type Row = ConversionsReportResponse["rows"][number];
-export interface ConversionFilters { period: SpendPeriod; status: "all" | ConversionStatus; brand: string | null }
+/** `createdBefore`: an ISO instant from the stalled alert link. The table lists rows created before it, any age, instead of the period. */
+export interface ConversionFilters { period: SpendPeriod; status: "all" | ConversionStatus; brand: string | null; createdBefore?: string | null }
 
 const DEFAULT_PERIOD: SpendPeriod = "7d";
 const LIMIT_START = CONVERSIONS_ROW_LIMIT;
@@ -46,7 +47,11 @@ export function readConversionFilters(search: string): ConversionFilters {
   const period = SPEND_PERIODS.find((value) => value === params.get("period")) ?? DEFAULT_PERIOD;
   const status = (["all", ...CONVERSION_STATUSES] as const).find((value) => value === params.get("status")) ?? "all";
   const brand = params.get("brand");
-  return { period, status, brand: brand && BrandId.safeParse(brand).success ? brand : null };
+  const createdBefore = params.get("created_before");
+  return {
+    period, status, brand: brand && BrandId.safeParse(brand).success ? brand : null,
+    ...(createdBefore && ConversionsQuery.shape.created_before.safeParse(createdBefore).success ? { createdBefore } : {}),
+  };
 }
 
 /** Only the values that differ from the defaults, so the default view is a clean /conversions. */
@@ -55,6 +60,7 @@ export function conversionsPath(filters: ConversionFilters): string {
   if (filters.period !== DEFAULT_PERIOD) params.set("period", filters.period);
   if (filters.status !== "all") params.set("status", filters.status);
   if (filters.brand) params.set("brand", filters.brand);
+  if (filters.createdBefore) params.set("created_before", filters.createdBefore);
   const query = params.toString();
   return query ? `${viewPath("conversions")}?${query}` : viewPath("conversions");
 }
@@ -63,10 +69,26 @@ const count = (n: number) => n.toLocaleString("en-US");
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("th-TH") : "—");
 
+/** A dead row's plain Thai class text, or null when the row keeps its reason code label. */
+const deadText = (row: Row): string | null => {
+  if (row.status !== "dead") return null;
+  const kind = deadClass(row);
+  return kind ? DEAD_TEXT[kind] : null;
+};
+
 function Reason({ row }: { row: Row }) {
-  const reason = row.reason_code ? REASON_TEXT[row.reason_code] : null;
   // An employee often gets null: core withholds free text that is not on its allow-list.
   const error = row.last_error?.trim() ? row.last_error : null;
+  const dead = deadText(row);
+  if (dead) {
+    return (
+      <div className="conv-reason">
+        <b>{dead}</b>
+        {error && <details><summary>ดูรายละเอียด</summary><code>{error}</code></details>}
+      </div>
+    );
+  }
+  const reason = row.reason_code ? REASON_TEXT[row.reason_code] : null;
   if (!reason && !error) return <>—</>;
   return (
     <div className="conv-reason">
@@ -81,13 +103,13 @@ type Load = { report: ConversionsReportResponse; limit: number } | { error: stri
 export function ConversionsScreen({ me }: { me: Me }) {
   const { inScopeId } = useBrandScope();
   const owner = me.role === "owner";
-  const { period, status, brand } = readConversionFilters(useSearch());
+  const { period, status, brand, createdBefore = null } = readConversionFilters(useSearch());
   const domains = useBrandDomains();
   const [load, setLoad] = useState<Load>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   // The key ties the grown limit to the filters that grew it: a filter change reads as the start limit again.
-  const filterKey = `${period}\n${status}\n${brand ?? ""}`;
+  const filterKey = `${period}\n${status}\n${brand ?? ""}\n${createdBefore ?? ""}`;
   const [more, setMore] = useState({ key: filterKey, limit: LIMIT_START });
   const limit = more.key === filterKey ? more.limit : LIMIT_START;
   // Re-key during render on every filter change, so returning to an earlier filter never revives its grown limit.
@@ -114,7 +136,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
       return () => { current = false; };
     }
     const growing = loadedKey.current === filterKey && limit !== loadedLimit.current;
-    api.conversions({ period, status: status === "all" ? undefined : status, brand: brand ?? undefined, limit }).then(
+    api.conversions({ period, status: status === "all" ? undefined : status, brand: brand ?? undefined, created_before: createdBefore ?? undefined, limit }).then(
       (report) => {
         if (!current) return;
         loadedKey.current = filterKey;
@@ -135,7 +157,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
       },
     );
     return () => { current = false; };
-  }, [period, status, brand, limit, filterKey]);
+  }, [period, status, brand, createdBefore, limit, filterKey]);
 
   // Rows picked for a bulk resend. Only dead rows can be picked; a filter change clears the pick.
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -143,7 +165,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
   const togglePick = (id: string) => setPicked((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
 
   // replace: a filter click edits the open page and adds no history entry.
-  const change = (patch: Partial<ConversionFilters>) => navigate(conversionsPath({ period, status, brand, ...patch }), { replace: true });
+  const change = (patch: Partial<ConversionFilters>) => navigate(conversionsPath({ period, status, brand, createdBefore, ...patch }), { replace: true });
   const labelOf = (id: string) => domains.get(id) ?? id;
   const options = [...domains].map(([id, domain]) => ({ id, text: domain === id ? id : `${domain} (${id})` })).sort((a, b) => a.text.localeCompare(b.text));
 
@@ -160,6 +182,15 @@ export function ConversionsScreen({ me }: { me: Me }) {
         : null),
     }] : []),
     { key: "brand", header: "แบรนด์", cell: (row) => <BrandLabel brandId={row.brand} domain={labelOf(row.brand)} /> },
+    {
+      key: "lead",
+      header: "ลีด",
+      mono: true,
+      cell: (row) => {
+        const path = routePath({ view: "leads", leadId: row.lead_id });
+        return <a href={path} title={row.lead_id} aria-label={`ดูลีด ${row.lead_id.slice(0, 8)}`} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(path); }}>{row.lead_id.slice(0, 8)}…</a>;
+      },
+    },
     { key: "status", header: "สถานะ", cell: (row) => <StatusBadge {...STATUS_BADGE[row.status]} /> },
     { key: "reason", header: "เหตุผล", cell: (row) => <Reason row={row} /> },
     { key: "click", header: "Click", mono: true, cell: (row) => row.click_type ?? "—" },
@@ -174,7 +205,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
     { header: "รหัสลีด", value: (row) => row.lead_id },
     { header: "แบรนด์", value: (row) => row.brand },
     { header: "สถานะ", value: (row) => STATUS_BADGE[row.status].label },
-    { header: "เหตุผล", value: (row) => (row.reason_code ? (REASON_TEXT[row.reason_code]?.label ?? row.reason_code) : "") },
+    { header: "เหตุผล", value: (row) => deadText(row) ?? (row.reason_code ? (REASON_TEXT[row.reason_code]?.label ?? row.reason_code) : "") },
     { header: "ข้อความเต็ม", value: (row) => row.last_error?.trim() || "" },
     { header: "Click", value: (row) => row.click_type },
     { header: "ครั้งที่ลอง", value: (row) => row.attempts },
@@ -199,7 +230,7 @@ export function ConversionsScreen({ me }: { me: Me }) {
         </div>
         <div className="seg" role="group" aria-label="ช่วงเวลา">
           {SPEND_PERIODS.map((key) => (
-            <button key={key} type="button" aria-pressed={period === key} onClick={() => change({ period: key })}>{PERIOD_LABEL[key]}</button>
+            <button key={key} type="button" aria-pressed={!createdBefore && period === key} onClick={() => change({ period: key, createdBefore: null })}>{PERIOD_LABEL[key]}</button>
           ))}
         </div>
       </div>
@@ -229,6 +260,9 @@ export function ConversionsScreen({ me }: { me: Me }) {
       {report && (
         <div className="conv-stack">
           <AllBrandsNote>ยอดสรุปด้านล่างนับทุกแบรนด์ ส่วนตารางตามขอบเขตแบรนด์</AllBrandsNote>
+          {createdBefore && (
+            <p className="hint">ตารางแสดงรายการที่สร้างก่อน {when(createdBefore)} ทุกช่วงเวลา ยอดสรุปยังนับ {PERIOD_LABEL[period]} · กดช่วงเวลาด้านบนเพื่อกลับไปดูตามช่วงเวลา</p>
+          )}
           <div className="ledger conv-stats" role="group" aria-label="สรุปคอนเวอร์ชัน">
             {COUNT_CELLS.map(([key, label]) => (
               <div className="cell" key={key}><p className="k">{label}</p><p className={key === "dead" && report.totals.dead > 0 ? "v num neg" : "v num"}>{count(report.totals[key])}</p></div>

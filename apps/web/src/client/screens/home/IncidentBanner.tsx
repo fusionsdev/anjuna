@@ -14,15 +14,16 @@ export const BANNER_LINES = 5;
  * or paid clicks that never reached the site. Each line says what and where. Nothing urgent renders nothing.
  * The banner holds every line its count names, each with its own button, so "มีเรื่องด่วน N เรื่อง" is the N lines under it.
  * Past BANNER_LINES lines it shows the first ones and a toggle that reveals the rest in place.
+ * Each line names the brand by its domain (brand_id to domain from Home), like the fix list.
  * A line with a path links there, one with onAct runs it, any other opens the alerts screen.
  */
-export function IncidentBanner({ urgent, clickLoss, onAlerts }: { urgent: FixItem[]; clickLoss: ClickLoss | null; onAlerts?: () => void }) {
+export function IncidentBanner({ urgent, clickLoss, onAlerts, domains }: { urgent: FixItem[]; clickLoss: ClickLoss | null; onAlerts?: () => void; domains?: ReadonlyMap<string, string> }) {
   const [expanded, setExpanded] = useState(false);
   const count = urgent.length + (clickLoss ? 1 : 0);
   if (count === 0) return null;
   const lines = urgent.map((item) => (
     <li key={item.id}>
-      {`${item.brand}: ${item.message} `}
+      {`${domains?.get(item.brand) ?? item.brand}: ${item.message} `}
       {item.path
         ? <a className="btn" href={item.path} onClick={inApp(item.path)}>{FIX_LABEL[item.kind ?? "details"]}</a>
         : <button type="button" className="btn" onClick={item.onAct ?? onAlerts}>{FIX_LABEL[item.kind ?? "details"]}</button>}

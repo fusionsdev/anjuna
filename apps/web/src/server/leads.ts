@@ -73,8 +73,8 @@ export async function handleLeadsRoute(
     const body = LeadExportResponse.parse(result.body);
     // The columns follow the body and the file name follows the request, so the two must agree.
     if (body.pii !== pii) return json(502, { error: "bad_gateway", message: "core export pii does not match the request" });
-    // Core resolves a missing bound and does not echo the window, so the name falls back.
-    const window = q.data.from && q.data.to ? `${q.data.from}_${q.data.to}` : "export";
+    // Core resolves a missing bound and does not echo the window, so the name falls back. An instant keeps its day only: no ":" in a file name.
+    const window = q.data.from && q.data.to ? `${q.data.from.slice(0, 10)}_${q.data.to.slice(0, 10)}` : "export";
     const name = `leads-${window}${pii ? "-pii" : ""}.csv`;
     return new Response(csvRows(body.pii ? LEAD_EXPORT_PII_COLUMNS : LEAD_EXPORT_COLUMNS, body.rows), {
       status: 200,

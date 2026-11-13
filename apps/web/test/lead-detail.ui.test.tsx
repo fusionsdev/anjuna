@@ -246,6 +246,26 @@ describe("Lead detail timeline and panel", () => {
     expect(screen.getByText("มี click id (gclid)")).toBeTruthy();
   });
 
+  it("shows a rejected lead as โดนปฏิเสธ with the no-reason line and never the word rejectLead", async () => {
+    const lead = ownerLead();
+    lead.outcome = "rejected";
+    lead.status = "rejectLead";
+    lead.postbacks = [{ event_type: "rejectLead", payout: 0, created_at: "2026-10-01T02:15:49.000Z" }];
+    lead.conversion = null;
+    respondWith(lead);
+    const { container } = await renderScreen();
+    expect(screen.getByRole("note", { name: "เหตุผลที่โดนปฏิเสธ" }).textContent).toBe("ผู้ซื้อไม่ได้ส่งเหตุผลมา");
+    expect(within(screen.getByLabelText("Postback")).getByText("โดนปฏิเสธ")).toBeTruthy();
+    expect(rowOf("สถานะดิบ (Raw status)").getByText("โดนปฏิเสธ")).toBeTruthy();
+    expect(container.textContent).not.toContain("rejectLead");
+  });
+
+  it("shows no reason line on a lead that was not rejected", async () => {
+    await renderScreen();
+    expect(screen.queryByRole("note", { name: "เหตุผลที่โดนปฏิเสธ" })).toBeNull();
+    expect(screen.queryByText("ผู้ซื้อไม่ได้ส่งเหตุผลมา")).toBeNull();
+  });
+
   it("shows a warning chip when the conversion carries no click id", async () => {
     const lead = ownerLead();
     lead.conversion = { ...lead.conversion!, click_type: "none" };

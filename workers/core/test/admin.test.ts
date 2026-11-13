@@ -737,6 +737,17 @@ describe("GET /admin/leads (FUS-376)", () => {
     expect(ids(await leadsAt(`/admin/leads?${WINDOW}&brand=brand-b&status=sold`))).toEqual([]);
   });
 
+  it("takes an instant window, from inclusive and to exclusive, and time=decided matches the soldLead or rejectLead postback time", async () => {
+    const at = (from: string, to: string, extra = "") => leadsAt(`/admin/leads?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${extra}`);
+    expect(ids(await at("2026-10-04T08:00:00.000Z", "2026-10-04T23:59:59.999Z"))).toEqual(["lead-0003-pending"]);
+    // lead-0001 was created at 00:00:00 and sold at 00:00:30: the decided window reads the postback time only.
+    expect(ids(await at("2026-10-05T00:00:30.000Z", "2026-10-05T00:00:31.000Z", "&time=decided"))).toEqual(["lead-0001-newest"]);
+    expect(ids(await at("2026-10-05T00:00:00.000Z", "2026-10-05T00:00:30.000Z", "&time=decided"))).toEqual([]);
+    expect(ids(await at("2026-10-05T00:00:30.000Z", "2026-10-05T00:00:31.000Z"))).toEqual([]);
+    // Day values keep working with time=decided.
+    expect(ids(await leadsAt("/admin/leads?from=2026-10-05&to=2026-10-05&time=decided&status=sold"))).toEqual(["lead-0001-newest"]);
+  });
+
   it("treats %, _ and backslash in q as literal characters", async () => {
     for (const q of ["%", "_", "%25%25%25%25", "\\"]) {
       const response = await lh.admin(`/admin/leads?${WINDOW}&q=${encodeURIComponent(q)}`, owner);
