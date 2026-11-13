@@ -95,6 +95,23 @@ describe("brand row basics", () => {
     expect(await screen.findByRole("status")).toHaveProperty("textContent", expect.stringContaining("หยุดแบรนด์แล้ว"));
   });
 
+  it("reads the sidebar counts again after a pause or resume from the row", async () => {
+    const onCountsChanged = vi.fn();
+    render(<BrandLifecycle me={owner} onCountsChanged={onCountsChanged} />);
+    const live = await rowOf("live.example");
+    await pauseFromMenu(live);
+    await answerConfirm(false);
+    expect(onCountsChanged).not.toHaveBeenCalled();
+    await pauseFromMenu(live);
+    await answerConfirm(true);
+    await waitFor(() => expect(onCountsChanged).toHaveBeenCalledTimes(1));
+    expect(posts("/api/brands/b-live/pause")).toHaveLength(1);
+    fireEvent.click(within(await rowOf("paused.example")).getByRole("button", { name: resumeName }));
+    await answerConfirm(true);
+    await waitFor(() => expect(onCountsChanged).toHaveBeenCalledTimes(2));
+    expect(posts("/api/brands/b-paused/resume")).toHaveLength(1);
+  });
+
   it("a click on the row action does not select the row", async () => {
     render(<BrandLifecycle me={owner} />);
     const paused = await rowOf("paused.example");

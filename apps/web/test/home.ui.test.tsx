@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, type Me } from "../src/client/api";
 import { clickLossWarning, isStale } from "../src/client/home-metrics";
 import { HomeScreen } from "../src/client/screens/Home";
+import { IncidentBanner } from "../src/client/screens/home/IncidentBanner";
 
 const owner = { id: "o", email: "o@example.test", role: "owner" } as Me;
 const employee = { id: "e", email: "e@example.test", role: "employee" } as Me;
@@ -171,6 +172,9 @@ const card = () => within(screen.getByRole("region", { name: "คอนเวอ
 /** The big number under a card label. */
 const cardValue = (label: string) => card().getByText(label).parentElement!.querySelector(".v")!.textContent;
 const fixList = () => within(screen.getByRole("region", { name: "ต้องแก้" }));
+/** The count line of one to-do card, by its title. Several cards can read "1 แบรนด์", so a test names the card. */
+const taskCount = (title: string) => within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).queryByText(title)?.querySelector("span")?.textContent ?? null;
+const taskOpen = (title: string) => within(within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).getByText(title).parentElement!).getByRole("button", { name: "เปิด" });
 const fixTexts = () => [...screen.getByRole("region", { name: "ต้องแก้" }).querySelectorAll(".home-item .t span")].map((s) => s.textContent);
 /**
  * Clicks a link and says whether the app took the click (default prevented, so no new page loads).
@@ -209,11 +213,10 @@ describe("Home screen, owner", () => {
     expect(fixes.getByText("Credit Genie")).toBeTruthy();
     expect(fixes.getByText("อัตรา reject 38% สูงกว่าค่าปกติ 10%")).toBeTruthy();
 
-    const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
-    expect(await todo.findByText("1 แบรนด์")).toBeTruthy();
-    expect(todo.getByText("ยืนยัน Test sold")).toBeTruthy();
-    expect(todo.getByText("2 รายการ")).toBeTruthy();
-    expect(todo.getByText("1 ร่าง")).toBeTruthy();
+    await waitFor(() => expect(taskCount("ยืนยัน Test sold")).toBe("1 แบรนด์"));
+    expect(taskCount("อนุมัติเทมเพลต")).toBe("2 รายการ");
+    // The drafts card counts brands and says so; it opens the drafts list, not a blank wizard.
+    expect(taskCount("แบรนด์ที่สร้างค้างไว้")).toBe("1 แบรนด์");
   });
 
   it("shows the domain for a fix-list brand id, like the Alerts screen", async () => {
@@ -415,10 +418,22 @@ describe("Home screen, owner", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ สร้างแบรนด์ใหม่" }));
     fireEvent.click(screen.getByRole("button", { name: "ดูทั้งหมด" }));
     fireEvent.click(screen.getByRole("button", { name: "แยกตามแบรนด์" }));
-    const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
-    await todo.findByText("2 รายการ");
-    fireEvent.click(todo.getAllByRole("button", { name: "เปิด" })[1]!);
-    expect(onGo.mock.calls.map((c) => c[0])).toEqual(["new-brand", "alerts", "funnel", "templates"]);
+    await waitFor(() => expect(taskCount("อนุมัติเทมเพลต")).toBe("2 รายการ"));
+    expect(onGo.mock.calls.map((c) => c[0])).toEqual(["new-brand", "alerts", "funnel"]);
+    // The templates card opens the list filtered to the versions it counted.
+    fireEvent.click(taskOpen("อนุมัติเทมเพลต"));
+    expect(window.location.pathname + window.location.search).toBe("/templates?status=awaiting_approval");
+  });
+
+  it("opens each brand to-do card on the Brands list with that card's chip in the URL", async () => {
+    render(<HomeScreen me={owner} />);
+    await waitFor(() => expect(taskCount("ยืนยัน Test sold")).toBe("1 แบรนด์"));
+    fireEvent.click(taskOpen("ยืนยัน Test sold"));
+    expect(window.location.pathname + window.location.search).toBe("/brands?chip=test-sold");
+    fireEvent.click(taskOpen("แบรนด์ที่สร้างค้างไว้"));
+    expect(window.location.pathname + window.location.search).toBe("/brands?chip=drafts");
+    // No bulk dialog opens on Home any more: the bulk Test sold lives above the filtered list.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("shows conversion counts and links the card and the dead count to the Conversions page", async () => {
@@ -721,7 +736,7 @@ describe("Home screen, employee", () => {
     expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283ถึงเว็บ", "131ถึง /go", "94เปิดฟอร์ม", "17ลีด", "4ขายได้"]);
     // Only the owner can approve a template.
     expect(screen.queryByText("อนุมัติเทมเพลต")).toBeNull();
-    expect(await within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).findByText("1 แบรนด์")).toBeTruthy();
+    await waitFor(() => expect(taskCount("ยืนยัน Test sold")).toBe("1 แบรนด์"));
   });
 
   it("employee sees no revenue", async () => {
@@ -870,20 +885,17 @@ describe("Home screen, work queue", () => {
 
   it("reads every brand checklist with one request and never asks per brand", async () => {
     render(<HomeScreen me={owner} />);
-    await within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" })).findByText("1 แบรนด์");
+    await waitFor(() => expect(taskCount("ยืนยัน Test sold")).toBe("1 แบรนด์"));
     expect(requests.filter((r) => r === "/api/brands/checklists")).toHaveLength(1);
     expect(requests.some((r) => /^\/api\/brands\/[^/]+\/checklist$/.test(r))).toBe(false);
   });
 
-  it("the Test sold task opens one dialog that names every open brand", async () => {
+  it("the Test sold task opens the Brands list filtered to the brands it counted, with no dialog on Home", async () => {
     render(<HomeScreen me={owner} />);
-    const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
-    await todo.findByText("1 แบรนด์");
-    fireEvent.click(todo.getAllByRole("button", { name: "เปิด" })[0]!);
-    const dialog = await screen.findByRole("alertdialog");
-    expect(dialog.textContent).toContain("Sixpack");
-    expect(dialog.textContent).toContain("sixpack.test");
-    expect(window.location.pathname).toBe("/");
+    await waitFor(() => expect(taskCount("ยืนยัน Test sold")).toBe("1 แบรนด์"));
+    fireEvent.click(taskOpen("ยืนยัน Test sold"));
+    expect(window.location.pathname + window.location.search).toBe("/brands?chip=test-sold");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("shows — for the test sold count when the checklist read fails, and keeps the rest", async () => {
@@ -895,14 +907,13 @@ describe("Home screen, work queue", () => {
     expect(await todo.findByText("2 รายการ")).toBeTruthy();
   });
 
-  it("opens Brands from the Test sold task when the checklist read failed", async () => {
+  it("opens the Test sold chip of Brands from the Test sold task when the checklist read failed", async () => {
     checklistsReply = () => json({ error: "core_unavailable" }, 502);
-    const onGo = vi.fn();
-    render(<HomeScreen me={owner} onGo={onGo} />);
+    render(<HomeScreen me={owner} />);
     const todo = within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
     await todo.findAllByText("— แบรนด์");
-    fireEvent.click(todo.getAllByRole("button", { name: "เปิด" })[0]!);
-    expect(onGo).toHaveBeenCalledWith("brands");
+    fireEvent.click(taskOpen("ยืนยัน Test sold"));
+    expect(window.location.pathname + window.location.search).toBe("/brands?chip=test-sold");
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
@@ -1156,11 +1167,44 @@ describe("Home screen, v9 layout", () => {
     expect(screen.queryByTestId("reconciliation")).toBeNull();
   });
 
-  it("puts two buttons on the incident banner: ดูคิว and การแจ้งเตือน", async () => {
+  it("lists every line the incident banner counts, each with its own button, and no page-wide button whose page counts differently", async () => {
+    // 6,000 paid clicks and 283 visitors adds the click-loss line to the dead conversions line.
+    spend.mockResolvedValue(spendReport(62300, 6000));
     render(<HomeScreen me={owner} />);
     const banner = await screen.findByRole("alert", { name: "เหตุด่วน" });
-    expect(within(banner).getByRole("button", { name: "ดูคิว" })).toBeTruthy();
-    expect(within(banner).getByRole("button", { name: "การแจ้งเตือน" })).toBeTruthy();
+    await waitFor(() => expect(banner.querySelectorAll("li")).toHaveLength(2));
+    const count = Number(/มีเรื่องด่วน (\d+) เรื่อง/.exec(banner.textContent ?? "")![1]);
+    const lines = [...banner.querySelectorAll("li")];
+    expect(lines).toHaveLength(count);
+    for (const line of lines) expect(line.querySelectorAll("a, button")).toHaveLength(1);
+    expect(within(banner).getByRole("link", { name: "ลองใหม่" }).getAttribute("href")).toBe("/conversions?period=today&status=dead");
+    expect(within(banner).getByRole("link", { name: "ตรวจ gclid" }).getAttribute("href")).toBe("/traffic");
+    expect(within(banner).queryByRole("button", { name: "การแจ้งเตือน" })).toBeNull();
+    expect(within(banner).queryByRole("button", { name: "ดูคิว" })).toBeNull();
+  });
+
+  it("shows the first 5 banner lines and a toggle that reveals the rest in place, with the count staying the total", () => {
+    const urgent = Array.from({ length: 7 }, (_, i) => ({ id: `alert:${i}`, level: "bad" as const, brand: `brand-${i}`, message: `ลีดโดนปฏิเสธ ${i}`, path: `/alerts?brand=brand-${i}` }));
+    render(<IncidentBanner urgent={urgent} clickLoss={{ paid: 6000, reached: 283 }} />);
+    const banner = screen.getByRole("alert", { name: "เหตุด่วน" });
+    expect(within(banner).getByText("มีเรื่องด่วน 8 เรื่อง")).toBeTruthy();
+    expect(banner.querySelectorAll("li")).toHaveLength(5);
+    expect(within(banner).queryByText(/brand-5/)).toBeNull();
+    fireEvent.click(within(banner).getByRole("button", { name: "ดูทั้งหมด (8)" }));
+    expect(banner.querySelectorAll("li")).toHaveLength(8);
+    expect(within(banner).getByText(/Google คิดเงิน/)).toBeTruthy();
+    expect(within(banner).getByText("มีเรื่องด่วน 8 เรื่อง")).toBeTruthy();
+    expect(window.location.pathname).toBe("/");
+    fireEvent.click(within(banner).getByRole("button", { name: "ย่อ" }));
+    expect(banner.querySelectorAll("li")).toHaveLength(5);
+  });
+
+  it("shows no toggle when the banner has 5 lines or fewer", () => {
+    const urgent = Array.from({ length: 5 }, (_, i) => ({ id: `alert:${i}`, level: "bad" as const, brand: `brand-${i}`, message: "ลีดโดนปฏิเสธ" }));
+    render(<IncidentBanner urgent={urgent} clickLoss={null} />);
+    const banner = screen.getByRole("alert", { name: "เหตุด่วน" });
+    expect(banner.querySelectorAll("li")).toHaveLength(5);
+    expect(within(banner).queryByRole("button", { name: /ดูทั้งหมด/ })).toBeNull();
   });
 });
 

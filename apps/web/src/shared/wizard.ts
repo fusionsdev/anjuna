@@ -2,7 +2,7 @@
  * Shapes the brand wizard shares between the panel Worker (src/server/wizard.ts) and the SPA.
  * Panel-only: none of these are core admin API contracts.
  */
-import { BrandName, UpdateBrandDraftResponse } from "@anjuna/contracts";
+import { BrandName, UpdateBrandDraftRequest, UpdateBrandDraftResponse } from "@anjuna/contracts";
 import { z } from "zod";
 
 /** A brand domain: lowercase, no trailing dot, apex (no www). Shared by draft creation, duplicate and the zone check. */
@@ -32,9 +32,28 @@ export type WizardDefaultsResponse = z.infer<typeof WizardDefaultsResponse>;
 export const DuplicateBrandRequest = z.strictObject({ domain: DraftDomain, name: BrandName.optional() });
 export type DuplicateBrandRequest = z.input<typeof DuplicateBrandRequest>;
 
-/** GET /api/wizard/drafts/:id and POST /api/brands/:id/duplicate: a draft as the wizard resumes it. */
-export const WizardDraft = UpdateBrandDraftResponse.omit({ changed: true });
+/**
+ * GET /api/wizard/drafts/:id and POST /api/brands/:id/duplicate: a draft as the wizard resumes it. A live brand answers
+ * with status "live" and its current revision; the wizard then holds its edits in memory and finishes with wizard-redeploy.
+ */
+export const WizardDraft = UpdateBrandDraftResponse.omit({ changed: true }).extend({
+  brand: UpdateBrandDraftResponse.shape.brand.extend({ status: z.enum(["draft", "failed", "live"]) }),
+  /** A live brand only: brands.current_revision_id when the wizard opened. wizard-redeploy sends it back as its base. */
+  base_revision_id: z.string().min(1).optional(),
+});
 export type WizardDraft = z.infer<typeof WizardDraft>;
+
+/**
+ * POST /api/brands/:id/wizard-redeploy: the edits plus the revision the wizard opened on. The server answers 409
+ * stale_revision when base_revision_id is absent or another install moved the brand since, so a second owner cannot
+ * overwrite the first one's change. Optional here so a missing base reaches that 409 and not a 422.
+ */
+export const WizardRedeployRequest = UpdateBrandDraftRequest.extend({ base_revision_id: z.string().min(1).optional() });
+export type WizardRedeployRequest = z.infer<typeof WizardRedeployRequest>;
+
+/** POST /api/wizard/preview/:id: a live brand's unsaved template and profile, rendered over its current revision. */
+export const WizardPreviewRequest = UpdateBrandDraftRequest.pick({ template_version_id: true, profile: true });
+export type WizardPreviewRequest = z.infer<typeof WizardPreviewRequest>;
 
 export const DuplicateBrandResponse = WizardDraft.extend({ duplicated_from: z.string().min(1) });
 export type DuplicateBrandResponse = z.infer<typeof DuplicateBrandResponse>;

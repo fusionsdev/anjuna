@@ -13,7 +13,7 @@ import type { BrandScopePrefs } from "./brand-scope";
 import { MicrosoftAdsSettingResponse, SettingsBrandsResponse } from "../shared/settings";
 import { AdsAccountEvent, TimelineResponse, type CreateAdsEventRequest } from "../shared/timeline";
 import type { TimelineRequestQuery } from "./timeline";
-import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest } from "../shared/wizard";
+import { DuplicateBrandResponse, WizardDefaultsResponse, WizardDraft, ZoneCheckResponse, type DuplicateBrandRequest, type WizardPreviewRequest, type WizardRedeployRequest } from "../shared/wizard";
 import type {
   AdminRole,
   AlertsReportResponse,
@@ -83,7 +83,8 @@ export function sortAlertStates(rows: readonly AlertStateRow[]): AlertStateRow[]
 /** Most pages of alert states one load reads: 100 pages of 500 rows. */
 const ALERT_STATES_MAX_PAGES = 100;
 
-export interface NavCounts { brands_need_fix: number; templates_awaiting: number; alerts_open: number }
+/** alerts_open is null when the alerts report or the stored alert states could not be read: the client hides that badge only. */
+export interface NavCounts { brands_need_fix: number; templates_awaiting: number; alerts_open: number | null }
 
 /** GET/PUT /api/me/prefs. Saved views are kept as the server sent them and written back unchanged. */
 export interface UserPrefsBody { brand_scope: BrandScopePrefs; saved_views: Record<string, unknown> }
@@ -296,6 +297,14 @@ export const api = {
   duplicateBrand: (brandId: string, body: DuplicateBrandRequest) => request<unknown>("POST", `/api/brands/${encodeURIComponent(brandId)}/duplicate`, body).then((result) => DuplicateBrandResponse.parse(result)),
   /** Checks the draft, then starts the install; a second call while it runs answers with the same install id. */
   generate: (brandId: string) => request<{ install_id: string; brand_id: string; status: string; idempotent?: boolean }>("POST", `/api/brands/${encodeURIComponent(brandId)}/generate`, {}),
+  /** A live brand's wizard edits as one redeploy: a new revision and an upgrade install, so rollback returns to the old one. */
+  wizardRedeploy: (brandId: string, body: WizardRedeployRequest) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/wizard-redeploy`, body),
+  /** A live brand's unsaved template and profile rendered as HTML; the server stores nothing. */
+  wizardPreview: async (brandId: string, body: WizardPreviewRequest): Promise<string> => {
+    const res = await fetch(`/api/wizard/preview/${encodeURIComponent(brandId)}`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null) as ApiError["body"]);
+    return res.text();
+  },
   install: (brandId: string, revisionId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/install`, revisionId ? { revision_id: revisionId } : {}),
   rollbackLifecycle: (brandId: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/rollback`, {}),
   redeploy: (brandId: string, formArtifactId?: string, templateVersionId?: string) => request<{ install_id: string; brand_id: string; status: string }>("POST", `/api/brands/${encodeURIComponent(brandId)}/redeploy`, { ...(formArtifactId ? { form_artifact_id: formArtifactId } : {}), ...(templateVersionId ? { template_version_id: templateVersionId } : {}) }),

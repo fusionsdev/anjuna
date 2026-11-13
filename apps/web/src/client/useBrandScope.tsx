@@ -37,7 +37,7 @@ const Context = createContext<BrandScopeState | null>(null);
 /** Outside the app shell a screen has no sidebar to change the scope, so it keeps the behaviour from before the scope existed: only demo brands are hidden. */
 const STANDALONE_SCOPE: BrandScope = { hideInactive: false, showDemo: false, brandIds: null };
 
-function useScopeState(persist: boolean): BrandScopeState {
+function useScopeState(persist: boolean, onSaved?: () => void): BrandScopeState {
   const urlScope = useRef(typeof window === "undefined" ? null : scopeFromSearch(window.location.search));
   const [scope, setScopeState] = useState<BrandScope>(urlScope.current ?? (persist ? DEFAULT_SCOPE : STANDALONE_SCOPE));
   const [fromUrl, setFromUrl] = useState(urlScope.current !== null);
@@ -51,6 +51,9 @@ function useScopeState(persist: boolean): BrandScopeState {
   const latest = useRef<BrandScope>(scope);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // Read through a ref so a new callback each render keeps setScope stable.
+  const savedCallback = useRef(onSaved);
+  savedCallback.current = onSaved;
 
   const loadList = useCallback(async () => {
     const [lifecycle, runtime] = await Promise.allSettled([api.lifecycleBrands(), api.brands()]);
@@ -97,8 +100,10 @@ function useScopeState(persist: boolean): BrandScopeState {
     // (the Realtime sound switch), so none of them can erase another's change. A failed read writes nothing and the user is told.
     void updatePrefs((cur) => ({ ...cur, brand_scope: scopeToPrefs(latest.current) })).then((saved) => {
       if (!mounted.current) return;
-      if (saved === null) setSaveFailed(true);
-      else if (latest.current === next) setSaveFailed(false);
+      if (saved === null) { setSaveFailed(true); return; }
+      if (latest.current === next) setSaveFailed(false);
+      // The badge counts read the saved scope on the server, so they are fetched again once it is stored.
+      savedCallback.current?.();
     });
   }, [persist]);
 
@@ -115,9 +120,12 @@ function useScopeState(persist: boolean): BrandScopeState {
   }, [scope, setScope, list, open, fromUrl, saveFailed]);
 }
 
-/** Holds the signed-in user's brand scope for the whole panel: saved through /api/me/prefs, overridden by `?scope=`. */
-export function BrandScopeProvider({ children }: { children: ReactNode }) {
-  const state = useScopeState(true);
+/**
+ * Holds the signed-in user's brand scope for the whole panel: saved through /api/me/prefs, overridden by `?scope=`.
+ * onSaved runs after each scope save that the server stored.
+ */
+export function BrandScopeProvider({ children, onSaved }: { children: ReactNode; onSaved?: () => void }) {
+  const state = useScopeState(true, onSaved);
   return <Context.Provider value={state}>{children}</Context.Provider>;
 }
 

@@ -69,10 +69,11 @@ describe("sidebar", () => {
 
   it("shows the badge counts GET /api/nav/counts returns", async () => {
     render(<App />);
-    expect((await screen.findByLabelText("3 แบรนด์ที่ต้องแก้")).textContent).toBe("3");
+    // The brands badge counts the rows the Brands page opens on, so its label names no subset.
+    expect((await screen.findByLabelText("3 แบรนด์")).textContent).toBe("3");
     expect(screen.getByLabelText("4 เทมเพลตรออนุมัติ").textContent).toBe("4");
     expect(screen.getByLabelText("2 รายการที่ต้องจัดการ").textContent).toBe("2");
-    expect(screen.getByLabelText("3 แบรนด์ที่ต้องแก้").closest("a")?.textContent).toBe("แบรนด์3");
+    expect(screen.getByLabelText("3 แบรนด์").closest("a")?.textContent).toBe("แบรนด์3");
   });
 
   it("shows no badge for a count of 0", async () => {
@@ -83,12 +84,32 @@ describe("sidebar", () => {
     expect(nav().querySelectorAll("b")).toHaveLength(0);
   });
 
-  it("falls back to the alerts report for the alerts badge when the counts call fails", async () => {
+  it("hides every badge when the counts call fails, without counting alerts another way", async () => {
     vi.mocked(api.navCounts).mockRejectedValue(new Error("not served yet"));
     vi.mocked(api.alerts).mockResolvedValue({ ...healthy, conversion_stalled: { state: "alert", detail: { max_hours: 6, stuck_count: 5, oldest_created_at: "2026-11-09T00:00:00.000Z" } } });
     render(<App />);
-    expect((await screen.findByLabelText("1 รายการที่ต้องจัดการ")).textContent).toBe("1");
-    expect(screen.queryByLabelText(/แบรนด์ที่ต้องแก้/)).toBeNull();
+    await waitFor(() => expect(api.navCounts).toHaveBeenCalled());
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    expect(nav().querySelectorAll("b")).toHaveLength(0);
+    expect(api.alerts).not.toHaveBeenCalled();
+  });
+
+  it("hides only the alerts badge when the server could not count alerts", async () => {
+    vi.mocked(api.navCounts).mockResolvedValue({ brands_need_fix: 3, templates_awaiting: 4, alerts_open: null });
+    render(<App />);
+    expect((await screen.findByLabelText("3 แบรนด์")).textContent).toBe("3");
+    expect(screen.getByLabelText("4 เทมเพลตรออนุมัติ").textContent).toBe("4");
+    expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull();
+  });
+
+  it("does not read the counts again on a page change", async () => {
+    render(<App />);
+    await screen.findByLabelText("2 รายการที่ต้องจัดการ");
+    fireEvent.click(within(nav()).getByRole("link", { name: /การแจ้งเตือน/ }));
+    await waitFor(() => expect(window.location.pathname).toBe("/alerts"));
+    fireEvent.click(within(nav()).getByRole("link", { name: /หน้าแรก/ }));
+    await screen.findByRole("heading", { name: "หน้าแรก" });
+    expect(api.navCounts).toHaveBeenCalledTimes(1);
   });
 
   it("reads the alerts badge again after an acknowledge or close, without leaving the page", async () => {
@@ -103,6 +124,22 @@ describe("sidebar", () => {
     // The badge goes away with the count of 0, on the same page.
     await waitFor(() => expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull());
     expect(window.location.pathname).toBe("/alerts");
+    expect(api.navCounts).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the counts again after a brand scope change is saved", async () => {
+    vi.mocked(api.mePrefs).mockResolvedValue({ brand_scope: { hide_inactive: true, show_demo: false, brand_ids: null }, saved_views: {} });
+    const save = vi.spyOn(api, "saveMePrefs").mockImplementation(async (body) => body);
+    vi.mocked(api.navCounts).mockResolvedValueOnce({ brands_need_fix: 3, templates_awaiting: 4, alerts_open: 2 }).mockResolvedValue({ brands_need_fix: 5, templates_awaiting: 4, alerts_open: 2 });
+    render(<App />);
+    expect((await screen.findByLabelText("3 แบรนด์")).textContent).toBe("3");
+    fireEvent.click(await screen.findByRole("button", { name: /แบรนด์ที่ใช้งาน/ }));
+    const dialog = await screen.findByRole("dialog", { name: "ขอบเขตแบรนด์" });
+    fireEvent.click(within(dialog).getByRole("switch", { name: "ซ่อนแบรนด์ที่ไม่ได้ใช้แล้ว" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "ใช้" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    // The server counts under the saved scope, so the badge follows the new one.
+    expect((await screen.findByLabelText("5 แบรนด์")).textContent).toBe("5");
     expect(api.navCounts).toHaveBeenCalledTimes(2);
   });
 

@@ -3,19 +3,21 @@
  * these add what the wizard needs around them:
  *   GET  /api/wizard/defaults        tenant amount buckets and form route (read-only in the Review summary)
  *   POST /api/wizard/zone-check      Cloudflare zone pre-check through the factory Worker (read-only)
- *   GET  /api/wizard/drafts/:id      a draft as the wizard resumes it
+ *   GET  /api/wizard/drafts/:id      a draft as the wizard resumes it (a live brand: its current revision)
  *   GET  /api/wizard/preview/:id     the draft's template rendered with its site text (iframe source)
+ *   POST /api/wizard/preview/:id     a live brand's unsaved template and profile rendered over its current revision
  *   POST /api/brands/:id/duplicate   a new draft from a brand's template, keyword, profile and site text
+ *   POST /api/brands/:id/wizard-redeploy  a live brand's wizard edits as one redeploy (lifecycle.ts wizardRedeploy)
  */
 import { TEMPLATE_ZIP_LIMITS, TemplateTextDefaults, themeCss, themeStyleTag, type AdminRequestContext } from "@anjuna/contracts";
 import { effectiveThemeVarsSql } from "@anjuna/factory-db";
 import { unzipSync } from "fflate";
-import { DuplicateBrandRequest, WizardDefaultsResponse, WizardDraft, ZoneCheckRequest, ZoneCheckResponse } from "../shared/wizard.js";
+import { DuplicateBrandRequest, WizardDefaultsResponse, WizardDraft, WizardPreviewRequest, ZoneCheckRequest, ZoneCheckResponse } from "../shared/wizard.js";
 import { PageCopyError, renderPageText, templateBrandName, type PageTextData } from "@anjuna/brand-runtime/page-text";
 import { applySiteText, type EffectiveSiteText } from "@anjuna/brand-runtime/site-text";
 import { writeFactoryAudit } from "./audit.js";
 import type { Env } from "./env.js";
-import { createDraft, decodePathSegment, storedProfile, tenantDefaults } from "./lifecycle.js";
+import { createDraft, decodePathSegment, storedProfile, tenantDefaults, wizardRedeploy } from "./lifecycle.js";
 import { authorizePanel, type PanelAction } from "./panel-roles.js";
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), {
@@ -28,24 +30,32 @@ const forbidden = (action: PanelAction, role: AdminRequestContext["actor_role"])
 const issues = (error: { issues: Array<{ path: PropertyKey[]; message: string }> }) =>
   json(422, { error: "invalid", issues: error.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })) });
 
-interface DraftRow { brand_id: string; name: string; domain: string; keyword_default: string | null; status: string; revision_id: string; revision: number; template_version_id: string; form_artifact_id: string; config_json: string }
+interface DraftRow { brand_id: string; name: string; domain: string; keyword_default: string | null; status: string; current_revision_id: string | null; revision_id: string; revision: number; template_version_id: string; form_artifact_id: string; config_json: string }
 
-/** The brand and its latest revision. Null when the brand does not exist. */
+/**
+ * The brand and the revision the wizard opens: the latest one for a draft, the current one for a live brand (after a
+ * rollback the latest revision is not the one it serves). Null when the brand does not exist.
+ */
 async function readDraft(env: Env, brandId: string): Promise<DraftRow | null> {
-  return env.FACTORY.prepare(`SELECT b.brand_id, b.name, b.domain, b.keyword_default, b.status, r.revision_id, r.revision, r.template_version_id, r.form_artifact_id, r.config_json
-    FROM brands b JOIN brand_revisions r ON r.revision_id = (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1)
+  return env.FACTORY.prepare(`SELECT b.brand_id, b.name, b.domain, b.keyword_default, b.status, b.current_revision_id, r.revision_id, r.revision, r.template_version_id, r.form_artifact_id, r.config_json
+    FROM brands b JOIN brand_revisions r ON r.revision_id = CASE WHEN b.status = 'live' THEN COALESCE(b.current_revision_id, (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1))
+      ELSE (SELECT revision_id FROM brand_revisions WHERE brand_id = b.brand_id ORDER BY revision DESC LIMIT 1) END
     WHERE b.brand_id = ?1`).bind(brandId).first<DraftRow>();
 }
-const editable = (row: DraftRow): row is DraftRow & { status: "draft" | "failed" } => row.status === "draft" || row.status === "failed";
-const notEditable = () => json(409, { error: "conflict", message: "Only draft or failed brands can be edited" });
+type WizardStatus = "draft" | "failed" | "live";
+/** Paused, retired and installing brands stay out of the wizard. */
+const editable = (row: DraftRow): row is DraftRow & { status: WizardStatus } => row.status === "draft" || row.status === "failed" || row.status === "live";
+const notEditable = () => json(409, { error: "conflict", message: "Only draft, failed or live brands open in the wizard" });
 const missingBrand = () => json(404, { error: "not_found", resource: "brand" });
 
-function draftBody(row: DraftRow & { status: "draft" | "failed" }) {
+function draftBody(row: DraftRow & { status: WizardStatus }) {
   const profile = storedProfile(row.config_json);
   return WizardDraft.parse({
     brand: { brand_id: row.brand_id, name: row.name, domain: row.domain, keyword_default: row.keyword_default, status: row.status },
     revision: { revision_id: row.revision_id, revision: row.revision, template_version_id: row.template_version_id, form_artifact_id: row.form_artifact_id },
     ...(profile ? { profile } : {}),
+    // The live revision this read saw. wizard-redeploy refuses a save whose base no longer matches it.
+    ...(row.status === "live" && row.current_revision_id ? { base_revision_id: row.current_revision_id } : {}),
   });
 }
 
@@ -102,6 +112,21 @@ const MIME: Record<string, string> = {
   woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
 };
 const PREVIEW_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
+// A meta policy ignores `sandbox` (the iframe's sandbox attribute covers it), so the srcDoc copy carries the rest.
+const PREVIEW_META_CSP = PREVIEW_CSP.replace(/^sandbox; /, "");
+
+/**
+ * The live preview is shown through srcDoc, which drops response headers, so the policy goes into the document as the
+ * first element of <head>: a meta policy only covers what comes after it.
+ */
+export function withPreviewCsp(html: string): string {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_META_CSP}">`;
+  for (const pattern of [/<head(?:\s[^>]*)?>/i, /<html(?:\s[^>]*)?>/i, /<!doctype[^>]*>/i]) {
+    const match = pattern.exec(html);
+    if (match) return html.slice(0, match.index + match[0].length) + meta + html.slice(match.index + match[0].length);
+  }
+  return meta + html;
+}
 
 function toBase64(bytes: Uint8Array): string {
   let text = "";
@@ -175,13 +200,16 @@ async function previewHtml(files: Record<string, Uint8Array>, input: { site: Eff
   return rewriter.transform(new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } })).text();
 }
 
-async function preview(env: Env, brandId: string): Promise<Response> {
+/** With unsaved edits (POST, live brands only) they replace the stored template version and profile; nothing is written. */
+async function preview(env: Env, brandId: string, unsaved?: WizardPreviewRequest): Promise<Response> {
   const row = await readDraft(env, brandId);
   if (!row) return missingBrand();
   if (!editable(row)) return notEditable();
+  if (unsaved && row.status !== "live") return json(409, { error: "conflict", message: "A draft previews what it saved" });
+  const templateVersionId = unsaved?.template_version_id ?? row.template_version_id;
   const template = await env.FACTORY.prepare(`SELECT tv.r2_key, tv.text_defaults_json, ${effectiveThemeVarsSql("tv")} AS theme_vars_json, t.name AS template_name
     FROM template_versions tv LEFT JOIN templates t ON t.template_id = tv.template_id WHERE tv.template_version_id = ?1 AND tv.status = 'sealed'`)
-    .bind(row.template_version_id).first<{ r2_key: string; text_defaults_json: string | null; theme_vars_json: string | null; template_name: string | null }>();
+    .bind(templateVersionId).first<{ r2_key: string; text_defaults_json: string | null; theme_vars_json: string | null; template_name: string | null }>();
   if (!template) return json(422, { error: "template_not_sealed" });
   const object = env.ARTIFACTS ? await env.ARTIFACTS.get(template.r2_key) : null;
   if (!object) return json(503, { error: "preview_unavailable", message: "Template archive is not available" });
@@ -203,7 +231,7 @@ async function preview(env: Env, brandId: string): Promise<Response> {
     const parsedDefaults = TemplateTextDefaults.safeParse(JSON.parse(template.text_defaults_json ?? "null"));
     if (parsedDefaults.success) defaults = parsedDefaults.data;
   } catch { /* invalid JSON: no defaults */ }
-  const profile = storedProfile(row.config_json);
+  const profile = unsaved?.profile ?? storedProfile(row.config_json);
   const copy = profile?.copy ?? {};
   const brand = copy.brand_name ?? (row.name.trim() || defaults?.brand_name) ?? row.name;
   // The install render takes the same inputs: profile.copy.brand_name else brands.name, and brands.keyword_default.
@@ -222,7 +250,8 @@ async function preview(env: Env, brandId: string): Promise<Response> {
     throw error;
   }
   if (html === null) return json(422, { error: "preview_unavailable", message: "Template has no index.html" });
-  return new Response(html, { headers: {
+  // The POSTed preview is shown through srcDoc, which drops the CSP header below.
+  return new Response(unsaved ? withPreviewCsp(html) : html, { headers: {
     "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
     "content-security-policy": PREVIEW_CSP, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
   } });
@@ -249,6 +278,20 @@ export async function handleWizardRoute(request: Request, env: Env, path: string
     const row = await readDraft(env, brandId);
     if (!row) return missingBrand();
     return editable(row) ? json(200, draftBody(row)) : notEditable();
+  }
+  if ((m = path.match(/^\/api\/wizard\/preview\/([^/]+)$/)) && method === "POST") {
+    const denied = forbidden("createBrand", ctx.actor_role); if (denied) return denied;
+    const brandId = decodePathSegment(m[1]!);
+    if (brandId === null) return json(400, { error: "invalid_brand_id" });
+    const parsed = WizardPreviewRequest.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return issues(parsed.error);
+    return preview(env, brandId, parsed.data);
+  }
+  if ((m = path.match(/^\/api\/brands\/([^/]+)\/wizard-redeploy$/)) && method === "POST") {
+    const denied = forbidden("redeployBrand", ctx.actor_role); if (denied) return denied;
+    const brandId = decodePathSegment(m[1]!);
+    if (brandId === null) return json(400, { error: "invalid_brand_id" });
+    return wizardRedeploy(request, env, ctx, brandId);
   }
   if ((m = path.match(/^\/api\/brands\/([^/]+)\/duplicate$/)) && method === "POST") {
     const denied = forbidden("duplicateBrand", ctx.actor_role); if (denied) return denied;

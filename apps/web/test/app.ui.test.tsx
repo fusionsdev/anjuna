@@ -64,7 +64,7 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/");
   vi.spyOn(api, "me").mockResolvedValue(owner);
   vi.spyOn(api, "alerts").mockResolvedValue(healthy);
-  // The count, prefs and brand-list reads are not under test here; a failed count falls back to the alerts report.
+  // The count, prefs and brand-list reads are not under test here; a failed count shows no badge.
   vi.spyOn(api, "navCounts").mockRejectedValue(new Error("unavailable"));
   vi.spyOn(api, "mePrefs").mockRejectedValue(new Error("unavailable"));
   vi.spyOn(api, "lifecycleBrands").mockRejectedValue(new Error("unavailable"));
@@ -90,8 +90,8 @@ describe("Console rail", () => {
     const user = document.querySelector<HTMLElement>(".sidebar-user")!;
     expect(within(user).getByText("owner@example.test")).toBeTruthy();
     expect(within(user).getByText("Owner")).toBeTruthy();
-    // A count of zero shows no badge.
-    await waitFor(() => expect(api.alerts).toHaveBeenCalled());
+    // A failed count shows no badge.
+    await waitFor(() => expect(api.navCounts).toHaveBeenCalled());
     expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull();
   });
 
@@ -172,32 +172,16 @@ describe("Console rail", () => {
     expect(within(tabs).getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("counts warn and alert categories, not affected leads or healthy categories", async () => {
+  it("shows no alerts badge when the counts call fails, and does not count the alerts report in its place", async () => {
     vi.mocked(api.alerts).mockResolvedValue(attention);
     render(<App />);
-    const badge = await screen.findByLabelText("3 รายการที่ต้องจัดการ");
-    expect(badge.textContent).toBe("3");
-    expect(badge.closest("a")?.textContent).toBe("การแจ้งเตือน3");
-  });
-
-  it("hides the badge when the report is unavailable and reloads on navigation", async () => {
-    vi.mocked(api.alerts).mockRejectedValueOnce(new Error("Unavailable")).mockResolvedValue(attention);
-    render(<App />);
     await screen.findByRole("heading", { name: "หน้าแรก" });
-    await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(1));
-    expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull();
+    await waitFor(() => expect(api.navCounts).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("link", { name: "เทมเพลต" }));
-    expect(await screen.findByLabelText("3 รายการที่ต้องจัดการ")).toBeTruthy();
-  });
-
-  it("ignores an older report that resolves after a navigation refresh", async () => {
-    let finish!: (report: AlertsReportResponse) => void;
-    vi.mocked(api.alerts).mockReturnValueOnce(new Promise<AlertsReportResponse>((resolve) => { finish = resolve; }));
-    render(<App />);
-    fireEvent.click(await screen.findByRole("link", { name: "เทมเพลต" }));
-    await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(2));
-    await act(async () => { finish(attention); });
-    expect(screen.queryByLabelText("3 รายการที่ต้องจัดการ")).toBeNull();
+    await screen.findByRole("heading", { name: "Templates screen -" });
+    expect(screen.queryByLabelText(/รายการที่ต้องจัดการ/)).toBeNull();
+    expect(api.alerts).not.toHaveBeenCalled();
+    expect(api.navCounts).toHaveBeenCalledTimes(1);
   });
 
   it("hides the owner-only tabs from employees and keeps the Settings item for the tabs they may open", async () => {

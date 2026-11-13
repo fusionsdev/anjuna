@@ -1,6 +1,6 @@
 import { LifecycleBrandSummary } from "@anjuna/contracts";
 import { describe, expect, it } from "vitest";
-import { BRAND_CHIPS, BRAND_SORTS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, sortWorstProfitFirst, type BrandHealth } from "../src/client/brand-health";
+import { BRAND_CHIPS, BRAND_SORTS, brandHealth, isDemoBrand, matchesBrandChip, matchesBrandSearch, sortBrands, sortWorstProfitFirst, type BrandHealth, type HealthChip } from "../src/client/brand-health";
 import { finalUrl, siteUrl } from "../src/client/final-url";
 
 const brand = (over: Partial<LifecycleBrandSummary> = {}) => LifecycleBrandSummary.parse({
@@ -74,7 +74,9 @@ describe("brandHealth", () => {
 });
 
 describe("matchesBrandChip", () => {
-  const chips = (row: LifecycleBrandSummary, health: BrandHealth) => BRAND_CHIPS.filter(({ id }) => matchesBrandChip(health, row, id)).map(({ id }) => id);
+  // The health chips only; the task chips read the checklist and are tested in task-counts.test.ts.
+  const HEALTH_CHIPS: HealthChip[] = ["needs-fix", "all", "live", "unfinished", "paused"];
+  const chips = (row: LifecycleBrandSummary, health: BrandHealth) => HEALTH_CHIPS.filter((id) => matchesBrandChip(health, row, id));
   it("counts a healthy live brand under live and nowhere else but all", () => {
     const row = brand();
     expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all", "live"]);
@@ -113,8 +115,8 @@ describe("matchesBrandChip", () => {
     expect(chips(row, brandHealth(row, { status: "live" }))).toEqual(["all"]);
   });
   it("lists every chip and sort, with profit the only owner-only sort", () => {
-    expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["needs-fix", "all", "live", "unfinished", "paused"]);
-    expect(BRAND_CHIPS.map((chip) => chip.label)).toEqual(["ต้องแก้", "ทั้งหมด", "ใช้งาน", "ยังไม่เสร็จ", "หยุด"]);
+    expect(BRAND_CHIPS.map((chip) => chip.id)).toEqual(["needs-fix", "all", "live", "unfinished", "paused", "test-sold", "drain-route", "drafts"]);
+    expect(BRAND_CHIPS.map((chip) => chip.label)).toEqual(["ต้องแก้", "ทั้งหมด", "ใช้งาน", "ยังไม่เสร็จ", "หยุด", "รอทดสอบการขาย", "รอตั้งเส้นทางส่งยอดขาย", "สร้างค้างไว้"]);
     expect(BRAND_SORTS.filter((sort) => sort.ownerOnly).map((sort) => sort.id)).toEqual(["profit"]);
   });
   it("carries no English in parentheses on a chip or sort label", () => {

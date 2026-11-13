@@ -171,10 +171,11 @@ describe("GET /api/wizard/drafts/:id", () => {
     const brandId = await draftId();
     expect(await (await call(`/api/wizard/drafts/${brandId}`, { cookie: employee })).json()).not.toHaveProperty("profile");
   });
-  it("answers 404 for an unknown brand and 409 for a brand that is not a draft", async () => {
+  // A live brand opens in the wizard too (FUS-391, wizard-live-api.test.ts); a paused one does not.
+  it("answers 404 for an unknown brand and 409 for a paused brand", async () => {
     expect((await call("/api/wizard/drafts/brand_nope", { cookie: employee })).status).toBe(404);
     const brandId = await draftId();
-    await env.FACTORY.prepare("UPDATE brands SET status = 'live' WHERE brand_id = ?1").bind(brandId).run();
+    await env.FACTORY.prepare("UPDATE brands SET status = 'paused' WHERE brand_id = ?1").bind(brandId).run();
     expect((await call(`/api/wizard/drafts/${brandId}`, { cookie: employee })).status).toBe(409);
   });
 });
@@ -375,10 +376,10 @@ describe("GET /api/wizard/preview/:id", () => {
     expect(await noIndex.json()).toMatchObject({ error: "preview_unavailable" });
   });
 
-  it("answers 404 for an unknown brand and 409 for a brand that is not a draft", async () => {
+  it("answers 404 for an unknown brand and 409 for a paused brand", async () => {
     expect((await preview("brand_nope")).status).toBe(404);
     const brandId = await draftId();
-    await env.FACTORY.prepare("UPDATE brands SET status = 'live' WHERE brand_id = ?1").bind(brandId).run();
+    await env.FACTORY.prepare("UPDATE brands SET status = 'paused' WHERE brand_id = ?1").bind(brandId).run();
     expect((await preview(brandId)).status).toBe(409);
   });
 
