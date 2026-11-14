@@ -7,6 +7,7 @@ import { hostnameBrand } from "../alert-incidents";
 import { buildBrandLabels } from "../brand-labels";
 import { Chip, type ChipTone } from "../components/Chip";
 import { EmptyState } from "../components/EmptyState";
+import { ScopeSubtitle } from "../components/ScopeSubtitle";
 import { scopeAlerts, scopeFunnel, scopeSpend, spendTotals } from "../home-metrics";
 import { listedInBrands } from "../task-counts";
 import { CLICK_PERIOD, DEAD_PERIOD, clickRange, clickTotals, taskRows, type TaskCategory, type TaskLevel, type TaskRow } from "../task-rows";
@@ -21,6 +22,7 @@ const LEVEL_LABEL: Record<TaskLevel, string> = { urgent: "ด่วน", todo: "
 const LEVEL_TONE: Record<TaskLevel, ChipTone> = { urgent: "danger", todo: "warning", system: "info" };
 const FILTERS: Array<[Filter, string]> = [["all", "ทั้งหมด"], ["urgent", "ด่วน"], ["brand", "แบรนด์"], ["template", "เทมเพลต"], ["system", "ระบบ"]];
 const matches = (filter: Filter, row: TaskRow): boolean => filter === "all" || (filter === "urgent" ? row.level === "urgent" : row.category === filter);
+const BRAND_STATUS_LABELS: Record<string, string> = { live: "ออนไลน์", draft: "ฉบับร่าง", failed: "ต้องแก้ไข", installing: "กำลังติดตั้ง", unmanaged: "ยังไม่จัดการ", retired: "เลิกใช้", ready: "พร้อมใช้งาน", paused: "หยุดชั่วคราว" };
 
 /** undefined while loading, null when the read failed. */
 type Loaded<T> = T | null | undefined;
@@ -130,7 +132,7 @@ export function HomeScreen({ me, onCounted }: { me: Me; onCounted?: (count: numb
           <a className="mission-link-primary" href="/brands/new" onClick={inApp("/brands/new")}>+ สร้างแบรนด์ใหม่</a>
         </div>
       </section>
-      <div className="mission-section-label"><span>WORKSPACE OVERVIEW</span><small>ข้อมูลจริงจากระบบ · ตามขอบเขตแบรนด์ที่เลือก</small></div>
+      <div className="mission-section-label"><span>WORKSPACE OVERVIEW</span><div className="mission-scope-meta"><small>ขอบเขตแบรนด์</small><ScopeSubtitle /></div></div>
       <section className="mission-kpis" aria-label="ตัวชี้วัดภาพรวม">
         <a className="mission-kpi" href="/brands" onClick={inApp("/brands")}>
           <span className="mission-kpi-label">แบรนด์ออนไลน์ <Globe2 size={18} /></span>
@@ -185,7 +187,7 @@ export function HomeScreen({ me, onCounted }: { me: Me; onCounted?: (count: numb
           return <a className="mission-brand-row" key={brand.brand_id} href={path} onClick={inApp(path)}>
             <span className="mission-brand-monogram" aria-hidden="true">{(brand.name || brand.hostnames[0] || "B").slice(0, 1).toUpperCase()}</span>
             <span className="mission-brand-info"><strong>{brand.hostnames[0] || brand.name || brand.brand_id}</strong><small>{brand.name || "Brand"}</small></span>
-            <span className={"mission-state mission-state-" + brand.status}>{brand.status === "live" ? "ออนไลน์" : brand.status === "draft" ? "ฉบับร่าง" : brand.status === "failed" ? "ต้องแก้ไข" : brand.status === "installing" ? "กำลังติดตั้ง" : brand.status}</span>
+            <span className={"mission-state mission-state-" + brand.status}>{BRAND_STATUS_LABELS[brand.status] ?? brand.status}</span>
             <ArrowRight size={16} />
           </a>;
         })}

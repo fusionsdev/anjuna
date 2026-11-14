@@ -484,3 +484,10 @@ a.nav[aria-current="page"] svg {color:#5257B7}
 .mission-session-info {display:flex; align-items:center; gap:7px; font-size:13px; color:#8592A8}
 .mission-session-dot {display:inline-block; width:7px; height:7px; border-radius:50%; background:#25B58C}
 @media(max-width:1023px){.mission-desktop-bar{display:none}}
+
+/* Scope belongs beside the overview heading, not above the page title. */
+.mission-scope-meta {display:flex;gap:9px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.mission-section-label .mission-scope-meta .scope-subtitle {display:inline-flex;align-items:center;gap:6px}
+.mission-section-label .mission-scope-meta .scope-subtitle .edit {font-size:13px;min-height:34px;border:1px solid #DCE2F0;border-radius:8px;padding:5px 12px;background:#fff;color:#5057B9;font-weight:700}
+.mission-section-label .mission-scope-meta .scope-subtitle .edit:hover {background:#EEF0FF}
+@media(max-width:680px){.mission-scope-meta {justify-content:flex-start}}
