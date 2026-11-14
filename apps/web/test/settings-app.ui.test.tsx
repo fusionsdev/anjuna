@@ -44,7 +44,7 @@ afterEach(() => {
 });
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-const drainKey = () => screen.getByLabelText("Drain key") as HTMLInputElement;
+const drainKey = () => screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement;
 
 async function openDirtyDraft() {
   render(<App />);

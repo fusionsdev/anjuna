@@ -45,9 +45,9 @@ const checklistRefreshMs = 60_000;
 /** The step icons of the checklist cards (design BrandDetailPanel). */
 const CHECKLIST_ICON = { drain_route: Route, leadsgate_postbacks: Webhook, test_sold: BadgeCheck, final_url: Globe } as const;
 const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: string }> = [
-  { item: "drain_route", label: "Drain route", pending: "อัตโนมัติเมื่อ Owner ตั้ง Google Ads account และ conversion action" },
-  { item: "leadsgate_postbacks", label: "LeadsGate postbacks", pending: "อัตโนมัติเมื่อ Core ใช้ postback token ของ tenant" },
-  { item: "test_sold", label: "ยืนยัน Test sold" },
+  { item: "drain_route", label: "เส้นทางส่งยอดขาย", pending: "อัตโนมัติเมื่อ Owner ตั้ง Google Ads account และ conversion action" },
+  { item: "leadsgate_postbacks", label: "ผลจากผู้ซื้อ", pending: "อัตโนมัติเมื่อ Core ใช้รหัสผลจากผู้ซื้อ (postback token) ของ tenant" },
+  { item: "test_sold", label: "ยืนยันการทดสอบการขาย" },
   { item: "final_url", label: "Final URL suffix keyword={keyword}", pending: "อัตโนมัติเมื่อ smoke test ของการติดตั้งผ่าน" },
 ];
 
@@ -57,8 +57,8 @@ const checklistItems: Array<{ item: ChecklistItemName; label: string; pending?: 
  */
 export function checklistFix(item: ChecklistItemName, ctx: { owner: boolean; installFailed: boolean }): { action: BrandAction; label: string; reason?: string } | null {
   switch (item) {
-    case "test_sold": return { action: "test-sold", label: "ยืนยัน Test sold" };
-    case "drain_route": return { action: "set-route", label: "ตั้งเส้นทางโฆษณา", ...(ctx.owner ? {} : { reason: "เฉพาะเจ้าของตั้งเส้นทางได้" }) };
+    case "test_sold": return { action: "test-sold", label: "ยืนยันการทดสอบการขาย" };
+    case "drain_route": return { action: "set-route", label: "ตั้งเส้นทางส่งยอดขาย", ...(ctx.owner ? {} : { reason: "เฉพาะเจ้าของตั้งเส้นทางได้" }) };
     case "final_url": return ctx.installFailed ? { action: "retry-install", label: "ลองติดตั้งใหม่" } : null;
     default: return null;
   }

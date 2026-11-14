@@ -125,13 +125,13 @@ describe("Settings review and save", () => {
   it("Cancel in the review sends no PATCH and keeps the draft", async () => {
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(false);
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(patches()).toHaveLength(0);
     expect(drawer()).toBeTruthy();
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
     expect(review().disabled).toBe(false);
   });
 
@@ -139,7 +139,7 @@ describe("Settings review and save", () => {
     onPatch = () => json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"]));
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", " dk_new ");
+    type("ชื่อเส้นทางส่งยอดขาย", " dk_new ");
     fireEvent.click(review());
     await answerConfirm(true);
     await waitFor(() => expect(patches()).toHaveLength(1));
@@ -151,7 +151,7 @@ describe("Settings review and save", () => {
     onPatch = () => json(saved(patched(alpha, { drain_key: "dk_new" }), ["drain_key"]));
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
     expect(await screen.findByText("บันทึกแล้ว (Saved)")).toBeTruthy();
@@ -172,7 +172,7 @@ describe("Settings review and save", () => {
     onPatch = () => json(saved(alpha, []));
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
     expect(await screen.findByText("ไม่มีค่าที่เปลี่ยน (Nothing changed)")).toBeTruthy();
@@ -205,7 +205,7 @@ describe("Settings review and save", () => {
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     type("AID (LeadsGate aid)", "444");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
 
@@ -214,7 +214,7 @@ describe("Settings review and save", () => {
     expect(banner.className).toContain("settings-banner");
     expect(drawer()).toBeTruthy();
     expect((screen.getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("444");
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
     expect(sent.some((s) => s.method === "GET" && s.url === "/api/brands/brand-alpha")).toBe(true);
     // The table row took the reloaded brand.
     await waitFor(() => expect(within(table()).getByText("333")).toBeTruthy());
@@ -223,7 +223,7 @@ describe("Settings review and save", () => {
     fireEvent.click(review());
     expect(await reviewRows(true)).toEqual([
       ["AID (LeadsGate aid)", "333", "444"],
-      ["Drain key", "dk_alpha", "dk_new"],
+      ["ชื่อเส้นทางส่งยอดขาย", "dk_alpha", "dk_new"],
     ]);
     await waitFor(() => expect(patches()).toHaveLength(2));
     expect(patches()[0]!.body).toEqual({ aid: "444", drain_key: "dk_new", expected_updated_at: T1 });
@@ -275,16 +275,16 @@ describe("Settings review and save", () => {
       : json(saved(patched(latest, body, "2026-10-25T09:00:00.000Z"), ["drain_key"])));
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
 
     await screen.findByText(CONFLICT);
     await waitFor(() => expect((screen.getByLabelText("AID (LeadsGate aid)") as HTMLInputElement).value).toBe("333"));
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
 
     fireEvent.click(review());
-    expect(await reviewRows(true)).toEqual([["Drain key", "dk_alpha", "dk_new"]]);
+    expect(await reviewRows(true)).toEqual([["ชื่อเส้นทางส่งยอดขาย", "dk_alpha", "dk_new"]]);
     await waitFor(() => expect(patches()).toHaveLength(2));
     expect(patches()[1]!.body).toEqual({ drain_key: "dk_new", expected_updated_at: T2 });
     expect(Object.hasOwn(patches()[1]!.body as object, "aid")).toBe(false);
@@ -299,7 +299,7 @@ describe("Settings review and save", () => {
       : json(saved(patched(latest, body, "2026-10-25T09:00:00.000Z"), ["drain_key"])));
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
 
@@ -307,7 +307,7 @@ describe("Settings review and save", () => {
     await waitFor(() => expect((screen.getByLabelText("น้ำหนักแขน 1 (Arm 1 weight)") as HTMLInputElement).value).toBe("20"));
     expect((screen.getByLabelText("น้ำหนักแขน 2 (Arm 2 weight)") as HTMLInputElement).value).toBe("80");
     fireEvent.click(review());
-    expect(await reviewRows(true)).toEqual([["Drain key", "dk_alpha", "dk_new"]]);
+    expect(await reviewRows(true)).toEqual([["ชื่อเส้นทางส่งยอดขาย", "dk_alpha", "dk_new"]]);
     await waitFor(() => expect(patches()).toHaveLength(2));
     expect(patches()[1]!.body).toEqual({ drain_key: "dk_new", expected_updated_at: T2 });
   });
@@ -317,26 +317,26 @@ describe("Settings review and save", () => {
     onPatch = () => json({ error: "conflict", current_updated_at: T2 }, 409);
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
     const banner = await screen.findByRole("alert");
     await waitFor(() => expect(banner.textContent).toBe(`${CONFLICT} สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)`));
     expect(drawer()).toBeTruthy();
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
   });
 
   it("a 403 shows the ApiError.thai banner and keeps the drawer", async () => {
     onPatch = () => json({ error: "forbidden_role", required_role: "owner" }, 403);
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
     const banner = await screen.findByRole("alert");
     expect(banner.textContent).toBe("สิทธิ์ไม่เพียงพอ (ต้องเป็น Owner)");
     expect(drawer()).toBeTruthy();
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
     expect(review().disabled).toBe(false);
     expect(sent.some((s) => s.method === "GET" && s.url === "/api/brands/brand-alpha")).toBe(false);
   });
@@ -348,7 +348,7 @@ describe("Settings save in flight", () => {
     onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
     await waitFor(() => expect(patches()).toHaveLength(1));
@@ -356,9 +356,9 @@ describe("Settings save in flight", () => {
 
   it("the drawer is locked until the answer: typing, Close, the scrim, Escape and Edit on another row do nothing", async () => {
     await startSave();
-    const input = screen.getByLabelText("Drain key") as HTMLInputElement;
+    const input = screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement;
     expect(input.closest("fieldset")!.disabled).toBe(true);
-    type("Drain key", "dk_typed");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_typed");
     expect(input.value).toBe("dk_new");
     fireEvent.click(screen.getByRole("button", { name: "ปิด (Close)" }));
     fireEvent.click(document.querySelector(".scrim")!);
@@ -406,7 +406,7 @@ describe("Settings save in flight", () => {
     const first = render(<SettingsScreen />);
     onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
     await waitFor(() => expect(patches()).toHaveLength(1));
@@ -414,7 +414,7 @@ describe("Settings save in flight", () => {
 
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_other");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_other");
     const beforeUnload = () => {
       const event = new Event("beforeunload", { cancelable: true });
       window.dispatchEvent(event);
@@ -426,7 +426,7 @@ describe("Settings save in flight", () => {
     expect(beforeUnload()).toBe(true);
     expect(screen.queryByText("บันทึกแล้ว (Saved)")).toBeNull();
     expect(within(table()).getByText("dk_alpha")).toBeTruthy();
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_other");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_other");
     navigate("/brands");
     expect(within(await screen.findByRole("alertdialog")).getByRole("heading").textContent).toBe(DISCARD_TITLE);
     expect(window.location.pathname).toBe("/settings");
@@ -437,7 +437,7 @@ describe("Settings save in flight", () => {
     const first = render(<SettingsScreen />);
     onPatch = () => new Promise<Response>((resolve) => { release = resolve; });
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(review());
     await answerConfirm(true);
     await waitFor(() => expect(patches()).toHaveLength(1));
@@ -466,7 +466,7 @@ describe("Settings unsaved-change guard", () => {
   it("closing the drawer while dirty asks to discard; Cancel keeps the draft; Discard closes", async () => {
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     fireEvent.click(screen.getByRole("button", { name: "ปิด (Close)" }));
     const asked = await screen.findByRole("alertdialog");
     expect(within(asked).getByRole("heading").textContent).toBe(DISCARD_TITLE);
@@ -474,7 +474,7 @@ describe("Settings unsaved-change guard", () => {
     await answerConfirm(false);
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(drawer()).toBeTruthy();
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
 
     fireEvent.keyDown(document, { key: "Escape" });
     await answerConfirm(true);
@@ -483,19 +483,19 @@ describe("Settings unsaved-change guard", () => {
 
     // Opening the row again starts from the loaded values.
     await openEditor("alpha.example.test");
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_alpha");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_alpha");
   });
 
   it("opening another row while dirty asks to discard", async () => {
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     await openEditor("beta.example.test");
     expect(within(await screen.findByRole("alertdialog")).getByRole("heading").textContent).toBe(DISCARD_TITLE);
     await answerConfirm(false);
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.getByRole("complementary", { name: "แก้ไขตั้งค่า alpha.example.test (Edit settings)" })).toBeTruthy();
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
 
     await openEditor("beta.example.test");
     await answerConfirm(true);
@@ -506,13 +506,13 @@ describe("Settings unsaved-change guard", () => {
   it("sidebar-style navigate(\"/brands\") while dirty asks; Cancel stays on /settings; Discard leaves", async () => {
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     navigate("/brands");
     expect(within(await screen.findByRole("alertdialog")).getByRole("heading").textContent).toBe(DISCARD_TITLE);
     await answerConfirm(false);
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(window.location.pathname).toBe("/settings");
-    expect((screen.getByLabelText("Drain key") as HTMLInputElement).value).toBe("dk_new");
+    expect((screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย") as HTMLInputElement).value).toBe("dk_new");
 
     navigate("/brands");
     await answerConfirm(true);
@@ -524,7 +524,7 @@ describe("Settings unsaved-change guard", () => {
   it("unmounting while dirty leaves no guard behind", async () => {
     const view = render(<SettingsScreen />);
     await openEditor("alpha.example.test");
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     view.unmount();
     navigate("/brands");
     expect(window.location.pathname).toBe("/brands");
@@ -542,11 +542,11 @@ describe("Settings unsaved-change guard", () => {
     render(<SettingsScreen />);
     await openEditor("alpha.example.test");
     expect(fire()).toBe(false);
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     expect(fire()).toBe(true);
-    type("Drain key", "dk_alpha");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_alpha");
     expect(fire()).toBe(false);
-    type("Drain key", "dk_new");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_new");
     expect(fire()).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "ปิด (Close)" }));
     await answerConfirm(true);

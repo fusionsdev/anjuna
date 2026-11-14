@@ -85,8 +85,8 @@ function filterProblems(filter: LeadFilterState): string[] {
 function Reconciliation({ row }: { row: LeadListRow }) {
   if (row.has_conversion) return <StatusBadge tone="live" label="มี conversion (Has conversion)" />;
   if (row.outcome === "sold") return <StatusBadge tone="bad" label="ขายแล้วแต่ไม่มีรายการอัปโหลด (Sold, no upload)" />;
-  if (row.postback_count === 0) return <StatusBadge tone="warn" label="ยังไม่มี postback (No postback yet)" />;
-  return <StatusBadge tone="blue" label="มี postback (Postback received)" />;
+  if (row.postback_count === 0) return <StatusBadge tone="warn" label="ยังไม่มีผลจากผู้ซื้อ" />;
+  return <StatusBadge tone="blue" label="มีผลจากผู้ซื้อแล้ว" />;
 }
 
 export function LeadsScreen({ me, selectedId = null, onSelect, onClose }: { me: Me; selectedId?: string | null; onSelect: (id: string) => void; onClose?: () => void }) {

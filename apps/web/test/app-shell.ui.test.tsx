@@ -11,13 +11,13 @@ const items: NavItem[] = [
   { id: "alerts", label: "การแจ้งเตือน", badge: { count: 3, label: "3 รายการที่ต้องจัดการ" } },
 ];
 
-function renderShell(onSignOut = vi.fn(), onOpen = vi.fn()) {
+function renderShell(onSignOut = vi.fn(), onOpen = vi.fn(), onCreateBrand = vi.fn()) {
   render(
-    <AppShell me={me} onSignOut={onSignOut} nav={<SidebarNav items={items} current="home" onOpen={onOpen} />}>
+    <AppShell me={me} onSignOut={onSignOut} onCreateBrand={onCreateBrand} nav={<SidebarNav items={items} current="home" onOpen={onOpen} />}>
       <p>body</p>
     </AppShell>,
   );
-  return { onSignOut, onOpen };
+  return { onSignOut, onOpen, onCreateBrand };
 }
 
 describe("AppShell", () => {
@@ -30,6 +30,31 @@ describe("AppShell", () => {
     expect(side.getByText("Owner · aduplift")).toBeTruthy();
     fireEvent.click(side.getByRole("button", { name: "ออกจากระบบ" }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("puts the create-brand button above the scope control and the menu, and a plain click calls onCreateBrand and closes the drawer", () => {
+    const { onCreateBrand } = renderShell();
+    const create = screen.getByRole("link", { name: "+ สร้างแบรนด์ใหม่" });
+    expect(create.getAttribute("href")).toBe("/brands/new");
+    const sidebar = document.querySelector<HTMLElement>("aside.sidebar")!;
+    expect(sidebar.contains(create)).toBe(true);
+    // Document order: create button, then the scope control, then the menu.
+    expect(create.compareDocumentPosition(sidebar.querySelector(".sidebar-scope")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(create.compareDocumentPosition(screen.getByRole("navigation", { name: "เมนูหลัก" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // A Ctrl click keeps the browser default (a new tab); jsdom cannot follow it, so the test stops it after the shell has seen it.
+    const stop = (e: Event) => e.preventDefault();
+    document.addEventListener("click", stop);
+    try {
+      fireEvent.click(create, { ctrlKey: true });
+    } finally {
+      document.removeEventListener("click", stop);
+    }
+    expect(onCreateBrand).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "เปิดเมนู" }));
+    expect(document.querySelector(".shell")?.getAttribute("data-drawer")).toBe("open");
+    fireEvent.click(create);
+    expect(onCreateBrand).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".shell")?.getAttribute("data-drawer")).toBe("closed");
   });
 
   it("has no desktop top bar: the 56px bar under 1024px holds the menu button and the logo", () => {
@@ -194,7 +219,7 @@ describe("SidebarNav", () => {
   it("wires the shortcuts: / focuses the page search, ? lists the shortcuts, and g then b opens the brands page", () => {
     window.history.replaceState(null, "", "/");
     render(
-      <AppShell me={me} onSignOut={vi.fn()} nav={<SidebarNav items={items} current="home" onOpen={vi.fn()} />}>
+      <AppShell me={me} onSignOut={vi.fn()} onCreateBrand={vi.fn()} nav={<SidebarNav items={items} current="home" onOpen={vi.fn()} />}>
         <input type="search" aria-label="ค้นหาแบรนด์" />
       </AppShell>,
     );
@@ -213,7 +238,7 @@ describe("SidebarNav", () => {
 
   it("labels the cells of a stacked table from its head row, so the card shows the column names", async () => {
     render(
-      <AppShell me={me} onSignOut={vi.fn()} nav={<SidebarNav items={items} current="home" onOpen={vi.fn()} />}>
+      <AppShell me={me} onSignOut={vi.fn()} onCreateBrand={vi.fn()} nav={<SidebarNav items={items} current="home" onOpen={vi.fn()} />}>
         <div className="stack-table"><table><thead><tr><th>แบรนด์</th><th>สถานะ</th></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table></div>
       </AppShell>,
     );

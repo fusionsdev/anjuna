@@ -47,7 +47,7 @@ function reconcile(postbacks: Postback[], conversion: LeadConversion | null): { 
   if (postbacks.some((p) => p.event_type === "soldLead") && !conversion) return { text: "ขายแล้วแต่ไม่มีรายการอัปโหลด", tone: "bad" };
   if (conversion?.status === "dead") return { text: "อัปโหลดล้มเหลวถาวร", tone: "bad" };
   if (conversion?.status === "uploaded") return { text: "ส่งคอนเวอร์ชันแล้ว", tone: "live" };
-  if (postbacks.length === 0) return { text: "ยังไม่มี postback จาก LeadsGate", tone: "warn" };
+  if (postbacks.length === 0) return { text: "ผู้ซื้อยังไม่แจ้งผล", tone: "warn" };
   return null;
 }
 
@@ -57,10 +57,10 @@ export function leadTimeline(lead: LeadDetail): Array<{ label: string; at: strin
   const events: Array<{ label: string; at: string; tone: TimelineTone }> = [{ label: "ส่งฟอร์ม", at: lead.created_at, tone: "info" }];
   for (const p of lead.postbacks) {
     const type = p.event_type;
-    if (type === "soldLead") events.push({ label: "postback ขายได้", at: p.created_at, tone: "success" });
-    else if (type === "newLead") events.push({ label: "postback ลีดใหม่", at: p.created_at, tone: "info" });
-    else if (/reject/i.test(type)) events.push({ label: "postback ปฏิเสธ", at: p.created_at, tone: "danger" });
-    else events.push({ label: `postback ${type}`, at: p.created_at, tone: "info" });
+    if (type === "soldLead") events.push({ label: "ผลจากผู้ซื้อ: ขายได้", at: p.created_at, tone: "success" });
+    else if (type === "newLead") events.push({ label: "ผลจากผู้ซื้อ: ลีดใหม่", at: p.created_at, tone: "info" });
+    else if (/reject/i.test(type)) events.push({ label: "ผลจากผู้ซื้อ: ปฏิเสธ", at: p.created_at, tone: "danger" });
+    else events.push({ label: `ผลจากผู้ซื้อ: ${type}`, at: p.created_at, tone: "info" });
   }
   const c = lead.conversion;
   if (c) {
@@ -262,10 +262,10 @@ export function LeadDetailScreen({ me, leadId, onBack, panel = false }: { me: Me
     </section>
 
     <section className={sec} style={secStyle} aria-labelledby="lead-inspector">
-      <h2 id="lead-inspector">Postback Inspector</h2>
+      <h2 id="lead-inspector">ผลจากผู้ซื้อ</h2>
       {found && <p role="status" aria-label="ตรวจยอด (Reconciliation)"><StatusBadge tone={found.tone} label={found.text} /></p>}
-      <DataTable label="Postback" columns={postbackColumns} rows={lead.postbacks.map((p, index) => ({ ...p, index }))} rowKey={(p) => `${p.event_type}|${p.created_at}|${p.index}`}
-        empty={<EmptyState title="ยังไม่มี postback (No postbacks yet)" />} />
+      <DataTable label="รายการผลจากผู้ซื้อ" columns={postbackColumns} rows={lead.postbacks.map((p, index) => ({ ...p, index }))} rowKey={(p) => `${p.event_type}|${p.created_at}|${p.index}`}
+        empty={<EmptyState title="ยังไม่มีผลจากผู้ซื้อ" />} />
       <h3 style={{ marginTop: 16 }}>Conversion</h3>
       {lead.conversion ? <Conversion conversion={lead.conversion} owner={showPayout} /> : <p className="hint">ไม่มีรายการอัปโหลด (No conversion upload)</p>}
     </section>

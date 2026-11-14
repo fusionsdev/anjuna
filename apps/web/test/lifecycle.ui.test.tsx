@@ -35,7 +35,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const lastBody = (path: string) => requests.filter((r) => r.path === path && r.method === "PATCH").at(-1)?.body;
 /** The Test sold fix button, once the install history read is done: it is disabled while that read runs, and a click then does nothing. */
 const enabledSoldButton = async () => {
-  const button = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+  const button = await screen.findByRole("button", { name: "ยืนยันการทดสอบการขาย" });
   await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
   return button;
 };
@@ -285,16 +285,16 @@ describe("mounted lifecycle UI with API responses", () => {
     expect(within(panel).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "สถานะ (Pause / Resume)", keywordSection, "ข้อความหน้าเว็บ (Site text)", "โลโก้และไอคอน (Logo and favicon)", rollbackHeading, "เวอร์ชันเทมเพลต (Template version, Owner เท่านั้น)", abSummarySection, bucketsLabel, flowGateSection, "เส้นทางเงิน (Money-path, Owner เท่านั้น)",
     ]);
-    for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "คีย์ drain (Drain key)", accountLabel, actionLabel, projectLabel]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
+    for (const label of ["รหัส LeadsGate (LeadsGate aid)", "URL ฐาน prepop (Prepop base)", "ชื่อเส้นทางส่งยอดขาย", accountLabel, actionLabel, projectLabel]) expect(within(panel).getByRole("textbox", { name: label })).toBeDefined();
     expect(within(panel).getByText(/^บัญชี \(Account\) test-account/)).toBeDefined();
-    expect(within(panel).getByText(/โทเคน postback \(Postback token\):/)).toBeDefined();
+    expect(within(panel).getByText(/รหัสผลจากผู้ซื้อ \(postback token\):/)).toBeDefined();
     // Every button reads Thai first with the English term in parentheses.
     const thaiThenEnglish = /^[฀-๿][^()]*\([A-Za-z][^()]*\)/;
     for (const button of within(panel).getAllByRole("button")) expect(button.textContent, button.textContent ?? "").toMatch(thaiThenEnglish);
     fireEvent.click(within(panel).getByRole("button", { name: rotateName }));
     await answerConfirm(true);
-    const modal = await screen.findByRole("dialog", { name: "โทเคน postback ใหม่ (New postback token)" });
-    expect(within(modal).getByRole("heading", { name: "โทเคน postback ใหม่ (New postback token)" })).toBeDefined();
+    const modal = await screen.findByRole("dialog", { name: "รหัสผลจากผู้ซื้อ (postback token) ใหม่" });
+    expect(within(modal).getByRole("heading", { name: "รหัสผลจากผู้ซื้อ (postback token) ใหม่" })).toBeDefined();
     expect(within(modal).getByRole("button", { name: "คัดลอก (Copy)" })).toBeDefined();
     expect(within(modal).getByRole("button", { name: closeName })).toBeDefined();
   });
@@ -731,14 +731,14 @@ describe("checklist actions and the brand selection", { timeout: 15_000 }, () =>
     fireEvent.change(within(dialog).getByLabelText("lead_id renderable.test"), { target: { value: "lead-1" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "ยืนยัน" }));
     await waitFor(() => expect((screen.getByRole("checkbox", { name: /test_sold/ }) as HTMLInputElement).checked).toBe(true));
-    expect(screen.queryByRole("button", { name: "ยืนยัน Test sold" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "ยืนยันการทดสอบการขาย" })).toBeNull();
   });
 
   it("turns the fix buttons off while an install runs", async () => {
     history([{ install_id: "running-1", status: "running", error: null }]);
     routes.set("GET /api/installs/running-1", () => json({ install_id: "running-1", brand_id: "brand-a", revision_id: "rev-1", status: "running", runtime_sync_status: "queued", receipts: [] }));
     render(<BrandLifecycle me={owner} />);
-    const fix = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    const fix = await screen.findByRole("button", { name: "ยืนยันการทดสอบการขาย" });
     await waitFor(() => expect((fix as HTMLButtonElement).disabled).toBe(true));
   });
 });
@@ -861,7 +861,7 @@ describe("AdKit numbers on the brand detail", () => {
 
   it("has no block and no spend request for an employee", async () => {
     render(<BrandLifecycle me={employee} />);
-    await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    await screen.findByRole("button", { name: "ยืนยันการทดสอบการขาย" });
     expect(screen.queryByRole("region", { name: "ตัวเลขโฆษณา" })).toBeNull();
     expect(requests.some((r) => r.path.startsWith("/api/spend"))).toBe(false);
   });
@@ -939,7 +939,7 @@ describe("checklist auto-refresh (FUS-385)", () => {
     let reads = 0;
     routes.set("GET /api/brands/brand-a/checklist", () => json({ brand_id: "brand-a", checklist: ++reads === 1 ? [] : allComputed() }));
     render(<BrandLifecycle me={owner} />);
-    await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    await screen.findByRole("button", { name: "ยืนยันการทดสอบการขาย" });
     await waitFor(() => expect(checklistReads()).toBe(1));
     await tick(60_000);
     await waitFor(() => expect(boxChecked(/final_url/)).toBe(true));
@@ -1025,7 +1025,7 @@ describe("checklist auto-refresh (FUS-385)", () => {
     });
     routes.set("POST /api/brands/brand-a/checklist", () => { attested = true; return json({ evidence: { ...evidence("test_sold"), event_id: "ev-1" } }); });
     render(<BrandLifecycle me={owner} />);
-    const fix = await screen.findByRole("button", { name: "ยืนยัน Test sold" });
+    const fix = await screen.findByRole("button", { name: "ยืนยันการทดสอบการขาย" });
     await waitFor(() => expect(checklistReads()).toBe(1));
     await tick(60_000);
     await waitFor(() => expect(checklistReads()).toBe(2));

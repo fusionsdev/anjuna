@@ -14,10 +14,10 @@ const label = (brand: ActionBrand) => `${brand.name} · ${brand.domain}`;
 
 const COPY: Record<Exclude<BrandAction, "set-route">, { title: (b: ActionBrand) => string; body: (b: ActionBrand) => string; confirm: string; done: (b: ActionBrand) => string; tone?: "danger" }> = {
   "test-sold": {
-    title: (b) => `ยืนยัน Test sold ของ ${label(b)}?`,
+    title: (b) => `ยืนยันการทดสอบการขายของ ${label(b)}?`,
     body: (b) => `ยืนยันว่ามีลีดทดสอบของ ${label(b)} ขายได้จริง กรอก lead_id ที่ตรวจแล้ว`,
     confirm: "ยืนยัน",
-    done: (b) => `ยืนยัน Test sold ของ ${b.domain} แล้ว`,
+    done: (b) => `ยืนยันการทดสอบการขายของ ${b.domain} แล้ว`,
   },
   "retry-install": {
     title: (b) => `ลองติดตั้ง ${label(b)} ใหม่?`,
@@ -100,7 +100,7 @@ export function useBrandActions(options: { onDone?: (action: BrandAction, brands
       if (!ok) return false;
       const missing = brands.find((brand) => !leads[brand.id]?.trim());
       if (!missing) return true;
-      problem = `กรอก lead_id ของ ${missing.domain} ก่อนยืนยัน Test sold`;
+      problem = `กรอก lead_id ของ ${missing.domain} ก่อนยืนยันการทดสอบการขาย`;
     }
   }, [confirm]);
 
@@ -159,7 +159,7 @@ export function useBrandActions(options: { onDone?: (action: BrandAction, brands
     generation.current += 1;
     const leads: Record<string, string> = {};
     const copy = COPY[action];
-    const ok = await askLeads(`ยืนยัน Test sold ${todo.length} แบรนด์?`, "กรอก lead_id ที่ตรวจแล้วของแต่ละแบรนด์ ระบบส่งทีละแบรนด์และหยุดเมื่อมีแบรนด์ที่ไม่สำเร็จ", todo, leads, copy.confirm);
+    const ok = await askLeads(`ยืนยันการทดสอบการขาย ${todo.length} แบรนด์?`, "กรอก lead_id ที่ตรวจแล้วของแต่ละแบรนด์ ระบบส่งทีละแบรนด์และหยุดเมื่อมีแบรนด์ที่ไม่สำเร็จ", todo, leads, copy.confirm);
     if (!ok) return;
     const keys = todo.map((brand) => keyOf(action, brand));
     if (keys.some((key) => inFlight.current.has(key))) return;
@@ -170,14 +170,14 @@ export function useBrandActions(options: { onDone?: (action: BrandAction, brands
         try {
           await send(action, brand, leads[brand.id]!.trim());
         } catch (error) {
-          show("err", `ยืนยัน Test sold ไม่สำเร็จที่ ${brand.domain}: ${failureText(error)} ส่งสำเร็จแล้ว ${done} จาก ${todo.length} แบรนด์`);
+          show("err", `ยืนยันการทดสอบการขายไม่สำเร็จที่ ${brand.domain}: ${failureText(error)} ส่งสำเร็จแล้ว ${done} จาก ${todo.length} แบรนด์`);
           return;
         } finally {
           release([keyOf(action, brand)]);
         }
         done += 1;
       }
-      show("ok", `ยืนยัน Test sold แล้ว ${done} แบรนด์`);
+      show("ok", `ยืนยันการทดสอบการขายแล้ว ${done} แบรนด์`);
     } finally {
       release(keys);
       if (done > 0) optionsRef.current.onDone?.(action, todo.slice(0, done));

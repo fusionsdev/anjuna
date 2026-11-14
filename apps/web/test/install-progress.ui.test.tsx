@@ -113,7 +113,7 @@ describe("BrandLifecycle detail", () => {
     const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
     expect(boxes).toHaveLength(4);
     expect(boxes.every((box) => box.disabled)).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "ยืนยัน Test sold" }));
+    fireEvent.click(screen.getByRole("button", { name: "ยืนยันการทดสอบการขาย" }));
     expect(onFix).toHaveBeenCalledWith("test_sold");
     expect(screen.queryByLabelText("lead_id")).toBeNull();
     expect(screen.getByText(/อัตโนมัติเมื่อ smoke test ของการติดตั้งผ่าน/)).toBeDefined();

@@ -9,16 +9,17 @@ import { BrandScopeControl } from "./BrandScopeControl";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 
 export const pageTitle: Record<View, string> = {
-  home: "หน้าแรก", brands: "แบรนด์", "new-brand": "สร้างแบรนด์ใหม่", templates: "เทมเพลต", funnel: "ฟันเนล",
+  home: "งานรอทำ", brands: "แบรนด์", "new-brand": "สร้างแบรนด์ใหม่", templates: "เทมเพลต", funnel: "ฟันเนล",
   conversions: "คอนเวอร์ชัน", alerts: "การแจ้งเตือน", deploys: "ประวัติการติดตั้ง", mailing: "รายชื่ออีเมล", audit: "ประวัติการแก้ไข", users: "ผู้ใช้",
   "builder-keys": "คีย์ Builder", leads: "ลีด", suppressions: "อีเมลที่บล็อก",
-  settings: "ตั้งค่า",
+  settings: "ตั้งค่าทั่วไป",
   "notify-settings": "ช่องทางแจ้งเตือน",
-  "ad-allocation": "จัดสรรค่าโฆษณา",
+  "ad-allocation": "แบ่งค่าโฆษณา",
   "brand-timeline": "ไทม์ไลน์แบรนด์", // spec timeline
   realtime: "เรียลไทม์", traffic: "ทราฟฟิก", errors: "ข้อผิดพลาดฝั่งเว็บ", // spec traffic
   campaigns: "แคมเปญ", // T13 Part B
   "adkit-terminal": "AdKit Terminal", // T13-6
+  money: "เงิน", system: "ระบบ", // FUS-393
   "not-found": "ไม่พบหน้านี้",
 };
 
@@ -38,8 +39,11 @@ function useMobileViewport() {
   return mobile;
 }
 
-/** Sidebar (232px) with the logo, the brand scope button, the menu and the user block; a 56px top bar and a drawer under 1024px. */
-export function AppShell({ me, nav, onSignOut, children }: { me: Me; nav: ReactNode; onSignOut: () => void; children: ReactNode }) {
+/**
+ * Sidebar (232px) with the logo, the create-brand button, the brand scope button, the menu and the user block;
+ * a 56px top bar and a drawer under 1024px.
+ */
+export function AppShell({ me, nav, onSignOut, onCreateBrand, children }: { me: Me; nav: ReactNode; onSignOut: () => void; onCreateBrand: () => void; children: ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const [help, setHelp] = useState(false);
   const mobile = useMobileViewport();
@@ -80,7 +84,7 @@ export function AppShell({ me, nav, onSignOut, children }: { me: Me; nav: ReactN
   return (
     <div className="shell" data-drawer={drawer ? "open" : "closed"}>
       <aside className="sidebar" id="sidebar" ref={sidebar} inert={mobile && !drawer} onClick={(e) => {
-        if (!(e.target as HTMLElement).closest("a.nav, a.brandmark")) return;
+        if (!(e.target as HTMLElement).closest("a.nav, a.brandmark, a.sidebar-create")) return;
         // The closed drawer is inert and the clicked link sits inside it, so focus would fall to body: move it to the page.
         closeDrawer("main");
       }}>
@@ -88,6 +92,12 @@ export function AppShell({ me, nav, onSignOut, children }: { me: Me; nav: ReactN
           <a href={viewPath("home")} className="brandmark" onClick={goHome}><i aria-hidden="true">A</i>Anjuna</a>
           <button type="button" className="sidebar-close" aria-label="ปิดเมนู" onClick={() => closeDrawer()}><X size={20} aria-hidden="true" /></button>
         </div>
+        {/* The app passes the open action, so a second click on the button opens the wizard again like the Brands page button does. */}
+        <a href={viewPath("new-brand")} className="btn pri sidebar-create" onClick={(e) => {
+          if (!isPlainLeftClick(e)) return;
+          e.preventDefault();
+          onCreateBrand();
+        }}>+ สร้างแบรนด์ใหม่</a>
         <div className="sidebar-scope"><BrandScopeControl /></div>
         {nav}
         <div className="sidebar-user">

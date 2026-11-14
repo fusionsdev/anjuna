@@ -3,11 +3,11 @@ import type { ConversionReasonCode } from "@anjuna/contracts";
 /** Thai label and one fix line per reason code. The strings are the spec "UI text per code" table. */
 export const REASON_TEXT: Record<ConversionReasonCode, { label: string; fix: string }> = {
   no_click_id: { label: "ไม่มี click id (No click id)", fix: "Lead มาโดยไม่มี gclid/gbraid/wbraid/msclkid. ส่งขึ้น Ads ไม่ได้. ตรวจว่าแคมเปญเปิด auto-tagging." },
-  lease_exhausted: { label: "ลองครบแล้ว (Attempts exhausted)", fix: "Drain ดึงไปแล้วไม่ตอบกลับจนครบจำนวนครั้ง. ตรวจ log ของ drain บน VPS." },
-  no_route: { label: "ไม่มี route (No route)", fix: "Drain ไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. เพิ่ม route ใน drain config บน VPS." },
-  not_ready: { label: "ยังไม่พร้อม (Not ready)", fix: "Ads ยังไม่รับ click นี้. Drain จะลองใหม่เอง." },
-  ms_env_missing: { label: "ตั้งค่า Microsoft ไม่ครบ (Microsoft env missing)", fix: "ตั้ง ACCOUNT และ CONVERSION_NAME ของ Microsoft Ads ใน env ของ drain." },
-  upload_failed: { label: "อัปโหลดไม่ผ่าน (Upload failed)", fix: "Ads ตอบ error. Drain จะลองใหม่ตาม backoff." },
+  lease_exhausted: { label: "ลองครบแล้ว (Attempts exhausted)", fix: "เส้นทางส่งยอดขายดึงไปแล้วไม่ตอบกลับจนครบจำนวนครั้ง. ตรวจ log ของเส้นทางส่งยอดขายบน VPS." },
+  no_route: { label: "ไม่มีเส้นทางส่งยอดขาย", fix: "เส้นทางส่งยอดขายไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. ตั้งเส้นทางส่งยอดขายของแบรนด์นี้บน VPS." },
+  not_ready: { label: "ยังไม่พร้อม (Not ready)", fix: "Ads ยังไม่รับ click นี้. เส้นทางส่งยอดขายจะลองใหม่เอง." },
+  ms_env_missing: { label: "ตั้งค่า Microsoft ไม่ครบ (Microsoft env missing)", fix: "ตั้ง ACCOUNT และ CONVERSION_NAME ของ Microsoft Ads ใน env ของเส้นทางส่งยอดขาย." },
+  upload_failed: { label: "อัปโหลดไม่ผ่าน (Upload failed)", fix: "Ads ตอบ error. เส้นทางส่งยอดขายจะลองใหม่ตาม backoff." },
   platform_error: { label: "Ads ตอบ error (Platform error)", fix: "ดูข้อความ error เต็มในแถว." },
 };
 
@@ -24,6 +24,14 @@ export const DEAD_TEXT: Record<DeadClass, string> = {
   adkit_failed: "AdKit ขัดข้อง ส่งไม่สำเร็จ",
   no_click_id: "ไม่มีรหัสคลิก คนเข้าเว็บไม่ได้มาจากโฆษณา ส่งไม่ได้",
   unknown: "ส่งไม่สำเร็จ",
+};
+
+/** The short name of each class, for a count line such as "ส่งซ้ำ 7 · AdKit ขัดข้อง 9". */
+export const DEAD_SHORT: Record<DeadClass, string> = {
+  one_per_click: "ส่งซ้ำ",
+  adkit_failed: "AdKit ขัดข้อง",
+  no_click_id: "ไม่มีรหัสคลิก",
+  unknown: "อื่นๆ",
 };
 
 // Google Ads refuses a second conversion for the same click and action; the drain stores its text as last_error.

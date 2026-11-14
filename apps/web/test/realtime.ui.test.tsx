@@ -385,7 +385,7 @@ describe("traffic live helpers", () => {
     expect(sessions.map((s) => s.sessionRef)).toEqual([ref, "cccccccccccccccc"]);
   });
   it("labels a postback as its own stage and filters it on its own", () => {
-    expect(STAGE.postback_received).toEqual({ label: "โพสต์แบ็ก", kind: "postback" });
+    expect(STAGE.postback_received).toEqual({ label: "ผลจากผู้ซื้อ", kind: "postback" });
     expect(EVENT_FILTERS.map((f) => f.id)).toEqual(["all", "landing", "form", "lead", "redirect", "postback", "bot"]);
     const postback = tailEvent({ event_type: "postback_received", device_type: null, browser: null, user_agent_family: "unknown" });
     const others = (["gate_viewed", "landing_viewed", "form_started", "lead_submitted", "redirect_started"] as const).map((event_type) => tailEvent({ event_type }));

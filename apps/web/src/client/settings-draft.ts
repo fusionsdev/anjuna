@@ -25,7 +25,7 @@ export const SETTINGS_LABELS: Record<SettingsField, string> = {
   amount_buckets: "ช่วงยอดเงิน (Amount buckets)",
   keyword_default: "คีย์เวิร์ด (Keyword default)",
   prepop_base: "Prepop base",
-  drain_key: "Drain key",
+  drain_key: "ชื่อเส้นทางส่งยอดขาย",
   theme: "สีแบรนด์ (Brand colors)",
 };
 
@@ -92,7 +92,7 @@ const FIELD_MESSAGES: Record<SettingsField, string> = {
   amount_buckets: "ช่วงยอดเงินต้องไม่ซ้ำ เรียงจากน้อยไปมาก และอยู่ในช่วงที่รับได้ (Amount buckets must be unique, ascending and in range)",
   keyword_default: "คีย์เวิร์ดไม่ถูกต้อง (Invalid keyword)",
   prepop_base: "Prepop base ต้องเป็น URL แบบ https หรือพาธที่ขึ้นต้นด้วย / และไม่มี ? หรือ # (Prepop base must be an https URL or a path starting with /, with no ? or #)",
-  drain_key: "Drain key ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Invalid drain key)",
+  drain_key: "ชื่อเส้นทางส่งยอดขายใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว",
   theme: "สีแบรนด์ต้องเป็นรูปแบบ #rrggbb (Brand colors must be #rrggbb hex)",
 };
 const bucketTokens = (text: string) => text.split(",").map((s) => s.trim());

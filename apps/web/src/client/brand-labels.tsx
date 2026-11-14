@@ -33,9 +33,10 @@ export function useBrandLabels(enabled = true): (brandId: string) => string {
   return (brandId) => map.get(brandId) ?? brandId;
 }
 
-export function BrandLabel({ brandId, domain }: { brandId: string; domain?: string | null }) {
+/** `showId` false keeps the raw brand id out of the text; it stays in the tooltip. */
+export function BrandLabel({ brandId, domain, showId = true }: { brandId: string; domain?: string | null; showId?: boolean }) {
   // A caller that already holds the domain (one useBrandLabels() per screen) must not trigger a fetch per row.
   const labelOf = useBrandLabels(!domain);
   const shown = domain || labelOf(brandId);
-  return <span className="brand-label" title={brandId}>{shown}{shown !== brandId && <code className="brand-id">{brandId}</code>}</span>;
+  return <span className="brand-label" title={brandId}>{shown}{showId && shown !== brandId && <code className="brand-id">{brandId}</code>}</span>;
 }

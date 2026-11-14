@@ -233,7 +233,7 @@ export function SettingsScreen({ me }: { me?: { id: string; email: string; role:
     <div className="head">
       <div>
         <h1 aria-label="ตั้งค่า (Settings)">ตั้งค่า</h1>
-        <p className="sub">AID, A/B test, เกต, ช่วงยอดเงิน, คีย์เวิร์ด, Prepop base และ Drain key ของทุกแบรนด์</p>
+        <p className="sub">AID, A/B test, เกต, ช่วงยอดเงิน, คีย์เวิร์ด, Prepop base และชื่อเส้นทางส่งยอดขายของทุกแบรนด์</p>
       </div>
     </div>
     {error

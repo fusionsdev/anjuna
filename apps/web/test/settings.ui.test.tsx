@@ -142,11 +142,11 @@ describe("Settings in the app", () => {
     vi.spyOn(api, "alerts").mockRejectedValue(new Error("alerts are not under test"));
   });
 
-  it("the sidebar opens Settings for an owner and the first allowed tab for an employee", async () => {
+  it("the sidebar opens ระบบ for both roles, and the Settings sections leave the owner-only tabs out for an employee", async () => {
     vi.spyOn(api, "me").mockResolvedValue(owner);
     render(<App />);
     const nav = await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(nav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("href")).toBe("/settings");
+    expect(within(nav).getByRole("link", { name: "ระบบ" }).getAttribute("href")).toBe("/system");
     cleanup();
 
     vi.restoreAllMocks();
@@ -155,7 +155,7 @@ describe("Settings in the app", () => {
     window.history.replaceState(null, "", "/settings");
     render(<App />);
     const employeeNav = await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(employeeNav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("href")).toBe("/mailing");
+    expect(within(employeeNav).getByRole("link", { name: "ระบบ" }).getAttribute("href")).toBe("/system");
     // The Settings tab is owner only, so the tab strip leaves it out for an employee.
     const tabs = within(screen.getByRole("navigation", { name: "หมวดตั้งค่า" }));
     expect(tabs.queryByRole("link", { name: "ทั่วไป" })).toBeNull();
@@ -167,7 +167,7 @@ describe("Settings in the app", () => {
     render(<App />);
     expect(await screen.findByRole("table", { name: "ตั้งค่าแบรนด์ (Brand settings)" })).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(nav).getByRole("link", { name: "ตั้งค่า" }).getAttribute("aria-current")).toBe("page");
+    expect(within(nav).getByRole("link", { name: "ระบบ" }).getAttribute("aria-current")).toBe("page");
     const tabs = within(screen.getByRole("navigation", { name: "หมวดตั้งค่า" }));
     expect(tabs.getByRole("link", { name: "ทั่วไป" }).getAttribute("aria-current")).toBe("page");
   });

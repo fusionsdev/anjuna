@@ -169,7 +169,7 @@ export function ConfigPanel({ me, brandId, brandName, onClose, onChanged, onOper
           onSave={(m) => save(m)}
           onRotate={async () => {
             const ok = await confirm({
-              title: "หมุน (rotate) postback token?",
+              title: "หมุนรหัสผลจากผู้ซื้อ (postback token)?",
               body: "ต้องอัปเดต URL ใน LeadsGate ทันที",
               confirmLabel: "หมุน token (Rotate token)",
               tone: "danger",
@@ -291,7 +291,7 @@ function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: {
     <Section title="เส้นทางเงิน (Money-path, Owner เท่านั้น)">
       <label>รหัส LeadsGate (LeadsGate aid)<input value={aid} onChange={(e) => setAid(e.target.value)} /></label>
       <label>URL ฐาน prepop (Prepop base)<input value={prepop} onChange={(e) => setPrepop(e.target.value)} /></label>
-      <label>คีย์ drain (Drain key)<input value={drain} onChange={(e) => setDrain(e.target.value)} /></label>
+      <label>ชื่อเส้นทางส่งยอดขาย<input value={drain} onChange={(e) => setDrain(e.target.value)} /></label>
       {ROUTE_FIELDS.map(({ field, label }) => (
         <Fragment key={field}>
           <label>
@@ -342,7 +342,7 @@ function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: {
         </button>
       </div>
       <div className="row split">
-        <span>โทเคน postback (Postback token): <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว (เฉพาะเว็บนี้)" : brand.postback_token === "global" ? "ใช้ postback กลาง (global)" : "ยังไม่ได้ตั้งค่า"}</b></span>
+        <span>รหัสผลจากผู้ซื้อ (postback token): <b>{brand.postback_token === "set" ? "ตั้งค่าแล้ว (เฉพาะเว็บนี้)" : brand.postback_token === "global" ? "ใช้ postback กลาง (global)" : "ยังไม่ได้ตั้งค่า"}</b></span>
         <button className="btn danger" onClick={onRotate}>หมุนโทเคน (Rotate token)</button>
       </div>
     </Section>
@@ -352,9 +352,9 @@ function MoneySection({ brand, microsoft, onSave, onSaveMicrosoft, onRotate }: {
 function TokenModal({ token, onClose }: { token: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="modal-wrap" role="dialog" aria-modal="true" aria-label="โทเคน postback ใหม่ (New postback token)">
+    <div className="modal-wrap" role="dialog" aria-modal="true" aria-label="รหัสผลจากผู้ซื้อ (postback token) ใหม่">
       <div className="card modal">
-        <h2>โทเคน postback ใหม่ (New postback token)</h2>
+        <h2>รหัสผลจากผู้ซื้อ (postback token) ใหม่</h2>
         <div className="warn">คุณจะไม่เห็น token นี้อีก (you will not see this again) — คัดลอกแล้วนำไปใส่ใน LeadsGate postback URL ทันที</div>
         <code className="token">{token}</code>
         <div className="row">

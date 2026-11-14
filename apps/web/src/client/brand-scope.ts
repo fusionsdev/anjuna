@@ -28,6 +28,14 @@ export function scopeFromSearch(search: string): BrandScope | null {
   return ids.length ? { hideInactive: false, showDemo: true, brandIds: ids } : null;
 }
 
+/** The `?scope=` value scopeFromSearch reads back as `scope`. Null for a scope no link can carry (a saved mix of ticks). */
+export function scopeToSearch(scope: BrandScope): string | null {
+  if (scope.brandIds !== null) return scope.brandIds.length && !scope.hideInactive && scope.showDemo ? scope.brandIds.join(",") : null;
+  if (!scope.hideInactive && scope.showDemo) return "all";
+  if (scope.hideInactive && !scope.showDemo) return "active";
+  return null;
+}
+
 /** What the scope needs to know about one brand. `inactive` is paused or retired. */
 export interface ScopeBrand { id: string; demo: boolean; inactive: boolean }
 

@@ -23,7 +23,7 @@ const CHAT_ID = /^-?\d+$/;
 /** The rules the alert sender knows (packages/insights notify RULES), in the order of the Alerts page. */
 const RULE_LABELS: Record<string, string> = {
   conversion_stalled: "คอนเวอร์ชันส่งไม่ได้",
-  brands_without_postbacks: "แบรนด์ไม่มี postback",
+  brands_without_postbacks: "แบรนด์ไม่มีผลจากผู้ซื้อ",
   submit_error_rate: "อัตราส่งฟอร์มไม่สำเร็จสูง",
   reject_rate: "อัตราปฏิเสธสูง",
   click_risk: "คลิกที่จ่ายไม่มี gclid",

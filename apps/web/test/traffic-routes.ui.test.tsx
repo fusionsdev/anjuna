@@ -12,7 +12,7 @@ const employee: Me = { id: "u2", email: "staff@example.test", role: "employee" }
 const TRAFFIC_TITLE = "ทราฟฟิก";
 const ERRORS_TITLE = "ข้อผิดพลาดฝั่งเว็บ";
 const TRAFFIC_TAB = "ทราฟฟิก";
-const ERRORS_TAB = "ข้อผิดพลาดฝั่งเว็บ";
+const MONEY = "เงิน";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const menu = () => within(screen.getByRole("navigation", { name: "เมนูหลัก" }));
@@ -53,24 +53,23 @@ describe("Traffic and Client errors routes", () => {
     expect(routePath({ view: "errors" })).toBe("/errors");
   });
 
-  it("the Traffic menu item and its Traffic, Funnel and Client errors tabs show to an employee and an owner", async () => {
+  it("the เงิน menu item holds the Traffic, live and Funnel tabs for an employee and an owner; Client errors moved to ระบบ", async () => {
     window.history.replaceState(null, "", "/funnel");
     const me = vi.spyOn(api, "me").mockResolvedValue(owner);
     const { unmount } = render(<App />);
     await screen.findByRole("navigation", { name: "หมวดย่อย" });
-    expect(tabLabels()).toEqual(["เรียลไทม์", TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
-    // The menu item opens the default tab, เรียลไทม์; every tab keeps its own URL.
-    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("href")).toBe("/realtime");
+    expect(tabLabels()).toEqual([TRAFFIC_TAB, "เรียลไทม์", "ฟันเนล", "ลีด", "คอนเวอร์ชัน", "แคมเปญ"]);
+    // The menu item opens the money page; every tab keeps its own URL.
+    expect(menu().getByRole("link", { name: MONEY }).getAttribute("href")).toBe("/money");
     expect(tabs().getByRole("link", { name: "เรียลไทม์" }).getAttribute("href")).toBe("/realtime");
     expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("href")).toBe("/traffic");
     expect(tabs().getByRole("link", { name: "ฟันเนล" }).getAttribute("href")).toBe("/funnel");
-    expect(tabs().getByRole("link", { name: ERRORS_TAB }).getAttribute("href")).toBe("/errors");
     unmount();
 
     me.mockResolvedValue(employee);
     render(<App />);
-    await waitFor(() => expect(menu().getByRole("link", { name: TRAFFIC_TAB })).toBeTruthy());
-    expect(tabLabels()).toEqual(["เรียลไทม์", TRAFFIC_TAB, "ฟันเนล", ERRORS_TAB]);
+    await waitFor(() => expect(menu().getByRole("link", { name: MONEY })).toBeTruthy());
+    expect(tabLabels()).toEqual([TRAFFIC_TAB, "เรียลไทม์", "ฟันเนล", "ลีด", "คอนเวอร์ชัน", "แคมเปญ"]);
   });
 
   it("opening /realtime renders the live tab with its page title, selected in the menu and in the tabs", async () => {
@@ -78,8 +77,8 @@ describe("Traffic and Client errors routes", () => {
     window.history.replaceState(null, "", "/realtime");
     render(<App />);
     expect(await screen.findByRole("heading", { level: 1, name: "เรียลไทม์" })).toBeTruthy();
-    await waitFor(() => expect(document.title).toBe("เรียลไทม์ · Control Panel"));
-    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
+    await waitFor(() => expect(document.title).toBe("เรียลไทม์ · เงิน · Control Panel"));
+    expect(menu().getByRole("link", { name: MONEY }).getAttribute("aria-current")).toBe("page");
     expect(tabs().getByRole("link", { name: "เรียลไทม์" }).getAttribute("aria-current")).toBe("page");
     expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBeNull();
   });
@@ -90,19 +89,19 @@ describe("Traffic and Client errors routes", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { level: 1, name: "ทราฟฟิก" })).toBeTruthy();
     // The title is set in an effect that can run after the heading appears.
-    await waitFor(() => expect(document.title).toBe(`${TRAFFIC_TITLE} · Control Panel`));
-    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
+    await waitFor(() => expect(document.title).toBe(`${TRAFFIC_TITLE} · เงิน · Control Panel`));
+    expect(menu().getByRole("link", { name: MONEY }).getAttribute("aria-current")).toBe("page");
     expect(tabs().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("opening /errors renders the Client errors screen with its page title", async () => {
+  it("opening /errors renders the Client errors screen under ระบบ with its page title", async () => {
     vi.spyOn(api, "me").mockResolvedValue(employee);
     window.history.replaceState(null, "", "/errors");
     render(<App />);
     expect(await screen.findByRole("heading", { level: 1, name: "ข้อผิดพลาดฝั่งเว็บ" })).toBeTruthy();
     // The title is set in an effect that can run after the heading appears.
-    await waitFor(() => expect(document.title).toBe(`${ERRORS_TITLE} · Control Panel`));
-    expect(menu().getByRole("link", { name: TRAFFIC_TAB }).getAttribute("aria-current")).toBe("page");
-    expect(tabs().getByRole("link", { name: ERRORS_TAB }).getAttribute("aria-current")).toBe("page");
+    await waitFor(() => expect(document.title).toBe(`${ERRORS_TITLE} · ระบบ · Control Panel`));
+    expect(menu().getByRole("link", { name: "ระบบ" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.queryByRole("navigation", { name: "หมวดย่อย" })).toBeNull();
   });
 });
