@@ -268,6 +268,53 @@ describe("งานรอทำ (FUS-393)", () => {
     expect(counted).not.toHaveBeenCalled();
   });
 
+  it("waits for the brand status read: no count and no footer while it is pending, both once it answers", async () => {
+    let answer!: (response: Response) => void;
+    replies["/api/brands"] = () => new Promise<Response>((resolve) => { answer = resolve; });
+    const counted = vi.fn();
+    render(<HomeScreen me={owner} onCounted={counted} />);
+    await waitFor(() => expect(rows().length).toBeGreaterThan(0));
+    // Every other source answered, so only the status read holds the footer back.
+    await waitFor(() => expect(requests).toContain("/api/brands"));
+    expect(screen.getByText("…")).toBeTruthy();
+    expect(screen.queryByText(/บนเมนู/)).toBeNull();
+    expect(counted).not.toHaveBeenCalled();
+    answer(json({ brands: [{ brand_id: "cg", status: "live", hostnames: ["creditgenie.test"] }], generated_at: "2026-10-22T10:00:00.000Z" }));
+    await loaded();
+    expect(screen.getByText(/^เลข 9 บนเมนู/)).toBeTruthy();
+    await waitFor(() => expect(counted).toHaveBeenLastCalledWith(9));
+  });
+
+  it("names a failed brand status read on its own line, with no count and no footer", async () => {
+    replies["/api/brands"] = () => json({ error: "core_unavailable" }, 502);
+    const counted = vi.fn();
+    render(<HomeScreen me={owner} onCounted={counted} />);
+    expect(await screen.findByText("— โหลดสถานะแบรนด์ไม่สำเร็จ")).toBeTruthy();
+    await loaded();
+    expect(screen.queryByText(/บนเมนู/)).toBeNull();
+    expect(screen.queryByText("ไม่มีงานค้าง ระบบทำที่เหลือให้เองแล้ว")).toBeNull();
+    expect(counted).not.toHaveBeenCalled();
+  });
+
+  it("drops the rows of a paused brand once the status read answers, and counts the rows shown", async () => {
+    // A screen outside the app shell keeps paused brands, so the default scope of the panel comes from the link.
+    window.history.replaceState(null, "", "/?scope=active");
+    replies["/api/brands"] = () => json({
+      brands: [{ brand_id: "cg", status: "live", hostnames: ["creditgenie.test"] }, { brand_id: "e7", status: "paused", hostnames: ["sevenco.test"] }],
+      generated_at: "2026-10-22T10:00:00.000Z",
+    });
+    const counted = vi.fn();
+    render(<HomeScreen me={owner} onCounted={counted} />);
+    await loaded();
+    // e7 lost its sale route row, and the test sale row now names d6 only.
+    expect(rowOf("sevenco.test")).toBeUndefined();
+    expect(rowOf("2 แบรนด์")).toBeUndefined();
+    expect(rows()).toHaveLength(8);
+    expect(screen.getByText(/^เลข 8 บนเมนู/)).toBeTruthy();
+    await waitFor(() => expect(counted).toHaveBeenLastCalledWith(rows().length));
+    expect(counted).not.toHaveBeenCalledWith(9);
+  });
+
   it("gives an employee no sale route, template or click loss rows, and never asks for templates, spend or funnel", async () => {
     replies["/api/funnel"] = () => json(funnelReport(0));
     render(<HomeScreen me={employee} />);

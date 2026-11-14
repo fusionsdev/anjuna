@@ -50,7 +50,7 @@ export function HomeScreen({ me, onCounted }: { me: Me; onCounted?: (count: numb
     // The stored acknowledge and close states decide which alerts are still open, like the Alerts screen.
     api.alertStates().then((rows) => { if (current) { hydrateAlertStates(rows); setStatesRead("ready"); } }, () => current && setStatesRead("error"));
     api.lifecycleBrands().then(({ brands: list }) => current && setBrands(list), () => current && setBrands(null));
-    // Core's list gives the paused status and the hostnames. A failed read means no pause, as on the Brands screen.
+    // Core's list gives the paused status and the hostnames. It is a source below: until it answers, paused brands still count.
     api.brands().then((list) => current && setRuntime(list.brands), () => current && setRuntime(null));
     api.checklists().then((batch) => current && setChecklists(batch), () => current && setChecklists(null));
     // Template approval is the owner's work, so an employee never asks.
@@ -84,6 +84,7 @@ export function HomeScreen({ me, onCounted }: { me: Me; onCounted?: (count: numb
   const sources: Array<[string, unknown]> = [
     ["การแจ้งเตือน", alerts === null || statesRead === "error" ? null : alerts === undefined || statesRead === "loading" ? undefined : alerts],
     ["รายชื่อแบรนด์", brands],
+    ["สถานะแบรนด์", runtime],
     ["เช็กลิสต์ของแบรนด์", checklists],
     ...(owner ? [["เทมเพลต", templates] as [string, unknown]] : []),
     ["รายการส่งยอดขาย", dead],
