@@ -372,3 +372,115 @@ button.link { background: none; border: 0; color: inherit; text-decoration: unde
 .csv-button { display: inline-flex; align-items: center; gap: 8px; min-height: var(--control-h); }
 .csv-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .filter-chips .csv-button { margin-left: auto; }
+
+/* Anjuna Mission Control: cohesive workspace navigation and dashboard */
+:root {
+  --canvas: #F7F8FC; --card: #FFFFFF; --ink: #202B43; --sub: #758299;
+  --line: #E5EAF1; --brand: #555CC8; --brand-hover: #454BB1;
+  --brand-tint: #EDF0FF; --brand-ink: #484FB5;
+  --shadow-1: 0 2px 10px rgba(29, 42, 80, .035);
+  --shadow-2: 0 14px 40px rgba(29, 42, 80, .10);
+}
+.shell {grid-template-columns: 248px minmax(0,1fr)}
+.sidebar {border-right:1px solid var(--line); box-shadow: 3px 0 18px rgba(29,42,80,.015)}
+.sidebar-head {height:80px; padding:0 23px}
+.brandmark {font-size:21px; font-weight:800; letter-spacing:-.06em}
+.brandmark i {height:35px; width:35px; font-size:20px; border-radius:10px; background:#293154; letter-spacing:-.07em}
+.sidebar-scope {padding:6px 13px 14px}
+.scope-btn {font-size:13px; border-radius:11px; background:#F8F9FC}
+a.sidebar-create {min-height:45px; margin:12px 13px 6px; background:#293154; border-color:#293154; color:#fff; border-radius:10px; font-size:13px; font-weight:700}
+a.sidebar-create:hover {background:#394372}
+.sidebar nav {padding:20px 13px; gap:7px}
+a.nav {font-weight:600; font-size:14px; min-height:47px; color:#78869C; border-radius:10px}
+a.nav:hover {background:#F3F5FB; color:#303A63}
+a.nav[aria-current="page"] {color:#5257B7; background:#EEF0FF; font-weight:750}
+a.nav[aria-current="page"] svg {color:#5257B7}
+.nav b {background:#E9EBFF; color:#5257B7; border-radius:7px; min-width:24px; padding:2px 6px}
+.nav[aria-current="page"] b {background:#DDE1FF; color:#5257B7}
+.sidebar-user {padding:13px; border-top:1px solid var(--line)}
+.avatar {background:#E2E7FF; color:#4354B5}
+.user-block {background:#F9FAFC; border:1px solid var(--line); border-radius:12px; padding:10px}
+.signout {font-size:13px}
+.content {max-width:1570px; width:100%; padding:30px clamp(18px,2.8vw,40px) 56px}
+.card,.panel {box-shadow:var(--shadow-1)}
+.page-body {min-width:0}
+.mission-welcome {display:flex; justify-content:space-between; align-items:center; gap:24px; margin-bottom:30px}
+.mission-welcome h1 {font-size:30px; font-weight:750; letter-spacing:-.04em; margin:0 0 6px}
+.mission-eyebrow {display:flex; align-items:center; gap:8px; font-size:13px; font-weight:800; color:#8994AB; letter-spacing:.13em; margin:0 0 9px; text-transform:uppercase}
+.mission-online-dot {display:inline-block; width:8px; height:8px; border-radius:50%; background:#21B784; box-shadow:0 0 0 3px #E3F8F1}
+.mission-welcome-desc {font-size:13px; color:var(--sub); margin:0}
+.mission-shortcuts {display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+.mission-shortcuts a {min-height:43px; display:inline-flex; justify-content:center; align-items:center; gap:8px; border-radius:10px; padding:9px 15px; text-decoration:none; font-size:13px; font-weight:700}
+.mission-link-secondary {border:1px solid var(--line); color:#596783; background:#fff}
+.mission-link-primary {background:#293154; border:1px solid #293154; color:#fff}
+.mission-shortcuts a:hover {filter:brightness(.93)}
+.mission-section-label {display:flex; align-items:center; gap:15px; justify-content:space-between; margin-bottom:12px}
+.mission-section-label span {font-size:13px; font-weight:800; letter-spacing:.11em; color:#78849A}
+.mission-section-label small {font-size:13px; color:#9DA9B9}
+.mission-kpis {display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-bottom:20px}
+.mission-kpi {min-width:0; display:flex; flex-direction:column; border:1px solid var(--line); border-radius:14px; padding:20px 17px; background:#fff; color:var(--ink); text-decoration:none; box-shadow:var(--shadow-1); transition:transform .16s,box-shadow .16s,border-color .16s}
+.mission-kpi:hover {transform:translateY(-2px); border-color:#B8C0F1; box-shadow:var(--shadow-2)}
+.mission-kpi-label {display:flex; align-items:center; gap:8px; justify-content:space-between; font-size:13px; color:#8896AA; font-weight:650}
+.mission-kpi-label svg {color:#747BC2; flex:none}
+.mission-kpi strong {font-size:clamp(20px,2.2vw,28px); line-height:1.3; letter-spacing:-.04em; margin:18px 0 10px; overflow-wrap:anywhere}
+.mission-kpi small {font-size:13px; color:#98A4B6; line-height:1.5}
+.mission-portfolio {border:1px solid var(--line); border-radius:15px; background:#fff; box-shadow:var(--shadow-1); padding:21px 22px 6px; margin-bottom:23px}
+.mission-portfolio-head {display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:13px}
+.mission-portfolio-head h2 {font-size:18px; letter-spacing:-.02em; margin:0}
+.mission-portfolio-head a {display:flex; align-items:center; gap:7px; text-decoration:none; color:#555AC0; font-size:13px; font-weight:750; min-height:42px}
+.mission-brand-row {display:flex; align-items:center; gap:12px; padding:11px 1px; border-top:1px solid #EEF1F5; text-decoration:none; color:#344057; min-height:62px}
+.mission-brand-row:hover {background:#F8F9FD}
+.mission-brand-monogram {display:inline-grid; place-items:center; border:1px solid #E4E6F4; background:#F1F3FF; color:#606BB6; font-size:13px; font-weight:800; width:34px; height:34px; border-radius:9px; flex:none}
+.mission-brand-info {display:flex; flex-direction:column; flex:1; min-width:0; gap:3px}
+.mission-brand-info strong {font-size:13px; overflow-wrap:anywhere; font-weight:700}
+.mission-brand-info small {font-size:13px; color:#9CA7B8}
+.mission-brand-row>svg {color:#A7B1BF; flex:none}
+.mission-state {font-size:13px; padding:6px 9px; border-radius:8px; background:#EFF1F5; color:#6C7890; font-weight:700; white-space:nowrap}
+.mission-state-live {background:#E8F8F0; color:#198562}
+.mission-state-failed {background:#FEECE8; color:#B94734}
+.mission-state-draft {background:#F0F1F6; color:#7B8496}
+.mission-state-installing,.mission-state-queued {background:#EAF1FF; color:#5374B3}
+.mission-muted {color:var(--sub); font-size:13px; padding:14px}
+.head.mission-task-heading {align-items:center; margin:0 0 13px}
+.mission-task-heading h2 {display:flex; align-items:center; gap:10px; font-size:20px; font-weight:750}
+.mission-task-heading h2>svg {color:#656DC8}
+.mission-task-count {background:#FFF0EA; color:#C86D44; font-size:13px; min-width:25px; height:25px; display:inline-grid; place-items:center; border-radius:8px}
+.mission-task-heading .sub {color:#8D9AB0; font-size:13px}
+.task-chip {background:white; border:1px solid var(--line); border-radius:8px; min-height:38px; font-size:13px}
+.task-chip[aria-pressed="true"] {background:#293154; color:#fff; border-color:#293154}
+.task-list {border-radius:14px; box-shadow:var(--shadow-1)}
+.task-row {padding:16px 20px; gap:15px}
+.task-title {font-size:14px; font-weight:750}
+.task-cause {font-size:13px}
+.task-act a.btn.pri {background:#30395E; color:white; border-color:#30395E; border-radius:9px; font-size:13px; padding:10px 15px}
+@media(max-width:1280px) {
+  .mission-kpis {grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:1023px) {
+  .shell {grid-template-columns:minmax(0,1fr)}
+  .sidebar {width:min(248px,86vw)}
+  .content {padding:22px 18px 48px}
+}
+@media(max-width:680px) {
+  .mission-welcome {align-items:flex-start; flex-direction:column; gap:16px; margin-bottom:22px}
+  .mission-welcome h1 {font-size:25px}
+  .mission-shortcuts {width:100%}
+  .mission-shortcuts a {flex:1}
+  .mission-section-label {align-items:flex-start; flex-direction:column; gap:3px}
+  .mission-kpis {grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px}
+  .mission-kpi {padding:15px 12px}
+  .mission-kpi strong {font-size:23px; margin:13px 0 7px}
+  .mission-portfolio {padding:15px 13px 5px}
+  .mission-brand-row {gap:8px}
+  .mission-state {padding:5px}
+  .mission-brand-info strong {font-size:13px}
+  .mission-brand-row>svg {display:none}
+}
+
+
+.mission-desktop-bar {height:61px; background:#fff; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; padding:0 clamp(18px,2.8vw,40px); color:#929EB1; font-size:13px}
+.mission-crumb-path {display:flex; align-items:center; gap:12px}
+.mission-crumb-path strong {color:#344158; font-weight:700}
+.mission-session-info {display:flex; align-items:center; gap:7px; font-size:13px; color:#8592A8}
+.mission-session-dot {display:inline-block; width:7px; height:7px; border-radius:50%; background:#25B58C}
+@media(max-width:1023px){.mission-desktop-bar{display:none}}
