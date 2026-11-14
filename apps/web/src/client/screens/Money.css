@@ -1,0 +1,108 @@
+/* Home screen only. The shared console classes (.panel .ledger .cell .k .v .btn .seg .row .dot .note .hint .pos .neg .amb .blue) come from styles.css. */
+.home-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.home-head h1 { margin: 0; font-size: var(--text-h1); line-height: 1.25; letter-spacing: -.01em; font-weight: 600; }
+.home-sub { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.home-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.home-stack { display: flex; flex-direction: column; gap: 16px; }
+.home-grid2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; }
+.home-ptitle { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.home-ptitle h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.home-flow, .home-drops { display: grid; grid-template-columns: repeat(var(--stages, 6), minmax(0, 1fr)); gap: 6px; }
+.home-flow { align-items: end; margin-top: 12px; }
+.home-drops { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.ledger .d { margin: 2px 0 0; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.ledger .d:not(.pos):not(.neg) { color: var(--muted); }
+.home-stage { display: flex; flex-direction: column; gap: 4px; }
+.home-bar { border-radius: 6px 6px 2px 2px; background: var(--money); }
+.home-stage.paid .home-bar { background: var(--spend); }
+.home-stage.leak .home-bar { background: var(--leak); }
+.home-stage.gap .home-bar { background: var(--line); }
+.home-n { margin: 0; font-size: 16px; font-weight: 500; }
+.home-l { margin: 0; font-size: 13px; color: var(--muted); }
+.home-item { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.home-item:first-of-type { border-top: 0; }
+.home-item .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.home-item .t span { display: block; color: var(--muted); font-size: 13px; }
+/* The conversions card sits alone on the first row; the fix list and the to-do list keep their 1.6 : 1 split below it. */
+.home-conv { grid-column: 1 / -1; }
+.home-conv .ledger { margin-top: 12px; }
+.home-ptitle a.btn, .home-item a.btn { display: inline-block; color: inherit; text-decoration: none; cursor: pointer; }
+.home-conv a.cell { display: block; color: inherit; text-decoration: none; }
+.home-conv a.cell:hover .v { text-decoration: underline; }
+/* Daily bars. --accent is an alias of --money, so leads take --spend to stay apart from sold in both themes. */
+.bars-svg { display: block; width: 100%; height: 120px; margin-top: 12px; }
+.bar-leads { fill: var(--spend); }
+.bar-sold { fill: var(--money); }
+.bars-legend { display: flex; gap: 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+.bars-legend li { display: flex; align-items: center; gap: 6px; }
+.bars-swatch { width: 10px; height: 10px; border-radius: 2px; }
+.bars-swatch.leads { background: var(--spend); }
+.bars-swatch.sold { background: var(--money); }
+@media (max-width: 760px) {
+  .home-grid2 { grid-template-columns: 1fr; }
+  .home-flow, .home-drops { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+/* Incident banner: shown only while something is urgent. */
+.home-banner { border: 1px solid var(--bad); border-radius: var(--radius, 16px); padding: 12px 16px; background: color-mix(in srgb, var(--bad) 8%, var(--card, #fff)); }
+.home-banner b { font-weight: 500; }
+.home-banner ul { margin: 6px 0 0; padding-inline-start: 18px; font-size: 13px; }
+/* Brand rows: name, state, numbers, then the one button. Cell labels come from data-label so the text of a cell is only its value. */
+.home-brands { list-style: none; margin: 8px 0 0; padding: 0; }
+.home-brand { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) repeat(3, minmax(0, 1fr)) auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.home-brand:first-child { border-top: 0; }
+.home-brand [data-label]::before { content: attr(data-label); display: block; font-size: 13px; color: var(--muted); }
+.home-brand .n b { font-weight: 500; }
+@media (max-width: 760px) {
+  .home-brand { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-brand .n { grid-column: 1 / -1; }
+  .home-brand button { grid-column: 1 / -1; }
+}
+
+/* v9: card titles carry the 3px brand bar; the two-column row stacks on a phone. */
+.home-ptitle h2 { display: flex; align-items: center; gap: 12px; }
+.home-ptitle h2::before { content: ""; flex: 0 0 3px; width: 3px; height: 24px; border-radius: 999px; background: var(--brand); }
+@media (max-width: 760px) { .home-grid2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* v9 Home: two equal columns, five separate KPI cards, funnel strip beside the queue card. */
+.home-compare { color: var(--sub); font-size: var(--text-body); }
+.home-grid2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.home-grid-fq { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; }
+.home-conv { grid-column: auto; }
+.ledger.kpi-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; background: none; border: 0; border-radius: 0; overflow: visible; }
+.ledger.kpi-row > .cell, .ledger.kpi-row > .kpi-pair { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: var(--shadow-1); padding: 20px; min-width: 0; position: relative; }
+.ledger.kpi-row .k { font-size: 13px; font-weight: 500; color: var(--sub); }
+.ledger.kpi-row .v { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; margin: 8px 0 0; }
+.ledger.kpi-row .hint, .ledger.kpi-row .d { font-size: 13px; margin: 8px 0 0; }
+.kpi-pair { display: grid; gap: 12px; }
+.ledger.kpi-row .kpi-pair .cell { background: none; padding: 0; border: 0; }
+.ledger.kpi-row .kpi-pair .v { font-size: 22px; margin-top: 4px; }
+.kpi-owner { position: absolute; top: 12px; right: 12px; }
+.ledger.queue-stats { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; background: none; border: 0; overflow: visible; }
+.ledger.queue-stats .cell { background: var(--canvas); border-radius: 12px; padding: 12px; text-decoration: none; color: inherit; }
+.ledger.queue-stats .v { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; }
+.home-n { font-family: var(--mono); font-size: var(--text-kpi); font-weight: 600; line-height: 1; }
+.home-l { font-size: 13px; color: var(--sub); }
+.home-banner { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; border: 1px solid #F2D49A; border-radius: var(--radius-card); background: var(--warn-bg); color: var(--warn); }
+.home-banner svg { flex-shrink: 0; margin-top: 2px; }
+.home-banner-body { flex: 1; min-width: 0; }
+.home-banner ul { margin: 4px 0 0; padding-left: 18px; }
+.home-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.home-item { gap: 12px; }
+@media (max-width: 1100px) { .ledger.kpi-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } .home-grid-fq { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .home-grid2 { grid-template-columns: minmax(0, 1fr); } .ledger.kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ledger.kpi-row > .kpi-pair { grid-column: 1 / -1; } .home-banner { flex-direction: column; } }
+.home-summary { margin: 2px 0 0; color: var(--ink); font-size: var(--text-body); font-weight: 500; }
+
+/* v9 FunnelStrip: a label, a 28px value and a horizontal bar per stage; the drop under each stage stays. */
+.home-flow { align-items: start; }
+.home-stage { gap: 6px; }
+.home-stage .home-l { order: 1; }
+.home-stage .home-n { order: 2; line-height: 1; }
+.home-stage .home-bar { order: 3; height: 6px; border-radius: 999px; }
+.home-flow, .home-drops { gap: 12px; }
+/* The to-do rows end in a link, not a boxed button. */
+.home-item .btn.home-task-link { min-height: 44px; border: 0; background: none; color: var(--brand-ink); font-weight: 500; padding: 0 4px; }
+.home-item .btn.home-task-link:hover { text-decoration: underline; background: none; }
+
+/* The funnel and the queue share a row, so their columns are narrow: the stage values are 22px and the money box takes a full row. */
+.home-stage .home-n { font-size: 22px; overflow-wrap: anywhere; }
+.ledger.queue-stats .cell:nth-child(5) { grid-column: 1 / -1; }

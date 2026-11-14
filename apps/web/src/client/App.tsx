@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type Me, type NavCounts } from "./api";
 import { resetAlertSession } from "./alerts-session";
 import { AlertsScreen } from "./screens/Alerts";
@@ -33,12 +33,24 @@ import { SectionTabs } from "./components/SectionTabs";
 import { SettingsSections } from "./components/SettingsSections";
 import { NotifySettingsScreen } from "./screens/NotifySettings";
 import { Spinner } from "./components/Spinner";
-import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, groupViews, visibleTabs, type SidebarBadge } from "./nav-groups";
-import { BrandScopeProvider } from "./useBrandScope";
+import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, sidebarEntryOf, visibleTabs, type SidebarBadge } from "./nav-groups";
+import { Breadcrumb } from "./components/Breadcrumb";
+import { MoneyScreen } from "./screens/Money";
+import { SystemScreen } from "./screens/System";
+import { BrandScopeProvider, useBrandScope } from "./useBrandScope";
 import { ScopeSubtitle } from "./components/ScopeSubtitle";
+import { scopeFromSearch, scopeToSearch } from "./brand-scope";
 
 /** The pages that show brand data. Each carries the scope chip, and each filters its rows by the scope (PLAN A9). */
-const SCOPED_VIEWS: ReadonlySet<string> = new Set(["home", "brands", "campaigns", "realtime", "traffic", "funnel", "leads", "conversions", "alerts"]);
+const SCOPED_VIEWS: ReadonlySet<string> = new Set(["home", "money", "brands", "campaigns", "realtime", "traffic", "funnel", "leads", "conversions", "alerts"]);
+
+/** Hands the shell the `?scope=` value of a link's scope while it applies, null once the saved scope applies again. */
+function ScopeLink({ onChange }: { onChange: (scope: string | null) => void }) {
+  const { scope, fromUrl } = useBrandScope();
+  const value = fromUrl ? scopeToSearch(scope) : null;
+  useEffect(() => onChange(value), [value, onChange]);
+  return null;
+}
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -49,11 +61,29 @@ export function App() {
   // The list filters a Home card opens live in the query string: `/brands?chip=` and `/templates?status=`.
   const search = useSearch();
   // Sidebar badge counts. A count the panel could not read is null and shows no badge.
-  const [counts, setCounts] = useState<Record<SidebarBadge, number | null>>({ brands_need_fix: null, templates_awaiting: null, alerts_open: null });
+  const [counts, setCounts] = useState<Record<SidebarBadge, number | null>>({ brands_need_fix: null, tasks_open: null });
 
   // The Alerts screen bumps this after an acknowledge or close, so the badge reads the count again without a page change.
   const [countsTick, setCountsTick] = useState(0);
   const refreshCounts = useCallback(() => setCountsTick((tick) => tick + 1), []);
+  // The scope of a `?scope=` link, sent with the counts read so the badges count what the pages show. ScopeLink keeps it current.
+  const [linkScope, setLinkScope] = useState<string | null>(() => {
+    const scope = scopeFromSearch(window.location.search);
+    return scope ? scopeToSearch(scope) : null;
+  });
+  // The row count งานรอทำ reported while it is open. It wins over a server count, so the badge equals the rows on screen.
+  const homeCount = useRef<number | null>(null);
+  const onHomeCounted = useCallback((count: number) => {
+    homeCount.current = count;
+    setCounts((prev) => (prev.tasks_open === count ? prev : { ...prev, tasks_open: count }));
+  }, []);
+  // Opening งานรอทำ from another page reads the counts again, as the page reads its rows again.
+  const lastView = useRef(view);
+  useEffect(() => {
+    if (view !== "home") homeCount.current = null;
+    else if (lastView.current !== "home") refreshCounts();
+    lastView.current = view;
+  }, [view, refreshCounts]);
 
   const refresh = useCallback(async () => {
     try {
@@ -67,19 +97,27 @@ export function App() {
   }, []);
   useEffect(() => void refresh(), [refresh]);
   useEffect(() => {
-    const unknown: Record<SidebarBadge, number | null> = { brands_need_fix: null, templates_awaiting: null, alerts_open: null };
+    const unknown: Record<SidebarBadge, number | null> = { brands_need_fix: null, tasks_open: null };
     if (!me) {
       setCounts(unknown);
       return;
     }
     let cancelled = false;
     const set = (next: Record<SidebarBadge, number | null>) => { if (!cancelled) setCounts(next); };
-    // A failed read hides every badge: a count from other inputs would differ from the page it opens.
-    api.navCounts().then((c: NavCounts) => set({ brands_need_fix: c.brands_need_fix, templates_awaiting: c.templates_awaiting, alerts_open: c.alerts_open }), () => set(unknown));
+    // A failed read hides every badge: a count from other inputs would differ from the page it opens. The open งานรอทำ page's own count stays.
+    api.navCounts(linkScope).then(
+      (c: NavCounts) => set({ brands_need_fix: c.brands_need_fix, tasks_open: homeCount.current ?? c.tasks_open }),
+      () => set({ ...unknown, tasks_open: homeCount.current }),
+    );
     return () => { cancelled = true; };
-    // Page changes do not refetch: each call costs several core reads. Screens call refreshCounts after a write instead.
-  }, [me, countsTick]);
-  useEffect(() => { document.title = me ? `${pageTitle[view]} · Control Panel` : "Control Panel"; }, [me, view]);
+    // Other page changes do not refetch: each call costs several core reads. Screens call refreshCounts after a write instead.
+  }, [me, countsTick, linkScope]);
+  // A page under a sidebar item names the item too, e.g. "ฟันเนล · เงิน · Control Panel".
+  useEffect(() => {
+    const entry = sidebarEntryOf(view);
+    const group = entry && entry.id !== view ? ` · ${entry.label}` : "";
+    document.title = me ? `${pageTitle[view]}${group} · Control Panel` : "Control Panel";
+  }, [me, view]);
 
   if (loading) return <div className="center"><Spinner /></div>;
   if (!me) return <SignIn onSignedIn={refresh} />;
@@ -88,31 +126,26 @@ export function App() {
     if (id === "new-brand") setWizardRequest((count) => count + 1);
     navigate(viewPath(id));
   };
-  // Nine flat items. A page that holds section tabs marks its item on every view it owns and opens the first tab the role may use.
-  // A thin divider sets off the watch and owner sections; an item the role may not use is left out.
+  // Four items. Each marks itself current on every view it owns, so an older URL such as /funnel still selects เงิน.
   const badgeLabel: Record<SidebarBadge, (count: number) => string> = {
     // The count of rows the Brands page opens on (its default chip under the saved scope), so the label names no subset.
     brands_need_fix: (count) => `${count} แบรนด์`,
-    templates_awaiting: (count) => `${count} เทมเพลตรออนุมัติ`,
-    alerts_open: (count) => `${count} รายการที่ต้องจัดการ`,
+    // The rows of งานรอทำ, counted by the same task-rows.ts code the page renders.
+    tasks_open: (count) => `${count} เรื่องรอทำ`,
   };
-  const shown = SIDEBAR_ENTRIES.flatMap((entry) => {
-    if (entry.minRole && !roleAtLeast(me.role, entry.minRole)) return [];
-    const group = entry.group ? NAV_GROUPS[entry.group] : null;
-    const tabs = group ? visibleTabs(group, me.role) : null;
-    if (tabs && tabs.length === 0) return [];
+  const items: NavItem[] = SIDEBAR_ENTRIES.map((entry) => {
     const count = entry.badge ? counts[entry.badge] : null;
-    return [{ entry, item: {
-      id: entry.id, label: entry.label, icon: entry.icon, tag: entry.tag,
-      activeFor: group ? groupViews(group) : [entry.id], target: tabs?.[0]?.id ?? entry.id,
+    return {
+      id: entry.id, label: entry.label, icon: entry.icon, activeFor: [...entry.views],
       badge: entry.badge && count !== null && count > 0 ? { count, label: badgeLabel[entry.badge](count) } : null,
-    } as NavItem }];
+    };
   });
-  const items: NavItem[] = shown.map(({ entry, item }, index) => ({ ...item, dividerBefore: index > 0 && shown[index - 1]!.entry.section !== entry.section }));
   const group = groupOfView(view);
+  const entry = sidebarEntryOf(view);
 
   return (
     <BrandScopeProvider onSaved={refreshCounts}>
+    <ScopeLink onChange={setLinkScope} />
     <AppShell
       me={me}
       onSignOut={async () => {
@@ -121,13 +154,19 @@ export function App() {
         setMe(null);
       }}
       nav={<SidebarNav items={items} current={view} onOpen={open} />}
+      onCreateBrand={() => open("new-brand")}
     >
+      {/* A page under a sidebar item names the item above it; the item's own page needs no trail. */}
+      {entry && entry.id !== view && <Breadcrumb parent={{ id: entry.id, label: entry.label }} current={pageTitle[view]} onOpen={open} />}
       <div className={group?.id === "settings" ? "settings-shell" : "page-body"}>
       {group && (group.id === "settings"
         ? <SettingsSections tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />
         : <SectionTabs tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />)}
       {SCOPED_VIEWS.has(view) && <div className="scope-bar"><ScopeSubtitle /></div>}
-      {view === "home" && <HomeScreen me={me} onGo={open} onCountsChanged={refreshCounts} />}
+      {view === "home" && <HomeScreen me={me} onCounted={onHomeCounted} />}
+      {/* The money tabs sit below the money page; on each tab's own page they sit on top. */}
+      {view === "money" && <><MoneyScreen me={me} onGo={open} onCountsChanged={refreshCounts} /><SectionTabs tabs={visibleTabs(NAV_GROUPS.money, me.role)} active={null} onSelect={open} /></>}
+      {view === "system" && <SystemScreen me={me} onOpen={open} />}
       {(view === "brands" || view === "new-brand") && (
         <BrandLifecycle
           me={me}

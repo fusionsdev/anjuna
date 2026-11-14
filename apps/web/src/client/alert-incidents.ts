@@ -8,6 +8,16 @@ import type { AlertsReportResponse } from "@anjuna/contracts";
 export type RuleId = "conversion_stalled" | "brands_without_postbacks" | "submit_error_rate" | "reject_rate" | "click_risk" | "ad_spend_unallocated";
 export type Level = "ok" | "warn" | "alert";
 
+/** The owner-facing title of each rule. The Alerts cards and the งานรอทำ rows read the same text. */
+export const RULE_TITLE: Record<RuleId, string> = {
+  conversion_stalled: "คอนเวอร์ชันค้าง",
+  brands_without_postbacks: "ยังไม่ได้ผลจากผู้ซื้อ",
+  submit_error_rate: "อัตราส่งฟอร์มผิดพลาด",
+  reject_rate: "อัตราปฏิเสธ",
+  click_risk: "คลิกเสี่ยงสูง",
+  ad_spend_unallocated: "ค่าโฆษณายังไม่จัดสรร",
+};
+
 const ORDER: Record<Level, number> = { alert: 0, warn: 1, ok: 2 };
 
 export const pct = (rate: number, digits = 0) => (rate * 100).toLocaleString("th-TH", { maximumFractionDigits: digits });
@@ -32,7 +42,7 @@ export function incidentsOf(report: AlertsReportResponse, brandOfHostname: (host
   });
   const nobody = report.brands_without_postbacks.detail;
   if (nobody.brands.length === 0) rows.push({ id: "brands_without_postbacks", rule: "brands_without_postbacks", level: report.brands_without_postbacks.state, key: null, brand: null, detail: "ไม่มีแบรนด์เกินเกณฑ์" });
-  for (const b of nobody.brands) rows.push({ id: `brands_without_postbacks:${b.brand}`, rule: "brands_without_postbacks", level: "alert", key: `brands_without_postbacks:${b.brand}`, brand: b.brand, detail: `${b.leads} ลีด ไม่มีโพสต์แบ็กใน ${nobody.window_hours} ชม.` });
+  for (const b of nobody.brands) rows.push({ id: `brands_without_postbacks:${b.brand}`, rule: "brands_without_postbacks", level: "alert", key: `brands_without_postbacks:${b.brand}`, brand: b.brand, detail: `${b.leads} ลีด ไม่มีผลจากผู้ซื้อใน ${nobody.window_hours} ชม.` });
   const errors = report.submit_error_rate.detail;
   if (errors.samples.length === 0) rows.push({ id: "submit_error_rate", rule: "submit_error_rate", level: report.submit_error_rate.state, key: null, brand: null, detail: "ไม่มีแบรนด์เกินเกณฑ์" });
   for (const b of errors.samples) rows.push({ id: `submit_error_rate:${b.brand}`, rule: "submit_error_rate", level: b.rate >= errors.alert_at ? "alert" : "warn", key: `submit_error_rate:${b.brand}`, brand: b.brand, detail: `ผิดพลาด ${b.errors} · ส่งฟอร์ม ${b.submits} · ${pct(b.rate, 1)}%` });

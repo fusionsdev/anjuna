@@ -30,7 +30,7 @@ describe("SettingsEditor", () => {
     render(<Harness b={brand()} onReview={onReview} />);
     expect(screen.getByRole("complementary", { name: "แก้ไขตั้งค่า alpha.example.test (Edit settings)" })).toBeTruthy();
     expect(review().disabled).toBe(true);
-    type("Drain key", "dk_changed");
+    type("ชื่อเส้นทางส่งยอดขาย", "dk_changed");
     expect(review().disabled).toBe(false);
     fireEvent.click(review());
     expect(onReview).toHaveBeenCalledTimes(1);
@@ -52,10 +52,10 @@ describe("SettingsEditor", () => {
 
   it("an invalid drain key shows its error, sets aria-invalid and disables Review and save", () => {
     render(<Harness b={brand()} />);
-    type("Drain key", "bad key!");
-    const input = screen.getByLabelText("Drain key");
+    type("ชื่อเส้นทางส่งยอดขาย", "bad key!");
+    const input = screen.getByLabelText("ชื่อเส้นทางส่งยอดขาย");
     expect(input.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText("Drain key ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Invalid drain key)")).toBeTruthy();
+    expect(screen.getByText("ชื่อเส้นทางส่งยอดขายใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว")).toBeTruthy();
     expect(review().disabled).toBe(true);
     expect(screen.getByLabelText("AID (LeadsGate aid)").getAttribute("aria-invalid")).toBeNull();
   });

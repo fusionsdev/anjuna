@@ -91,8 +91,9 @@ describe("brand timeline route", () => {
     await waitFor(() => expect(timeline).toHaveBeenCalledWith("b1", expect.anything()));
     const menu = within(screen.getByRole("navigation", { name: "เมนูหลัก" }));
     expect(menu.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
-    const tabs = within(screen.getByRole("navigation", { name: "หมวดย่อย" }));
-    expect(tabs.getByRole("link", { name: "แบรนด์" }).getAttribute("aria-current")).toBe("page");
+    // แบรนด์ has no tab strip; the breadcrumb names the item and links back to the list.
+    const trail = within(screen.getByRole("navigation", { name: "ตำแหน่งหน้านี้" }));
+    expect(trail.getByRole("link", { name: "แบรนด์" }).getAttribute("href")).toBe("/brands");
     expect(screen.queryByText(LINK)).toBeNull();
   });
 });

@@ -99,7 +99,7 @@ ${read("styles.css")}`);
 
   it("keeps relative font sizes at 13px or more inside a 13px parent", () => {
     // A size in em or % shrinks inside a small parent: .875em in a 13px .small is 11.4px. Every such size must be wrapped in max(13px, ...).
-    const sources = ["styles.css", "screens/Audit.tsx", "screens/Suppressions.tsx", "screens/Home.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css", "screens/BuilderKeys.tsx"];
+    const sources = ["styles.css", "screens/Audit.tsx", "screens/Suppressions.tsx", "screens/Money.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css", "screens/BuilderKeys.tsx"];
     for (const file of sources) {
       for (const match of read(file).matchAll(/font-?[sS]ize:\s*"?([^;"},]+(?:\([^)]*\))?[^;"},]*)/g)) {
         const value = match[1]!.trim();
@@ -128,7 +128,7 @@ ${read("styles.css")}`);
   });
 
   it("styles the KPI row and the queue stats with selectors that beat the shared .ledger rule", () => {
-    const home = read("screens/Home.css");
+    const home = read("screens/Money.css");
     expect(home).toContain(".ledger.kpi-row {");
     expect(home).toContain(".ledger.queue-stats {");
     // A bare .kpi-row or .queue-stats rule would lose to .ledger in the built CSS and flatten the five cards into one frame.
@@ -137,7 +137,7 @@ ${read("styles.css")}`);
   });
 
   it("sets no font size under 13px in any stylesheet", () => {
-    const files = ["styles.css", "styles/tokens.css", "screens/Home.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css"];
+    const files = ["styles.css", "styles/tokens.css", "screens/Money.css", "screens/Traffic.css", "screens/Brands.css", "screens/Campaigns.css", "screens/Conversions.css", "screens/Settings.css", "screens/Deploys.css", "screens/AdkitTerminal.css", "screens/BrandTimeline.css"];
     for (const file of files) {
       for (const match of read(file).matchAll(/font-size:\s*([\d.]+)(px|rem|em)/g)) {
         const size = Number(match[1]);

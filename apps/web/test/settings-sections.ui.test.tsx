@@ -36,7 +36,7 @@ describe("Settings section list", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Settings screen" });
     const links = sections().getAllByRole("link");
-    expect(links.map((a) => a.textContent)).toEqual(["ทั่วไป", "ช่องทางแจ้งเตือน", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
+    expect(links.map((a) => a.textContent)).toEqual(["ทั่วไป", "ช่องทางแจ้งเตือน", "แบ่งค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
     expect(links.map((a) => a.getAttribute("href"))).toEqual(["/settings", "/notify-settings", "/ad-allocation", "/users", "/mailing", "/suppressions", "/audit", "/builder-keys"]);
     expect(links.map((a) => a.getAttribute("aria-current"))).toEqual(["page", null, null, null, null, null, null, null]);
     // The old tab strip is gone from this group.
@@ -86,11 +86,11 @@ describe("Settings section list", () => {
     expect(sections().queryByRole("link", { name: "ช่องทางแจ้งเตือน" })).toBeNull();
   });
 
-  it("leaves the other groups on their section tabs", async () => {
+  it("leaves the money group on its section tabs", async () => {
     vi.spyOn(api, "me").mockResolvedValue(owner);
-    window.history.replaceState(null, "", "/brands");
+    window.history.replaceState(null, "", "/money");
     render(<App />);
-    await screen.findByRole("heading", { name: "Brands screen" });
+    await screen.findByRole("heading", { name: "เงิน" });
     expect(screen.getByRole("navigation", { name: "หมวดย่อย" })).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "หมวดตั้งค่า" })).toBeNull();
   });

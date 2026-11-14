@@ -12,7 +12,7 @@ import type { CsvColumn } from "../csv";
 import { EmptyState } from "../components/EmptyState";
 import { Spinner } from "../components/Spinner";
 import { scopeAlerts } from "../home-metrics";
-import { hostnameBrand, incidentsOf, isOpenIncident, pct, when, type Level, type RuleId } from "../alert-incidents";
+import { RULE_TITLE, hostnameBrand, incidentsOf, isOpenIncident, pct, when, type Level, type RuleId } from "../alert-incidents";
 import { useBrandScope } from "../useBrandScope";
 import "./Leads.css";
 import "./Alerts.css";
@@ -20,14 +20,6 @@ import "./Alerts.css";
 type Filter = "open" | "closed" | "all";
 type Tab = "alerts" | "history";
 
-const RULE_TITLE: Record<RuleId, string> = {
-  conversion_stalled: "คอนเวอร์ชันค้าง",
-  brands_without_postbacks: "แบรนด์ไม่มีโพสต์แบ็ก",
-  submit_error_rate: "อัตราส่งฟอร์มผิดพลาด",
-  reject_rate: "อัตราปฏิเสธ",
-  click_risk: "คลิกเสี่ยงสูง",
-  ad_spend_unallocated: "ค่าโฆษณายังไม่จัดสรร",
-};
 const RULE_ICON: Record<RuleId, LucideIcon> = {
   conversion_stalled: Timer,
   brands_without_postbacks: Webhook,
@@ -68,7 +60,7 @@ function RulesCard({ report }: { report: AlertsReportResponse }) {
       <p className="hint">ค่าปัจจุบันของระบบ อ่านอย่างเดียว ปุ่มเปิดปิดใช้ไม่ได้จนกว่าจะมี API กฎ</p>
       <ul className="alert-rules">
         <Rule rule="conversion_stalled" level={report.conversion_stalled.state} text={`คอนเวอร์ชันค้างส่ง Google เกิน ${report.conversion_stalled.detail.max_hours} ชั่วโมง`} />
-        <Rule rule="brands_without_postbacks" level={report.brands_without_postbacks.state} text={`แบรนด์ที่มีลีดแต่ไม่มีโพสต์แบ็กใน ${report.brands_without_postbacks.detail.window_hours} ชั่วโมง`} />
+        <Rule rule="brands_without_postbacks" level={report.brands_without_postbacks.state} text={`แบรนด์ที่มีลีดแต่ไม่มีผลจากผู้ซื้อใน ${report.brands_without_postbacks.detail.window_hours} ชั่วโมง`} />
         <Rule rule="submit_error_rate" level={report.submit_error_rate.state} text={`เตือนที่ ${pct(report.submit_error_rate.detail.warn_at)}% ผิดปกติที่ ${pct(report.submit_error_rate.detail.alert_at)}% ใน ${report.submit_error_rate.detail.window_hours} ชั่วโมง`} />
         <Rule rule="reject_rate" level={report.reject_rate.state} text={`เตือนที่ ${pct(report.reject_rate.detail.warn_at)}% ผิดปกติที่ ${pct(report.reject_rate.detail.alert_at)}% ใน ${report.reject_rate.detail.window_hours} ชั่วโมง`} />
         <Rule rule="click_risk" level={report.click_risk.state} text={`โดเมนที่คนเข้าเว็บได้คะแนนเสี่ยงสูงเกิน ${Math.round(report.click_risk.detail.alert_at * 100)}% (อย่างน้อย ${report.click_risk.detail.min_visits} คน) ใน ${report.click_risk.detail.window_hours} ชั่วโมง`} />
@@ -173,7 +165,7 @@ function AlertList({ report, domains, onChanged }: { report: AlertsReportRespons
                   <span className="alert-dot" aria-hidden="true" style={{ background: DOT_COLOR[i.level] }} />
                   <Icon aria-hidden="true" className="alert-icon" />
                   <div className="alert-main">
-                    <p className="alert-title">{title}{i.brand && <> · <BrandLabel brandId={i.brand} domain={domains.get(i.brand)} /></>}</p>
+                    <p className="alert-title">{title}{i.brand && <> · <BrandLabel brandId={i.brand} domain={domains.get(i.brand)} showId={false} /></>}</p>
                     <p className="hint">{fix ? fix.cause : i.detail}{i.closedAt ? ` · ปิดเมื่อ ${when(i.closedAt)}` : ""}</p>
                     {fix && <a className="btn pri" href={fix.path} onClick={(e) => { if (!isPlainLeftClick(e)) return; e.preventDefault(); navigate(fix.path); }}>{fix.label}</a>}
                   </div>

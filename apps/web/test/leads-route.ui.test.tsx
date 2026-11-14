@@ -12,7 +12,7 @@ const APPLICANT_EMAIL = "test.applicant@example.com";
 const owner: Me = { id: "u1", email: "owner@example.test", role: "owner" };
 const employee: Me = { id: "u2", email: "staff@example.test", role: "employee" };
 const LEADS_NAV = "ลีด (Leads)"; // the screen heading
-const LEADS_MENU = "ลีดและคอนเวอร์ชัน";
+const LEADS_MENU = "เงิน";
 const LEADS_TAB = "ลีด";
 const SUPPRESSIONS_TAB = "อีเมลที่บล็อก";
 const OWNER_ONLY = "สำหรับ Owner เท่านั้น (Owner only)";
@@ -61,7 +61,7 @@ describe("Leads and Suppressions routes", () => {
     const { container } = render(<App />);
 
     expect(await screen.findByRole("heading", { level: 2, name: PANEL })).toBeTruthy();
-    await screen.findByText("Postback Inspector");
+    await screen.findByText("ผลจากผู้ซื้อ");
     expect(requests).toContain(`/api/leads/${LEAD_ID}`);
     expect(container.textContent).toContain(APPLICANT_EMAIL);
     // The list stays beside the panel.
@@ -83,11 +83,11 @@ describe("Leads and Suppressions routes", () => {
     render(<App />);
     fireEvent.click(await screen.findByTitle(LEAD_ID));
     expect(window.location.pathname).toBe(`/leads/${LEAD_ID}`);
-    await screen.findByText("Postback Inspector");
+    await screen.findByText("ผลจากผู้ซื้อ");
     const listRequests = requests.filter((r) => r.startsWith("/api/leads?")).length;
     fireEvent.click(screen.getByRole("button", { name: CLOSE }));
     expect(window.location.pathname).toBe("/leads");
-    await waitFor(() => expect(screen.queryByText("Postback Inspector")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("ผลจากผู้ซื้อ")).toBeNull());
     expect(screen.getByTitle(LEAD_ID)).toBeTruthy();
     // Opening and closing a lead never reloads the list.
     expect(requests.filter((r) => r.startsWith("/api/leads?")).length).toBe(listRequests);
@@ -100,11 +100,11 @@ describe("Leads and Suppressions routes", () => {
     fireEvent.click(await screen.findByTitle(LEAD_ID));
     expect(window.location.pathname).toBe(`/leads/${LEAD_ID}`);
     expect(window.location.search).toBe("?status=sold");
-    await screen.findByText("Postback Inspector");
+    await screen.findByText("ผลจากผู้ซื้อ");
     fireEvent.click(screen.getByRole("button", { name: CLOSE }));
     expect(window.location.pathname).toBe("/leads");
     expect(window.location.search).toBe("?status=sold");
-    await waitFor(() => expect(screen.queryByText("Postback Inspector")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("ผลจากผู้ซื้อ")).toBeNull());
     expect(screen.getByTitle(LEAD_ID)).toBeTruthy();
   });
 
@@ -120,7 +120,7 @@ describe("Leads and Suppressions routes", () => {
     expect(ownerTabs.indexOf(SUPPRESSIONS_TAB)).toBe(ownerTabs.indexOf("รายชื่ออีเมล") + 1);
     expect(sections().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("href")).toBe("/suppressions");
     expect(sections().getByRole("link", { name: SUPPRESSIONS_TAB }).getAttribute("aria-current")).toBe("page");
-    expect(menu().getByRole("link", { name: LEADS_MENU }).getAttribute("href")).toBe("/leads");
+    expect(menu().getByRole("link", { name: LEADS_MENU }).getAttribute("href")).toBe("/money");
     unmount();
 
     me.mockResolvedValue(employee);

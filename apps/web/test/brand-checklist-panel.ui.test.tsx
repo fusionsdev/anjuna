@@ -22,8 +22,8 @@ describe("brand checklist fix buttons", () => {
   it("a failing step shows its fix button inside the step and runs the action for that item", () => {
     const onFix = vi.fn();
     render(detail({ onFix, install: { install_id: "inst-1", status: "failed", receipts: [], runtime_sync_status: "ready" } as never }));
-    fireEvent.click(within(step("test_sold")).getByRole("button", { name: "ยืนยัน Test sold" }));
-    fireEvent.click(within(step("drain_route")).getByRole("button", { name: "ตั้งเส้นทางโฆษณา" }));
+    fireEvent.click(within(step("test_sold")).getByRole("button", { name: "ยืนยันการทดสอบการขาย" }));
+    fireEvent.click(within(step("drain_route")).getByRole("button", { name: "ตั้งเส้นทางส่งยอดขาย" }));
     fireEvent.click(within(step("final_url")).getByRole("button", { name: "ลองติดตั้งใหม่" }));
     expect(onFix.mock.calls.map(([item]) => item)).toEqual(["test_sold", "drain_route", "final_url"]);
   });
@@ -45,7 +45,7 @@ describe("brand checklist fix buttons", () => {
 
   it("an employee sees the drain_route fix disabled with a Thai reason", () => {
     render(detail({ me: employee, onFix: () => {} }));
-    const button = within(step("drain_route")).getByRole("button", { name: "ตั้งเส้นทางโฆษณา" }) as HTMLButtonElement;
+    const button = within(step("drain_route")).getByRole("button", { name: "ตั้งเส้นทางส่งยอดขาย" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(button.title).toBe("เฉพาะเจ้าของตั้งเส้นทางได้");
   });

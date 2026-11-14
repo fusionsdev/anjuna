@@ -171,7 +171,7 @@ describe("settings draft", () => {
     if (!r.ok) {
       expect(Object.keys(r.errors).sort()).toEqual(["aid", "amount_buckets", "drain_key", "prepop_base"]);
       expect(r.errors.aid).toBe("รหัส AID ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 32 ตัว (Invalid aid)");
-      expect(r.errors.drain_key).toBe("Drain key ใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว (Invalid drain key)");
+      expect(r.errors.drain_key).toBe("ชื่อเส้นทางส่งยอดขายใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 64 ตัว");
       expect(r.errors.prepop_base).toBe(PREPOP_MESSAGE);
     }
     const query = parseDraft(edit(b, { prepop_base: "https://leads.example/form?a=1" }));

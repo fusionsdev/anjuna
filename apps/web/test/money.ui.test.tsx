@@ -1,0 +1,1083 @@
+import conversionsFixture from "@anjuna/contracts/fixtures/admin/conversions.response.json";
+import type { ConversionsReportResponse } from "@anjuna/contracts";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError, api, type Me } from "../src/client/api";
+import { clickLossWarning, isStale } from "../src/client/home-metrics";
+import { MoneyScreen } from "../src/client/screens/Money";
+
+const owner = { id: "o", email: "o@example.test", role: "owner" } as Me;
+const employee = { id: "e", email: "e@example.test", role: "employee" } as Me;
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+const row = (brand: string, clicks: number, go: number, form: number, submits: number, sold: number, revenue: number | null) => ({
+  brand, keyword: null, variant: null, clicks, go_count: go, form_views: form, submits, sold, revenue, submit_rate: null, sold_rate: null,
+});
+// 7 days: reached 283, /go 131, form 94, leads 17, sold 4, revenue 410. The biggest drop is form -> lead (82%).
+const FUNNEL_7D = { from: "2026-10-16T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", rows: [row("cg", 212, 98, 70, 11, 3, 254), row("d6", 71, 33, 24, 6, 1, 156)] };
+// 30 days: reached 900, leads 60, sold 12, revenue 1500.
+const FUNNEL_30D = { from: "2026-09-23T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", rows: [row("cg", 900, 600, 400, 60, 12, 1500)] };
+// The window before 7d (from 2026-10-09): reached 300, leads 10, sold 2, revenue 600. Against FUNNEL_7D that is visits ▼ 6%, leads ▲ 70%, sold ▲ 100%, revenue ▼ 32%.
+const FUNNEL_BEFORE = { from: "2026-10-09T00:00:00.000Z", to: "2026-10-16T00:00:00.000Z", rows: [row("cg", 200, 90, 60, 8, 2, 500), row("d6", 100, 40, 30, 2, 0, 100)] };
+// The previous range starts one window earlier than the current one: 7d 2026-10-09, 30d 2026-08-24, today 2026-10-21.
+const isPreviousFrom = (from: string) => ["2026-10-09", "2026-08-24", "2026-10-21"].some((day) => from.startsWith(day));
+// Spend in baht as the THB accounts bill it, with the server's USD at 35 THB per USD. 62,300 THB is $1,780.
+const spendReport = (cost: number, clicks: number, thbPerUsd = 35) => ({
+  period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost_by_currency: { THB: cost, USD: 0 }, clicks, impressions: 9000 },
+  brands: [{ brand_id: "cg", currency: "THB", cost, cost_usd: Math.round((cost / thbPerUsd) * 100) / 100, clicks, impressions: 9000, updated_at: "2026-10-22T09:00:00.000Z" }],
+  total_cost_usd: Math.round((cost / thbPerUsd) * 100) / 100, fx: { thbPerUsd },
+  daily: [{ date: "2026-10-21", cost: cost * 0.4, currency: "THB" }, { date: "2026-10-22", cost: cost * 0.6, currency: "THB" }],
+});
+const alertsReport = {
+  generated_at: "2026-10-22T10:00:00.000Z",
+  conversion_stalled: { state: "ok", detail: { max_hours: 6, stuck_count: 0, oldest_created_at: null } },
+  brands_without_postbacks: { state: "warn", detail: { window_hours: 24, brands: [{ brand: "demo06", leads: 5 }] } },
+  submit_error_rate: { state: "ok", detail: { window_hours: 24, warn_at: 0.05, alert_at: 0.1, samples: [] } },
+  reject_rate: { state: "warn", detail: { window_hours: 24, warn_at: 0.1, alert_at: 0.2, brands: [{ brand: "Credit Genie", rejected: 5, decided: 13, rate: 0.38 }] } },
+};
+// Traffic breakdown: form-views from form_started events, /go counted from click_sessions (landing_path='/go').
+// cg: 283 reach the site, 94 open the form. go_count is null in this default so most tests exercise the "—" path;
+// the tests that need a measured /go override breakdownReply with a value.
+const breakdownReport = {
+  period: "today", by: "source", from: "2026-10-22T00:00:00.000Z", to: "2026-10-23T00:00:00.000Z", timezone: "America/New_York",
+  rows: [],
+  brands: [{ brand_id: "cg", hostname: "creditgenie.test", visits: 283, go_count: null, form_views: 94, leads: 17 }],
+};
+// The same brands with a measured /go, for scenarios that assert the Home /go stage shows a number.
+const breakdownWithGo = (go: number) => ({ ...breakdownReport, brands: breakdownReport.brands.map((b) => ({ ...b, go_count: go })) });
+// The Conversions fixture, owner view: uploaded 5, pending 3, dead 4, stalled 1, uploaded value 412.5.
+const CONVERSIONS_OWNER = conversionsFixture as ConversionsReportResponse;
+// 30 days: every count is different so the period switch shows in the card.
+const CONVERSIONS_30D: ConversionsReportResponse = { ...CONVERSIONS_OWNER, period: "30d", totals: { pending: 6, processing: 2, uploaded: 20, dead: 9 }, value_totals: { uploaded: 1800, dead: 400 }, stalled: 2 };
+// Employee view: core withholds every money field.
+const redact = (report: ConversionsReportResponse): ConversionsReportResponse => ({ ...report, value_totals: null, rows: report.rows.map((r) => ({ ...r, value: null })) });
+const template = (id: string, status: string) => ({ template_version_id: id, template_id: id, name: id, version: 1, status, submitted_by_label: null, created_at: "2026-10-20", sealed_at: null, thumbnail_url: null, brands_using: 0 });
+// Daily outcome counts: 2026-10-21 has 3 pending + 1 sold (4 leads, 1 sold); 2026-10-22 has 2 sold + 1 rejected (3 leads, 2 sold).
+const aggregateRows = [
+  { brand_id: "cg", day: "2026-10-21", status: "pending", count: 3 },
+  { brand_id: "cg", day: "2026-10-21", status: "sold", count: 1 },
+  { brand_id: "cg", day: "2026-10-22", status: "sold", count: 2 },
+  { brand_id: "cg", day: "2026-10-22", status: "rejected", count: 1 },
+];
+const aggregatesBody = (from: string, to: string) => ({ from, to, timezone: "UTC", rows: aggregateRows });
+// Brand ids match the funnel rows. cg and d6 are live, dr is a draft with a form, demo01 is a demo brand the list hides.
+const lifecycleBrand = (brand_id: string, name: string, status: string, extra: Record<string, unknown> = {}) => ({
+  brand_id, name, account: "acct", hostnames: [`${name.toLowerCase()}.test`], status, current_revision_id: status === "draft" ? null : "rev-1",
+  runtime_sync_status: status === "draft" ? "queued" : "ready", bundle_form_version: "form@abcdef1", payload_version: "2026-01", latest_install: null, ...extra,
+});
+const BRANDS = [lifecycleBrand("cg", "Creditgenie", "live"), lifecycleBrand("d6", "Sixpack", "live"), lifecycleBrand("dr", "Draftco", "draft"), lifecycleBrand("demo01", "demo01", "live")];
+const evidence = (item: string) => ({ item, evidence: {} });
+// cg: test sold and drain route done. d6: drain route done, test sold still open.
+const checklistsBody = (templateApproved = true) => ({ brands: {
+  cg: { checklist: [evidence("test_sold"), evidence("drain_route")], template_approved: templateApproved, template_waiting_id: templateApproved ? null : "tv-2" },
+  d6: { checklist: [evidence("drain_route")], template_approved: true, template_waiting_id: null },
+  demo01: { checklist: [], template_approved: true, template_waiting_id: null },
+} });
+
+let funnel: (from: string) => Response | Promise<Response>;
+let conversions: (period: string) => Response | Promise<Response>;
+let aggregates: (from: string, to: string) => Response | Promise<Response>;
+let alertsBody: unknown;
+let alertsReply: () => Response | Promise<Response>;
+let brandsReply: () => Response | Promise<Response>;
+let checklistsReply: () => Response | Promise<Response>;
+let runtimeReply: () => Response | Promise<Response>;
+let breakdownReply: () => Response | Promise<Response>;
+let spend: ReturnType<typeof vi.fn>;
+const realSpend = api.spend;
+let requests: string[];
+// Answers the per-status upload reads of the brand table. Unset, they fall through to `conversions`.
+let convFacts: ((url: URL) => Response | Promise<Response>) | undefined;
+let adsReply: () => Response | Promise<Response>;
+// The realtime report of one brand, for its gclid warning. Default: plenty of landings, few without a gclid.
+let realtimeReply: (brand: string) => Response | Promise<Response>;
+// Google Ads state: Creditgenie has an account and an enabled campaign; Sixpack has no account.
+const ADS_BODY = {
+  campaigns: [{ draft_job_id: "6f1c2b9e-3a4d-4c5e-8f60-7a8b9c0d1e2f", campaign_id: null, brand_id: "cg", account: "1234567890", name: "cg-search-1", daily_budget: 100, currency: "THB", daily_budget_thb: 100, state: "enabled", updated_at: "2026-10-22T00:00:00.000Z", geo: { country: "US" }, final_url: "https://cg.test/" }],
+  brands: [{ brand_id: "cg", currency: "THB", thb_per_unit: 1, committed_thb_day: 0 }],
+  caps: { total_thb_day: 1000, brand_thb_day: 500 }, enabled_total_thb_day: 0,
+};
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));
+  requests = [];
+  convFacts = undefined;
+  adsReply = () => json(ADS_BODY);
+  realtimeReply = () => json({ kpis: { landing_views: 400, no_gclid_landings: { count: 20, pct: 5 } } });
+  funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D);
+  conversions = (period) => json(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER);
+  aggregates = (from, to) => json(aggregatesBody(from, to));
+  alertsBody = alertsReport;
+  alertsReply = () => json(alertsBody);
+  brandsReply = () => json({ brands: BRANDS });
+  checklistsReply = () => json(checklistsBody());
+  runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "live", hostnames: ["creditgenie.test"] }, { brand_id: "d6", status: "live", hostnames: ["sixpack.test"] }] });
+  breakdownReply = () => json(breakdownReport);
+  spend = vi.fn(async (period: string) => (period === "30d" ? spendReport(84000, 1200) : spendReport(62300, 402)));
+  (api as unknown as { spend: unknown }).spend = spend;
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    requests.push(input);
+    const url = new URL(input, "http://panel.test");
+    if (url.pathname === "/api/funnel") return funnel(url.searchParams.get("from") ?? "");
+    if (url.pathname === "/api/conversions" && convFacts && /status=(uploaded|dead)/.test(input)) return convFacts(url);
+    if (url.pathname === "/api/conversions") return conversions(url.searchParams.get("period") ?? "");
+    if (url.pathname === "/api/leads/aggregates") return aggregates(url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? "");
+    if (url.pathname === "/api/alerts") return alertsReply();
+    if (url.pathname === "/api/templates") return json({ templates: [template("t1", "awaiting_approval"), template("t2", "awaiting_approval"), template("t3", "approved")] });
+    if (url.pathname === "/api/lifecycle/brands") return brandsReply();
+    if (url.pathname === "/api/ads/campaigns") return adsReply();
+    if (url.pathname === "/api/traffic/realtime") return realtimeReply(url.searchParams.get("brand") ?? "");
+    if (url.pathname === "/api/traffic/breakdown") return breakdownReply();
+    if (url.pathname === "/api/brands/checklists") return checklistsReply();
+    if (url.pathname === "/api/brands") return runtimeReply();
+    throw new Error(`Unexpected test HTTP request: ${input}`);
+  }));
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  api.spend = realSpend;
+  // navigate() moves the jsdom location; the next test starts on Home.
+  window.history.replaceState(null, "", "/");
+});
+
+const ledgerValue = (label: string) => {
+  const cell = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText(label).parentElement!;
+  return { text: cell.querySelector(".v")!.textContent, className: cell.querySelector(".v")!.className };
+};
+/** The numbers sentence under the page title. It reads the loaded values, so tests wait on it. */
+const heading = (name: string) => screen.findByText(name, { selector: "p.home-summary" });
+/** The delta line under a ledger value, `null` when the cell has none. */
+const ledgerDelta = (label: string) => {
+  const d = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText(label).parentElement!.querySelector(".d");
+  return d ? { text: d.textContent, className: d.className } : null;
+};
+/** The brand table asks once for the last 30 days (its stages) on mount. The period requests are the rest, so that first one is left out. */
+const dropFirst = <T,>(list: T[], match: (item: T) => boolean): T[] => { const at = list.findIndex(match); return at < 0 ? list : [...list.slice(0, at), ...list.slice(at + 1)]; };
+const funnelQueries = () => dropFirst(requests.filter((r) => r.startsWith("/api/funnel")).map((r) => new URL(r, "http://panel.test").searchParams), (q) => q.get("from") === "2026-09-23T00:00:00.000Z" && q.get("to") === "2026-10-23T00:00:00.000Z");
+// The brand table asks per status for its upload dots (brand-facts.ts). The period requests are the ones without a status.
+const conversionRequests = () => requests.filter((r) => r.startsWith("/api/conversions") && !/[?&]status=(uploaded|dead)/.test(r));
+/** The `[from, to]` days of every daily-bars request, in call order. */
+const aggregateQueries = () => requests.filter((r) => r.startsWith("/api/leads/aggregates")).map((r) => {
+  const params = new URL(r, "http://panel.test").searchParams;
+  return [params.get("from"), params.get("to")];
+});
+const dailyPanel = () => within(screen.getByRole("region", { name: "ลีดรายวัน" }));
+/** One `<title>` per day in the daily bars. */
+const dayTitles = () => [...screen.getByRole("region", { name: "ลีดรายวัน" }).querySelectorAll("svg g > title")].map((t) => t.textContent);
+const card = () => within(screen.getByRole("region", { name: "ส่งยอดขายให้ Google Ads" }));
+/** The big number under a card label. */
+const cardValue = (label: string) => card().getByText(label).parentElement!.querySelector(".v")!.textContent;
+/**
+ * Clicks a link and says whether the app took the click (default prevented, so no new page loads).
+ * The click is cancelled afterwards so jsdom does not try to navigate.
+ */
+const appTakesClick = (link: Element, init: MouseEventInit = {}) => {
+  let prevented = false;
+  const seen = (event: Event) => { prevented = event.defaultPrevented; event.preventDefault(); };
+  document.addEventListener("click", seen);
+  fireEvent.click(link, init);
+  document.removeEventListener("click", seen);
+  return prevented;
+};
+
+// FUS-393: the money content of the old Home moved to /money. The fix list, the to-do cards and the banner moved to งานรอทำ (tasks.ui.test.tsx).
+describe("Money screen, owner", () => {
+  it("shows spend, leads, cost per lead, the ledger and where people drop out", async () => {
+    breakdownReply = () => json(breakdownWithGo(131));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+
+    expect(ledgerValue("ค่าโฆษณา").text).toBe("฿62,300");
+    expect(ledgerValue("ต้นทุนต่อลีด").text).toBe("฿3,665");
+    expect(ledgerValue("รายได้").text).toBe("$410");
+    expect(ledgerValue("กำไร")).toEqual({ text: "−$1,370", className: "v neg" });
+
+    const stages = [...document.querySelectorAll(".home-stage")].map((s) => s.textContent);
+    // /go shows the measured count (131) from the traffic breakdown; เปิดฟอร์ม shows 94. Biggest leak is เปิดฟอร์ม -> ลีด (82%).
+    expect(stages).toEqual(["402คลิกโฆษณา", "283เข้าเว็บ", "131กดเริ่มกรอก", "94เปิดฟอร์ม", "17ส่งฟอร์ม", "4ขายได้"]);
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ส่งฟอร์ม");
+    expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หาย 82%");
+    expect(document.querySelector(".note")!.textContent).toContain("หายมากสุดหลังเปิดฟอร์ม: เปิดฟอร์ม 94 คน ส่งฟอร์มแค่ 17 (หายไป 82%)");
+    expect(screen.getByRole("region", { name: "คนหายไปตรงไหน" })).toBeTruthy();
+    // The KPI cards carry the mockup's one-line meaning.
+    expect(screen.getByText("คนที่ส่งฟอร์ม")).toBeTruthy();
+    expect(screen.getByText("รายได้ลบค่าโฆษณา")).toBeTruthy();
+  });
+
+
+  it("shows spend and cost per lead in baht with the server's USD spend under it, and profit in USD", async () => {
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    const spendCell = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText("ค่าโฆษณา").parentElement!;
+    expect(spendCell.querySelector(".hint")!.textContent).toBe("≈$1,780");
+    // Revenue $410 minus $1,780, never $410 minus 62,300 baht.
+    expect(ledgerValue("กำไร")).toEqual({ text: "−$1,370", className: "v neg" });
+  });
+
+  it("draws a spend sparkline with one point per day of the window from the daily series", async () => {
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    const spendCell = within(screen.getByRole("group", { name: "สรุปตัวเลข" })).getByText("ค่าโฆษณา").parentElement!;
+    const line = within(spendCell).getByRole("img", { name: "ค่าโฆษณารายวัน" }).querySelector("polyline")!;
+    // 16 to 22 October is 7 days; only the last two have spend, so the line rises from the floor at the end.
+    expect(line.getAttribute("points")!.split(" ")).toHaveLength(7);
+    expect(line.getAttribute("points")!.split(" ")[0]!.endsWith(",26")).toBe(true);
+    expect(line.getAttribute("points")!.split(" ")[6]!.endsWith(",2")).toBe(true);
+  });
+
+  it("draws no sparkline for a single day or when core sends no daily rows", async () => {
+    spend.mockResolvedValue({ ...spendReport(62300, 402), period: "today", from: "2026-10-22", to: "2026-10-22", daily: [{ date: "2026-10-22", cost: 62300, currency: "THB" }] });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(screen.queryByRole("img", { name: "ค่าโฆษณารายวัน" })).toBeNull();
+    cleanup();
+    spend.mockResolvedValue({ ...spendReport(62300, 402), daily: [] });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(screen.queryByRole("img", { name: "ค่าโฆษณารายวัน" })).toBeNull();
+  });
+
+  it("takes profit from the server's total_cost_usd at the owner's rate, not a client-side rate", async () => {
+    spend.mockResolvedValue(spendReport(62300, 402, 31.15));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(ledgerValue("กำไร")).toEqual({ text: "−$1,590", className: "v neg" });
+  });
+
+  it("names the paid-click loss in the note when it is the biggest leak", async () => {
+    funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 900, 800, 700, 600, 500, 5000)] });
+    spend.mockResolvedValue(spendReport(91770, 3000));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿91,770 ได้ 600 ลีด ต้นทุนลีดละ ฿153");
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("900เข้าเว็บ");
+    expect(document.querySelector(".home-drops .amb")!.textContent).toBe("หาย 70%");
+    expect(document.querySelector(".note")!.textContent).toContain("Google คิดเงิน 3,000 คลิก มาถึงเว็บจริง 900 คน หายไป 2,100 คลิก (70%)");
+  });
+
+  it("opens on today, compares it with yesterday, and switches to 7 days and 30 days", async () => {
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(screen.getByRole("button", { name: "วันนี้" }).getAttribute("aria-pressed")).toBe("true");
+    // Every period asks the funnel twice: the window itself, then the window of equal length before it.
+    const funnelQuery = (n: number) => funnelQueries()[n]!;
+    expect(funnelQuery(0).get("from")).toBe("2026-10-22T00:00:00.000Z");
+    expect(funnelQuery(0).get("to")).toBe("2026-10-23T00:00:00.000Z");
+    expect(funnelQuery(1).get("from")).toBe("2026-10-21T00:00:00.000Z");
+    expect(funnelQuery(1).get("to")).toBe("2026-10-22T00:00:00.000Z");
+    expect(spend).toHaveBeenCalledWith("today");
+
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(spend).toHaveBeenCalledWith("7d"));
+    await waitFor(() => expect(funnelQueries()).toHaveLength(4));
+    expect(funnelQuery(2).get("from")).toBe("2026-10-16T00:00:00.000Z");
+    expect(funnelQuery(2).get("to")).toBe("2026-10-23T00:00:00.000Z");
+    expect(funnelQuery(3).get("from")).toBe("2026-10-09T00:00:00.000Z");
+    expect(funnelQuery(3).get("to")).toBe("2026-10-16T00:00:00.000Z");
+
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await heading("จ่ายค่าโฆษณา ฿84,000 ได้ 60 ลีด ต้นทุนลีดละ ฿1,400");
+    expect(screen.getByRole("button", { name: "30 วัน" }).getAttribute("aria-pressed")).toBe("true");
+    expect(funnelQuery(4).get("from")).toBe("2026-09-23T00:00:00.000Z");
+    expect(funnelQuery(5).get("from")).toBe("2026-08-24T00:00:00.000Z");
+    expect(funnelQuery(5).get("to")).toBe("2026-09-23T00:00:00.000Z");
+    expect(spend).toHaveBeenCalledWith("30d");
+  });
+
+  it("shows the revenue change against the previous window, the spend change in the neutral colour, and none on cost per lead or profit", async () => {
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "▼ 32%", className: "d neg" }));
+    // Today against yesterday. The spend mock answers 62,300 for both, so the change is 0%, drawn without a good or bad colour.
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "0%", className: "d" }));
+    expect(spend).toHaveBeenCalledWith("yesterday");
+    expect(ledgerDelta("ต้นทุนต่อลีด")).toBeNull();
+    expect(ledgerDelta("กำไร")).toBeNull();
+  });
+
+  it("shows a dash instead of a percent when the previous revenue is 0", async () => {
+    funnel = (from) => json(isPreviousFrom(from) ? { ...FUNNEL_BEFORE, rows: [row("cg", 200, 90, 60, 8, 2, 0)] } : FUNNEL_7D);
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
+    expect(document.body.textContent).not.toMatch(/Infinity|NaN/);
+  });
+
+  it("shows a dash for the revenue change when core withheld the revenue", async () => {
+    funnel = () => json({ ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
+    expect(ledgerValue("รายได้").text).toBe("—");
+  });
+
+  it("keeps the current values and shows a dash when the previous window fails", async () => {
+    funnel = (from) => (isPreviousFrom(from) ? json({ error: "core_unavailable" }, 502) : json(FUNNEL_7D));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "–", className: "d" }));
+    expect(ledgerValue("รายได้").text).toBe("$410");
+    expect(ledgerValue("กำไร")).toEqual({ text: "−$1,370", className: "v neg" });
+  });
+
+  it("shows no delta while the previous window loads and drops a late answer for an old period", async () => {
+    let releaseOld: (response: Response) => void = () => {};
+    const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
+    funnel = (from) => (from.startsWith("2026-10-21") ? old : json(isPreviousFrom(from) ? FUNNEL_BEFORE : from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(ledgerDelta("รายได้")).toBeNull();
+
+    // The 30 day previous window (1500 now against 600 before) answers; then yesterday's window arrives with a different number.
+    funnel = (from) => json(from.startsWith("2026-08-24") ? { ...FUNNEL_BEFORE, rows: [row("cg", 1, 1, 1, 1, 1, 600)] } : FUNNEL_30D);
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(ledgerDelta("รายได้")).toEqual({ text: "▲ 150%", className: "d pos" }));
+    releaseOld(json({ ...FUNNEL_BEFORE, rows: [row("cg", 1, 1, 1, 1, 1, 1500)] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(ledgerDelta("รายได้")).toEqual({ text: "▲ 150%", className: "d pos" });
+  });
+
+  it("shows — for spend, cost per lead and profit when the spend API fails, and keeps revenue", async () => {
+    spend.mockRejectedValue(new ApiError(502, { error: "core_unavailable" }));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา — ได้ 17 ลีด ต้นทุนลีดละ —");
+    expect(ledgerValue("ค่าโฆษณา").text).toBe("—");
+    expect(ledgerValue("ต้นทุนต่อลีด").text).toBe("—");
+    expect(ledgerValue("รายได้").text).toBe("$410");
+    expect(ledgerValue("กำไร")).toEqual({ text: "—", className: "v" });
+    expect(document.querySelector(".home-stage")!.textContent).toBe("—คลิกโฆษณา");
+  });
+
+  it("shows — when the spend API has no rows for the period instead of $0", async () => {
+    spend.mockResolvedValue({ period: "7d", from: "2026-10-16", to: "2026-10-22", totals: { cost_by_currency: { THB: 0, USD: 0 }, clicks: 0, impressions: 0 }, brands: [], total_cost_usd: 0, fx: { thbPerUsd: 35 } });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา — ได้ 17 ลีด ต้นทุนลีดละ —");
+  });
+
+  it("shows — for every funnel number when the funnel API fails", async () => {
+    funnel = () => json({ error: "core_unavailable" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ — ลีด ต้นทุนลีดละ —");
+    expect(ledgerValue("รายได้").text).toBe("—");
+    expect(ledgerValue("กำไร").text).toBe("—");
+    // The funnel API failed, so visits/leads/sold read "—"; the form count comes from the traffic breakdown, which still answered.
+    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["402คลิกโฆษณา", "—เข้าเว็บ", "—กดเริ่มกรอก", "94เปิดฟอร์ม", "—ส่งฟอร์ม", "—ขายได้"]);
+    expect(document.querySelector(".note")).toBeNull();
+  });
+
+  it("shows — for revenue and profit when every funnel row has null revenue instead of $0", async () => {
+    funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(ledgerValue("รายได้").text).toBe("—");
+    expect(ledgerValue("กำไร")).toEqual({ text: "—", className: "v" });
+  });
+
+  it("shows — for revenue and profit when one funnel row has null revenue instead of a partial sum", async () => {
+    funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, 156)] });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(ledgerValue("รายได้").text).toBe("—");
+    expect(ledgerValue("กำไร")).toEqual({ text: "—", className: "v" });
+  });
+
+  it("shows a real 0 for no leads and — for the cost per lead it cannot divide", async () => {
+    funnel = () => json({ from: FUNNEL_7D.from, to: FUNNEL_7D.to, rows: [] });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 0 ลีด ต้นทุนลีดละ —");
+    expect(ledgerValue("รายได้").text).toBe("$0");
+    expect(ledgerValue("กำไร").text).toBe("−$1,780");
+  });
+
+  it("opens the matching screen from the buttons", async () => {
+    const onGo = vi.fn();
+    render(<MoneyScreen me={owner} onGo={onGo} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    // The create button lives in the sidebar now, and the to-do lists moved to งานรอทำ.
+    expect(screen.queryByRole("button", { name: "+ สร้างแบรนด์ใหม่" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "แยกตามแบรนด์" }));
+    expect(onGo.mock.calls.map((c) => c[0])).toEqual(["funnel"]);
+  });
+
+
+  it("shows conversion counts and links the card and the dead count to the Conversions page", async () => {
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    expect(cardValue("รอส่ง")).toBe("3");
+    expect(cardValue("ส่งไม่สำเร็จ (สะสม)")).toBe("4");
+    expect(cardValue("ค้างเกิน 6 ชม.")).toBe("1");
+    expect(cardValue("มูลค่าที่ส่งแล้ว")).toBe("$412.50");
+    expect(conversionRequests()).toEqual(["/api/conversions?period=today"]);
+
+    const dead = card().getByRole("link", { name: "ส่งไม่สำเร็จ (สะสม) 4" });
+    expect(dead.getAttribute("href")).toBe("/conversions?period=today&status=dead");
+    expect(appTakesClick(dead)).toBe(true);
+    expect(window.location.pathname).toBe("/conversions");
+    expect(window.location.search).toBe("?period=today&status=dead");
+
+    window.history.replaceState(null, "", "/");
+    const all = card().getByRole("link", { name: "ดูคิว" });
+    expect(all.getAttribute("href")).toBe("/conversions?period=today");
+    expect(appTakesClick(all)).toBe(true);
+    expect(window.location.pathname).toBe("/conversions");
+    expect(window.location.search).toBe("?period=today");
+  });
+
+  it("keeps the selected period in the card links", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(cardValue("ส่งไม่สำเร็จ (สะสม)")).toBe("9"));
+
+    const dead = card().getByRole("link", { name: "ส่งไม่สำเร็จ (สะสม) 9" });
+    expect(dead.getAttribute("href")).toBe("/conversions?period=30d&status=dead");
+    expect(card().getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions?period=30d");
+    expect(appTakesClick(dead)).toBe(true);
+    expect(window.location.pathname + window.location.search).toBe("/conversions?period=30d&status=dead");
+
+    // Today is not the Conversions default, so it stays in the query. 7d is the default and leaves the query out.
+    fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
+    await waitFor(() => expect(card().getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions?period=today"));
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(card().getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions"));
+  });
+
+  it("keeps the browser default for a ctrl-click, meta-click or middle-click on the card links", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    const dead = card().getByRole("link", { name: "ส่งไม่สำเร็จ (สะสม) 4" });
+    const all = card().getByRole("link", { name: "ดูคิว" });
+    for (const link of [dead, all]) {
+      expect(appTakesClick(link, { ctrlKey: true })).toBe(false);
+      expect(appTakesClick(link, { metaKey: true })).toBe(false);
+      expect(appTakesClick(link, { shiftKey: true })).toBe(false);
+      expect(appTakesClick(link, { button: 1 })).toBe(false);
+    }
+    expect(window.location.pathname + window.location.search).toBe("/");
+
+    // A plain left click on the same link stays in the app.
+    expect(appTakesClick(dead)).toBe(true);
+    expect(window.location.pathname + window.location.search).toBe("/conversions?period=today&status=dead");
+  });
+
+  it("asks for the conversions of the chosen period and drops a late answer for an old one", async () => {
+    let releaseOld: (response: Response) => void = () => {};
+    const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
+    conversions = (period) => (period === "today" ? old : json(CONVERSIONS_30D));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    // The 7 day answer is still on its way: every cell shows the loading mark.
+    expect(["ส่งแล้ว", "รอส่ง", "ส่งไม่สำเร็จ (สะสม)", "ค้างเกิน 6 ชม."].map(cardValue)).toEqual(["…", "…", "…", "…"]);
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("20"));
+    expect(cardValue("ส่งไม่สำเร็จ (สะสม)")).toBe("9");
+    expect(cardValue("มูลค่าที่ส่งแล้ว")).toBe("$1,800.00");
+    releaseOld(json(CONVERSIONS_OWNER));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cardValue("ส่งแล้ว")).toBe("20");
+    expect(cardValue("ส่งไม่สำเร็จ (สะสม)")).toBe("9");
+    expect(conversionRequests()).toEqual(["/api/conversions?period=today", "/api/conversions?period=30d"]);
+  });
+
+
+
+
+
+
+
+
+
+
+  it("hides the card body behind — when the conversions call fails", async () => {
+    conversions = () => json({ error: "core_unavailable" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("—"));
+    expect(["ส่งแล้ว", "รอส่ง", "ส่งไม่สำเร็จ (สะสม)", "ค้างเกิน 6 ชม."].map(cardValue)).toEqual(["—", "—", "—", "—"]);
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
+  });
+
+  it("asks for the daily lead counts of the chosen window and widens today to the last 7 days", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(aggregateQueries()).toEqual([["2026-10-16", "2026-10-22"]]);
+    expect(dayTitles()).toEqual([
+      "2026-10-16: ลีด 0, ขายได้ 0",
+      "2026-10-17: ลีด 0, ขายได้ 0",
+      "2026-10-18: ลีด 0, ขายได้ 0",
+      "2026-10-19: ลีด 0, ขายได้ 0",
+      "2026-10-20: ลีด 0, ขายได้ 0",
+      "2026-10-21: ลีด 4, ขายได้ 1",
+      "2026-10-22: ลีด 3, ขายได้ 2",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(dayTitles()).toHaveLength(30));
+    expect(aggregateQueries()[1]).toEqual(["2026-09-23", "2026-10-22"]);
+    expect(dayTitles().slice(-2)).toEqual(["2026-10-21: ลีด 4, ขายได้ 1", "2026-10-22: ลีด 3, ขายได้ 2"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "วันนี้" }));
+    await waitFor(() => expect(aggregateQueries()).toHaveLength(3));
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(aggregateQueries()[2]).toEqual(["2026-10-16", "2026-10-22"]);
+  });
+
+  it("shows the daily bars legend and the loading mark until the counts arrive", async () => {
+    let release: (response: Response) => void = () => {};
+    aggregates = () => new Promise<Response>((resolve) => { release = resolve; });
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    expect(dailyPanel().getByText("…")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
+
+    release(json(aggregatesBody("2026-10-16", "2026-10-22")));
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(dailyPanel().queryByText("…")).toBeNull();
+    expect(dailyPanel().getByRole("img", { name: "ลีดและยอดขายรายวัน" })).toBeTruthy();
+    expect(dailyPanel().getByText("ขายได้")).toBeTruthy();
+    expect(dailyPanel().getByText("ลีด", { selector: "li" })).toBeTruthy();
+  });
+
+  it("shows — and the failure in the daily bars panel when the aggregates call fails and keeps the other panels", async () => {
+    aggregates = () => json({ error: "core_unavailable" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(dailyPanel().getByText("— โหลดลีดรายวันไม่สำเร็จ")).toBeTruthy());
+    expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
+    expect(dailyPanel().queryByText("ยังไม่มีลีดในช่วงนี้")).toBeNull();
+
+    expect(ledgerValue("รายได้").text).toBe("$410");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    expect(document.querySelector(".home-stage.leak")!.textContent).toBe("17ส่งฟอร์ม");
+  });
+
+  it("shows the empty state when the window has no leads", async () => {
+    aggregates = (from, to) => json({ from, to, timezone: "UTC", rows: [] });
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(dailyPanel().getByText("ยังไม่มีลีดในช่วงนี้")).toBeTruthy());
+    expect(screen.getByRole("region", { name: "ลีดรายวัน" }).querySelector("svg")).toBeNull();
+  });
+
+  it("drops a late daily bars answer for an old period", async () => {
+    let releaseOld: (response: Response) => void = () => {};
+    const old = new Promise<Response>((resolve) => { releaseOld = resolve; });
+    // The 7 day window starts on 2026-10-16 and is still on its way; the 30 day window answers first.
+    aggregates = (from, to) => (from === "2026-10-16" ? old : json(aggregatesBody(from, to)));
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(dayTitles()).toHaveLength(30));
+
+    releaseOld(json(aggregatesBody("2026-10-16", "2026-10-22")));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dayTitles()).toHaveLength(30);
+  });
+});
+
+describe("Money screen, employee", () => {
+  beforeEach(() => {
+    conversions = (period) => json(redact(period === "30d" ? CONVERSIONS_30D : CONVERSIONS_OWNER));
+  });
+
+  it("shows visitors, leads, sold and pending with no money and no spend request", async () => {
+    breakdownReply = () => json(breakdownWithGo(131));
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+
+    expect(ledgerValue("ผู้เข้าเว็บ").text).toBe("283");
+    expect(ledgerValue("ลีด").text).toBe("17");
+    expect(ledgerValue("ขายได้").text).toBe("4");
+    await waitFor(() => expect(ledgerValue("รอผล").text).toBe("5"));
+
+    expect(spend).not.toHaveBeenCalled();
+    expect(requests.some((r) => r.startsWith("/api/spend"))).toBe(false);
+    expect(document.body.textContent).not.toContain("$");
+    expect(screen.queryByText("ค่าโฆษณา")).toBeNull();
+    expect(screen.queryByText("รายได้")).toBeNull();
+    expect(screen.queryByText("กำไร")).toBeNull();
+    expect(screen.queryByText("คลิกโฆษณา")).toBeNull();
+    expect([...document.querySelectorAll(".home-stage")].map((s) => s.textContent)).toEqual(["283เข้าเว็บ", "131กดเริ่มกรอก", "94เปิดฟอร์ม", "17ส่งฟอร์ม", "4ขายได้"]);
+  });
+
+  it("employee sees no revenue", async () => {
+    funnel = (from) => json({ ...(from.startsWith("2026-09-23") ? FUNNEL_30D : FUNNEL_7D), rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(ledgerValue("รอผล").text).toBe("5"));
+
+    expect(screen.queryByText("รายได้")).toBeNull();
+    expect(screen.queryByText("กำไร")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/\$0(?!\.)/);
+    expect(document.body.textContent).not.toContain("$");
+    expect(document.body.textContent).not.toContain("NaN");
+  });
+
+  it("shows visits, leads and sold against the previous window and no delta on pending", async () => {
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(ledgerDelta("ผู้เข้าเว็บ")).toEqual({ text: "▼ 6%", className: "d neg" }));
+    expect(ledgerDelta("ลีด")).toEqual({ text: "▲ 70%", className: "d pos" });
+    expect(ledgerDelta("ขายได้")).toEqual({ text: "▲ 100%", className: "d pos" });
+    await waitFor(() => expect(ledgerValue("รอผล").text).toBe("5"));
+    expect(ledgerDelta("รอผล")).toBeNull();
+  });
+
+  it("employee gets no revenue delta when the funnel withholds revenue", async () => {
+    funnel = (from) => json({ ...(isPreviousFrom(from) ? FUNNEL_BEFORE : FUNNEL_7D), rows: [row("cg", 212, 98, 70, 11, 3, null), row("d6", 71, 33, 24, 6, 1, null)] });
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(ledgerDelta("ลีด")).toEqual({ text: "0%", className: "d" }));
+    expect(screen.queryByText("รายได้")).toBeNull();
+    expect(document.body.textContent).not.toContain("$");
+  });
+
+  it("employee sees conversion counts without value", async () => {
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    expect(cardValue("รอส่ง")).toBe("3");
+    expect(cardValue("ส่งไม่สำเร็จ (สะสม)")).toBe("4");
+    expect(cardValue("ค้างเกิน 6 ชม.")).toBe("1");
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
+    expect(card().getByRole("link", { name: "ส่งไม่สำเร็จ (สะสม) 4" }).getAttribute("href")).toBe("/conversions?period=today&status=dead");
+    expect(document.body.textContent).not.toContain("$");
+  });
+
+  it("employee sees the daily bars, which carry counts only", async () => {
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(dayTitles()).toHaveLength(7));
+    expect(dayTitles().slice(-2)).toEqual(["2026-10-21: ลีด 4, ขายได้ 1", "2026-10-22: ลีด 3, ขายได้ 2"]);
+    expect(aggregateQueries()).toEqual([["2026-10-16", "2026-10-22"]]);
+    expect(document.body.textContent).not.toContain("$");
+  });
+
+  it("hides the uploaded value from an employee even if the response carries it", async () => {
+    conversions = () => json(CONVERSIONS_OWNER);
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(cardValue("ส่งแล้ว")).toBe("5"));
+    expect(card().queryByText("มูลค่าที่ส่งแล้ว")).toBeNull();
+    expect(document.body.textContent).not.toContain("$");
+  });
+
+  it("shows — for pending when the alerts API fails", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const path = new URL(String(input), "http://panel.test").pathname;
+      if (path === "/api/funnel") return json(FUNNEL_7D);
+      return json({ error: "core_unavailable" }, 502);
+    });
+    render(<MoneyScreen me={employee} />);
+    await heading("ผู้เข้าเว็บ 283 คน ได้ 17 ลีด ขายได้ 4");
+    await waitFor(() => expect(ledgerValue("รอผล").text).toBe("—"));
+  });
+});
+
+describe("home-metrics: stale spend and click loss", () => {
+  it("isStale is true once the newest AdKit sync is older than the limit", () => {
+    const now = new Date("2026-10-22T12:30:00.000Z");
+    expect(isStale("2026-10-22T10:00:00.000Z", now)).toBe(true);
+    expect(isStale("2026-10-22T10:29:59.000Z", now)).toBe(true);
+    expect(isStale("2026-10-22T10:30:00.000Z", now)).toBe(false);
+    expect(isStale("2026-10-22T12:00:00.000Z", now)).toBe(false);
+    expect(isStale("2026-10-22T08:00:00.000Z", now, 6)).toBe(false);
+    // A time that cannot be read counts as stale: never show a number of unknown age.
+    expect(isStale("not a date", now)).toBe(true);
+  });
+
+  it("clickLossWarning needs 20 paid clicks and fewer than 5 percent reaching the site", () => {
+    expect(clickLossWarning(170, 141)).toBe(false);
+    expect(clickLossWarning(170, 4)).toBe(true);
+    expect(clickLossWarning(10, 0)).toBe(false);
+    expect(clickLossWarning(20, 0)).toBe(true);
+    expect(clickLossWarning(100, 5)).toBe(false);
+    expect(clickLossWarning(100, 4)).toBe(true);
+  });
+});
+
+const brandRow = (id: string) => document.querySelector<HTMLElement>(`[data-brand-id="${id}"]`);
+const rowCell = (id: string, col: string) => brandRow(id)?.querySelector(`[data-col="${col}"]`)?.textContent;
+const rowButton = (id: string) => brandRow(id)?.querySelector<HTMLButtonElement>("button[data-next-action]");
+const brandsRegion = () => screen.getByRole("region", { name: "แบรนด์" });
+
+describe("Money screen, brand table", () => {
+  it("reads every brand checklist with one request and never asks per brand", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(requests).toContain("/api/brands/checklists"));
+    expect(requests.filter((r) => r === "/api/brands/checklists")).toHaveLength(1);
+    expect(requests.some((r) => /^\/api\/brands\/[^/]+\/checklist$/.test(r))).toBe(false);
+  });
+
+
+
+
+  it("lists the brands but not demo brands, one button each from nextAction", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")).toBeTruthy());
+    expect(brandRow("demo01")).toBeNull();
+    expect(rowButton("cg")).toMatchObject({ textContent: "ดูแบรนด์", disabled: false });
+    expect(rowButton("cg")!.dataset.nextAction).toBe("open");
+    expect(rowButton("d6")!.textContent).toBe("ยืนยันขายทดสอบ");
+    expect(rowButton("d6")!.dataset.nextAction).toBe("test-sold");
+    expect(rowButton("dr")!.textContent).toBe("ติดตั้ง");
+    expect(brandsRegion().querySelectorAll("button[data-next-action]")).toHaveLength(3);
+  });
+
+  it("a row button that changes something opens a dialog naming the brand and its domain, and does not navigate", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("d6")).toBeTruthy());
+    fireEvent.click(rowButton("d6")!);
+    const first = await screen.findByRole("alertdialog");
+    expect(first.textContent).toContain("Sixpack");
+    expect(first.textContent).toContain("sixpack.test");
+    expect(window.location.pathname).toBe("/");
+    fireEvent.click(screen.getByRole("button", { name: /ยกเลิก/ }));
+    cleanup();
+    window.history.replaceState(null, "", "/");
+
+    checklistsReply = () => json(checklistsBody(false));
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("approve-template"));
+    expect(rowButton("cg")!.textContent).toBe("อนุมัติเทมเพลต");
+    fireEvent.click(rowButton("cg")!);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("Creditgenie");
+    expect(dialog.textContent).toContain("creditgenie.test");
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("a paused brand's resume button still opens its page", async () => {
+    runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "paused" }, { brand_id: "d6", status: "live" }] });
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("resume"));
+    fireEvent.click(rowButton("cg")!);
+    expect(window.location.pathname).toBe("/brands/cg");
+  });
+
+  it("offers set-route when the brand has no drain route, and leaves owner-only actions disabled for an employee", async () => {
+    checklistsReply = () => json({ brands: { cg: { checklist: [evidence("test_sold")], template_approved: true, template_waiting_id: null }, d6: { checklist: [evidence("drain_route")], template_approved: false, template_waiting_id: "tv-9" } } });
+    const { unmount } = render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("set-route"));
+    expect(rowButton("cg")).toMatchObject({ textContent: "ตั้งเส้นทาง", disabled: false });
+    expect(rowButton("d6")).toMatchObject({ textContent: "อนุมัติเทมเพลต", disabled: false });
+    unmount();
+
+    render(<MoneyScreen me={employee} />);
+    await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("set-route"));
+    expect(rowButton("cg")!.disabled).toBe(true);
+    expect(rowButton("cg")!.title).toBe("เฉพาะเจ้าของตั้งเส้นทางได้");
+    expect(rowButton("d6")!.disabled).toBe(true);
+  });
+
+  it("falls back to the plain open button when the checklist read fails, never inventing an action", async () => {
+    checklistsReply = () => json({ error: "core_unavailable" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")).toBeTruthy());
+    expect(rowButton("cg")!.dataset.nextAction).toBe("open");
+    expect(rowButton("d6")!.dataset.nextAction).toBe("open");
+  });
+
+  it("gives a brand core has paused the same next step as the Brands screen: resume", async () => {
+    runtimeReply = () => json({ brands: [{ brand_id: "cg", status: "paused" }, { brand_id: "d6", status: "live" }] });
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")!.dataset.nextAction).toBe("resume"));
+    expect(rowButton("cg")).toMatchObject({ textContent: "เปิดใช้งานต่อ", disabled: false });
+    expect(rowButton("d6")!.dataset.nextAction).toBe("test-sold");
+    fireEvent.click(rowButton("cg")!);
+    expect(window.location.pathname).toBe("/brands/cg");
+  });
+
+  it("treats a failed runtime list as no pause, never inventing one", async () => {
+    runtimeReply = () => json({ error: "core_unavailable" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("d6")!.dataset.nextAction).toBe("test-sold"));
+    expect(rowButton("cg")!.dataset.nextAction).toBe("open");
+  });
+
+  it("offers no fix button for a brand whose checklist is unknown because core did not answer", async () => {
+    checklistsReply = () => json({ brands: {
+      cg: { checklist: [], template_approved: true, template_waiting_id: null, unknown: true },
+      d6: { checklist: [evidence("drain_route"), evidence("test_sold")], template_approved: true, template_waiting_id: null },
+    } });
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("cg")).toBeTruthy());
+    // No drain route row and no test sold row, yet nothing is offered: the open button shows.
+    expect(rowButton("cg")!.dataset.nextAction).toBe("open");
+    expect(rowButton("cg")!.disabled).toBe(false);
+    expect(rowButton("d6")!.dataset.nextAction).toBe("open");
+  });
+
+  it("ranks the brands that need a person first by the kind of the action", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowButton("d6")).toBeTruthy());
+    const order = [...brandsRegion().querySelectorAll<HTMLElement>("[data-brand-id]")].map((li) => li.dataset.brandId);
+    // d6 (test-sold) and dr (install) need a person; cg only opens.
+    expect(order.at(-1)).toBe("cg");
+    expect(order.slice(0, 2).sort()).toEqual(["d6", "dr"]);
+  });
+
+  it("keeps a broken brand among the 5 rows when 11 healthy brands sort after it", async () => {
+    const healthy = Array.from({ length: 11 }, (_, i) => lifecycleBrand(`ok${i}`, `Healthy${i}`, "live"));
+    brandsReply = () => json({ brands: [...healthy, lifecycleBrand("bad", "Broken", "live", { runtime_sync_status: "sync_error" })] });
+    checklistsReply = () => json({ brands: {} });
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(brandRow("bad")).toBeTruthy());
+    expect(brandsRegion().querySelectorAll("[data-brand-id]")).toHaveLength(5);
+    expect(brandsRegion().querySelector("[data-brand-id]")!.getAttribute("data-brand-id")).toBe("bad");
+    expect(rowButton("bad")!.textContent).toBe("ตรวจสอบ");
+  });
+
+  it("shows each brand's leads, spend in baht and cost per lead in baht", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowCell("cg", "spend")).toBe("฿62,300"));
+    expect(rowCell("cg", "leads")).toBe("11");
+    // 62,300 baht over 11 leads. The server's USD figure never joins a baht number.
+    expect(rowCell("cg", "cpl")).toBe("฿5,664");
+    // d6 has leads but no spend row: nothing was synced, so spend and cost per lead are unknown.
+    expect(rowCell("d6", "leads")).toBe("6");
+    expect(rowCell("d6", "spend")).toBe("—");
+    expect(rowCell("d6", "cpl")).toBe("—");
+    expect(brandsRegion().textContent).not.toContain("$");
+  });
+
+  it("shows — for spend and cost per lead of a brand whose AdKit data is older than 2 hours", async () => {
+    const report = spendReport(62300, 402);
+    // The system time is 10:00 UTC; 06:00 is 4 hours old.
+    spend.mockResolvedValue({ ...report, brands: report.brands.map((b) => ({ ...b, updated_at: "2026-10-22T06:00:00.000Z" })) });
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowCell("cg", "leads")).toBe("11"));
+    expect(rowCell("cg", "spend")).toBe("—");
+    expect(rowCell("cg", "cpl")).toBe("—");
+  });
+
+  it("keeps a fresh brand's numbers while a stale brand shows —", async () => {
+    const report = spendReport(62300, 402);
+    spend.mockResolvedValue({ ...report, brands: [...report.brands, { ...report.brands[0]!, brand_id: "d6", cost: 7000, cost_usd: 200, updated_at: "2026-10-22T03:00:00.000Z" }] });
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowCell("cg", "spend")).toBe("฿62,300"));
+    expect(rowCell("d6", "spend")).toBe("—");
+    expect(rowCell("d6", "cpl")).toBe("—");
+  });
+
+  it("gives an employee the brand rows without spend, cost per lead or any dollar sign", async () => {
+    render(<MoneyScreen me={employee} />);
+    await waitFor(() => expect(rowButton("cg")).toBeTruthy());
+    expect(rowCell("cg", "leads")).toBe("11");
+    expect(brandRow("cg")!.querySelector('[data-col="spend"]')).toBeNull();
+    expect(brandRow("cg")!.querySelector('[data-col="cpl"]')).toBeNull();
+    expect(brandsRegion().textContent).not.toMatch(/฿|\$/);
+  });
+
+  it("shows — for leads when the funnel fails and an error line when the brand list fails", async () => {
+    funnel = () => json({ error: "core_unavailable" }, 502);
+    const { unmount } = render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(rowCell("cg", "leads")).toBe("—"));
+    unmount();
+
+    brandsReply = () => json({ error: "core_unavailable" }, 502);
+    render(<MoneyScreen me={owner} />);
+    expect(await within(screen.getByRole("region", { name: "แบรนด์" })).findByText("— โหลดรายการแบรนด์ไม่สำเร็จ")).toBeTruthy();
+  });
+});
+
+describe("Money screen, v9 layout", () => {
+  it("heads the page เงิน with the mockup subtitle, the range toggle and the comparison text", async () => {
+    render(<MoneyScreen me={owner} />);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("เงิน");
+    expect(screen.getByText("รวมทุกแบรนด์ · ค่าโฆษณาดึงจาก AdKit ทุกชั่วโมง")).toBeTruthy();
+    expect(screen.getByText("เทียบกับเมื่อวาน")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    expect(screen.getByText("เทียบกับ 30 วันก่อนหน้า")).toBeTruthy();
+  });
+
+
+
+  it("shows seven stage dots per brand and the brand count on the link that opens every brand", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    const dots = brandRow("cg")!.querySelector('[role="img"]')!;
+    expect(dots.querySelectorAll(".stage-dot")).toHaveLength(7);
+    expect(dots.getAttribute("aria-label")).toContain("สร้าง: เสร็จ");
+    expect(dots.getAttribute("aria-label")).toContain("เทมเพลต: เสร็จ");
+    // Creditgenie has leads in the 30 day funnel and a test sold row.
+    expect(dots.getAttribute("aria-label")).toContain("ลีด: เสร็จ");
+    expect(dots.getAttribute("aria-label")).toContain("ขายได้: เสร็จ");
+    // Three brands are listed: the two live ones and the draft. The demo brand is not.
+    expect(within(brandsRegion()).getByRole("link", { name: "ดูทั้งหมด 3" })).toBeTruthy();
+  });
+
+  it("shows the Google Ads chip of each brand from today's spend", async () => {
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("ใช้งาน"));
+    // d6 has no spend rows, so no account is connected to it.
+    expect(brandRow("d6")!.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
+  });
+
+  it("closes the queue card with sold = sent + failed + waiting, waiting counting the rows in flight", async () => {
+    // 12 sold = 5 sent + 4 failed + (1 pending + 2 processing): one period, every brand, nothing left over.
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { pending: 1, processing: 2, uploaded: 5, dead: 4 } });
+    funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : { ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 12, 254)] });
+    render(<MoneyScreen me={owner} />);
+    const line = await screen.findByTestId("reconciliation");
+    await waitFor(() => expect(line.textContent).toBe("กระทบยอด: ขายได้ 12 = ส่งแล้ว 5 + ส่งไม่สำเร็จ 4 + รอส่ง 3"));
+    expect(screen.getByRole("link", { name: "ดูคิว" }).getAttribute("href")).toBe("/conversions?period=today");
+  });
+
+  it("shows the gap instead of hiding it when the two sides do not match", async () => {
+    conversions = () => json({ ...CONVERSIONS_OWNER, totals: { pending: 1, processing: 0, uploaded: 5, dead: 4 } });
+    funnel = (from) => json(isPreviousFrom(from) ? FUNNEL_BEFORE : { ...FUNNEL_7D, rows: [row("cg", 212, 98, 70, 11, 12, 254)] });
+    render(<MoneyScreen me={owner} />);
+    const line = await screen.findByTestId("reconciliation");
+    await waitFor(() => expect(line.textContent).toBe("กระทบยอด: ขายได้ 12 = ส่งแล้ว 5 + ส่งไม่สำเร็จ 4 + รอส่ง 1 · ต่างกัน +2"));
+  });
+
+  it("hides the reconciliation line while a source loads or when one fails", async () => {
+    conversions = () => json({ error: "bad_gateway" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "ส่งยอดขายให้ Google Ads" })).queryByText(/กระทบยอด/)).toBeNull());
+    expect(screen.queryByTestId("reconciliation")).toBeNull();
+  });
+
+
+
+});
+
+describe("Money screen, facts behind the brand table", () => {
+  const convRow = (brand: string, status: string) => ({ lead_id: `${brand}-1`, brand, status, reason_code: null, last_error: null, click_type: null, attempts: 1, value: null, currency: "THB", occurred_at: "2026-10-20T00:00:00.000Z", created_at: "2026-10-20T00:00:00.000Z", updated_at: "2026-10-20T00:00:00.000Z", next_attempt_at: null });
+  const page = (rows: ReturnType<typeof convRow>[], truncated: boolean) => ({ ...CONVERSIONS_OWNER, rows, truncated });
+  const dotsOf = (id: string) => brandRow(id)!.querySelector('[role="img"]')!.getAttribute("aria-label")!;
+
+  it("reads the upload dot of a brand exactly when the page of 200 rows is full of other brands", async () => {
+    // The big page holds only Sixpack rows and is cut. Creditgenie has an uploaded row that the cut left out: its own read finds it.
+    convFacts = (url) => {
+      const brand = url.searchParams.get("brand");
+      const status = url.searchParams.get("status")!;
+      if (brand) return json(page(brand === "cg" && status === "uploaded" ? [convRow("cg", "uploaded")] : [], false));
+      return json(page(status === "uploaded" ? [convRow("d6", "uploaded")] : [], true));
+    };
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(dotsOf("cg")).toContain("อัปโหลด: เสร็จ"));
+    expect(dotsOf("d6")).toContain("อัปโหลด: เสร็จ");
+    expect(requests.filter((r) => /status=uploaded&brand=cg&limit=1/.test(r))).toHaveLength(1);
+  });
+
+  it("shows a dead conversion as a failed upload dot", async () => {
+    convFacts = (url) => json(page(url.searchParams.get("status") === "dead" ? [convRow("cg", "dead")] : [], false));
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(dotsOf("cg")).toContain("อัปโหลด: ล้มเหลว"));
+  });
+
+  it("reads the upload dot as ไม่ทราบ, never done, when both reads fail", async () => {
+    convFacts = () => json({ error: "bad_gateway" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(dotsOf("cg")).toContain("อัปโหลด: ไม่ทราบ");
+    expect(dotsOf("cg")).not.toContain("อัปโหลด: เสร็จ");
+  });
+
+  it("does not call an upload done when uploaded answered but the dead read failed", async () => {
+    // Uploaded has a row for Creditgenie; the dead read fails. "No dead conversion" is not known, so the dot is unknown, not done.
+    convFacts = (url) => (url.searchParams.get("status") === "dead" ? json({ error: "bad_gateway" }, 502) : json(page([convRow("cg", "uploaded")], false)));
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(dotsOf("cg")).toContain("อัปโหลด: ไม่ทราบ");
+    expect(dotsOf("cg")).not.toContain("อัปโหลด: เสร็จ");
+    expect(brandRow("cg")!.querySelector('[data-stage="อัปโหลด"]')!.getAttribute("title")).toBe("อัปโหลด · ไม่ทราบ");
+  });
+
+  it("keeps the Google Ads chip the same when the period changes: it reads today's spend and the campaigns, not the chosen window", async () => {
+    render(<MoneyScreen me={owner} />);
+    const chip = () => brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent;
+    await waitFor(() => expect(chip()).toBe("ใช้งาน"));
+    for (const label of ["7 วัน", "30 วัน", "วันนี้"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
+      expect(chip()).toBe("ใช้งาน");
+    }
+  });
+
+  it("shows ไม่มี gclid when the brand's landings of the last 24 hours had too few gclids, and keeps it across periods", async () => {
+    realtimeReply = (brand) => json({ kpis: { landing_views: 300, no_gclid_landings: { count: brand === "cg" ? 120 : 3, pct: brand === "cg" ? 40 : 1 } } });
+    render(<MoneyScreen me={owner} />);
+    const chip = () => brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent;
+    await waitFor(() => expect(chip()).toBe("ไม่มี gclid (24 ชม.)"));
+    for (const label of ["7 วัน", "30 วัน", "วันนี้"]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(screen.getByRole("button", { name: label }).getAttribute("aria-pressed")).toBe("true"));
+      expect(chip()).toBe("ไม่มี gclid (24 ชม.)");
+    }
+    // Asked for 24 hours and for the brand that spends today only (Sixpack has no spend row).
+    const asked = requests.filter((r) => r.startsWith("/api/traffic/realtime"));
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((r) => r === "/api/traffic/realtime?period=24h&brand=cg")).toBe(true);
+  });
+
+  it("keeps ใช้งาน when the gclid read fails, and never asks for an employee", async () => {
+    realtimeReply = () => json({ error: "bad_gateway" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("ใช้งาน"));
+    cleanup();
+    requests = [];
+    render(<MoneyScreen me={employee} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(requests.some((r) => r.startsWith("/api/traffic/realtime"))).toBe(false);
+  });
+
+  it("shows a dash in the Google Ads cell while the campaigns read fails, never not connected", async () => {
+    adsReply = () => json({ error: "bad_gateway" }, 502);
+    render(<MoneyScreen me={owner} />);
+    await waitFor(() => expect(brandRow("cg")).toBeTruthy());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("—");
+  });
+
+  it("gives an employee the chip the campaigns show, without spend: เปิดแล้ว for an enabled campaign", async () => {
+    render(<MoneyScreen me={employee} />);
+    await waitFor(() => expect(brandRow("cg")!.querySelector('[data-col="ads"]')!.textContent).toBe("เปิดแล้ว"));
+    expect(brandRow("d6")!.querySelector('[data-col="ads"]')!.textContent).toBe("ยังไม่เชื่อม");
+  });
+});
+
+describe("Money screen, spend change and funnel strip", () => {
+  const thirtyDays = (recent: number, older: number) => {
+    const daily = Array.from({ length: 30 }, (_, i) => ({ date: new Date(Date.UTC(2026, 8, 23 + i)).toISOString().slice(0, 10), cost: i >= 23 ? recent : i >= 16 ? older : 100, currency: "THB" as const }));
+    return { ...spendReport(84000, 1200), period: "30d", from: "2026-09-23", to: "2026-10-22", daily };
+  };
+
+  it("compares 7 days with the 7 days before from the daily rows, and says so in the neutral colour", async () => {
+    spend = vi.fn(async (period: string) => (period === "30d" ? thirtyDays(2000, 1000) : spendReport(14000, 400)));
+    (api as unknown as { spend: unknown }).spend = spend;
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿14,000 ได้ 17 ลีด ต้นทุนลีดละ ฿824");
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "▲ 100%", className: "d" }));
+  });
+
+  it("shows a dash for the spend change over 30 days and when the earlier window cannot be read", async () => {
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    fireEvent.click(screen.getByRole("button", { name: "30 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "–", className: "d" }));
+    // 7 days with only two daily rows: the earlier week is not in the report, so it is a dash too.
+    fireEvent.click(screen.getByRole("button", { name: "7 วัน" }));
+    await waitFor(() => expect(ledgerDelta("ค่าโฆษณา")).toEqual({ text: "–", className: "d" }));
+  });
+
+  it("draws each stage of the funnel with a horizontal bar sized against the largest stage", async () => {
+    render(<MoneyScreen me={owner} />);
+    await heading("จ่ายค่าโฆษณา ฿62,300 ได้ 17 ลีด ต้นทุนลีดละ ฿3,665");
+    const bars = [...document.querySelectorAll<HTMLElement>(".home-stage .home-bar")];
+    expect(bars.length).toBeGreaterThan(3);
+    expect(bars.every((bar) => bar.style.width.endsWith("%") && bar.style.height === "")).toBe(true);
+    expect(Math.max(...bars.map((bar) => parseInt(bar.style.width, 10)))).toBe(100);
+  });
+});

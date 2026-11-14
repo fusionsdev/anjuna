@@ -131,16 +131,16 @@ describe("Conversions page", () => {
     await table();
     // Rows that are not dead, and a dead row whose code has its own fix, keep the spec "UI text per code" table.
     const expected: Array<[string, string]> = [
-      ["ลองครบแล้ว (Attempts exhausted)", "Drain ดึงไปแล้วไม่ตอบกลับจนครบจำนวนครั้ง. ตรวจ log ของ drain บน VPS."],
-      ["ไม่มี route (No route)", "Drain ไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. เพิ่ม route ใน drain config บน VPS."],
-      ["ยังไม่พร้อม (Not ready)", "Ads ยังไม่รับ click นี้. Drain จะลองใหม่เอง."],
-      ["ตั้งค่า Microsoft ไม่ครบ (Microsoft env missing)", "ตั้ง ACCOUNT และ CONVERSION_NAME ของ Microsoft Ads ใน env ของ drain."],
+      ["ลองครบแล้ว (Attempts exhausted)", "เส้นทางส่งยอดขายดึงไปแล้วไม่ตอบกลับจนครบจำนวนครั้ง. ตรวจ log ของเส้นทางส่งยอดขายบน VPS."],
+      ["ไม่มีเส้นทางส่งยอดขาย", "เส้นทางส่งยอดขายไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. ตั้งเส้นทางส่งยอดขายของแบรนด์นี้บน VPS."],
+      ["ยังไม่พร้อม (Not ready)", "Ads ยังไม่รับ click นี้. เส้นทางส่งยอดขายจะลองใหม่เอง."],
+      ["ตั้งค่า Microsoft ไม่ครบ (Microsoft env missing)", "ตั้ง ACCOUNT และ CONVERSION_NAME ของ Microsoft Ads ใน env ของเส้นทางส่งยอดขาย."],
     ];
     for (const [label, fix] of expected) {
       const row = screen.getByText(label).closest("tr")!;
       expect(within(row).getByText(fix)).toBeTruthy();
     }
-    const noRoute = screen.getByText("ไม่มี route (No route)").closest("tr")!;
+    const noRoute = screen.getByText("ไม่มีเส้นทางส่งยอดขาย").closest("tr")!;
     const details = noRoute.querySelector("details")!;
     expect(within(details).getByText("ข้อความเต็ม")).toBeTruthy();
     expect(details.textContent).toContain("no route for brand=brand-a hostname=a.example");
@@ -272,8 +272,8 @@ describe("Conversions page: details", () => {
     respond = () => json({ ...redacted, rows });
     render(<ConversionsScreen me={employee} />);
     await table();
-    expect(screen.getByText("ไม่มี route (No route)")).toBeTruthy();
-    expect(screen.getByText("Drain ไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. เพิ่ม route ใน drain config บน VPS.")).toBeTruthy();
+    expect(screen.getByText("ไม่มีเส้นทางส่งยอดขาย")).toBeTruthy();
+    expect(screen.getByText("เส้นทางส่งยอดขายไม่รู้ว่าแบรนด์นี้ส่งเข้าบัญชี Ads ไหน. ตั้งเส้นทางส่งยอดขายของแบรนด์นี้บน VPS.")).toBeTruthy();
     // The dead platform error row reads as unknown, and an employee gets no raw text behind it.
     expect(screen.getAllByText("ส่งไม่สำเร็จ")).toHaveLength(2);
     expect(document.querySelectorAll("details")).toHaveLength(0);
@@ -324,7 +324,7 @@ describe("Conversions page: details", () => {
     waiting[0]!(json(report));
     await settle();
     expect(screen.getAllByRole("row")).toHaveLength(1 + 4);
-    expect(screen.queryByText("ไม่มี route (No route)")).toBeNull();
+    expect(screen.queryByText("ไม่มีเส้นทางส่งยอดขาย")).toBeNull();
     expect(screen.getByText("ลองครบแล้ว (Attempts exhausted)")).toBeTruthy();
   });
 
@@ -485,7 +485,7 @@ describe("Conversions page: load more", () => {
     const grid = screen.getByRole("table", { name: "รายการคอนเวอร์ชัน (Conversions)" });
     expect(within(grid).getAllByRole("row")).toHaveLength(1 + 3);
     expect(within(grid).getAllByText("ค้างส่ง")).toHaveLength(3);
-    expect(within(grid).getByText("ไม่มี route (No route)")).toBeTruthy();
+    expect(within(grid).getByText("ไม่มีเส้นทางส่งยอดขาย")).toBeTruthy();
     expect(screen.queryByText("ลองครบแล้ว (Attempts exhausted)")).toBeNull();
     expect(lastCall().searchParams.get("limit")).toBe("200");
   });

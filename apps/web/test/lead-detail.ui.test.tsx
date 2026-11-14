@@ -13,7 +13,7 @@ const NOTICE = "ข้อมูลส่วนบุคคลสงวนสำ�
 const SOLD_NO_UPLOAD = "ขายแล้วแต่ไม่มีรายการอัปโหลด";
 const DEAD = "อัปโหลดล้มเหลวถาวร";
 const UPLOADED = "ส่งคอนเวอร์ชันแล้ว";
-const NO_POSTBACK = "ยังไม่มี postback จาก LeadsGate";
+const NO_POSTBACK = "ผู้ซื้อยังไม่แจ้งผล";
 const PAYOUT_HEADER = "ค่าตอบแทน (Payout)";
 
 type Lead = GetLeadResponse["lead"];
@@ -39,7 +39,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const renderScreen = async (me: Me = owner) => {
   const view = render(<LeadDetailScreen me={me} leadId={LEAD_ID} onBack={() => {}} />);
-  await screen.findByText("Postback Inspector");
+  await screen.findByText("ผลจากผู้ซื้อ");
   return view;
 };
 const rowOf = (label: string) => within(screen.getByText(label).closest("tr")!);
@@ -57,10 +57,10 @@ describe("Lead detail screen", () => {
     expect(rowOf("รหัสไปรษณีย์ (ZIP)").getByText("75201")).toBeTruthy();
     expect(rowOf("วันเกิด (Birth date)").getByText("1990-01-15")).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: PAYOUT_HEADER })).toBeTruthy();
-    expect(within(screen.getByLabelText("Postback")).getByText("$85")).toBeTruthy();
+    expect(within(screen.getByLabelText("รายการผลจากผู้ซื้อ")).getByText("$85")).toBeTruthy();
     expect(rowOf("มูลค่า (Value)").getByText("$85")).toBeTruthy();
     expect(container.textContent).toContain("Fast Cash Loans");
-    expect(within(screen.getByLabelText("Postback")).getAllByRole("row")).toHaveLength(3);
+    expect(within(screen.getByLabelText("รายการผลจากผู้ซื้อ")).getAllByRole("row")).toHaveLength(3);
   });
 
   it("hides the applicant block and the payout column from an employee and says why", async () => {
@@ -77,7 +77,7 @@ describe("Lead detail screen", () => {
     expect(screen.queryByRole("columnheader", { name: PAYOUT_HEADER })).toBeNull();
     expect(screen.queryByText("มูลค่า (Value)")).toBeNull();
     expect(screen.queryByText("$85")).toBeNull();
-    const postbacks = within(screen.getByLabelText("Postback"));
+    const postbacks = within(screen.getByLabelText("รายการผลจากผู้ซื้อ"));
     expect(postbacks.getAllByRole("columnheader")).toHaveLength(2);
     expect(postbacks.getAllByRole("row")).toHaveLength(3);
     // Profile is not PII: the employee still reads it.
@@ -125,7 +125,7 @@ describe("Lead detail screen", () => {
     expect(pillOf(NO_POSTBACK).className).toContain("p-warn");
     expect(screen.queryByText(SOLD_NO_UPLOAD)).toBeNull();
     expect(screen.getByRole("columnheader", { name: PAYOUT_HEADER })).toBeTruthy();
-    expect(within(screen.getByLabelText("Postback")).getByText("ยังไม่มี postback (No postbacks yet)")).toBeTruthy();
+    expect(within(screen.getByLabelText("รายการผลจากผู้ซื้อ")).getByText("ยังไม่มีผลจากผู้ซื้อ")).toBeTruthy();
   });
 
   it("keeps the payout column and the Value row for an owner when every amount is null", async () => {
@@ -134,7 +134,7 @@ describe("Lead detail screen", () => {
     lead.conversion = { ...lead.conversion!, value: null };
     respondWith(lead);
     await renderScreen();
-    const postbacks = within(screen.getByLabelText("Postback"));
+    const postbacks = within(screen.getByLabelText("รายการผลจากผู้ซื้อ"));
     expect(postbacks.getByRole("columnheader", { name: PAYOUT_HEADER })).toBeTruthy();
     const headers = postbacks.getAllByRole("columnheader").map((h) => h.textContent);
     const payoutAt = headers.indexOf(PAYOUT_HEADER);
@@ -177,7 +177,7 @@ describe("Lead detail screen", () => {
     respondWith(lead);
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     await renderScreen();
-    expect(within(screen.getByLabelText("Postback")).getAllByRole("row")).toHaveLength(3);
+    expect(within(screen.getByLabelText("รายการผลจากผู้ซื้อ")).getAllByRole("row")).toHaveLength(3);
     expect(errors.mock.calls.flat().join(" ")).not.toContain("same key");
     errors.mockRestore();
   });
@@ -234,7 +234,7 @@ describe("Lead detail screen", () => {
     render(<LeadDetailScreen me={owner} leadId={LEAD_ID} onBack={() => {}} />);
     expect(await screen.findByText("ไม่พบลีดนี้")).toBeTruthy();
     expect(screen.getByText("กลับหน้าแรก (Back to Home)")).toBeTruthy();
-    expect(screen.queryByText("Postback Inspector")).toBeNull();
+    expect(screen.queryByText("ผลจากผู้ซื้อ")).toBeNull();
   });
 });
 
@@ -242,7 +242,7 @@ describe("Lead detail timeline and panel", () => {
   it("lists the form, each postback and the upload in time order with the click id chip", async () => {
     await renderScreen();
     const items = within(screen.getByRole("list", { name: "ไทม์ไลน์ลีด" })).getAllByRole("listitem").map((li) => li.querySelector("p")!.textContent);
-    expect(items).toEqual(["ส่งฟอร์ม", "postback ลีดใหม่", "postback ขายได้", "สร้างรายการอัปโหลด", "อัปโหลดสำเร็จ"]);
+    expect(items).toEqual(["ส่งฟอร์ม", "ผลจากผู้ซื้อ: ลีดใหม่", "ผลจากผู้ซื้อ: ขายได้", "สร้างรายการอัปโหลด", "อัปโหลดสำเร็จ"]);
     expect(screen.getByText("มี click id (gclid)")).toBeTruthy();
   });
 
@@ -255,7 +255,7 @@ describe("Lead detail timeline and panel", () => {
     respondWith(lead);
     const { container } = await renderScreen();
     expect(screen.getByRole("note", { name: "เหตุผลที่โดนปฏิเสธ" }).textContent).toBe("ผู้ซื้อไม่ได้ส่งเหตุผลมา");
-    expect(within(screen.getByLabelText("Postback")).getByText("โดนปฏิเสธ")).toBeTruthy();
+    expect(within(screen.getByLabelText("รายการผลจากผู้ซื้อ")).getByText("โดนปฏิเสธ")).toBeTruthy();
     expect(rowOf("สถานะดิบ (Raw status)").getByText("โดนปฏิเสธ")).toBeTruthy();
     expect(container.textContent).not.toContain("rejectLead");
   });
@@ -277,7 +277,7 @@ describe("Lead detail timeline and panel", () => {
   it("renders as a panel with a level 2 heading and a close button that calls onBack", async () => {
     const onBack = vi.fn();
     const view = render(<LeadDetailScreen me={owner} leadId={LEAD_ID} onBack={onBack} panel />);
-    await screen.findByText("Postback Inspector");
+    await screen.findByText("ผลจากผู้ซื้อ");
     expect(screen.getByRole("heading", { level: 2, name: "รายละเอียดลีด" })).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
     expect(view.container.querySelector("aside.lead-panel")).toBeTruthy();

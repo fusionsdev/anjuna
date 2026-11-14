@@ -83,8 +83,11 @@ export function sortAlertStates(rows: readonly AlertStateRow[]): AlertStateRow[]
 /** Most pages of alert states one load reads: 100 pages of 500 rows. */
 const ALERT_STATES_MAX_PAGES = 100;
 
-/** alerts_open is null when the alerts report or the stored alert states could not be read: the client hides that badge only. */
-export interface NavCounts { brands_need_fix: number; templates_awaiting: number; alerts_open: number | null }
+/**
+ * alerts_open is null when the alerts report or the stored alert states could not be read: the client hides that badge only.
+ * tasks_open is the row count of งานรอทำ, null when one of its sources could not be read.
+ */
+export interface NavCounts { brands_need_fix: number; templates_awaiting: number; alerts_open: number | null; tasks_open: number | null }
 
 /** GET/PUT /api/me/prefs. Saved views are kept as the server sent them and written back unchanged. */
 export interface UserPrefsBody { brand_scope: BrandScopePrefs; saved_views: Record<string, unknown> }
@@ -238,7 +241,8 @@ export const api = {
   sealedTemplates: () => request<unknown>("GET", "/api/templates/sealed").then((body) => SealedTemplatesResponse.parse(body)),
   me: () => request<{ user: Me }>("GET", "/api/me").then((r) => r.user),
   /** Sidebar badges. Lane W01 (W01-5) serves it; until then the call fails and the sidebar falls back to the alerts report. */
-  navCounts: () => request<NavCounts>("GET", "/api/nav/counts"),
+  /** `scope` is a `?scope=` value (all, active or brand ids); the server then counts under it instead of the saved scope. */
+  navCounts: (scope?: string | null) => request<NavCounts>("GET", scope ? `/api/nav/counts?${new URLSearchParams({ scope })}` : "/api/nav/counts"),
   /** Per-user preferences (brand scope, saved views). Lane W01 (W01-5) serves them; the shape is `UserPrefs` in packages/contracts. */
   mePrefs: () => request<unknown>("GET", "/api/me/prefs").then(unwrapPrefs),
   saveMePrefs: (prefs: UserPrefsBody) => request<unknown>("PUT", "/api/me/prefs", prefs).then(unwrapPrefs),

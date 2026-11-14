@@ -6,10 +6,10 @@ type PageView = Exclude<View, "not-found">;
 /** One row of the shortcut list shown by the "?" overlay. */
 export const SHORTCUTS: ReadonlyArray<{ keys: string; text: string }> = [
   { keys: "/", text: "ไปที่ช่องค้นหาของหน้านี้" },
-  { keys: "g แล้ว h", text: "ไปหน้าแรก" },
+  { keys: "g แล้ว h", text: "ไปหน้างานรอทำ" },
   { keys: "g แล้ว b", text: "ไปหน้าแบรนด์" },
   { keys: "g แล้ว t", text: "ไปหน้าเทมเพลต" },
-  { keys: "g แล้ว a", text: "ไปหน้าการแจ้งเตือน" },
+  { keys: "g แล้ว a", text: "ไปรายการแจ้งเตือนในงานรอทำ" },
   { keys: "?", text: "เปิดหรือปิดรายการทางลัดนี้" },
   { keys: "Esc", text: "ปิดหน้าต่างด้านข้าง เมนู และหน้าต่างที่เปิดอยู่" },
 ];

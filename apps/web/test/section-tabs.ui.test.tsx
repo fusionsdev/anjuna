@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SectionTabs } from "../src/client/components/SectionTabs";
-import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, groupViews, visibleTabs } from "../src/client/nav-groups";
+import { NAV_GROUPS, SIDEBAR_ENTRIES, activeTabId, groupOfView, groupViews, sidebarEntryOf, visibleTabs } from "../src/client/nav-groups";
 import type { View } from "../src/client/router";
 
 afterEach(cleanup);
@@ -52,48 +52,47 @@ describe("SectionTabs", () => {
 describe("nav groups", () => {
   const labels = (group: keyof typeof NAV_GROUPS, role: "owner" | "employee") => visibleTabs(NAV_GROUPS[group], role).map((t) => t.label);
 
-  it("lists the tab sets of the brief for an owner", () => {
-    expect(labels("brands", "owner")).toEqual(["แบรนด์", "ประวัติการติดตั้ง"]);
-    expect(labels("traffic", "owner")).toEqual(["เรียลไทม์", "ทราฟฟิก", "ฟันเนล", "ข้อผิดพลาดฝั่งเว็บ"]);
-    expect(labels("leads", "owner")).toEqual(["ลีด", "คอนเวอร์ชัน"]);
-    expect(labels("settings", "owner")).toEqual(["ทั่วไป", "ช่องทางแจ้งเตือน", "จัดสรรค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
+  it("lists the tab sets for an owner", () => {
+    expect(labels("money", "owner")).toEqual(["ทราฟฟิก", "เรียลไทม์", "ฟันเนล", "ลีด", "คอนเวอร์ชัน", "แคมเปญ"]);
+    expect(labels("settings", "owner")).toEqual(["ทั่วไป", "ช่องทางแจ้งเตือน", "แบ่งค่าโฆษณา", "ผู้ใช้", "รายชื่ออีเมล", "อีเมลที่บล็อก", "ประวัติการแก้ไข", "คีย์ Builder"]);
   });
 
   it("leaves the owner-only tabs out for an employee", () => {
     expect(labels("settings", "employee")).toEqual(["รายชื่ออีเมล", "ประวัติการแก้ไข", "คีย์ Builder"]);
-    for (const group of ["brands", "traffic", "leads"] as const) expect(labels(group, "employee")).toEqual(labels(group, "owner"));
+    expect(labels("money", "employee")).toEqual(labels("money", "owner"));
   });
 
-  it("maps every screen to a group except Home, Templates, Campaigns, Alerts, AdKit Terminal and not-found", () => {
+  it("puts every screen under one of the four sidebar items, and only not-found under none", () => {
     // A Record forces a new view to be listed here, so a screen added later cannot silently miss the menu.
-    const grouped: Record<View, string | null> = {
-      home: null, templates: null, alerts: null, campaigns: null, "adkit-terminal": null, "not-found": null,
-      brands: "brands", "new-brand": "brands", "brand-timeline": "brands", deploys: "brands",
-      realtime: "traffic", traffic: "traffic", funnel: "traffic", errors: "traffic",
-      leads: "leads", conversions: "leads",
-      settings: "settings", "notify-settings": "settings", "ad-allocation": "settings", users: "settings", mailing: "settings", suppressions: "settings", audit: "settings", "builder-keys": "settings",
+    const item: Record<View, string | null> = {
+      "not-found": null,
+      home: "home", alerts: "home",
+      brands: "brands", "new-brand": "brands", "brand-timeline": "brands",
+      money: "money", realtime: "money", traffic: "money", funnel: "money", leads: "money", conversions: "money", campaigns: "money",
+      system: "system", templates: "system", "adkit-terminal": "system", deploys: "system", errors: "system",
+      settings: "system", "notify-settings": "system", "ad-allocation": "system", users: "system", mailing: "system", suppressions: "system", audit: "system", "builder-keys": "system",
     };
-    for (const [view, group] of Object.entries(grouped)) expect(groupOfView(view as View)?.id ?? null, view).toBe(group);
+    for (const [view, id] of Object.entries(item)) expect(sidebarEntryOf(view as View)?.id ?? null, view).toBe(id);
+    // No view sits under two items.
+    const all = SIDEBAR_ENTRIES.flatMap((entry) => entry.views);
+    expect(new Set(all).size).toBe(all.length);
   });
 
-  it("keeps AdKit Terminal out of the Settings tabs: it is a sidebar item for the owner (T13-6)", () => {
-    expect(labels("settings", "owner")).not.toContain("AdKit Terminal");
-    const entry = SIDEBAR_ENTRIES.find((e) => e.id === "adkit-terminal")!;
-    expect(entry.minRole).toBe("owner");
-    expect(entry.tag).toBe("owner");
+  it("maps the tabbed screens to their tab group and leaves the rest without tabs", () => {
+    expect(groupOfView("funnel")?.id).toBe("money");
+    expect(groupOfView("campaigns")?.id).toBe("money");
+    expect(groupOfView("mailing")?.id).toBe("settings");
+    for (const view of ["home", "alerts", "brands", "new-brand", "money", "system", "templates", "deploys", "errors", "adkit-terminal"] as const) expect(groupOfView(view), view).toBeNull();
   });
 
-  it("selects the Brands tab on the wizard and the brand timeline, which have no tab of their own", () => {
-    expect(activeTabId(NAV_GROUPS.brands, "new-brand")).toBe("brands");
-    expect(activeTabId(NAV_GROUPS.brands, "brand-timeline")).toBe("brands");
-    expect(activeTabId(NAV_GROUPS.brands, "deploys")).toBe("deploys");
-    expect(activeTabId(NAV_GROUPS.traffic, "home")).toBeNull();
+  it("selects the tab that owns a view and none for a view outside the group", () => {
+    expect(activeTabId(NAV_GROUPS.money, "realtime")).toBe("realtime");
+    expect(activeTabId(NAV_GROUPS.money, "money")).toBeNull();
+    expect(activeTabId(NAV_GROUPS.settings, "home")).toBeNull();
   });
 
-  it("makes the sidebar item current on every view of its group", () => {
-    expect(groupViews(NAV_GROUPS.traffic)).toEqual(["realtime", "traffic", "funnel", "errors"]);
-    expect(groupViews(NAV_GROUPS.leads)).toEqual(["leads", "conversions"]);
-    expect([...groupViews(NAV_GROUPS.brands)].sort()).toEqual(["brand-timeline", "brands", "deploys", "new-brand"]);
+  it("makes the sidebar item current on every view of its tab group", () => {
+    expect(groupViews(NAV_GROUPS.money)).toEqual(["traffic", "realtime", "funnel", "leads", "conversions", "campaigns"]);
     expect([...groupViews(NAV_GROUPS.settings)].sort()).toEqual(["ad-allocation", "audit", "builder-keys", "mailing", "notify-settings", "settings", "suppressions", "users"]);
   });
 });

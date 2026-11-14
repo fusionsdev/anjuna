@@ -55,7 +55,7 @@ describe("Notification channels", () => {
     expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(expect.arrayContaining(["-100184", "5550001"]));
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows.map((row) => row.querySelector("td")!.textContent)).toEqual([
-      "คอนเวอร์ชันส่งไม่ได้", "แบรนด์ไม่มี postback", "อัตราส่งฟอร์มไม่สำเร็จสูง", "อัตราปฏิเสธสูง", "คลิกที่จ่ายไม่มี gclid",
+      "คอนเวอร์ชันส่งไม่ได้", "แบรนด์ไม่มีผลจากผู้ซื้อ", "อัตราส่งฟอร์มไม่สำเร็จสูง", "อัตราปฏิเสธสูง", "คลิกที่จ่ายไม่มี gclid",
     ]);
     // A rule with no entry shows the sender's default; click risk shows what was saved.
     expect((screen.getByLabelText("ส่ง คอนเวอร์ชันส่งไม่ได้ ผ่าน Telegram") as HTMLInputElement).checked).toBe(true);
@@ -83,10 +83,10 @@ describe("Notification channels", () => {
     await open();
     const save = screen.getByRole("button", { name: "บันทึก" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("ส่ง แบรนด์ไม่มี postback ผ่าน Telegram"));
-    fireEvent.change(screen.getByLabelText("ส่ง แบรนด์ไม่มี postback ซ้ำทุก"), { target: { value: "1" } });
-    fireEvent.click(screen.getByLabelText("ตั้งช่วงเงียบของ แบรนด์ไม่มี postback"));
-    fireEvent.change(screen.getByLabelText("ช่วงเงียบของ แบรนด์ไม่มี postback เริ่ม"), { target: { value: "21:30" } });
+    fireEvent.click(screen.getByLabelText("ส่ง แบรนด์ไม่มีผลจากผู้ซื้อ ผ่าน Telegram"));
+    fireEvent.change(screen.getByLabelText("ส่ง แบรนด์ไม่มีผลจากผู้ซื้อ ซ้ำทุก"), { target: { value: "1" } });
+    fireEvent.click(screen.getByLabelText("ตั้งช่วงเงียบของ แบรนด์ไม่มีผลจากผู้ซื้อ"));
+    fireEvent.change(screen.getByLabelText("ช่วงเงียบของ แบรนด์ไม่มีผลจากผู้ซื้อ เริ่ม"), { target: { value: "21:30" } });
     expect(screen.getByText("มีการแก้ไขที่ยังไม่บันทึก")).toBeTruthy();
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
@@ -112,12 +112,12 @@ describe("Notification channels", () => {
       return realFetch(input, init);
     }));
     await open();
-    fireEvent.click(screen.getByLabelText("ส่ง แบรนด์ไม่มี postback ผ่าน Telegram"));
+    fireEvent.click(screen.getByLabelText("ส่ง แบรนด์ไม่มีผลจากผู้ซื้อ ผ่าน Telegram"));
     fireEvent.click(screen.getByRole("button", { name: "บันทึก" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "กำลังบันทึก…" })).toBeTruthy());
     const telegram = screen.getByLabelText("เปิดแจ้งเตือนผ่าน Telegram") as HTMLInputElement;
     const digest = screen.getByLabelText("เปิดสรุปรายวัน") as HTMLInputElement;
-    for (const control of [telegram, digest, screen.getByLabelText("ส่ง แบรนด์ไม่มี postback ผ่าน Telegram"), screen.getByLabelText("chat id ใหม่")]) expect(control.matches(":disabled")).toBe(true);
+    for (const control of [telegram, digest, screen.getByLabelText("ส่ง แบรนด์ไม่มีผลจากผู้ซื้อ ผ่าน Telegram"), screen.getByLabelText("chat id ใหม่")]) expect(control.matches(":disabled")).toBe(true);
     release?.();
     expect(await screen.findByText("บันทึกแล้ว")).toBeTruthy();
     expect(telegram.checked).toBe(true);

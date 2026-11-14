@@ -1,4 +1,4 @@
-// T13 A3: tab "จัดสรรค่าโฆษณา" (owner only). Google Ads accounts that several brands share, their campaigns with 7 day
+// T13 A3: tab "แบ่งค่าโฆษณา" (owner only). Google Ads accounts that several brands share, their campaigns with 7 day
 // cost, who owns each one, the allocation mode and the cost no brand got. The owner gives an unmapped campaign to a brand.
 import type { AdAllocationAccount, AdAllocationCampaign, AdAllocationResponse, CampaignMapSource, SpendCostByCurrency } from "@anjuna/contracts";
 import { useCallback, useEffect, useState } from "react";
@@ -101,7 +101,7 @@ export function AdAllocationScreen() {
   return <div className="stack ad-allocation-page">
     <div className="head">
       <div>
-        <h1>จัดสรรค่าโฆษณา</h1>
+        <h1>แบ่งค่าโฆษณา</h1>
         <p className="sub">บัญชี Google Ads ที่หลายแบรนด์ใช้ร่วมกัน แคมเปญของแต่ละบัญชี และแบรนด์ที่เป็นเจ้าของ{data ? ` · ${data.from} ถึง ${data.to}` : ""}</p>
       </div>
     </div>

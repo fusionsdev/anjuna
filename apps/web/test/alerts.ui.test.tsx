@@ -24,7 +24,8 @@ afterEach(() => {
 });
 
 describe("Alerts brand labels", () => {
-  it("names brands by domain with the id in code in the postback, submit-error and reject lists", async () => {
+  // FUS-393 item 9: the cards print the domain only; the raw brand id stays in the tooltip.
+  it("names brands by domain in the postback, submit-error and reject cards, with the raw id only in the tooltip", async () => {
     vi.spyOn(api, "alerts").mockResolvedValue({
       ...healthy,
       brands_without_postbacks: { state: "alert", detail: { window_hours: 24, brands: [{ brand: "brand-a", leads: 4 }] } },
@@ -33,9 +34,8 @@ describe("Alerts brand labels", () => {
     });
     render(<AlertsScreen />);
     await waitFor(() => expect(screen.getAllByText("lead.example")).toHaveLength(3));
-    const ids = screen.getAllByText("brand-a");
-    expect(ids).toHaveLength(3);
-    for (const id of ids) expect(id.tagName).toBe("CODE");
+    expect(screen.queryByText("brand-a")).toBeNull();
+    for (const label of screen.getAllByText("lead.example")) expect(label.getAttribute("title")).toBe("brand-a");
   });
 });
 
@@ -123,7 +123,7 @@ describe("Alerts list", () => {
     const rows = within(list).getAllByRole("listitem");
     // Two open rows (postbacks, rejects). The healthy rules sit only under ทั้งหมด.
     expect(rows).toHaveLength(2);
-    expect(within(rows[0]!).getByText("แบรนด์ไม่มีโพสต์แบ็ก", { exact: false })).toBeTruthy();
+    expect(within(rows[0]!).getByText("ยังไม่ได้ผลจากผู้ซื้อ", { exact: false })).toBeTruthy();
     expect(within(rows[0]!).getByText("ผิดปกติ")).toBeTruthy();
     expect(within(rows[1]!).getByText("เตือน")).toBeTruthy();
     const chip = (name: string) => screen.getByRole("button", { name }).textContent!;
@@ -152,8 +152,8 @@ describe("Alerts list", () => {
   });
   const ackedRow = (key: string) => stateRow(key, { acknowledged_by: "u1", acknowledged_at: "2026-10-23T01:00:00.000Z" });
   const closedRow = (key: string) => stateRow(key, { closed_at: "2026-10-23T02:00:00.000Z" });
-  const ackName = /^รับทราบ แบรนด์ไม่มีโพสต์แบ็ก/;
-  const closeName = /^ปิด แบรนด์ไม่มีโพสต์แบ็ก/;
+  const ackName = /^รับทราบ ยังไม่ได้ผลจากผู้ซื้อ/;
+  const closeName = /^ปิด ยังไม่ได้ผลจากผู้ซื้อ/;
 
   it("acknowledges a row, calls core with the rule and brand key and keeps the row open with a รับทราบแล้ว chip and a working ปิด", async () => {
     vi.spyOn(api, "alerts").mockResolvedValue(noisy());
@@ -185,7 +185,7 @@ describe("Alerts list", () => {
     fireEvent.click(screen.getByRole("button", { name: "ปิดแล้ว" }));
     const closed = within(screen.getByRole("region", { name: "รายการแจ้งเตือน" })).getAllByRole("listitem");
     expect(closed).toHaveLength(1);
-    expect(closed[0]!.textContent).toContain("แบรนด์ไม่มีโพสต์แบ็ก");
+    expect(closed[0]!.textContent).toContain("ยังไม่ได้ผลจากผู้ซื้อ");
     expect(closed[0]!.textContent).toContain("ปิดเมื่อ");
     expect(within(closed[0]!).queryByRole("button")).toBeNull();
   });
@@ -282,7 +282,7 @@ describe("Alerts list", () => {
       fireEvent.click(screen.getByRole("button", { name: "ปิดแล้ว" }));
       const closed = within(screen.getByRole("region", { name: "รายการแจ้งเตือน" })).getAllByRole("listitem");
       expect(closed).toHaveLength(1);
-      expect(closed[0]!.textContent).toContain("แบรนด์ไม่มีโพสต์แบ็ก");
+      expect(closed[0]!.textContent).toContain("ยังไม่ได้ผลจากผู้ซื้อ");
       expect(closed[0]!.textContent).toContain("ปิดเมื่อ");
     });
 

@@ -13,13 +13,13 @@ export const STAGE: Record<TrafficTailEvent["event_type"], { label: string; kind
   lead_submitted: { label: "ส่งลีดแล้ว", kind: "lead" },
   redirect_started: { label: "ส่งต่อผู้ซื้อ", kind: "redirect" },
   redirect_failed: { label: "ส่งต่อไม่สำเร็จ", kind: "redirect", error: true },
-  postback_received: { label: "โพสต์แบ็ก", kind: "postback" },
+  postback_received: { label: "ผลจากผู้ซื้อ", kind: "postback" },
 };
 
 export type EventFilter = "all" | "landing" | "form" | "lead" | "redirect" | "postback" | "bot";
 export const EVENT_FILTERS: ReadonlyArray<{ id: EventFilter; label: string }> = [
   { id: "all", label: "ทุกเหตุการณ์" }, { id: "landing", label: "หน้าแรก" }, { id: "form", label: "ฟอร์ม" },
-  { id: "lead", label: "ส่งลีด" }, { id: "redirect", label: "ส่งต่อ" }, { id: "postback", label: "โพสต์แบ็ก" },
+  { id: "lead", label: "ส่งลีด" }, { id: "redirect", label: "ส่งต่อ" }, { id: "postback", label: "ผลจากผู้ซื้อ" },
   { id: "bot", label: "บอท" },
 ];
 

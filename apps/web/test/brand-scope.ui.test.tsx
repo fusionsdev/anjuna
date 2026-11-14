@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/client/App";
 import { ApiError, api } from "../src/client/api";
-import { DEFAULT_SCOPE, groupOfBrand, inScope, scopeFromPrefs, scopeFromSearch, scopeSummary, scopeToPrefs } from "../src/client/brand-scope";
+import { DEFAULT_SCOPE, groupOfBrand, inScope, scopeFromPrefs, scopeFromSearch, scopeSummary, scopeToPrefs, scopeToSearch } from "../src/client/brand-scope";
 
 const lifecycle = (id: string, name: string, host: string, extra: Record<string, unknown> = {}) => LifecycleBrandSummary.parse({
   brand_id: id, name, account: "test-account", hostnames: [host], status: "live", current_revision_id: "rev-1",
@@ -85,6 +85,12 @@ describe("brand scope helpers", () => {
     expect(scopeFromSearch("?scope=active")).toEqual(DEFAULT_SCOPE);
     expect(scopeFromSearch("?scope=a,b")).toEqual({ hideInactive: false, showDemo: true, brandIds: ["a", "b"] });
     expect(scopeFromSearch("?scope=")).toBeNull();
+  });
+
+  it("writes a link scope back as the ?scope= value the server reads, and no value for a scope no link carries", () => {
+    for (const value of ["all", "active", "a,b"]) expect(scopeToSearch(scopeFromSearch(`?scope=${value}`)!)).toBe(value);
+    expect(scopeToSearch({ hideInactive: false, showDemo: false, brandIds: null })).toBeNull();
+    expect(scopeToSearch({ hideInactive: true, showDemo: true, brandIds: ["a"] })).toBeNull();
   });
 
   it("writes the chip text", () => {
@@ -184,10 +190,14 @@ describe("brand scope in the app", () => {
     await waitFor(() => expect(rowCount()).toBe(5));
     expect(api.mePrefs).toHaveBeenCalled();
     expect(rowCount()).toBe(5); // the saved scope (hide paused) arrived and did not win
+    // The badges count under the link's scope too.
+    expect(vi.mocked(api.navCounts).mock.calls).toEqual([["all"]]);
     const dialog = await openPopover();
     fireEvent.click(within(dialog).getByRole("button", { name: "ใช้" }));
     await act(async () => undefined);
     expect(window.location.search).toBe("");
+    // A scope the user picked is saved, so the badges count under the saved scope again.
+    await waitFor(() => expect(vi.mocked(api.navCounts).mock.lastCall).toEqual([null]));
   });
 
   it("lists the brands by state in the popover and filters them by search", async () => {
@@ -277,8 +287,9 @@ describe("scope on the other pages", () => {
   const ledger = () => within(screen.getByRole("group", { name: "สรุปตัวเลข" }));
   const leadsCell = () => ledger().getByText("ลีด", { selector: "p.k" }).nextElementSibling!.textContent;
 
-  it("counts only the brands in scope in the Home numbers and brand rows", async () => {
-    window.history.replaceState(null, "", "/");
+  // FUS-393: the numbers and brand rows moved from Home to /money.
+  it("counts only the brands in scope in the เงิน numbers and brand rows", async () => {
+    window.history.replaceState(null, "", "/money");
     withFunnel();
     render(<App />);
     await waitFor(() => expect(leadsCell()).toBe("11")); // brand-al is paused, so its 40 leads stay out
@@ -316,16 +327,18 @@ describe("scope on Home work items and the all-brand labels", () => {
       return routes[path] ? json(routes[path]!()) : base(input);
     }));
   };
-  const fixList = () => within(screen.getByRole("region", { name: "ต้องแก้" }));
-  const todo = () => within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
+  // FUS-393: the fix list and the to-do cards are rows of งานรอทำ now.
+  const fixList = () => within(screen.getByRole("list", { name: "รายการงาน" }));
+  const testSoldRow = () => [...document.querySelectorAll<HTMLElement>(".task-row")].find((row) => row.querySelector(".task-title")?.textContent === "ยังไม่ได้ทดสอบการขาย")!;
   const showInactive = async () => {
     const dialog = await openPopover();
     fireEvent.click(within(dialog).getByRole("switch", { name: "ซ่อนแบรนด์ที่ไม่ได้ใช้แล้ว" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "ใช้" }));
   };
 
-  it("leaves a hidden brand out of the Home fix list and brings it back when the scope shows it", async () => {
+  it("leaves a hidden brand out of the งานรอทำ rows and brings it back when the scope shows it", async () => {
     window.history.replaceState(null, "", "/");
+    vi.spyOn(api, "alertStates").mockResolvedValue([]);
     const alerts = { ...alertsFixture, brands_without_postbacks: { state: "warn", detail: { window_hours: 24, brands: [{ brand: "brand-cg", leads: 5 }, { brand: "brand-al", leads: 7 }] } } };
     vi.mocked(api.alerts).mockResolvedValue(alerts as never);
     render(<App />);
@@ -343,19 +356,19 @@ describe("scope on Home work items and the all-brand labels", () => {
     withRoutes({ "/api/brands/checklists": () => ({ brands: { "brand-cg": open, "brand-nv": open, "brand-al": open } }) });
     render(<App />);
     // Credit Genie and Nova Cash are in scope. Alpha Loans is paused in core, so it is out.
-    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("2 แบรนด์"));
+    await waitFor(() => expect(testSoldRow().querySelector(".task-where")!.textContent).toBe("2 แบรนด์"));
     await showInactive();
-    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("3 แบรนด์"));
+    await waitFor(() => expect(testSoldRow().querySelector(".task-where")!.textContent).toBe("3 แบรนด์"));
   });
 
-  it("opens the Test sold chip from the Home card and batches only the brands in scope", async () => {
+  it("opens the Test sold chip from the งานรอทำ row and batches only the brands in scope", async () => {
     window.history.replaceState(null, "", "/");
     const open = { checklist: [], template_approved: true, template_waiting_id: null };
     withRoutes({ "/api/brands/checklists": () => ({ brands: { "brand-cg": open, "brand-nv": open, "brand-al": open } }) });
     render(<App />);
-    await waitFor(() => expect(todo().getByText("ยืนยัน Test sold").querySelector("span")!.textContent).toBe("2 แบรนด์"));
-    // The card opens the Brands list on its chip; the bulk button above the table batches the same 2 brands.
-    fireEvent.click(todo().getAllByRole("button", { name: "เปิด" })[0]!);
+    await waitFor(() => expect(testSoldRow().querySelector(".task-where")!.textContent).toBe("2 แบรนด์"));
+    // The row opens the Brands list on its chip; the bulk button above the table batches the same 2 brands.
+    fireEvent.click(within(testSoldRow()).getByRole("link", { name: "ดู 2 แบรนด์" }));
     expect(window.location.pathname + window.location.search).toBe("/brands?chip=test-sold");
     fireEvent.click(await screen.findByRole("button", { name: "ทดสอบการขายทั้งหมด 2 แบรนด์" }));
     const dialog = await screen.findByRole("alertdialog");
@@ -364,16 +377,16 @@ describe("scope on Home work items and the all-brand labels", () => {
     expect(dialog.textContent).not.toContain("Alpha Loans");
   });
 
-  it("labels the Home conversion queue ทุกแบรนด์ while the scope hides brands, and not when every brand shows", async () => {
-    window.history.replaceState(null, "", "/");
+  it("labels the เงิน sale queue ทุกแบรนด์ while the scope hides brands, and not when every brand shows", async () => {
+    window.history.replaceState(null, "", "/money");
     withRoutes({ "/api/conversions": () => conversionsFixture });
     render(<App />);
-    const queue = () => screen.getByRole("region", { name: "คอนเวอร์ชัน" });
+    const queue = () => screen.getByRole("region", { name: "ส่งยอดขายให้ Google Ads" });
     await waitFor(() => expect(queue().querySelector(".all-brands-note")!.textContent).toBe("ทุกแบรนด์"));
     cleanup();
-    window.history.replaceState(null, "", "/?scope=all");
+    window.history.replaceState(null, "", "/money?scope=all");
     render(<App />);
-    await screen.findByRole("region", { name: "คอนเวอร์ชัน" });
+    await screen.findByRole("region", { name: "ส่งยอดขายให้ Google Ads" });
     await act(async () => undefined);
     expect(queue().querySelector(".all-brands-note")).toBeNull();
   });
@@ -388,15 +401,15 @@ describe("scope on Home work items and the all-brand labels", () => {
     render(<App />);
     await waitFor(() => expect(document.querySelector(".traffic-stack .all-brands-note")!.textContent).toContain("ทุกแบรนด์"));
   });
-  it("hides the Home reconciliation line while the scope hides brands, and shows it with every brand in scope", async () => {
-    window.history.replaceState(null, "", "/");
+  it("hides the เงิน reconciliation line while the scope hides brands, and shows it with every brand in scope", async () => {
+    window.history.replaceState(null, "", "/money");
     withRoutes({ "/api/conversions": () => conversionsFixture });
     render(<App />);
-    await waitFor(() => expect(screen.getByRole("region", { name: "คอนเวอร์ชัน" }).querySelector(".all-brands-note")).not.toBeNull());
+    await waitFor(() => expect(screen.getByRole("region", { name: "ส่งยอดขายให้ Google Ads" }).querySelector(".all-brands-note")).not.toBeNull());
     expect(screen.queryByTestId("reconciliation")).toBeNull();
     cleanup();
-    window.history.replaceState(null, "", "/?scope=all");
+    window.history.replaceState(null, "", "/money?scope=all");
     render(<App />);
-    expect((await screen.findByTestId("reconciliation")).textContent).toMatch(/^กระทบยอด: ขายได้ 0 = ส่งแล้ว \d+ \+ ส่งไม่ได้ \d+ \+ ค้างส่ง \d+/);
+    expect((await screen.findByTestId("reconciliation")).textContent).toMatch(/^กระทบยอด: ขายได้ 0 = ส่งแล้ว \d+ \+ ส่งไม่สำเร็จ \d+ \+ รอส่ง \d+/);
   });
 });

@@ -67,17 +67,25 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
-const todo = () => within(screen.getByRole("region", { name: "งานที่ต้องใช้คน" }));
-const cardCount = (title: string) => Number(/^(\d+)/.exec(todo().getByText(title).querySelector("span")!.textContent ?? "")?.[1]);
-const openCard = (title: string) => fireEvent.click(within(todo().getByText(title).parentElement!).getByRole("button", { name: "เปิด" }));
+// FUS-393: the Home to-do cards are rows of งานรอทำ. A grouped row names its count on the button, else in its "where" line.
+const taskRow = (title: string) => [...document.querySelectorAll<HTMLElement>(".task-row")].find((row) => row.querySelector(".task-title")?.textContent === title);
+const cardCount = (title: string) => {
+  const row = taskRow(title);
+  if (!row) return 0;
+  const number = (text: string | null | undefined) => /(\d+)/.exec(text ?? "")?.[1];
+  return Number(number(row.querySelector(".task-act a")?.textContent) ?? number(row.querySelector(".task-where")?.textContent));
+};
+const openCard = (title: string) => fireEvent.click(taskRow(title)!.querySelector(".task-act a")!);
+/** One row per template awaiting approval. */
+const templateRows = () => [...document.querySelectorAll<HTMLElement>(".task-row")].filter((row) => row.querySelector(".task-where")?.textContent?.startsWith("เทมเพลต "));
 const brandRows = () => [...document.querySelectorAll<HTMLElement>("table.brand-table tbody tr[data-brand-id]")];
 const chipCount = (label: string) => Number(within(screen.getByRole("group", { name: "ตัวกรองแบรนด์" })).getByRole("button", { name: new RegExp(`^${label}`) }).querySelector(".brand-chip-count")!.textContent);
 
 describe("Home to-do counts equal the rows of the page each card opens", () => {
   it.each([
-    ["ยืนยัน Test sold", "/brands?chip=test-sold", "รอทดสอบการขาย", 2, ["live-both", "live-ts"]],
-    ["ตั้ง drain route", "/brands?chip=drain-route", "รอตั้งเส้นทางส่งยอดขาย", 3, ["live-both", "live-dr", "live-dr2"]],
-    ["แบรนด์ที่สร้างค้างไว้", "/brands?chip=drafts", "สร้างค้างไว้", 1, ["draft-1"]],
+    ["ยังไม่ได้ทดสอบการขาย", "/brands?chip=test-sold", "รอทดสอบการขาย", 2, ["live-both", "live-ts"]],
+    ["Google Ads ยังไม่รู้ว่าขายได้", "/brands?chip=drain-route", "รอตั้งเส้นทางส่งยอดขาย", 3, ["live-both", "live-dr", "live-dr2"]],
+    ["สร้างแบรนด์ยังไม่เสร็จ", "/brands?chip=drafts", "สร้างค้างไว้", 1, ["draft-1"]],
   ] as const)("%s", async (title, url, chipLabel, expected, ids) => {
     render(<App />);
     await waitFor(() => expect(cardCount(title)).toBe(expected));
@@ -91,8 +99,8 @@ describe("Home to-do counts equal the rows of the page each card opens", () => {
 
   it("the templates card count equals the rows of /templates?status=awaiting_approval, archived versions left out of both", async () => {
     render(<App />);
-    await waitFor(() => expect(cardCount("อนุมัติเทมเพลต")).toBe(2));
-    openCard("อนุมัติเทมเพลต");
+    await waitFor(() => expect(templateRows()).toHaveLength(2));
+    fireEvent.click(templateRows()[0]!.querySelector(".task-act a")!);
     expect(window.location.pathname + window.location.search).toBe("/templates?status=awaiting_approval");
     const list = await screen.findByRole("region", { name: "รายการเทมเพลต" });
     await waitFor(() => expect(list.querySelectorAll("tbody tr")).toHaveLength(2));

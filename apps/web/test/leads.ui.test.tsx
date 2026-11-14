@@ -55,7 +55,7 @@ describe("Leads screen", () => {
     const pending = rowOf(PENDING_ID);
     expect(pending.getByText("รอผล (Pending)").closest(".pill")!.className).toContain("p-blue");
     expect(pending.getByText("$500")).toBeTruthy();
-    expect(pending.getByText("ยังไม่มี postback (No postback yet)").closest(".pill")!.className).toContain("p-warn");
+    expect(pending.getByText("ยังไม่มีผลจากผู้ซื้อ").closest(".pill")!.className).toContain("p-warn");
 
     expect(leadRequests()).toHaveLength(1);
     expect(leadRequests()[0]).toMatch(/^\/api\/leads\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
@@ -167,8 +167,8 @@ describe("Leads screen", () => {
     const badge = (id: string) => rowOf(id).getAllByRole("cell")[7]!.querySelector(".pill")!;
     expect([badge(ids[0]!).textContent, badge(ids[0]!).className]).toEqual(["●มี conversion (Has conversion)", expect.stringContaining("p-live")]);
     expect([badge(ids[1]!).textContent, badge(ids[1]!).className]).toEqual(["✕ขายแล้วแต่ไม่มีรายการอัปโหลด (Sold, no upload)", expect.stringContaining("p-bad")]);
-    expect([badge(ids[2]!).textContent, badge(ids[2]!).className]).toEqual(["▲ยังไม่มี postback (No postback yet)", expect.stringContaining("p-warn")]);
-    expect([badge(ids[3]!).textContent, badge(ids[3]!).className]).toEqual(["◆มี postback (Postback received)", expect.stringContaining("p-blue")]);
+    expect([badge(ids[2]!).textContent, badge(ids[2]!).className]).toEqual(["▲ยังไม่มีผลจากผู้ซื้อ", expect.stringContaining("p-warn")]);
+    expect([badge(ids[3]!).textContent, badge(ids[3]!).className]).toEqual(["◆มีผลจากผู้ซื้อแล้ว", expect.stringContaining("p-blue")]);
   });
 
   it("refuses a search under 4 characters on submit: no list request, no live export link, an inline reason", async () => {
