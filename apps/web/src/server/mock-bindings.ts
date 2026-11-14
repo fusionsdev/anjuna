@@ -192,11 +192,30 @@ function templateMcp(env: Env): Fetcher {
 }
 
 /** With MOCK_CORE=1, fills each missing lifecycle, factory and template binding. Otherwise returns `env` itself. */
+/** Local-only notification stand-in. No network calls or stored alerts.
+ * State persistence and acknowledgment flows are tested against Core separately.
+ */
+function notificationCore(): Fetcher {
+  return {
+    async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      const request = input instanceof Request && init === undefined ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path === "/admin/alerts/state") return json(200, { rows: [], next_cursor: null });
+      if (request.method === "GET" && path === "/admin/alerts/log") return json(200, { rows: [] });
+      if (request.method === "GET" && path === "/admin/alerts/open-count") return json(200, { alerts_open: 0 });
+      if (request.method === "POST" && /^\/admin\/alerts\/[^/]+\/(ack|close)$/.test(path)) return json(404, { error: "not_found" });
+      if (request.method === "POST" && path === "/admin/notifications/test") return json(409, { error: "not_configured" });
+      return notFound(path);
+    },
+  } as unknown as Fetcher;
+}
+
 export function withMockBindings(env: Env): Env {
   if (env.MOCK_CORE !== "1") return env;
-  if (env.CORE_LIFECYCLE && env.FACTORY_WORKER && env.TEMPLATE_MCP) return env;
+  if (env.CORE && env.CORE_LIFECYCLE && env.FACTORY_WORKER && env.TEMPLATE_MCP) return env;
   return {
     ...env,
+    CORE: env.CORE ?? notificationCore(),
     CORE_LIFECYCLE: env.CORE_LIFECYCLE ?? coreLifecycle(env),
     FACTORY_WORKER: env.FACTORY_WORKER ?? factoryWorker(),
     TEMPLATE_MCP: env.TEMPLATE_MCP ?? templateMcp(env),
