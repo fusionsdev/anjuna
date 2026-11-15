@@ -77,10 +77,13 @@
 .rt-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 
 /* Breakdowns */
-.rt-breakdowns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; }
+.rt-breakdowns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; }
+.rt-breakdowns > .panel { min-width: 0; }
 .rt-rows { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.rt-rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; font-size: var(--text-body); }
-.rt-row-key { overflow-wrap: anywhere; }
+.rt-rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; min-width: 0; font-size: var(--text-body); }
+/* Never split a source, domain or brand into one character per line. Full key remains available via title. */
+.rt-row-key { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rt-row-percent { white-space: nowrap; }
 .rt-row-bar { grid-column: 1 / -1; height: 6px; border-radius: 999px; background: var(--canvas); overflow: hidden; }
 .rt-row-bar span { display: block; height: 100%; background: var(--spend); border-radius: 999px; }
 

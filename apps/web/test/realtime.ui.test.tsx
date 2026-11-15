@@ -91,6 +91,30 @@ describe("Realtime tab report", () => {
     expect(kpi("redirect_errors").textContent).toContain("—");
   });
 
+  it("rounds fractional percentages in KPI and breakdowns without losing the full row label", async () => {
+    const base = realtimeReport();
+    const longKey = "extremely-long-campaign-source-that-should-not-break-character-by-character.example";
+    report = {
+      ...base,
+      kpis: {
+        ...base.kpis,
+        no_gclid_landings: { ...base.kpis.no_gclid_landings, pct: 8.51063829787234 },
+        non_us_pct: 2.37467018469657,
+      },
+      breakdowns: {
+        ...base.breakdowns,
+        source: [{ key: longKey, count: 8, pct: 8.51063829787234 }],
+      },
+    };
+    await open();
+    expect(kpi("no_gclid_landings").querySelector(".v")!.textContent).toBe("40 · 8.5%");
+    expect(kpi("non_us_pct").querySelector(".v")!.textContent).toBe("2.4%");
+    const row = document.querySelector('[data-breakdown="source"] .rt-rows li')!;
+    expect(row.querySelector(".rt-row-key")!.getAttribute("title")).toBe(longKey);
+    expect(row.querySelector(".rt-row-percent")!.textContent).toBe("8 · 8.5%");
+    expect(row.querySelector(".rt-row-bar span")!.getAttribute("style")).toContain("8.510638");
+  });
+
   it("shows a dash for a null suspicious count and a null non-US share, never a zero", async () => {
     report = realtimeReport({ kpis: { ...realtimeReport().kpis, suspicious_sessions: null, non_us_pct: null } });
     await open();

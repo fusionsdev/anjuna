@@ -20,6 +20,11 @@ import "./Realtime.css";
 type Report = TrafficRealtimeResponse;
 const PERIOD_LABEL: Record<TrafficLogPeriod, string> = { "24h": "24 ชม.", "7d": "7 วัน", "30d": "30 วัน" };
 const count = (n: number) => n.toLocaleString("en-US");
+/** Display-only rounding: keep the server percentage for calculations and bar widths. */
+export const percentText = (pct: number | null): string =>
+  pct === null || !Number.isFinite(pct)
+    ? "—"
+    : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(pct)}%`;
 const dash = (value: string | number | null) => (value === null || value === "" ? "—" : String(value));
 
 export function realtimePath(period: TrafficLogPeriod): string {
@@ -33,8 +38,8 @@ const RISE_IS_BAD = new Set<KpiKey>(["validation_errors", "redirect_errors", "su
 function kpiValue(report: Report, key: KpiKey): string {
   const k = report.kpis;
   switch (key) {
-    case "no_gclid_landings": return `${count(k.no_gclid_landings.count)} · ${k.no_gclid_landings.pct}%`;
-    case "non_us_pct": return k.non_us_pct === null ? "—" : `${k.non_us_pct}%`;
+    case "no_gclid_landings": return `${count(k.no_gclid_landings.count)} · ${percentText(k.no_gclid_landings.pct)}`;
+    case "non_us_pct": return percentText(k.non_us_pct);
     case "suspicious_sessions": return k.suspicious_sessions === null ? "—" : count(k.suspicious_sessions);
     default: return count(k[key]);
   }
@@ -225,13 +230,16 @@ export function RealtimeTab() {
                     <h2>{title}</h2>
                     {rows.length === 0 ? <p className="hint">ยังไม่มีข้อมูล</p> : (
                       <ul className="rt-rows">
-                        {rows.map((row) => (
-                          <li key={row.key}>
-                            <span className="rt-row-key">{key === "brand" ? labelOf(row.key) : row.key}</span>
-                            <span className="num">{count(row.count)} · {row.pct}%</span>
-                            <span className="rt-row-bar" aria-hidden="true"><span style={{ width: `${row.pct}%` }} /></span>
-                          </li>
-                        ))}
+                        {rows.map((row) => {
+                          const name = key === "brand" ? labelOf(row.key) : row.key;
+                          return (
+                            <li key={row.key}>
+                              <span className="rt-row-key" title={name}>{name}</span>
+                              <span className="num rt-row-percent">{count(row.count)} · {percentText(row.pct)}</span>
+                              <span className="rt-row-bar" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, row.pct))}%` }} /></span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
