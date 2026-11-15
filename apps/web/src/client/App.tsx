@@ -162,7 +162,7 @@ export function App() {
       {group && (group.id === "settings"
         ? <SettingsSections tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />
         : <SectionTabs tabs={visibleTabs(group, me.role)} active={activeTabId(group, view)} onSelect={open} />)}
-      {SCOPED_VIEWS.has(view) && <div className="scope-bar"><ScopeSubtitle /></div>}
+      {SCOPED_VIEWS.has(view) && view !== "home" && <div className="scope-bar"><ScopeSubtitle /></div>}
       {view === "home" && <HomeScreen me={me} onCounted={onHomeCounted} />}
       {/* The money tabs sit below the money page; on each tab's own page they sit on top. */}
       {view === "money" && <><MoneyScreen me={me} onGo={open} onCountsChanged={refreshCounts} /><SectionTabs tabs={visibleTabs(NAV_GROUPS.money, me.role)} active={null} onSelect={open} /></>}

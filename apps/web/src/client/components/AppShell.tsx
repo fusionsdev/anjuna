@@ -113,6 +113,10 @@ export function AppShell({ me, nav, onSignOut, onCreateBrand, children }: { me: 
       </aside>
       {drawer && <div className="scrim shell-scrim" onClick={() => closeDrawer()} />}
       <div className="main-col" inert={mobile && drawer}>
+        <header className="mission-desktop-bar" aria-label="พื้นที่ทำงาน">
+          <div className="mission-crumb-path"><span>Workspace</span><span aria-hidden="true">/</span><strong>Anjuna</strong></div>
+          <div className="mission-session-info"><span className="mission-session-dot" /> {me.role === "owner" ? "Owner workspace" : "Staff workspace"}{me.account ? " · " + me.account : ""}</div>
+        </header>
         <header className="mobile-bar">
           <button type="button" className="menu-btn" ref={menuButton} aria-label="เปิดเมนู" aria-controls="sidebar" aria-expanded={drawer} onClick={() => (drawer ? closeDrawer() : setDrawer(true))}><Menu size={20} aria-hidden="true" /></button>
           <a href={viewPath("home")} className="brandmark" onClick={goHome}><i aria-hidden="true">A</i>Anjuna</a>

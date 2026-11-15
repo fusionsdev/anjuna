@@ -39,6 +39,26 @@ it("prefs round-trip for an employee, remain private to that user and require a 
   expect((await call("/api/me/prefs")).status).toBe(401);
   expect((await call("/api/me/prefs", { cookie: employee, method: "PUT", body: { ...prefs, user_id: "owner" } })).status).toBe(422);
 });
+it("local mock alert state works for both roles without a real CORE binding", async () => {
+  const local = makeEnv({ CORE: undefined, CORE_LIFECYCLE: undefined, FACTORY_WORKER: undefined, TEMPLATE_MCP: undefined, MOCK_CORE: "1" });
+  const ownerResponse = await call("/api/alerts/state?limit=200", { cookie: owner, env: local });
+  expect(ownerResponse.status).toBe(200);
+  expect(await ownerResponse.json()).toEqual({ rows: [], next_cursor: null });
+  const employeeResponse = await call("/api/alerts/state", { cookie: employee, env: local });
+  expect(employeeResponse.status).toBe(200);
+  expect(await employeeResponse.json()).toEqual({ rows: [], next_cursor: null });
+  expect(await (await call("/api/alerts/log", { cookie: owner, env: local })).json()).toEqual({ rows: [] });
+  expect((await call("/api/alerts/no-such-alert/ack", { cookie: employee, method: "POST", env: local })).status).toBe(404);
+  expect((await call("/api/alerts/state", { env: local })).status).toBe(401);
+});
+
+it("without MOCK_CORE the alert route fails closed when CORE is missing", async () => {
+  const local = makeEnv({ CORE: undefined, MOCK_CORE: "0" });
+  const response = await call("/api/alerts/state", { cookie: owner, env: local });
+  expect(response.status).toBe(502);
+  expect(await response.json()).toEqual({ error: "unavailable" });
+});
+
 it("owner test forwards to private core and returns only provider status", async () => {
   let path = "";
   const binding = { async fetch(request: Request) { path = new URL(request.url).pathname; return Response.json({ status: "sent", response_code: 200 }); } } as unknown as Fetcher;
