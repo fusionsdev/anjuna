@@ -68,6 +68,23 @@ function Kpi({ report, id, label, hint }: { report: Report; id: KpiKey; label: s
   );
 }
 
+/** On touch screens a title tooltip is not available; allow revealing long breakdown labels. */
+function BreakdownLabel({ name }: { name: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`rt-row-key${expanded ? " rt-row-key-expanded" : ""}`}
+      title={name}
+      aria-label={`${expanded ? "ย่อชื่อ" : "ดูชื่อเต็ม"} ${name}`}
+      aria-pressed={expanded}
+      onClick={() => setExpanded((v) => !v)}
+    >
+      {name}
+    </button>
+  );
+}
+
 /** Three series per bucket as div bars: landing views, form starts and leads, each scaled to the largest value on the chart. */
 function Trend({ trend }: { trend: Report["trend"] }) {
   const most = Math.max(1, ...trend.flatMap((b) => [b.landing_views, b.form_starts, b.leads]));
@@ -234,7 +251,7 @@ export function RealtimeTab() {
                           const name = key === "brand" ? labelOf(row.key) : row.key;
                           return (
                             <li key={row.key}>
-                              <span className="rt-row-key" title={name}>{name}</span>
+                              <BreakdownLabel name={name} />
                               <span className="num rt-row-percent">{count(row.count)} · {percentText(row.pct)}</span>
                               <span className="rt-row-bar" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, row.pct))}%` }} /></span>
                             </li>

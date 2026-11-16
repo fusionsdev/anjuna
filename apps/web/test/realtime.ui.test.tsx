@@ -110,7 +110,15 @@ describe("Realtime tab report", () => {
     expect(kpi("no_gclid_landings").querySelector(".v")!.textContent).toBe("40 · 8.5%");
     expect(kpi("non_us_pct").querySelector(".v")!.textContent).toBe("2.4%");
     const row = document.querySelector('[data-breakdown="source"] .rt-rows li')!;
-    expect(row.querySelector(".rt-row-key")!.getAttribute("title")).toBe(longKey);
+    const label = row.querySelector<HTMLButtonElement>(".rt-row-key")!;
+    expect(label.getAttribute("title")).toBe(longKey);
+    expect(label.getAttribute("aria-pressed")).toBe("false");
+    expect(label.getAttribute("aria-label")).toContain(longKey);
+    fireEvent.click(label);
+    expect(label.getAttribute("aria-pressed")).toBe("true");
+    expect(label.className).toContain("rt-row-key-expanded");
+    fireEvent.click(label);
+    expect(label.getAttribute("aria-pressed")).toBe("false");
     expect(row.querySelector(".rt-row-percent")!.textContent).toBe("8 · 8.5%");
     expect(row.querySelector(".rt-row-bar span")!.getAttribute("style")).toContain("8.510638");
   });
